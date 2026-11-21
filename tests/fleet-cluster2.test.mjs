@@ -6,6 +6,7 @@
  */
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -14,7 +15,8 @@ import { git } from './helpers/git.mjs';
 import { T0, world } from './helpers/fleet-lease-world.mjs';
 import { emptyLease } from '../scripts/lib/fleet/lease.mjs';
 import { endTurnWorkGone } from '../scripts/lib/fleet/lease-turns.mjs';
-import { afterRetire, cmdReleaseStaleReady, retireSession } from '../scripts/lib/fleet/lifecycle.mjs';
+import { afterRetire, cmdReleaseStaleReady, evidenceHolds, retireSession } from '../scripts/lib/fleet/lifecycle.mjs';
+import { repairCommand } from '../scripts/lib/fleet/lease-workgone.mjs';
 import { fleetDir, transact } from '../scripts/lib/fleet/registry.mjs';
 import { broadClaimPatterns, staleReadyMarks } from '../scripts/lib/fleet/overlap.mjs';
 import { classifyDirective, DIRECTIVE_KINDS } from '../scripts/lib/fleet/directives.mjs';
@@ -70,6 +72,42 @@ describe('D1 endTurnWorkGone (pure)', () => {
     assert.equal(endTurnWorkGone(empty, A, NOW, { clearCi: true }).lease, empty);
     const others = leaseWith({ turn: turnOf(B) });
     assert.equal(endTurnWorkGone(others, A, NOW).lease, others);
+  });
+});
+
+describe('D1 audit fixes', () => {
+  it('a FUTURE CI window (a reservation, not this work) is left; only a running one is cleared', () => {
+    const future = { ...ciWindow(A, 'w-future'), from: '2026-10-14T09:00:00.000Z', until: '2026-10-14T09:30:00.000Z' };
+    const r = endTurnWorkGone(leaseWith({ windows: [future, ciWindow(A, 'w-run')] }), A, NOW, { clearCi: true });
+    assert.deepEqual(r.lease.windows.map((w) => w.id), ['w-future']);
+  });
+  it('the repair command quotes the session id as data (a branch name may hold shell metacharacters)', () => {
+    const cmd = repairCommand('fleet', 'topic;touch pwned');
+    assert.ok(/(['"]).*topic;touch pwned.*\1/.test(cmd), `the id must sit inside quotes: ${cmd}`);
+    assert.equal(repairCommand('fleet', 'plain-branch'), 'fleet release --id plain-branch');
+  });
+  it('an unreadable lease file is a FAILED follow-on with the repair, never a quiet skip', () => {
+    const w = world();
+    assert.equal(w.runA(['lease', 'acquire', '--for', '30']).status, 0);
+    assert.equal(w.runA(['lease', 'release']).status, 0);
+    fs.writeFileSync(w.leaseFile, '{ not json');
+    const r = w.runA(['release', '--json']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(r.json.leaseStep.lease, 'failed');
+    assert.match(r.json.leaseStep.reason, /unreadable/);
+    assert.ok(r.json.repair);
+  });
+  it('merged evidence is bound to the session generation, revision and branch tip it described', () => {
+    const fx = makeFleetRepo();
+    const tip = git(['rev-parse', 'refs/heads/main'], fx.repo);
+    const cur = { gen: 1, rev: 2, source: { kind: 'branch', branch: 'main' } };
+    const ctx = { cwd: fx.repo };
+    assert.equal(evidenceHolds(ctx, cur, { gen: 1, rev: 2, tip }), true);
+    assert.equal(evidenceHolds(ctx, cur, { gen: 1, rev: 3, tip }), false, 'the record moved');
+    assert.equal(evidenceHolds(ctx, { ...cur, gen: 2 }, { gen: 1, rev: 2, tip }), false, 'a new generation');
+    assert.equal(evidenceHolds(ctx, cur, { gen: 1, rev: 2, tip: 'f'.repeat(40) }), false, 'the tip moved');
+    assert.equal(evidenceHolds(ctx, cur, null), false);
+    assert.equal(evidenceHolds(ctx, { ...cur, source: { kind: 'pr' } }, { gen: 1, rev: 2, tip }), false, 'a PR session has no local tip');
   });
 });
 
@@ -172,7 +210,7 @@ describe('D2 broad claims', () => {
 });
 
 describe('D2 the narrow directive is verified by the fact, not by the coordinator\'s word', () => {
-  const baseItem = (over = {}) => ({ id: 's1', branch: 's1', paths: ['tests/**'], overlaps: [{ with: 's2', via: ['paths'], known: false }], ...over });
+  const baseItem = (over = {}) => ({ id: 's1', branch: 's1', paths: ['tests/**'], overlaps: [{ with: 's2', via: ['paths'], known: false, ownPatterns: ['tests/**'] }], ...over });
   const session = (paths) => ({ id: 's1', state: 'working', paths });
   const directive = (over = {}) => ({ id: 'd-20261121000000-0001', to: 's1', kind: 'narrow', reason: { kind: 'note', note: 'tests/** blocks siblings' }, by: 'coord', createdAt: T0, expiresAt: '2026-11-22T00:00:00.000Z', acks: [], ...over });
   const derive = (item, sess, dirs = []) => deriveObligations({ item, session: sess, directives: { active: dirs, complete: true }, now: NOW });
@@ -183,6 +221,12 @@ describe('D2 the narrow directive is verified by the fact, not by the coordinato
     const v = r.directives[0];
     assert.equal(v.status, 'verified');
     assert.match(v.action, /fleet claim --paths/);
+  });
+  it('UNVERIFIED when the overlap was not caused by the broad pattern (files only, or only a narrow pattern met)', () => {
+    const filesOnly = derive(baseItem({ overlaps: [{ with: 's2', via: ['files'], known: false, files: ['a.txt'] }] }), session(['tests/**']), [directive()]);
+    assert.equal(filesOnly.directives[0].status, 'unverified');
+    const narrowCaused = derive(baseItem({ paths: ['tests/**', 'a.txt'], overlaps: [{ with: 's2', via: ['paths'], known: false, ownPatterns: ['a.txt'] }] }), session(['tests/**', 'a.txt']), [directive()]);
+    assert.equal(narrowCaused.directives[0].status, 'unverified');
   });
   it('UNVERIFIED when the claim is not broad, or broad but overlaps nobody', () => {
     const narrow = derive(baseItem({ paths: ['tests/x.test.mjs'] }), session(['tests/x.test.mjs']), [directive()]);
@@ -199,6 +243,12 @@ describe('D2 the narrow directive is verified by the fact, not by the coordinato
     const future = classifyDirective({ schemaVersion: 1, ...directive({ kind: 'a-kind-from-the-next-release' }) });
     assert.ok(future.unsupported);
     assert.equal(future.directive, undefined);
+    // The REAL compatibility case: a `narrow` record read with the OLD five-kind vocabulary is unsupported, never an error.
+    const oldKinds = DIRECTIVE_KINDS.filter((k) => k !== 'narrow');
+    const seenByOld = classifyDirective({ schemaVersion: 1, ...directive() }, oldKinds);
+    assert.ok(seenByOld.unsupported, JSON.stringify(seenByOld));
+    assert.match(seenByOld.unsupported.reason, /not understood/);
+    assert.equal(seenByOld.directive, undefined);
   });
 });
 
@@ -206,7 +256,7 @@ describe('D3 stale ready marks', () => {
   const DAY = 86_400_000;
   const known = (merged, extra = {}) => ({ known: true, merged, ...extra });
   const item = (id, over = {}) => ({
-    id, tracked: true, state: 'ready', gen: 1, rev: 3, oid: 'b'.repeat(40), readyStale: true,
+    id, tracked: true, kind: 'branch', state: 'ready', gen: 1, rev: 3, oid: 'b'.repeat(40), readyStale: true,
     ready: { oid: 'a'.repeat(40), at: new Date(NOW.getTime() - 20 * DAY).toISOString() }, merged: known(false), ...over,
   });
   const pick = (items, days) => staleReadyMarks(items, { now: NOW, ...(days ? { days } : {}) });
@@ -240,6 +290,11 @@ describe('D3 stale ready marks', () => {
     assert.deepEqual(bad.aged, []);
     assert.match(bad.skipped[0].reason, /valid timestamp/);
   });
+  it('a PR-sourced session and an unreadable tip are skipped with a reason, in preview as in apply', () => {
+    const r = pick([item('pr', { kind: 'pr', merged: known(true) }), item('notip', { oid: null, merged: known(true) })]);
+    assert.deepEqual([r.landed, r.aged], [[], []]);
+    assert.deepEqual(r.skipped.map((x) => x.id), ['pr', 'notip']);
+  });
   it('--days is a whole number 1..3650', () => {
     for (const days of [0, -1, 1.5, 3651, NaN]) assert.throws(() => staleReadyMarks([], { now: NOW, days }), /days must be/);
     assert.doesNotThrow(() => staleReadyMarks([], { now: NOW, days: 3650 }));
@@ -263,7 +318,7 @@ describe('D3 fleet release --stale-ready through the command', () => {
   const itemsFor = (dir, over, tip) => () => {
     const r = transact(dir, (t) => t.sessions).value;
     return r.map((s) => ({
-      id: s.id, tracked: true, state: s.state, gen: s.gen, rev: s.rev, oid: tip, readyStale: true, ready: s.ready,
+      id: s.id, tracked: true, kind: 'branch', state: s.state, gen: s.gen, rev: s.rev, oid: tip, readyStale: true, ready: s.ready,
       merged: over[s.id] ?? { known: true, merged: false },
     }));
   };
@@ -300,6 +355,18 @@ describe('D3 fleet release --stale-ready through the command', () => {
     assert.equal(two.ready, null);
     assert.deepEqual(two.paths, ['two.txt'], 'its claim is intact');
   });
+  it('--apply reports a per-item write failure and carries on; it never aborts the command mid-list', () => {
+    const s = setup();
+    mark(s.dir, 'one', { state: 'ready', ready: old(), rev: 5 });
+    mark(s.dir, 'two', { state: 'ready', ready: old(), rev: 5 });
+    // The clock's toISOString throws, so the invalidation write (which stamps updatedAt) fails inside the transaction.
+    const brokenClock = Object.assign(new Date(NOW), { toISOString() { throw new Error('disk full'); } });
+    const r = cmdReleaseStaleReady({ ...s.ctx, now: brokenClock }, { '--apply': true }, { items: itemsFor(s.dir, {}, s.tip) });
+    assert.equal(r.ok, false, 'a failed item makes the command a refusal');
+    assert.deepEqual(r.results.map((x) => x.retirement), ['failed', 'failed'], 'both were attempted');
+    assert.match(r.results[0].reason, /registry write failed \(disk full\)/);
+    assert.equal(transact(s.dir, (t) => t.sessions.filter((x) => x.state === 'ready').length).value, 2, 'nothing half-written');
+  });
   it('--apply skips an item whose class changed between the listing and the apply (aged -> landed) and one whose record moved', () => {
     const s = setup();
     mark(s.dir, 'one', { state: 'ready', ready: old(), rev: 5 });
@@ -327,7 +394,7 @@ describe('D3 fleet release --stale-ready through the command', () => {
     mark(dir, 'main', { state: 'ready', ready: { oid: 'a'.repeat(40), at: T0 }, rev: 5 });
     const ctx = { dir, cwd: w.a.repo, env: w.env(), now: NOW, cmd: 'fleet', config: { baseBranch: 'main' } };
     const tip = git(['rev-parse', 'refs/heads/main'], w.a.repo);
-    const items = () => [{ id: 'main', tracked: true, state: 'ready', gen: 1, rev: 5, oid: tip, readyStale: true, ready: { oid: 'a'.repeat(40), at: T0 }, merged: { known: true, merged: true, via: 'pr', pr: 1 } }];
+    const items = () => [{ id: 'main', tracked: true, kind: 'branch', state: 'ready', gen: 1, rev: 5, oid: tip, readyStale: true, ready: { oid: 'a'.repeat(40), at: T0 }, merged: { known: true, merged: true, via: 'pr', pr: 1 } }];
     const r = cmdReleaseStaleReady(ctx, { '--apply': true }, { items });
     assert.equal(r.ok, true, r.text);
     assert.equal(r.results[0].retirement, 'retired');

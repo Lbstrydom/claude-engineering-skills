@@ -793,11 +793,13 @@ export function buildStatus(facts) {
       if (uncShared.length) via.push('uncommitted');
       const hot = new Set([...hotShared, ...uncHot]);
       let declared = false;
+      // Which of EACH side's own patterns made the declared overlap, so a reader can attribute it (a broad claim that did not cause it is not to blame).
+      const patA = new Set(); const patB = new Set();
       for (const pa of a.paths) {
         for (const pb of b.paths) {
           if (patternsIntersect(pa, pb) === 'disjoint') continue;
           const lit = hotLiteralOf(pa, pb, hotFiles);
-          if (lit) hot.add(lit); else declared = true;
+          if (lit) hot.add(lit); else { declared = true; patA.add(pa); patB.add(pb); }
         }
       }
       if (declared) via.push('paths');
@@ -810,8 +812,8 @@ export function buildStatus(facts) {
       const sa = byId.get(a.id); const sb = byId.get(b.id);
       const known = (sa?.knownOverlaps ?? []).some((k) => k.with === b.id) || (sb?.knownOverlaps ?? []).some((k) => k.with === a.id);
       const unc = uncShared.length ? { uncommittedFiles: uncShared.slice(0, 5) } : {};
-      a.overlaps.push({ with: b.id, via, files: files.slice(0, 5), known, ...unc });
-      b.overlaps.push({ with: a.id, via, files: files.slice(0, 5), known, ...unc });
+      a.overlaps.push({ with: b.id, via, files: files.slice(0, 5), known, ...unc, ...(declared ? { ownPatterns: [...patA] } : {}) });
+      b.overlaps.push({ with: a.id, via, files: files.slice(0, 5), known, ...unc, ...(declared ? { ownPatterns: [...patB] } : {}) });
     }
   }
   const dupGroups = duplicatePatches(active.map((i) => ({ id: i.id, patchId: facts.patchIds?.[i.branch]?.patchId ?? null })));
@@ -891,6 +893,9 @@ export function staleReadyMarks(items, { now, days = STALE_READY_DEFAULT_DAYS })
   for (const i of items) {
     if (!i.tracked || i.state !== 'ready' || !i.ready) continue;
     const key = { id: i.id, gen: i.gen, rev: i.rev, readyOid: i.ready.oid, tip: i.oid ?? null };
+    // Only a branch-sourced session can have its tip re-read locally at apply time; a PR-sourced one is never listed as actionable.
+    if (i.kind !== 'branch') { out.skipped.push({ id: i.id, reason: 'a PR-sourced session is not verified by this command' }); continue; }
+    if (!i.oid) { out.skipped.push({ id: i.id, reason: 'its branch tip could not be read' }); continue; }
     const m = i.merged;
     if (!m || m.known !== true) { out.skipped.push({ id: i.id, reason: m?.reason ? `merged evidence unreadable (${m.reason})` : 'merged evidence not gathered' }); continue; }
     if (m.merged === true) { out.landed.push({ ...key, class: 'landed', via: m.via ?? null, pr: m.pr ?? null }); continue; }

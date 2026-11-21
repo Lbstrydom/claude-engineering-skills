@@ -138,7 +138,9 @@ export function deriveObligations({ item, session = null, advance = null, myFile
     add('overlap', 'info', `overlaps ${o.with} (${o.via.join('+')})${o.files?.length ? ` on ${o.files.join(', ')}` : ''}${o.uncommittedFiles?.length ? ` · uncommitted: ${o.uncommittedFiles.join(', ')}` : ''}`);
   }
   const broad = broadClaimPatterns(session?.paths ?? item?.paths ?? []);
-  const blocked = (item?.overlaps ?? []).filter((o) => !o.known);
+  // Blame only a broad pattern that actually produced the overlap (`ownPatterns`, from buildStatus); a files-only overlap, or
+  // an overlap whose own patterns are all narrow, is not this claim's doing.
+  const blocked = (item?.overlaps ?? []).filter((o) => !o.known && o.via?.includes('paths') && (o.ownPatterns ?? []).some((p) => broad.includes(p)));
   if (broad.length && blocked.length) {
     add('broad-claim', 'info', `your claim ${broad.join(', ')} is broad and overlaps ${blocked.map((o) => o.with).join(', ')}: claim the files you actually edit`, { patterns: broad, with: blocked.map((o) => o.with) });
   }

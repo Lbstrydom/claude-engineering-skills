@@ -95,10 +95,10 @@ export function newDirectiveId(now = new Date()) {
  * kind this reader does not know — the NEXT release's record), or `invalid`.
  * @returns {{directive?: object, unsupported?: object, invalid?: string}}
  */
-export function classifyDirective(raw) {
+export function classifyDirective(raw, kinds = DIRECTIVE_KINDS) {
   if (!raw || typeof raw !== 'object') return { invalid: 'not an object' };
   if (raw.schemaVersion !== 1) return { unsupported: { id: raw.id ?? null, reason: `schemaVersion ${JSON.stringify(raw.schemaVersion)} is not understood by this fleet` } };
-  if (typeof raw.kind === 'string' && !DIRECTIVE_KINDS.includes(raw.kind)) {
+  if (typeof raw.kind === 'string' && !kinds.includes(raw.kind)) {
     return { unsupported: { id: raw.id ?? null, kind: raw.kind, reason: `kind ${JSON.stringify(raw.kind)} is not understood by this fleet` } };
   }
   const p = DirectiveSchema.safeParse(raw);
