@@ -25,6 +25,7 @@ This is the list to read when asking "what is in flight?".
 | [Size floor for `arch:duplicates` and the drift score](./duplicate-min-lines-floor.md) | `In Progress` |  |
 | [Fable 5.2 vs Opus 5.5 on coordinator-grade decisions](./fable-vs-opus-decision-eval.md) | `Approved` |  |
 | [fleet field feedback, cluster 1 — hydrate circularity and `--help` read-only (consumer feedback 2026-11-21)](./fleet-feedback-cluster1-bugs.md) | `In Progress` | implemented on branch claude/fleet-field-feedback-54e8b7, awaiting audit |
+| [fleet feedback cluster 2 — a turn outlives its work, broad claims, stale ready marks](./fleet-feedback-cluster2-claims-turns.md) | `In Progress` | plan audited (3 GPT rounds, Gemini APPROVE), implementing on branch claude/fleet-cluster2-claims-turns |
 | [fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe](./fleet-hygiene.md) | `In Progress` |  |
 | [fleet train id collision within one second (CI flake, run 44940239208)](./fleet-train-id-collision.md) | `In Progress` | implemented on branch claude/fleet-trainid-collision-9f2c, awaiting audit |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |

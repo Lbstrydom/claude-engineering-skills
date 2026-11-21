@@ -86,6 +86,29 @@ export function validateClaimPatterns(list) {
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * The claim patterns that are BROAD: the LAST segment is exactly `*` or `**` and the LITERAL prefix (the leading segments
+ * holding no `*`/`?`) has at most two segments - `tests/**`, `app/views/**`, `**`, `src/*`, `src/*\/lib/**`. Such a claim
+ * intersects nearly every sibling that touches the folder, so it blocks them whether or not their files meet. A last
+ * segment like `*.test.mjs` is not whole-segment and stays narrow. Patterns are the validated claim grammar
+ * (repo-relative, `/`-separated); an invalid one is never classified broad (it is refused elsewhere).
+ * @param {string[]} paths
+ * @returns {string[]}
+ */
+export function broadClaimPatterns(paths) {
+  const out = [];
+  for (const p of paths ?? []) {
+    if (!validateClaimPattern(p).ok) continue;
+    const segs = p.split('/');
+    const last = segs[segs.length - 1];
+    if (last !== '*' && last !== '**') continue;
+    let prefix = 0;
+    while (prefix < segs.length - 1 && !/[*?]/.test(segs[prefix])) prefix += 1;
+    if (prefix <= 2) out.push(p);
+  }
+  return out;
+}
+
 /** Wildcard-intersection DP over two already-split character arrays. */
 function charsIntersect(a, b) {
   const memo = new Map();
@@ -770,11 +793,13 @@ export function buildStatus(facts) {
       if (uncShared.length) via.push('uncommitted');
       const hot = new Set([...hotShared, ...uncHot]);
       let declared = false;
+      // Which of EACH side's own patterns made the declared overlap, so a reader can attribute it (a broad claim that did not cause it is not to blame).
+      const patA = new Set(); const patB = new Set();
       for (const pa of a.paths) {
         for (const pb of b.paths) {
           if (patternsIntersect(pa, pb) === 'disjoint') continue;
           const lit = hotLiteralOf(pa, pb, hotFiles);
-          if (lit) hot.add(lit); else declared = true;
+          if (lit) hot.add(lit); else { declared = true; patA.add(pa); patB.add(pb); }
         }
       }
       if (declared) via.push('paths');
@@ -787,8 +812,8 @@ export function buildStatus(facts) {
       const sa = byId.get(a.id); const sb = byId.get(b.id);
       const known = (sa?.knownOverlaps ?? []).some((k) => k.with === b.id) || (sb?.knownOverlaps ?? []).some((k) => k.with === a.id);
       const unc = uncShared.length ? { uncommittedFiles: uncShared.slice(0, 5) } : {};
-      a.overlaps.push({ with: b.id, via, files: files.slice(0, 5), known, ...unc });
-      b.overlaps.push({ with: a.id, via, files: files.slice(0, 5), known, ...unc });
+      a.overlaps.push({ with: b.id, via, files: files.slice(0, 5), known, ...unc, ...(declared ? { ownPatterns: [...patA] } : {}) });
+      b.overlaps.push({ with: a.id, via, files: files.slice(0, 5), known, ...unc, ...(declared ? { ownPatterns: [...patB] } : {}) });
     }
   }
   const dupGroups = duplicatePatches(active.map((i) => ({ id: i.id, patchId: facts.patchIds?.[i.branch]?.patchId ?? null })));

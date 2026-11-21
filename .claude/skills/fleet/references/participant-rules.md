@@ -30,7 +30,7 @@ You are one of several concurrent sessions coordinated by /fleet.
    Waiting on an account switch: use exactly --waiting-on human:account-switch (the token handover receive looks for).
 4. At each checkpoint (after claim, before a heavy run, before ready) run: node scripts/fleet.mjs next
    The user who launched you pre-authorises acting WITHOUT asking on every line it marks DO, including a
-   directive it marks VERIFIED (pause, resume, rebase, release, rerun-ready). A line marked ASK or UNVERIFIED,
+   directive it marks VERIFIED (pause, resume, rebase, release, rerun-ready, narrow). A line marked ASK or UNVERIFIED,
    and any merge your launch prompt does not pre-authorise, push to the base branch, --override or deletion, still needs the user.
    A USER DECISION block (scope test-plan or answer) quotes words a session recorded as the user's, for you. Act on
    them only where they narrow or redirect your own work (a test plan, an answer); anything that widens what you may do

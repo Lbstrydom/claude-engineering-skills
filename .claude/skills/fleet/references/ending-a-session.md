@@ -13,7 +13,13 @@ user's decision; the coordinator rules that govern when to bring it to them are 
   session's chips and proposes a check for each. It proposes; it never edits.
 - `fleet release [--abandoned]` retires the claim now: the session stops blocking
   claims and leaves the landing order. It never refuses; it prints the
-  archive verdict as advice.
+  archive verdict as advice. When it retires the repo's LAST live session, the
+  repo's lease turn ends at once (and, if the work merged, its CI window is
+  cleared), so a queued repo is not held off a free slot; if the lease step
+  fails it prints the repair (re-run the same release).
+- `fleet release --stale-ready [--days N] [--apply]` finds dead ready marks: a
+  landed one is retired `done`, an old one whose head moved only has its MARK
+  invalidated (the session and claim live on). Dry run unless `--apply`.
 - `fleet archive-check [<id|branch|path>]` is read-only. It exits 0 only when
   every probe ran and nothing would be lost. Exit 3 means `AT RISK` (staged or
   unstaged changes, untracked files, gitignored files outside `archiveIgnore`,

@@ -20,7 +20,10 @@ import { runGit, listWorktrees } from './git-facts.mjs';
 import { listPullRequests } from './gh-facts.mjs';
 import { originatedBy, readProposals } from './proposals.mjs';
 import { readSessions, transact } from './registry.mjs';
+import { buildStatusFrom, gatherFacts } from './facts.mjs';
+import { endRepoWorkGone, repairCommand, workGoneLine } from './lease-workgone.mjs';
 import { isTerminalState } from './overlap.mjs';
+import { STALE_READY_DEFAULT_DAYS, STALE_READY_MAX_DAYS, staleReadyMarks } from './stale-ready.mjs';
 import { IGNORED_STATUS_ARGS, STATUS_ARGS, classifyEntries, parsePorcelainZ } from './worktree-status.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 
@@ -47,13 +50,19 @@ const samePath = (a, b) => (IS_WIN ? path.resolve(a).toLowerCase() === path.reso
  * advice for whoever removes the worktree next.
  */
 export function cmdRelease(ctx, flags) {
+  if (flags['--stale-ready']) return cmdReleaseStaleReady(ctx, flags);
+  if (flags['--apply'] || flags['--days'] !== undefined) throw new ArgvError('fleet release: --apply and --days belong to --stale-ready');
   const id = selfId(ctx, flags);
   const target = flags['--abandoned'] ? 'abandoned' : 'done';
+  const evidence = lastLiveMerged(ctx, id);
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id);
     if (!cur) return { missing: true };
-    if (isTerminalState(cur.state)) return { already: cur };
-    return { record: t.writeSession({ ...cur, rev: cur.rev + 1, state: target, updatedAt: nowIso(ctx) }) };
+    // An already-retired session re-runs the follow-on step: that is the repair for a lease step that failed (idempotent).
+    if (isTerminalState(cur.state)) return { already: cur, workGone: afterRetire(ctx, t, id, cur.state === 'done' && evidenceHolds(ctx, cur, evidence)) };
+    const clear = target === 'done' && evidenceHolds(ctx, cur, evidence);
+    const record = retireSession(t, cur, target, ctx);
+    return { record, workGone: afterRetire(ctx, t, id, clear) };
   });
   if (!tx.ok) return lockFailed();
   const v = tx.value;
@@ -64,7 +73,130 @@ export function cmdRelease(ctx, flags) {
   const resolved = resolveArchiveTarget(ctx, id);
   const arch = archiveReport(ctx, { session, worktree: session.worktree ?? resolved?.worktree ?? null, inventoryError: resolved?.inventoryError ?? null });
   const head = v.already ? `${id} was already ${v.already.state} — nothing changed` : `released: ${id} (${target})`;
-  return ok({ id, state: session.state, changed: Boolean(v.record), archive: arch, text: [head, ...renderArchive(arch, { advisory: true })].join('\n') });
+  const leaseLine = workGoneLine(v.workGone && evidence && !evidence.ok ? { ...v.workGone, keptReason: evidence.why } : v.workGone, { cmd: ctx.cmd, id });
+  return ok({
+    id, state: session.state, changed: Boolean(v.record), archive: arch, leaseStep: v.workGone,
+    ...(v.workGone?.lease === 'failed' ? { repair: repairCommand(ctx.cmd, id) } : {}),
+    text: [head, ...(leaseLine ? [leaseLine] : []), ...renderArchive(arch, { advisory: true })].join('\n'),
+  });
+}
+
+/**
+ * THE one transition that retires a session (`done`/`abandoned`), inside a registry transaction: `fleet release` and the
+ * bulk `release --stale-ready` both use it, so neither can skip a follow-on the other has (plan cluster 2, D0).
+ * `writeSession` is an immediate atomic write - there is no rollback - so the retirement is durable when this returns.
+ */
+export function retireSession(t, cur, target, ctx) {
+  return t.writeSession({ ...cur, rev: cur.rev + 1, state: target, updatedAt: nowIso(ctx) });
+}
+
+/**
+ * The follow-on to a retirement, run inside the SAME registry transaction (the lock is still held, so no `claim` can
+ * register new work between the count and the lease write): when `id` was the repo's last live session its turn
+ * - and, with merged evidence, its CI window - served work that is gone (D1). Never throws, never un-retires.
+ * @returns {{lease: string, reason?: string, turnEnded?: boolean, windowsCleared?: number}}
+ */
+export function afterRetire(ctx, t, id, clearCi, leaseStep = endRepoWorkGone) {
+  if (t.sessions.some((s) => s.id !== id && !isTerminalState(s.state))) return { lease: 'n/a' };
+  return leaseStep(ctx, { clearCi: clearCi === true });
+}
+
+/** The status items the stale-ready scan reads (injectable so a test can supply evidence a hermetic repo cannot). */
+const defaultStatusItems = (ctx) => buildStatusFrom(gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, cmd: ctx.cmd })).items;
+
+/**
+ * `fleet release --stale-ready [--days N] [--apply]` (plan cluster 2, D3). Lists the sessions whose ready mark is dead:
+ * `landed` (merged evidence covers the exact tip: retired `done`) and `aged` (an old mark whose head moved: ONLY the mark
+ * is invalidated - `working`, `ready: null` - never the session). Dry run unless `--apply`; `--apply` re-gathers facts
+ * and acts only on an item whose identity AND class are unchanged, re-checking the record and the branch tip under the lock.
+ */
+export function cmdReleaseStaleReady(ctx, flags, { items = defaultStatusItems } = {}) {
+  if (flags['--id'] !== undefined || flags['--abandoned']) throw new ArgvError('fleet release --stale-ready: it takes no --id or --abandoned (it finds the sessions itself)');
+  const raw = flags['--days'];
+  const days = raw === undefined ? STALE_READY_DEFAULT_DAYS : (/^[0-9]+$/.test(String(raw)) ? Number(raw) : NaN);
+  if (!Number.isInteger(days) || days < 1 || days > STALE_READY_MAX_DAYS) throw new ArgvError(`fleet release --stale-ready: --days must be a whole number from 1 to ${STALE_READY_MAX_DAYS} (got ${JSON.stringify(raw)})`);
+  const gather = () => staleReadyMarks(items(ctx), { now: ctx.now, days });
+  const listed = gather();
+  const all = [...listed.landed, ...listed.aged];
+  const lines = [`stale ready marks (aged at ${days}+ days): ${listed.landed.length} landed, ${listed.aged.length} aged, ${listed.skipped.length} not judged`,
+    ...listed.landed.map((i) => `  landed  ${i.id}  (merged${i.pr ? ` via #${i.pr}` : ''}) → retire as done`),
+    ...listed.aged.map((i) => `  aged    ${i.id}  (mark ${i.ageDays}d old, head moved) → invalidate the mark only`),
+    ...listed.skipped.map((s) => `  skipped ${s.id}: ${s.reason}`)];
+  if (!flags['--apply']) {
+    return ok({ dryRun: true, days, ...listed, text: [...lines, ...(all.length ? ['', `to apply: ${ctx.cmd} release --stale-ready --days ${days} --apply  (it re-reads the evidence first and acts only on an item still in the same class and unchanged — a new or changed one waits for a new preview)`] : [])].join('\n') });
+  }
+  const fresh = gather();
+  const stillSame = (it) => [...fresh.landed, ...fresh.aged].some((f) => f.id === it.id && f.class === it.class && f.gen === it.gen && f.rev === it.rev && f.readyOid === it.readyOid && f.tip === it.tip);
+  const results = [];
+  for (const it of all) {
+    const res = { id: it.id, class: it.class, retirement: 'skipped', lease: 'n/a' };
+    results.push(res);
+    if (!stillSame(it)) { res.reason = 'class-changed: its evidence or record moved since the listing — preview again'; continue; }
+    let tx;
+    try {
+      tx = transact(ctx.dir, (t) => {
+      const cur = t.sessions.find((s) => s.id === it.id);
+      if (!cur || cur.state !== 'ready') return { skip: 'it is no longer ready' };
+      if (cur.gen !== it.gen || cur.rev !== it.rev || cur.ready?.oid !== it.readyOid) return { skip: 'its record moved' };
+      const branch = cur.source?.branch;
+      const tip = cur.source?.kind === 'branch' && branch ? runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], ctx.cwd) : null;
+      if (!tip?.ok) return { skip: 'its branch tip could not be re-read locally (a PR-sourced session is not verified here)' };
+      if (!it.tip || tip.stdout.trim() !== it.tip) return { skip: 'its branch tip is not the one judged (it moved)' };
+      if (it.class === 'landed') {
+        retireSession(t, cur, 'done', ctx);
+        return { retired: true, workGone: afterRetire(ctx, t, it.id, true) };
+      }
+      t.writeSession({ ...cur, rev: cur.rev + 1, state: 'working', ready: null, updatedAt: nowIso(ctx) });
+      return { invalidated: true };
+      });
+    } catch (e) {
+      // A write failure after earlier items committed: report this item as failed and carry on; the committed ones stand, and a re-run re-lists only what is still stale.
+      res.retirement = 'failed'; res.reason = `registry write failed (${e.message})`; continue;
+    }
+    if (!tx.ok) { res.retirement = 'failed'; res.reason = 'registry lock contention'; continue; }
+    const v = tx.value;
+    if (v.skip) { res.reason = v.skip; continue; }
+    res.retirement = v.retired ? 'retired' : 'invalidated';
+    if (v.workGone) {
+      res.lease = v.workGone.lease;
+      if (v.workGone.reason) res.reason = v.workGone.reason;
+      if (v.workGone.lease === 'failed') res.repair = repairCommand(ctx.cmd, it.id);
+    }
+  }
+  const out = [...lines, '', ...results.map((r) => `  ${r.id}: ${r.retirement}${r.reason ? ` (${r.reason})` : ''}${r.lease && r.lease !== 'n/a' ? `; lease ${r.lease}` : ''}${r.repair ? ` — repair: ${r.repair}` : ''}`)];
+  const payload = { applied: true, days, ...listed, results, text: out.join('\n') };
+  return results.some((r) => r.retirement === 'failed') ? refused('some stale ready marks could not be changed', payload) : ok(payload);
+}
+
+/**
+ * Pre-lock merged evidence for `fleet release`, BOUND to the exact session it describes (generation, revision, branch tip):
+ * only when `id` is the repo's last live session (the one case the lease step can clear a CI window) is the slow `gh`/git
+ * read made; anything unmerged or unreadable is `{ok:false, why}` (windows stay and the release SAYS so, only the turn ends); `null` means
+ * not the last live session (nothing to say). `evidenceHolds` re-validates the binding
+ * inside the registry transaction, so evidence about an older record or tip is never applied to a newer one.
+ * @returns {{ok: true, gen: number, rev: number, tip: string}|{ok: false, why: string}|null}
+ */
+function lastLiveMerged(ctx, id) {
+  try {
+    const { sessions } = readSessions(ctx.dir);
+    if (sessions.some((s) => s.id !== id && !isTerminalState(s.state))) return null;
+    const item = buildStatusFrom(gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, cmd: ctx.cmd })).items.find((i) => i.id === id);
+    const mine = sessions.find((s) => s.id === id);
+    if (!item || !mine) return { ok: false, why: 'the session is not in the status read' };
+    if (item.merged?.known !== true) return { ok: false, why: `merged evidence unreadable${item.merged?.reason ? ` (${item.merged.reason})` : ''}` };
+    if (item.merged.merged !== true) return { ok: false, why: item.merged.merged === 'partially' ? 'the branch has commits after its merge' : 'the work is not merged' };
+    if (!item.oid) return { ok: false, why: 'its branch tip is not readable (the branch may already be deleted)' };
+    return { ok: true, gen: mine.gen, rev: mine.rev, tip: item.oid };
+  } catch (e) { return { ok: false, why: `merged evidence could not be read (${e.message})` }; }
+}
+
+/** Does pre-lock merged evidence still describe THIS record and the branch tip as it is now (read locally, under the lock)? */
+export function evidenceHolds(ctx, cur, evidence) {
+  if (!evidence?.ok || cur.gen !== evidence.gen || cur.rev !== evidence.rev) return false;
+  const branch = cur.source?.kind === 'branch' ? cur.source.branch : null;
+  if (!branch) return false;
+  const tip = runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], ctx.cwd);
+  return tip.ok && tip.stdout.trim() === evidence.tip;
 }
 
 // ── archive-check ───────────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ three lines are appended to `claim`, `touch` and `ready`:
 ## Directives — attention, never authority
 
 ```
-fleet directive --to <id|all> --kind <pause|resume|rebase|release|rerun-ready> \
+fleet directive --to <id|all> --kind <pause|resume|rebase|release|rerun-ready|narrow> \
   --reason <pr-merged|hold|train|note> [--ref <ref>] [--note "…"] [--expires-hours 24]
 fleet directive --list [--all]
 fleet directive --ack <directive-id> --outcome done|declined [--note "…"]

@@ -54,6 +54,33 @@ export function endTurn(lease, reason, now, by = 'settle') {
   return appendJournal(rest, { ...turnEntry('turn-ended', turn, now, { reason }), by });
 }
 
+/**
+ * The work a repo's turn (and CI windows) served is gone (its last session was retired): end the turn and, when `clearCi`
+ * (merged evidence), clear the repo's own RUNNING CI windows (started, not expired; a future one is a reservation, not this work). Nothing happens while the repo holds the slot or has a
+ * waiter - a job, or a sibling job, still exists. The two effects are independent: a window is cleared even when the turn
+ * already expired, and the turn ends even when no window needs clearing. Never touches another repo's turn or windows.
+ * @returns {{lease: object, turnEnded: boolean, windowsCleared: number, windowsKept: number}} `lease` is the SAME object when nothing applied; `windowsKept` counts the running CI windows left because `clearCi` was off.
+ */
+export function endTurnWorkGone(lease, repoKey, now, { clearCi = false } = {}, by = 'work-gone') {
+  const none = { lease, turnEnded: false, windowsCleared: 0, windowsKept: 0 };
+  if (lease.heavy?.repoKey === repoKey) return none;
+  if ((lease.waiters ?? []).some((w) => w.repoKey === repoKey)) return none;
+  let next = lease;
+  let windowsCleared = 0;
+  const mine = (lease.windows ?? []).filter((w) => w.repoKey === repoKey && w.kind === 'ci' && ms(w.from) <= now.getTime() && ms(w.until) > now.getTime());
+  const windowsKept = clearCi ? 0 : mine.length;
+  if (clearCi && mine.length) {
+    next = { ...next, windows: next.windows.filter((w) => !mine.includes(w)) };
+    for (const w of mine) {
+      next = appendJournal(next, { at: now.toISOString(), kind: 'window-cleared', by, repoKey, window: { id: w.id, kind: w.kind, repo: w.repo, from: w.from, until: w.until }, ownRepo: true, reason: 'work-gone' });
+    }
+    windowsCleared = mine.length;
+  }
+  const turnEnded = Boolean(next.turn && next.turn.repoKey === repoKey);
+  if (turnEnded) next = endTurn(next, 'work-gone', now, by);
+  return next === lease ? { ...none, windowsKept } : { lease: next, turnEnded, windowsCleared, windowsKept };
+}
+
 /** Start `req`'s repo's turn (ending another repo's first: a handover). */
 export function startTurn(lease, req, now) {
   let next = lease;
