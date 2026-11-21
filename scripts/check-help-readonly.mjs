@@ -59,10 +59,14 @@ export function listEntryPoints(root = ROOT, smokeSet = []) {
   // CLI_SMOKE_SET members under scripts/lib (which ship to consumers as CLIs).
   // Library modules among them are probed too (harmless: nothing runs) but only a
   // file that looks like a CLI owes the static contract — see `looksLikeCli`.
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((e) => {
+      if (e.isDirectory()) return e.name === 'lib' || e.name === 'node_modules' ? [] : walk(path.join(d, e.name));
+      return e.name.endsWith('.mjs') ? [path.join(d, e.name)] : [];
+    });
   const nested = fs.readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== 'lib' && e.name !== 'node_modules')
-    .flatMap((e) => fs.readdirSync(path.join(dir, e.name)).filter((n) => n.endsWith('.mjs')).sort()
-      .map((n) => path.join(dir, e.name, n)));
+    .flatMap((e) => walk(path.join(dir, e.name)));
   const libSmoke = [...smokeSet].filter((rel) => rel.startsWith('lib/'))
     .map((rel) => path.join(dir, rel)).filter((p) => fs.existsSync(p));
   return [...top, ...nested, ...libSmoke];

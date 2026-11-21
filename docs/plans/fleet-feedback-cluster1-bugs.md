@@ -48,7 +48,7 @@ does not own a consumer's `package.json`, and the doctor already reads it.
 Two halves, because each alone missed the original bug:
 
 1. **Dynamic** (`lib/help-probe/`). Every top-level `scripts/*.mjs`, EVERY
-   nested `scripts/<subsystem>/*.mjs` (derived from the filesystem, so a new nested
+   nested `scripts/<subsystem>/**/*.mjs` at any depth outside `lib/` (derived from the filesystem, so a new nested
    CLI is covered the day it lands) and the `lib/` members of `CLI_SMOKE_SET` run with `--help` under an `--import` preload that
    RECORDS and BLOCKS filesystem writes, network (`net`, `dns`, `http(s)`,
    `fetch`) and any spawn other than `node` and read-only `git`. Blocking makes the
@@ -80,6 +80,18 @@ other flags by convention (`--bogus --help` prints usage and runs nothing), so
 unknown-flag refusal applies to invocations that would actually run. The usage
 text is the header `Usage:` block, else the first `@fileoverview` paragraph, else
 a `see the header of scripts/<file>` line — never empty, never an error.
+
+**Why `process.exit(0)` and not `finishAndExit` (`stdout:flush:gate`).** The guard
+writes usage with a SYNCHRONOUS `fs.writeSync(1, …)` before exiting, so there is
+nothing buffered for the exit to discard — the drain `finishAndExit` exists to
+provide is the write itself. An async write + exit callback would instead let later
+imports keep evaluating. The guard decides from `process.argv[1]` only, so a
+guarded module imported as a library by a CLI prints that CLI's own usage — the
+same text its own guard would print.
+
+**Wiring.** `help:readonly:gate` is a step of `check:static` (so of `check` and the
+pre-push hook), classified in `ARCHIVE_LANE_CHECK_CLASSIFICATION` (`S`), and
+catalogued in `scripts/.cli-catalog.json`.
 
 **Gate shape.** Absolute, NOT baselined: the census found 54 findings including
 `prepush-check --help` creating a git worktree and paid-provider calls from
