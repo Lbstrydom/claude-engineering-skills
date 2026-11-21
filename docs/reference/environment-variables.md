@@ -52,6 +52,8 @@ gateway + termination watchdog) are documented in the
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `AUDIT_DB_URL` | No | — | **Postgres DSN** for the audit-loop store. Supabase users: dashboard → Connect → **Session pooler** (URI, port 5432). Unset → local-only mode (#16 graceful degradation). Replaces the legacy `SUPABASE_AUDIT_*` triplet (postgres-parity M4). |
+| `TELEMETRY_CONSUMER_ALIAS` | No | — | The alias this consumer exports under (`[a-z0-9-]{1,32}`; the reader's expected-exporters list names the same alias). Opt-in telemetry export for a store CES cannot reach: `npm run telemetry:export` ([plan](../plans/private-store-telemetry-path.md)). |
+| `TELEMETRY_DROP_DIR` | No | — | Directory the export file is written to (a private-Git-repo clone, a synced folder, …). The exporter never creates it. `--push` additionally `git add`/`commit`/`push`es the one file when it is a Git work tree. |
 | `AUDIT_DB_SSL_SERVERNAME` | No | — | TLS `servername` (SNI + certificate name check). Set to the server's real hostname when connecting through a tunnel/port-forward on `127.0.0.1`, so `require` can verify. |
 | `AUDIT_DB_SSL_CA` | No | — | Path to a PEM CA bundle to verify the server against. An unreadable, empty or non-PEM file throws (never silently falls back). With either of these two set, the DSN must not carry `sslrootcert`/`sslcert`/`sslkey` (refused), and its `sslmode` is ignored in favour of `AUDIT_DB_SSL_MODE`. |
 | `AUDIT_DB_SSL_MODE` | No | `require` | TLS mode: `require` (default; strict verify), `no-verify` (accept self-signed — needed for Supabase poolers), `disable`. |

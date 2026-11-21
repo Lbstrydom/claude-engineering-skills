@@ -213,6 +213,7 @@
     "fixture:verify": "node scripts/pinned-worktree.mjs verify",
     "fixture:remove": "node scripts/pinned-worktree.mjs remove",
     "doctor": "node scripts/doctor.mjs",
+    "telemetry:export": "node scripts/telemetry-export.mjs",
     "doctor:json": "node scripts/doctor.mjs --json",
     "upstream:coverage": "node scripts/check-upstream-probe-coverage.mjs",
     "upstream:coverage:gate": "node scripts/check-upstream-probe-coverage.mjs --gate",

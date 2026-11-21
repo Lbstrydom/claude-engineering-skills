@@ -57,9 +57,9 @@ is a rejection, not a pass-through — a guard that is inert on its defaults is 
 | Field group | Contents |
 |---|---|
 | Envelope | `schema` (`telemetry-export/v1`), `exportId`, `generatedAt`, `window {from, to}`, `consumerAlias` (the registry alias, never a repo name), `storeFingerprint` (the existing 16-hex digest), `toolBundleSha` (the sync manifest hash) |
-| Health | the `doctor` store-reachability verdict, `stores:drift` result (counts of unapplied / mismatched migrations, live-constraint status), migration ledger head |
-| Audit | per skill and per round: counts of audit runs by verdict, rounds to convergence, finding counts by severity and category, adjudication outcome counts. **Counts and enumerations only.** |
-| Upstream | open `upstream_issues` as `{id (12 hex of sha256 of the row id, so ids cannot be mistaken for store keys; a 48-bit digest reaches a birthday collision only around 2^24 ≈ 16 million distinct ids, against a lifetime population of a few thousand reports, and an id is a display handle, never a join key), severity, category, ageDays}`, capped at 200 rows with `truncated: true` beyond that. **Titles and bodies have no field in v1** (§2.2). |
+| Health | the `doctor` store-reachability verdict and the `stores:drift` result as three counts (unapplied migrations, applied-with-a-different-sha, live constraints missing or altered). **Point-in-time probes taken at export time, not part of the audit/upstream snapshot below.** The migration ledger head is deferred (it is a filename, i.e. free text; v2 would carry a count or a hash). |
+| Audit | **as built in v1:** `runs` (audit_runs rows in the window), `convergedRuns`, runs by mode (`code`/`plan`) and by reviewer verdict, and finding counts by severity, adjudication outcome and audit pass. **Counts and enumerations only.** Deferred to a later version, each for a stated reason: breakdowns per skill and per round (the table carries a mode, not a skill), and finding categories (free text in the source; a closed taxonomy must exist before they can be exported). |
+| Upstream | open `upstream_issues` as `{id (12 hex of sha256 of the row id, so ids cannot be mistaken for store keys; a 48-bit digest reaches a birthday collision only around 2^24 ≈ 16 million distinct ids, against a lifetime population of a few thousand reports, and an id is a display handle, never a join key), severity, ageDays}` (the table has no category column), capped at 200 rows with `truncated: true` beyond that. **Titles and bodies have no field in v1** (§2.2). |
 | Measurement honesty | for every group, `measured: true|false` and a `reason` when false (e.g. the store was unreachable at export time). An export never writes a zero for a group it could not read. |
 
 **Every string-valued field has a stated contract; none is free text.** Classifications (`severity`, `category`, skill name,
@@ -70,8 +70,8 @@ list; `storeFingerprint` 16 lowercase hex; `toolBundleSha` 40 lowercase hex. A v
 That, not the scrub in §2.2, is what guarantees no organisation detail can ride inside a value.
 
 **Field sources (specified before any code).** The first deliverable of Phase 1 is a table of every field → the exact
-query or CLI it is read from, the filter, units, and window boundaries (windows are the 7 days ending at `generatedAt`,
-read in one transaction so the groups agree; a group that cannot be read in that snapshot is `measured:false`, not
+query or CLI it is read from, the filter, units, and window boundaries (windows are exactly the 7 days ending at `generatedAt`,
+read in one read-only repeatable-read transaction that also performs the repo lookup, so the audit and upstream groups agree; a group that cannot be read in that snapshot is `measured:false`, not
 partial). That table is reviewed before the exporter is written; this plan fixes the *shape*, not the SQL.
 
 **Bounds.** One export file is at most 256 KB; the reader refuses larger files (`rejected: oversize`) without parsing
@@ -102,7 +102,7 @@ must not appear anywhere in the serialised export.
 Manual first: `npm run telemetry:export` writes the file and prints its path. Then two existing triggers, neither
 new infrastructure: a `/ship` post-step when the store is reachable, and the **local weekly maintenance** replica
 (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`, `docs/runbooks/local-maintenance-checks.md`). The export is idempotent, keyed by
-`(consumerAlias, window end date)`. Each export is **immutable and uniquely named**, `<alias>/<yyyy-mm-dd>-<first 8 of exportId>.json`,
+`(consumerAlias, window end date)`. Each export is **immutable and uniquely named**, `<alias>/<yyyy-mm-dd>-<exportId>.json` (the full UUID; published with a no-replace hard link),
 written to a temporary name and renamed into place (a reader never sees a half-written file); a same-day repeat is a
 second file, never an overwrite, so a delayed or rejected older file can never replace a valid newer one. The reader
 chooses the newest **valid** export by `generatedAt`, and retention (§2.1 bounds) removes the oldest. A cadence is
