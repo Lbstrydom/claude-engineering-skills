@@ -192,3 +192,15 @@ test('H9: a checkpoint is advertised only if rounds 1..N are all present', () =>
   assert.match(buildExportSnapshot({ exp, runIds: ['r1', 'r2', 'GHOST', 'r4'], checkpoint: 3 }).reason, /missing/);
   assert.equal(buildExportSnapshot({ exp, runIds: ['r1', 'r2'], checkpoint: 3 }).ok, false);
 });
+
+test('R2-H3: with no run N+1 the cutoff is run N + 3h (the session gap): a round-N event 1h later is kept, 4h later is excluded', () => {
+  const exp = fixture();
+  exp.runs.push({ id: 'y1', branch: 'b4', audited_sha: SHA('a'), created_at: at(8), plan_file: 'plan.md' }, { id: 'y2', branch: 'b4', audited_sha: SHA('b'), created_at: at(9), plan_file: 'plan.md' }, { id: 'y3', branch: 'b4', audited_sha: SHA('c'), created_at: at(10), plan_file: 'plan.md' });
+  const mk = (id, run) => ({ id, run_id: run, finding_fingerprint: `fp-${id}`, severity: 'HIGH', category: 'c', primary_file: 'src/a.mjs', detail_snapshot: 'd', round_raised: 3, created_at: at(10) });
+  exp.findings.push(mk('Y1', 'y3'), mk('Y2', 'y3'));
+  const ev = (id, finding_id, created_at) => ({ id, finding_id, adjudication_outcome: 'accepted', remediation_state: 'pending', ruling: null, round: 3, created_at, superseded_at: null, overrides_event_id: null });
+  exp.events.push(ev('EY1', 'Y1', at(11)), ev('EY2', 'Y2', at(14)));
+  const byId = Object.fromEntries(buildExportSnapshot({ exp, runIds: ['y1', 'y2', 'y3'], checkpoint: 3 }).snapshot.ledgerEntries.map((e) => [e.findingId, e]));
+  assert.ok(byId.Y1, 'one hour after run 3: kept');
+  assert.equal(byId.Y2, undefined, 'four hours after run 3: excluded');
+});

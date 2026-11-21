@@ -39,7 +39,7 @@ export function checkpointFor({ mode, round }) {
 export function readRoundsWithSha({ sid, auditDir, upTo }) {
   try {
     const found = discoverRoundResults({ sid, dir: auditDir }).filter((r) => r.round <= upTo);
-    return { rounds: found.map(({ path: p, round }) => { const r = readRoundResult(p); return { round, auditedSha: r._auditedSha ?? null, verdict: r.verdict ?? null, findings: r.findings || [] }; }), unmeasured: null };
+    return { rounds: found.map(({ path: p, round }) => { const r = readRoundResult(p); return { round, auditedSha: r._auditedSha ?? null, verdict: r.verdict ?? null, findings: Array.isArray(r.findings) ? r.findings : null }; }), unmeasured: null };
   } catch (err) { return { rounds: null, unmeasured: `round results unreadable (${err.message})` }; }
 }
 

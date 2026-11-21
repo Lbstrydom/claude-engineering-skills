@@ -161,7 +161,7 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   if (scan.length > limits.maxImporterScan) notes.push(`importer scan truncated to ${limits.maxImporterScan} of ${scan.length} code files`);
   for (const rel of scan.slice(0, limits.maxImporterScan)) {
     const c = classify(rel); if (!c.ok) continue;
-    let body; try { body = fsImpl.readFileSync(c.canonical, 'utf8'); } catch { continue; }
+    let body; try { body = fsImpl.readFileSync(c.canonical, 'utf8'); } catch { skipped.push({ path: rel, category: 'sensitive', pattern: 'read-failed', action: 'excluded', unreadable: true }); continue; }
     for (const spec of parseImports(body)) {
       const r = resolveSpecifier({ fromFile: rel, specifier: spec, repoFiles: repoSet });
       if (r.kind === 'repo' && citedSet.has(r.resolved)) importersOf.set(rel, 'importer-of-cited');
@@ -206,18 +206,22 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   const size = () => parts.reduce((n, p) => n + p.open.length + p.body.length + p.close.length, 0) + SEP.length * Math.max(0, parts.length - 1);
   const truncations = [];
   const FILE_GROUPS = new Set(['cited', 'imports', 'importers']);
+  // Every iteration removes or shrinks something: a file part is dropped; a text part is cut ONCE (to its kept prefix plus the
+  // marker, or to empty) and is then spent. A spent section is never selected again, so the loop cannot spin.
+  const spent = new Set();
   for (const group of TRUNCATION_ORDER) {
     while (size() > limits.totalChars) {
-      const idx = parts.map((p, i) => (p.group === group ? i : -1)).filter((i) => i >= 0);
+      const idx = parts.map((p, i) => (p.group === group && !spent.has(p) ? i : -1)).filter((i) => i >= 0);
       if (idx.length === 0) break;
       if (FILE_GROUPS.has(group)) { const [gone] = parts.splice(idx[idx.length - 1], 1); truncations.push({ section: group, action: 'dropped', path: gone.meta.path }); continue; }
       const p = parts[idx[0]];
       const keep = Math.max(0, p.body.length - (size() - limits.totalChars) - TRUNCATION_MARKER.length);
       truncations.push({ section: group, action: 'truncated', from: p.body.length, to: keep });
-      p.body = `${p.body.slice(0, keep)}${TRUNCATION_MARKER}`;
-      if (p.body.length > keep && size() > limits.totalChars) p.body = '';
+      p.body = keep > 0 ? `${p.body.slice(0, keep)}${TRUNCATION_MARKER}` : '';
+      spent.add(p);
     }
   }
+  if (size() > limits.totalChars) throw new Error(`step-back pack cannot fit totalChars=${limits.totalChars}: every section is emptied and the fixed markup alone is ${size()} chars`);
   if (truncations.length) notes.push(`pack over ${limits.totalChars} chars: ${truncations.map((t) => `${t.section} ${t.action}${t.path ? ` ${t.path}` : ''}`).join('; ')}`);
 
   const topics = [...new Set([...roundView.flatMap((r) => r.findings.map((f) => f.topicId)), ...(ledgerEntries || []).map((e) => e.topicId)].filter(Boolean))].sort();

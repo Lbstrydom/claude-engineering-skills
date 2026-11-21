@@ -7,6 +7,7 @@ import { freezeFromExport } from '../scripts/lib/audit/step-back-export.mjs';
 import { scoringPathFor } from '../scripts/lib/audit/step-back-dataset.mjs';
 import { createRevisionFs } from '../scripts/lib/audit/step-back-gitfs.mjs';
 import { runReplay, upperBoundUsd } from '../scripts/lib/audit/step-back-replay.mjs';
+import crypto from 'node:crypto';
 import { main, EXIT_BUDGET_STOP } from '../scripts/step-back-replay.mjs';
 
 const at = (h) => `2026-11-20T${String(h).padStart(2, '0')}:00:00.000Z`;
@@ -16,7 +17,9 @@ function world() {
   const runs = [1, 2, 3].map((n) => ({ id: `r${n}`, branch: 'bb', audited_sha: SHA(String(n)), created_at: at(9 + n), plan_file: 'plan.md' }));
   const findings = [{ id: 'F1', run_id: 'r1', finding_fingerprint: 'fp1', severity: 'HIGH', category: 'c', primary_file: 'src/a.mjs', detail_snapshot: 'd', round_raised: 1, created_at: at(10) }];
   const exp = { version: 1, since: '2026-11-19', branches: ['bb'], runs, findings, events: [] };
-  const { dataset, scoring } = freezeFromExport({ exp, exportPath: 'x.json', spec: { prs: [{ pr: 1, label: 'bad', branch: 'bb', runIds: ['r1', 'r2', 'r3'] }] } });
+  const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const inputs = { exportSha256: sha('EXPORT-BYTES'), specPath: 'spec.json', specSha256: sha('SPEC-BYTES') };
+  const { dataset, scoring } = freezeFromExport({ exp, exportPath: 'x.json', inputs, spec: { prs: [{ pr: 1, label: 'bad', branch: 'bb', runIds: ['r1', 'r2', 'r3'] }] } });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-spend-'));
   const dsPath = path.join(dir, 'dataset.json');
   fs.writeFileSync(dsPath, JSON.stringify(dataset));
@@ -25,14 +28,15 @@ function world() {
   const files = [{ path: 'src/a.mjs', oid: 'o1', body: 'export const a = 1;\n' }, { path: 'plan.md', oid: 'o2', body: '# plan\n' }];
   const tree = `${files.map((f) => `100644 blob ${f.oid}\t${f.path}`).join('\0')}\0`;
   const openRevision = ({ sha }) => createRevisionFs({ sha, git: (a) => (a[0] === 'ls-tree' ? { status: 0, stdout: tree } : { status: 1, stdout: '' }), readBatch: (o) => new Map(files.filter((f) => o.includes(f.oid)).map((f) => [f.oid, f.body])) });
-  return { dir, dsPath, dataset, exp, openRevision };
+  const readBytes = (p) => (p === 'x.json' ? Buffer.from('EXPORT-BYTES') : p === 'spec.json' ? Buffer.from('SPEC-BYTES') : fs.readFileSync(p));
+  return { dir, dsPath, dataset, exp, openRevision, readBytes };
 }
 const provider = (model, call) => ({ model, call });
 const GOOD = '{"action":"structural","files":["src/a.mjs"]}';
 
-test('H5: the upper bound is chars/3 tokens at the input price plus the output ceiling at the output price', () => {
-  // gpt-5.5: $5/M in, $30/M out. 30000 chars -> 10000 tokens -> $0.05 + 4000 x $30/M = $0.12 -> $0.17.
-  assert.ok(Math.abs(upperBoundUsd({ modelId: 'gpt-5.5', inputChars: 30000, outputCeilingTokens: 4000 }) - 0.17) < 1e-9);
+test('H2: the preflight bound is chars/2 tokens at the input price plus the output ceiling at the output price', () => {
+  // gpt-5.5: $5/M in, $30/M out. 30000 chars -> 15000 tokens -> $0.075 + 4000 x $30/M = $0.12 -> $0.195.
+  assert.ok(Math.abs(upperBoundUsd({ modelId: 'gpt-5.5', inputChars: 30000, outputCeilingTokens: 4000 }) - 0.195) < 1e-9);
   // An unpriced model never gets a zero bound.
   assert.ok(upperBoundUsd({ modelId: 'no-such-model', inputChars: 3000 }) > 0);
 });
@@ -63,7 +67,7 @@ test('H6/H16: a provider that returns NO usage is charged its upper bound, never
 test('H13/H18: every call is appended to the JSONL before scoring; a scoring failure loses nothing and `score` rescoring works', async () => {
   const w = world();
   const results = path.join(w.dir, 'calls.jsonl');
-  const deps = { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD, usage: { input_tokens: 100, output_tokens: 50 } })) };
+  const deps = { readExport: () => w.exp, readBytes: w.readBytes, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD, usage: { input_tokens: 100, output_tokens: 50 } })) };
   const orig = console.log; console.log = () => {};
   try {
     await assert.rejects(() => main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '5', '--confirm-spend', '--results', results], { ...deps, readScoring: () => { throw new Error('scoring blew up'); } }), /scoring blew up/);
@@ -83,7 +87,42 @@ test('budget stop through the CLI still exits 5 and leaves the skipped calls in 
   const w = world(); const results = path.join(w.dir, 'c.jsonl');
   const orig = console.log; console.log = () => {};
   let code;
-  try { code = await main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '0.05', '--confirm-spend', '--results', results], { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD })) }); } finally { console.log = orig; }
+  try { code = await main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '0.05', '--confirm-spend', '--results', results], { readExport: () => w.exp, readBytes: w.readBytes, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD })) }); } finally { console.log = orig; }
   assert.equal(code, EXIT_BUDGET_STOP);
   assert.match(fs.readFileSync(results, 'utf8'), /skipped-budget/);
+});
+
+test('R2-H6/H8: a paid run refuses an existing results path and never truncates it; nor an input path', async () => {
+  const w = world();
+  const deps = { readExport: () => w.exp, readBytes: w.readBytes, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD })) };
+  const results = path.join(w.dir, 'precious.jsonl');
+  fs.writeFileSync(results, 'PAID-OUTPUT-FROM-AN-EARLIER-RUN\n');
+  await assert.rejects(() => main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '5', '--confirm-spend', '--results', results], deps), /already exists/);
+  assert.equal(fs.readFileSync(results, 'utf8'), 'PAID-OUTPUT-FROM-AN-EARLIER-RUN\n', 'untouched');
+  await assert.rejects(() => main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '5', '--confirm-spend', '--results', w.dsPath], deps), /must not be the dataset/);
+  assert.equal(JSON.parse(fs.readFileSync(w.dsPath, 'utf8')).source, 'store-export', 'the dataset survived');
+});
+
+test('R2-H3(freeze): duplicate PR numbers or duplicate (pr, checkpoint) pairs are refused', async () => {
+  const w = world();
+  const pr = { pr: 1, label: 'bad', branch: 'bb', runIds: ['r1', 'r2', 'r3'] };
+  assert.throws(() => freezeFromExport({ exp: w.exp, exportPath: 'x', spec: { prs: [pr, { ...pr }] } }), /duplicate PR number #1/);
+  const { assertNoDuplicates } = await import('../scripts/lib/audit/step-back-dataset.mjs');
+  assert.throws(() => assertNoDuplicates([{ pr: 2, checkpoints: [{ checkpoint: 3 }, { checkpoint: 3 }] }]), /duplicate \(pr, checkpoint\) pair #2 R3/);
+  await assert.rejects(() => runReplay({ dataset: { ...w.dataset, prs: [...w.dataset.prs, ...w.dataset.prs] }, arms: ['same'], dryRun: true, deps: { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({})) } }), /duplicate PR number/);
+});
+
+test('R2-H1: run verifies the export and spec hashes recorded at freeze before any call', async () => {
+  const w = world(); let calls = 0;
+  const base = { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => { calls++; return { text: GOOD }; }) };
+  const args = ['run', '--dataset', w.dsPath, '--arms', 'same', '--dry-run'];
+  assert.equal(await main(args, { ...base, readBytes: w.readBytes }), 0, 'matching bytes verify');
+  const tampered = (p) => (p === 'x.json' ? Buffer.from('EXPORT-BYTES-EDITED') : w.readBytes(p));
+  await assert.rejects(() => main(args, { ...base, readBytes: tampered }), /export file \(x\.json\) changed since the dataset was frozen/);
+  const specEdited = (p) => (p === 'spec.json' ? Buffer.from('SPEC-EDITED') : w.readBytes(p));
+  await assert.rejects(() => main(args, { ...base, readBytes: specEdited }), /spec file/);
+  const unhashed = { ...w.dataset, inputs: null };
+  const p2 = path.join(w.dir, 'unhashed.json'); fs.writeFileSync(p2, JSON.stringify(unhashed));
+  await assert.rejects(() => main(['run', '--dataset', p2, '--arms', 'same', '--dry-run'], { ...base, readBytes: w.readBytes }), /records no input hashes/);
+  assert.equal(calls, 0);
 });
