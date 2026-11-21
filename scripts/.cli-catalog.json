@@ -833,6 +833,10 @@
       "description": "cadence:doctor, machine-readable (one envelope on stdout).",
       "category": "diagnostic"
     },
+    "gate:provenance": {
+      "description": "Judge a PR by the gates of its BASE: classify how it changed every registered gate-defining file (.gate-files.json) as tightening, loosening or unknown, run each registered ratchet gate from a snapshot whose protected set is the base version, and check the gate-loosening label plus an approving review. Observe mode (CI) reports and exits 0; unmeasured states are printed, never clean. Usage: npm run gate:provenance -- --base <sha> [--json].",
+      "category": "diagnostic"
+    },
     "own-model:coverage:gate": {
       "description": "Offline null-rate coverage gate: every tracked own-model capture column exists in the schema fixture and every new nullable column has an entry or a reasoned exemption.",
       "category": "diagnostic"

@@ -315,6 +315,10 @@
       "domain": "gate-honesty"
     },
     {
+      "pattern": "scripts/lib/gate-provenance/**",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/fit-check/**",
       "domain": "fit-check"
     },

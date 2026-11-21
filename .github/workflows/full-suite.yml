@@ -31,6 +31,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read   # gate-provenance reads labels and reviews of the PR
 
 jobs:
   full-suite:
@@ -54,6 +55,51 @@ jobs:
           git config --global user.name "ci"
           git config --global user.email "ci@example.invalid"
           git config --global init.defaultBranch main
+
+      # Gate provenance, OBSERVE mode (the verification-lessons plan, section 2.2). It runs BEFORE the PR `npm ci`, so no
+      # lifecycle script of the PR has executed when the base is judged. The runner itself comes from a detached worktree of
+      # the immutable base sha with the dependencies of THE BASE (`npm ci --ignore-scripts`); a PR that edits the runner,
+      # the registry or the classifier cannot change how it is judged. The analyzed head is the PR head sha (not the merge
+      # commit), so a standing review can be bound to it. Observe mode exits 0 by design (no continue-on-error is needed);
+      # a failed base install, an unfetchable base and the bootstrap PR (no runner at the base) each print an
+      # `unmeasured` notice and let the job continue.
+      - name: Gate provenance (observe)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notice() { echo "::notice title=audit-loop-gate-provenance::$1"; }
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+          fi
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            notice "state=unmeasured | base sha $BASE_SHA is not fetchable"
+            exit 0
+          fi
+          # The PR head is a parent of the checked-out merge commit; fetch it explicitly rather than assume the clone holds it.
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$HEAD_SHA" || true
+          fi
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            notice "state=unmeasured | head sha $HEAD_SHA is not fetchable"
+            exit 0
+          fi
+          BASE_WT="$RUNNER_TEMP/gate-provenance-base"
+          if ! git worktree add --detach "$BASE_WT" "$BASE_SHA"; then
+            notice "state=unmeasured | could not create the base worktree"
+            exit 0
+          fi
+          if [ ! -f "$BASE_WT/scripts/gate-provenance.mjs" ]; then
+            notice "state=unmeasured | the base has no scripts/gate-provenance.mjs (bootstrap PR: the one change that cannot be judged by base code)"
+          elif ! (cd "$BASE_WT" && npm ci --ignore-scripts --no-audit --no-fund); then
+            notice "unmeasured (base install failed: npm ci --ignore-scripts exited non-zero in the base worktree)"
+          else
+            node "$BASE_WT/scripts/gate-provenance.mjs" --repo-root "$GITHUB_WORKSPACE" --base "$BASE_SHA" --head "$HEAD_SHA" --base-install-dir "$BASE_WT" --pr "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --mode observe || notice "state=unmeasured | the runner exited non-zero in observe mode"
+          fi
+          git worktree remove --force "$BASE_WT" || true
 
       - run: npm ci
 

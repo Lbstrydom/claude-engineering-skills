@@ -276,6 +276,74 @@ The ratchet is proven non-opt-in by a worktree integration test
 it runs the **real** checker binary against an otherwise-valid synthetic skill
 in a throwaway git worktree and asserts the checker fails and names the skill.
 
+## Gate provenance (observe mode)
+
+A PR is judged by the gates it carries, so a PR could loosen the gate that judges it: raise a ratchet cap, add an allowance,
+weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges it from its BASE instead
+(the verification-lessons plan, section 2.2, the plan this implements).
+
+- **Registry**: `.gate-files.json` lists every gate-defining path (each ratchet baseline, `scripts/gate-contracts/**`,
+  `skills/*/gate-contract.json`, the prompt seeds, the policy loaders, the gate evaluators named by a contract, `package.json`/lockfile/`.npmrc`,
+  the runner, the workflow, the registry itself) with a classifier kind: `numeric-cap`, `set-of-allowances`, `contract-set` or `opaque`.
+  `tests/gate-provenance-registry.test.mjs` derives the candidates from the tracked tree and fails on an unregistered
+  `*-baseline.json` or contract file, on a gate entry point that does not exist, and on a contract `implementation` that is
+  neither registered nor inside the protected closure.
+- **One protected-set model** (`scripts/lib/gate-provenance/protected-set.mjs`): registry entries + the base import closure of
+  each registered gate entry point + the **subprocess helpers** a closure module spawns (a string literal naming a repo script in a
+  module that imports child_process under any binding (aliases and namespace imports included), followed recursively with its own closure) + install inputs. The snapshot, the
+  classification and the registered-only authorization check all read this one set. A module in it that is not registered and
+  that the PR changes classifies as `opaque`, so `unknown`, so loosening. Residual: a script path computed at runtime is not followed.
+- **Classifier** (`scripts/lib/gate-provenance/classify.mjs`, `GATE_DIFF_CONTRACT_VERSION = 1`): every changed protected file
+  reads `tightening`, `loosening`, `unknown` or `unchanged`; worst wins, in the order `loosening > unknown > tightening >
+  unchanged`. `unknown` is treated as loosening. A raised cap, an added allowance, a removed entry or a deleted file loosens. A
+  change to the registry compares the whole entry minus `note`, so a field added later is never ignored.
+- **Verdict run, and an opt-in shadow**: a detached worktree of the PR head with the protected set checked out from the
+  base (a protected path the base lacked is removed from disk and index). `node_modules` is the dependency install of THE
+  BASE (`npm ci --ignore-scripts` in a separate base worktree, or `--base-install-dir`). Each registered ratchet gate runs there:
+  **base code over PR data**. The CI step executes no PR-controlled code *that the protected set can see*: every gate entry
+  point, its import closure and every helper it spawns by a literal path (or declares in `spawns`) come from the base. A helper
+  a gate reaches through a path computed at run time and NOT declared in `spawns` is the one way PR code could still run there;
+  that is a declared limit, not a guarantee. The *shadow* run (the same gates from a clean
+  worktree of the head, which does execute PR code) is therefore opt-in (`--shadow`), off by default, and never passed by
+  `full-suite.yml`; the report then says `shadow: not run (PR code is never executed by the provenance step; the test job runs it)`.
+  With `--shadow`, all verdict runs still finish before any shadow run starts, and a divergence is printed.
+- **Unmeasured dominates**: any unmeasured input (a git read failure, an unparseable base registry, the snapshot, the base
+  install, the gate runs, `--no-gate-runs`, unreadable PR facts) makes the overall state `unmeasured`, never `clean` or
+  `authorized`; `unmeasuredParts` lists them. A measured `violation` still outranks it. A git read that FAILS is unmeasured;
+  only a path the tree confirms absent reads as absent.
+- **Observe mode** (the only mode CI runs): prints the report and a `::notice title=audit-loop-gate-provenance::` line and
+  exits 0; a crash is printed as unmeasured and still exits 0. `--mode enforce` (or `--mode=enforce`) exits 1 on a violation and 3
+  on unmeasured or a crash, and is not enabled in CI. In CI the step runs before the PR `npm ci`, from a worktree of the base
+  sha, and a failed base install prints an unmeasured notice and lets the job continue.
+- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost); the effective-cap rule for baseline exceptions is below.
+- **Isolation and output**: all verdict runs finish before any shadow run starts (the shadow shares the base `node_modules`), and
+  every untrusted string that reaches stdout or a `::notice` line (filenames, reasons, `gh` text) is Actions-escaped
+  (`%`, CR, LF), so a filename cannot start a workflow command. Snapshot pathspecs are `:(literal)`-prefixed, never
+  `--literal-pathspecs`, which leaks into hooks.
+- **Effective cap**: on a `numeric-cap` baseline an `allowanceKeys` exception removed at or above the default it falls back to
+  (the head value of `allowanceDefaultKey`, e.g. `limitLines`) is `tightening`; below it, `loosening`; with no declared default
+  or a non-numeric value only an ids-style array member is `tightening`, anything else `unknown`.
+- **Registry precedence**: an exact registry entry beats a glob, so a PR that adds an exact entry for a path an existing glob
+  governs, with a different classification, changes that path classification: it reads `unknown` (a path no entry governs
+  is a genuinely new one: `tightening`). The registered-only authorization check uses the BASE registry protected set
+  only, so a PR cannot make its own change of a file registered-only by registering the file; a change outside that set is a
+  measured violation decided from the diff alone, before any PR fact is read.
+- **Declared limit - computed helper paths**: the spawn scan follows string literals only. A gate that spawns a script whose
+  path is computed at runtime must declare it in its registry gate entry (`spawns: [paths]`, validated by the strict schema);
+  declared helpers join the protected set with their import closure. An undeclared computed path is not protected.
+- **Output contract**: in `--json` mode stdout is one JSON report even when the runner crashes (`unmeasuredParts:
+  ['runner crashed: ...']`; observe exits 0, enforce exits 3). Untrusted text is Actions-escaped, and no standalone line may
+  start with `::` (a leading marker is prefixed with `| `).
+- **Named residual - the step lives in a PR-controlled workflow**: observe mode runs inside the `pull_request` workflow that
+  the PR itself can edit, so a PR can delete or neutralise the step. Observe mode is a notice, not a control. The enforce-mode
+  follow-up MUST be a base-defined required check (for example `pull_request_target` running only base code, with no PR
+  checkout executed), never a step in the PR own workflow file.
+
+**Requesting a loosening**: a PR whose gate diff is `loosening` or `unknown` is allowed only when every changed file (both sides
+of a rename) is inside the protected set, it carries the label `gate-loosening`, the PR base and head from the API equal the
+analyzed ones, and the latest review state of `Lbstrydom` is APPROVED on the analyzed head commit (a later push needs a fresh
+approval). Open it as its own PR; the alternative is to fix the cause so the baseline can shrink instead.
+
 ## Explicitly out of scope (v1)
 
 All 16 skills are now contracted (Phase C) and the ratchet keeps them so
