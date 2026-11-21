@@ -26,7 +26,7 @@ function validFinding(overrides = {}) {
     detail: 'Something is wrong.',
     risk: 'It could break.',
     recommendation: 'Fix it properly.',
-    is_quick_fix: false,
+    is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false,
     is_mechanical: true,
     is_reopened: false,
     principle: 'Fail loud, not quiet',
@@ -148,7 +148,7 @@ describe('clampToJsonSchemaLimits — anyOf/oneOf traversal (nullable anchors)',
     const js = z.toJSONSchema(strict);
     const finding = {
       id: 'H1', severity: 'MEDIUM', category: 'c', section: 's', detail: 'd', risk: 'r',
-      recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
+      recommendation: 'rec', is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false, is_mechanical: false, principle: 'p',
       classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'MODEL', sourceName: 'm' },
       evidenceType: 'commission',
       anchor: { diffPathId: 'a', oldFile: 'a', newFile: 'a', fileStatus: 'modified', side: 'head', startLine: 1, endLine: 1, quote: 'x'.repeat(1500), headSha: 'W' },

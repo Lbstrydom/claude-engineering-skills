@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { FindingTagsProducer, FindingTagsPersisted } from './finding-tags.mjs';  // required on producers, nullable on persisted
 
 // ── Classification Schema (SonarQube-style, Phase B) ─────────────────────────
 
@@ -100,8 +101,7 @@ const FindingBase = {
  * checking `properties`/`required`, not by reading the Zod source.
  */
 export const ProducerFindingSchema = z.object({
-  ...FindingBase,
-  classification: ClassificationSchema,
+  ...FindingBase, ...FindingTagsProducer, classification: ClassificationSchema,
   is_reopened: z.boolean().describe(
     'ROUND 2+ ONLY. TRUE only if this re-raises a finding YOU previously ruled DISMISSED *and* '
     + 'a specific changed line has invalidated that ruling — cite that line in `detail`. '
@@ -274,8 +274,7 @@ const EvidenceFieldsOptional = {
  * Legacy generator call sites keep ProducerFindingSchema (V1) untouched.
  */
 export const ProducerFindingV2Schema = z.object({
-  ...FindingBase,
-  classification: ClassificationSchema,
+  ...FindingBase, ...FindingTagsProducer, classification: ClassificationSchema,
   ...EvidenceFieldsOptional,
   evidenceType: z.enum(['commission', 'omission']),
 }).superRefine((f, ctx) => {
@@ -345,7 +344,7 @@ export function makeProducerFindingV3Schema(ids) {
     throw new Error('makeProducerFindingV3Schema: ids must be non-empty — handle the empty/invalid map before building a schema (§7j)');
   }
   const anchor = ProducerEvidenceAnchorSchema.extend({ diffPathId: z.enum(ids) });
-  const base = { ...FindingBase, classification: ClassificationSchema };
+  const base = { ...FindingBase, ...FindingTagsProducer, classification: ClassificationSchema };
   return z.discriminatedUnion('evidenceType', [
     z.object({
       ...base,
@@ -391,7 +390,7 @@ export const PROVIDER_FACING_SCHEMAS = Object.freeze({
  * findings validate unchanged since every evidence field is optional.
  */
 export const PersistedFindingSchema = z.object({
-  ...FindingBase,
+  ...FindingBase, ...FindingTagsPersisted,
   classification: ClassificationSchema.nullable().optional(),
   verification: FindingVerificationSchema.optional(),
   // OPTIONAL here and REQUIRED on the producer, exactly as `classification` is

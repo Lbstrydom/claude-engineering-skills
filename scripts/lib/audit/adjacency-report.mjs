@@ -19,6 +19,7 @@
  */
 
 import { INCOMPLETENESS_KINDS, incompleteness } from './adjacency-state.mjs';
+import { NON_LLM_FINDING_TAGS } from '../finding-tags.mjs';
 
 let _idCounter = 0;
 /** Reset the A-id counter — test-only, mirroring the duplication wave's D-id pattern. */
@@ -184,6 +185,7 @@ function buildAdjacencyFinding(e, severity, rationale) {
     is_mechanical: !rationale,
     is_quick_fix: true,
     is_reopened: false,   // mechanical wave — never reopens a prior ruling
+    ...NON_LLM_FINDING_TAGS,
     principle: '#2 SOLID — Single Responsibility',
   };
 }
@@ -213,6 +215,7 @@ export function buildAdjacencyIncompleteFinding(record) {
     is_mechanical: true,
     is_quick_fix: true,
     is_reopened: false,   // mechanical wave — never reopens a prior ruling
+    ...NON_LLM_FINDING_TAGS,
     principle: '#19 Observability',
   };
 }
@@ -238,6 +241,7 @@ export function buildAdjacencyFailedFinding(_reason) {
     is_mechanical: true,
     is_quick_fix: true,
     is_reopened: false,   // mechanical wave — never reopens a prior ruling
+    ...NON_LLM_FINDING_TAGS,
     principle: '#15 Error Handling',
   };
 }

@@ -44,7 +44,7 @@ function canned(findingOverrides = {}) {
     deliberation_quality: { claude_bias_detected: false, gpt_false_positive_count: 0, deliberation_was_fair: true, quality_summary: 'ok' },
     new_findings: [{
       id: 'G1', severity: 'LOW', category: 'Naming', section: 'src/a.mjs:1', detail: 'd', risk: 'r',
-      recommendation: 'rec', is_quick_fix: false, is_mechanical: false, is_reopened: false, principle: 'p',
+      recommendation: 'rec', is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false, is_mechanical: false, is_reopened: false, principle: 'p',
       classification: { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'x' },
       release_blocking: false, blocking_basis: 'none',
       ...findingOverrides,

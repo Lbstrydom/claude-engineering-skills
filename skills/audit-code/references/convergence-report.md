@@ -165,3 +165,8 @@ the "two surfaces must show the same number" check.
 primary — it never gates the build, attributes findings per `source_model`, and
 persists the diff for `final-review-stats`. No-op when unset or under an Azure
 profile. See `docs/plans/final-review-shadow-reviewer.md`.
+
+## not-convergence remedies
+
+- Unrecognised file type: `.auditignore` it, or report upstream.
+- Required subject not read in full: fix the read; never `.auditignore` it.

@@ -9,6 +9,7 @@
  * @module scripts/lib/audit/run-notices
  */
 import { takeDegradedScanNotes } from '../disowned-paths.mjs';
+import { NON_LLM_FINDING_TAGS } from '../finding-tags.mjs';
 
 /** The marker finding for one degraded scan. Mirrors the shape of the adjacency control marker so every consumer of `findings` reads it. */
 export function buildOwnershipUnverifiedFinding(why, index = 0) {
@@ -25,6 +26,7 @@ export function buildOwnershipUnverifiedFinding(why, index = 0) {
     is_mechanical: true,
     is_quick_fix: true,
     is_reopened: false,
+    ...NON_LLM_FINDING_TAGS,
   };
 }
 

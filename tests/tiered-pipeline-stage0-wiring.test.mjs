@@ -508,7 +508,7 @@ describe('hydrated anchors satisfy Gate A\'s oracle — stage0Malformed must rea
   const LEGAL_SIDE = { added: 'head', deleted: 'base', modified: 'head', renamed: 'head', copied: 'head' };
   const base = {
     id: 'H1', severity: 'HIGH', category: 'c', section: 's', detail: 'd', risk: 'r',
-    recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
+    recommendation: 'rec', is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false, is_mechanical: false, principle: 'p',
     classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'MODEL', sourceName: 'sonnet' },
   };
 

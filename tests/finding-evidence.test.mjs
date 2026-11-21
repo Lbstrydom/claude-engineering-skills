@@ -31,7 +31,7 @@ const BASE_FINDING = {
   detail: 'Multi-step write lacks a transaction boundary.',
   risk: 'Partial writes on failure.',
   recommendation: 'Wrap both writes in one transaction.',
-  is_quick_fix: false,
+  is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false,
   is_mechanical: false,
   principle: 'Transaction Safety',
 };

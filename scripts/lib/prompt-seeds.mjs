@@ -246,6 +246,9 @@ Populate the \`classification\` field on each finding:
   - CRITICAL: architectural rewrite required
 - **sourceKind**: Always "${sourceKind}" for your findings
 - **sourceName**: Always "${sourceName}" for your findings
+- **importance**: "important" (a defect to fix before this ships) or "nit" (style/naming, no behavioural consequence)
+- **pre_existing**: true only if the line you cite is outside every changed hunk and not in a new file
+- **newly_reachable**: true only if you name, in \`detail\`, the changed line that makes a pre_existing defect reachable; else false
 `;
 }
 

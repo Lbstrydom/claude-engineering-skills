@@ -419,7 +419,7 @@ describe('discovery batch-abort hardening — one malformed GLM finding must not
   const classification = { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'glm-test' };
   const baseFinding = {
     id: 'H1', category: 'Test Category', section: 'src/x.js', detail: 'a real defect',
-    risk: 'something breaks', recommendation: 'fix it', is_quick_fix: false, is_mechanical: false,
+    risk: 'something breaks', recommendation: 'fix it', is_quick_fix: false, importance: 'important', pre_existing: false, newly_reachable: false, is_mechanical: false,
     principle: 'correctness', classification,
   };
   // A genuinely well-formed V3 commission finding citing the diff-path map's

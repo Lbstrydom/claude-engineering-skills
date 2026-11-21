@@ -45,6 +45,7 @@ import { toolRunConfig } from './tool-run-config.mjs';
 import { worstToolState } from './tool-states.mjs';
 import { resolveSpawnTarget } from './spawn-target.mjs';
 import { oneLine } from './coverage-format.mjs';
+import { NON_LLM_FINDING_TAGS } from './finding-tags.mjs';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -675,6 +676,7 @@ export function normalizeExternalFinding(raw, result, autoIndex) {
     // constructor must satisfy it explicitly, exactly as it does the two
     // booleans above.
     is_reopened: false,
+    ...NON_LLM_FINDING_TAGS,
     principle: raw.rule,
     classification: {
       sonarType,
