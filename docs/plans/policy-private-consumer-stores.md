@@ -397,3 +397,9 @@ to code. Files: `scripts/lib/telemetry/capture-queries.mjs` (create), `scripts/l
   not by convergence: the structural card read 0 structural / 18 polish clusters, so the remaining character is
   implementation-completeness, which the code audit checks against real code.
 - **Final gate**: Gemini (`gemini-4-argon`) round 1 — APPROVE, gate `approve`, 0 blocking, 0 debt.
+- **Cluster A code audit** (SID `audit-code-1795280359734-63820`): 6 GPT rounds (the cap) — H16→7→5→6→5→4; each
+  later round's findings were narrower edge cases of the privacy and leak rules, all fixed or dismissed with reasons in
+  the ledger. Final gate: Gemini `--batch`, 5 groups, `approve_with_debt`. G1 (MEDIUM: a refused shared store lost the
+  `self` label) fixed with a red-then-green test. **Debt G2 (LOW)**: a repo-scoped read (`{repo:'self'}` /
+  `{repos:[...]}`) always renders `unknownBeyond`, even in the source repo where the registry could name the
+  store-mates it did not read — honest but less informative; revisit if a repo-scoped verdict needs the not-measured side.

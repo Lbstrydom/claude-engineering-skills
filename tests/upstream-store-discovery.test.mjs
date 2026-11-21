@@ -241,7 +241,8 @@ describe('discoverStores — policy-private consumers (never queried, never coun
       self: { name: 'this repo', url: NAS_DSN, sslMode: null },
     });
     assert.deepEqual(stores, []);
-    assert.ok(policyUnreachable.some((x) => x.repo === 'this repo' && x.alias === null && x.reason === 'shared-with-policy-consumer'));
+    // Labelled `self`, not null (final gate G1): the refused shared store still names this repo.
+    assert.ok(policyUnreachable.some((x) => x.repo === 'this repo' && x.alias === 'self' && x.reason === 'shared-with-policy-consumer'));
     assert.ok(policyUnreachable.some((x) => x.alias === 'wine' && x.reason === 'shared-with-policy-consumer'));
   });
 

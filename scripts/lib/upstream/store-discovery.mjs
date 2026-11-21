@@ -209,7 +209,11 @@ export function discoverStores({
     const fp = self.url ? fingerprintOf(self.url) : null;
     if (fp) privateFingerprints.add(fp);
     policyUnreachable.push({ repo: selfName, alias: null, reason: selfPolicy, ...(fp ? {} : { identityUnknown: true }) });
-  } else if (self?.url) add(selfName, self.url, self.sslMode, SELF_ALIAS);
+  } else if (self?.url) {
+    // Recorded so a refused shared store still labels this repo `self` (final gate G1).
+    aliasByName.set(selfName, SELF_ALIAS);
+    add(selfName, self.url, self.sslMode, SELF_ALIAS);
+  }
   else if (self) unresolved.push({ repo: selfName, reason: UNRESOLVED.NO_DSN });
 
   for (const repo of repos || []) {
