@@ -149,10 +149,28 @@ export function checkMarkerRemedies(rootDir, io = {}) {
   } catch {
     // An unreadable package.json cannot prove the remedy exists, so report
     // every named script missing rather than passing on absence of evidence.
-    return { ok: false, missing: checked, checked };
+    return { ok: false, missing: checked, circular: [], checked };
   }
   const missing = checked.filter((name) => !Object.prototype.hasOwnProperty.call(scripts, name));
-  return { ok: missing.length === 0, missing, checked };
+  // PRESENT is not RUNNABLE. A remedy whose body is `node scripts/.claude-skills/…`
+  // lives inside the very gitignored tree it exists to copy, so in a fresh linked
+  // worktree it dies on MODULE_NOT_FOUND — the bootstrap problem, reintroduced by
+  // the consumer's own spelling (consumer field report 2026-11-21; AGENTS.md
+  // "seven shapes" #4). Existence checks passed throughout.
+  const circular = checked.filter((name) => !missing.includes(name) && isCircularRemedy(scripts[name]));
+  return { ok: missing.length === 0 && circular.length === 0, missing, circular, checked };
+}
+
+/** `node <path under scripts/.claude-skills/>` as the executed file (not a dir string inside `node -e`). */
+const CIRCULAR_REMEDY = /(?:^|[\s&|;(])(?:node|npx|tsx)\s+(?:--?[\w-]+\s+)*["']?(?:\.\/)?[\w./\\-]*scripts[\\/]\.claude-skills[\\/]/;
+
+/**
+ * Does a remedy script run a file from the gitignored tooling tree?
+ * @param {unknown} body
+ * @returns {boolean}
+ */
+export function isCircularRemedy(body) {
+  return typeof body === 'string' && CIRCULAR_REMEDY.test(body);
 }
 
 /**

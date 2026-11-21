@@ -82,7 +82,10 @@
   "ignore": [
     "docs/plans/security/files/**",
     "tests/fixtures/anchor-contract/files/**",
-    "tests/fixtures/nav-static/**"
+    "tests/fixtures/nav-static/**",
+    // Loaded by PATH through a child process's `--import` (scripts/lib/help-probe/probe.mjs),
+    // never imported — and importing it WOULD be wrong: it patches fs/net/child_process on load.
+    "scripts/lib/help-probe/preload.mjs"
   ],
 
   // @stryker-mutator/core is SPAWNED, never imported: scripts/mutation-test.mjs

@@ -21,7 +21,7 @@
  *
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Close-out (shadow validation).
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { argOption } from './lib/cli-io.mjs';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';

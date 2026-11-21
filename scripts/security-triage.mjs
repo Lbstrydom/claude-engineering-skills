@@ -19,7 +19,7 @@
  * Deliberately has no `--selfcheck-relocation` handler: this CLI is not part of
  * a synced consumer surface in v1 (audit R1-L1). Add one if consumer sync lands.
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';

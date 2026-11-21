@@ -7,7 +7,7 @@
  * @module scripts/bandit
  */
 
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { MutexFileStore } from './lib/file-store.mjs';
 import { createRNG } from './lib/rng.mjs';

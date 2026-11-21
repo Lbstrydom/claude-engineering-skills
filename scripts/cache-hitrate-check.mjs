@@ -26,7 +26,7 @@
  *   0 — analysis ran (regardless of recommendation)
  *   1 — could not read .audit/ directory
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 // Import config.mjs (not bare 'dotenv/config') for its env-loading side effect:
 // it loads the cwd/git-root .env AND the shared ~/.audit-loop.env, where the

@@ -22,7 +22,7 @@
  *   AUDIT_TOOL_MANIFEST_URL=<url>   override default upstream URL
  */
 
-import './lib/load-env.mjs';
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
 import {
   fetchUpstreamManifest,
   compareToUpstream,

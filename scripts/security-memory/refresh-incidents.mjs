@@ -18,7 +18,7 @@
  *
  * @module scripts/security-memory/refresh-incidents
  */
-import '../lib/load-env.mjs';
+import '../lib/help-guard-run.mjs'; import '../lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';

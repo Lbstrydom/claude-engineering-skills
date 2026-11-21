@@ -1,4 +1,4 @@
-import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from './shared.mjs';
+import './lib/help-guard-run.mjs'; import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from './shared.mjs';
 import { scratchPath } from './lib/temp-paths.mjs';
 
 const SID = 'audit-1776354886';

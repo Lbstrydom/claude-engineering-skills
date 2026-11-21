@@ -27,7 +27,7 @@
  *
  * @module scripts/audit-clean
  */
-import { readdirSync, statSync, lstatSync, rmSync } from 'node:fs';
+import './lib/help-guard-run.mjs'; import { readdirSync, statSync, lstatSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { sweepStaleOrphanPreimages } from './lib/audit/diff-scope-resolver.mjs';

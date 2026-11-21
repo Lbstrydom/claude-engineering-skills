@@ -28,7 +28,7 @@ import { MANIFEST_RELATIVE_PATH } from '../scripts/lib/sync-manifest.mjs';
 import {
   markerNamedNpmScripts, checkMarkerRemedies, checkDocumentedRecipes,
   MARKER_BLOCK, PENDING_NOTE_READ_RECIPE, PENDING_NOTE_WRITE_RECIPE,
-  CONSUMER_HYDRATE_NPM_SCRIPT,
+  CONSUMER_HYDRATE_NPM_SCRIPT, isCircularRemedy,
 } from '../scripts/lib/worktree-preflight.mjs';
 
 const MAIN = path.resolve('/repo');
@@ -227,7 +227,31 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
 
   it('passes when package.json defines every named script', () => {
     const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'node …' } }) });
-    assert.deepEqual(r, { ok: true, missing: [], checked: ['skills:hydrate'] });
+    assert.deepEqual(r, { ok: true, missing: [], circular: [], checked: ['skills:hydrate'] });
+  });
+
+  it('THE CONSUMER SHAPE: a remedy that runs a file inside scripts/.claude-skills/ fails as circular', () => {
+    // Field report 2026-11-21: the script existed (existence check green) but lived
+    // in the tree it copies, so a fresh worktree died on MODULE_NOT_FOUND.
+    for (const body of [
+      'node scripts/.claude-skills/skills-hydrate.mjs',
+      'node ./scripts/.claude-skills/skills-hydrate.mjs --json',
+      'cd . && node scripts/.claude-skills/skills-hydrate.mjs',
+      'node scripts\\.claude-skills\\skills-hydrate.mjs',
+    ]) {
+      const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
+      assert.equal(r.ok, false, body);
+      assert.deepEqual(r.circular, ['skills:hydrate'], body);
+      assert.deepEqual(r.missing, [], body);
+    }
+  });
+
+  it('negative control: the canonical one-liner and a tracked-script remedy are NOT circular', () => {
+    // The one-liner names the directory inside `node -e`; it must not be flagged.
+    const canonical = JSON.parse(`{${CONSUMER_HYDRATE_NPM_SCRIPT}}`)['skills:hydrate'];
+    assert.equal(isCircularRemedy(canonical), false);
+    assert.equal(isCircularRemedy('node scripts/skills-hydrate.mjs'), false);
+    assert.equal(isCircularRemedy(undefined), false);
   });
 
   it('THE DIRECTION THAT HAD TO FIRE: fails when the named script is absent', () => {

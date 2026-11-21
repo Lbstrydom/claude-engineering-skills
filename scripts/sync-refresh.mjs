@@ -15,7 +15,7 @@
  * @module scripts/sync-refresh
  */
 
-import { spawnSync } from 'node:child_process';
+import './lib/help-guard-run.mjs'; import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';

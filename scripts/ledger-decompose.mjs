@@ -22,7 +22,7 @@
  * @module scripts/ledger-decompose
  */
 
-import './lib/load-env.mjs';
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
 import path from 'node:path';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag } from './lib/cli-io.mjs';
