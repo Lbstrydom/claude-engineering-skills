@@ -22,12 +22,184 @@
  * @module scripts/lib/telemetry-export/deliver
  */
 import crypto from 'node:crypto';
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { validateExport } from './schema.mjs';
+import { assertExportClean } from './redact.mjs';
 
 const ALIAS_RE = /^[a-z0-9-]{1,32}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * One git runner: cwd pinned to the drop, bounded, stderr captured. `input` feeds stdin (hash-object); `env` carries a
+ * private GIT_INDEX_FILE so a commit can be BUILT without ever touching the work tree's real index.
+ */
+function makeGit(exec, root) {
+  return (args, o = {}) => exec('git', args, {
+    cwd: root, encoding: 'utf-8', timeout: 120000, windowsHide: true,
+    stdio: [o.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    ...(o.input === undefined ? {} : { input: o.input }),
+    ...(o.env ? { env: o.env } : {}),
+  });
+}
+
+/**
+ * The ONE gate in front of any push the exporter makes (the fresh-export path and the retry path alike).
+ *
+ * The exporter pushes only what IT created, and only when that is the whole difference to the remote:
+ *   - the drop directory is itself the ROOT of its own work tree (not a folder inside another repository);
+ *   - an upstream is configured — its absence is an UNKNOWN delivery state, never "nothing pending"; and
+ *   - NOTHING is already committed-but-unpushed. A push publishes every ancestor, so pushing on top of history the
+ *     exporter did not write would publish that history too, past the schema and the redaction check. Rather than
+ *     try to inspect arbitrary commits, it refuses and says so; whoever made them pushes them.
+ *
+ * @returns {{remote: string, branch: string}} the destination, resolved explicitly (a bare `git push` obeys
+ *   push.default / remote.pushDefault and could publish other refs)
+ */
+/** A git-ignored export could never be staged, would sit on disk unseen by the retry scan and never be delivered. */
+function refuseIfIgnored(git, rel) {
+  let ignored = false;
+  try {
+    git(['check-ignore', '-q', '--', rel]);
+    ignored = true;
+  } catch (err) {
+    // Exit 1 is git's answer "not ignored". Anything else (fatal repository or index error) is NOT an answer.
+    if (err?.status !== 1) throw new Error('deliver: could not tell whether the export would be git-ignored — refusing to publish');
+  }
+  if (ignored) throw new Error('deliver: the drop repository ignores exports of this name (.gitignore) — they could never be delivered');
+}
+
+function pushGate(git, root) {
+  const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
+  if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
+  let upstream;
+  try { upstream = String(git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']) ?? '').trim(); } catch { upstream = ''; }
+  const slash = upstream.indexOf('/');
+  if (!upstream || slash < 1) throw new Error('deliver: cannot tell whether earlier exports were pushed (no upstream configured?) — set one, then retry');
+  const remote = upstream.slice(0, slash);
+  const branch = upstream.slice(slash + 1);
+  // The checks below compare HEAD with the local tracking ref, so they only mean something for a PLAIN clone: the
+  // default fetch refspec (a custom one can map a differently named remote branch onto this tracking ref) and no
+  // separate push URL (a push destination that is not the one the upstream was fetched from can be behind it, and
+  // an explicit push would then publish the missing ancestors too).
+  const optional = (args) => { try { return String(git(args) ?? '').trim(); } catch { return ''; } };
+  const fetchSpecs = optional(['config', '--get-all', `remote.${remote}.fetch`]).split('\n').filter(Boolean);
+  if (fetchSpecs.length !== 1 || fetchSpecs[0] !== `+refs/heads/*:refs/remotes/${remote}/*`) {
+    throw new Error(`deliver: remote "${remote}" does not use the default fetch refspec — the drop must be a plain clone`);
+  }
+  // The EFFECTIVE destinations, rewrites applied (`url.<base>.insteadOf` / `pushInsteadOf` / `pushurl`): the push
+  // must go exactly where the upstream was fetched from, and to exactly one place.
+  const fetchUrls = optional(['remote', 'get-url', '--all', remote]).split('\n').filter(Boolean);
+  const pushUrls = optional(['remote', 'get-url', '--push', '--all', remote]).split('\n').filter(Boolean);
+  if (fetchUrls.length !== 1 || pushUrls.length !== 1 || fetchUrls[0] !== pushUrls[0]) {
+    throw new Error(`deliver: remote "${remote}" pushes somewhere other than where it fetches (a separate push URL or a rewrite) — the drop must be a plain clone`);
+  }
+  // The local tracking ref is only as fresh as the last fetch: a remote branch reset or deleted since would make
+  // "nothing ahead" a statement about a stale picture. Ask the remote itself; a mismatch means fetch first.
+  const tracked = String(git(['rev-parse', '@{u}']) ?? '').trim();
+  const remoteTip = String(git(['ls-remote', remote, `refs/heads/${branch}`]) ?? '').trim().split(/\s+/)[0] ?? '';
+  if (!tracked || remoteTip !== tracked) {
+    throw new Error(`deliver: the remote branch is not where this clone last saw it — fetch and review first (the exporter will not push over an unknown state)`);
+  }
+  const ahead = Number(String(git(['rev-list', '--count', '@{u}..HEAD']) ?? '').trim());
+  if (!Number.isInteger(ahead)) throw new Error('deliver: could not count unpushed commits — refusing to push');
+  if (ahead > 0) {
+    throw new Error(`deliver: ${ahead} commit(s) are committed but not pushed in the drop directory — push or reset them yourself; the exporter will not publish history it did not write`);
+  }
+  // Not ahead is not enough: a clone that is BEHIND the remote must not push either (a lease-pinned push of a commit
+  // built on a stale HEAD would otherwise discard what the remote gained). HEAD must be exactly the observed tip.
+  const head = String(git(['rev-parse', 'HEAD']) ?? '').trim();
+  if (!head || head !== tracked) throw new Error('deliver: the drop is not at the remote tip (behind it?) — fetch and fast-forward first');
+  // The LOCAL branch HEAD is on, named explicitly: updates target this ref, never the symbolic HEAD, so a checkout
+  // that happens between the gate and the update cannot redirect them. A detached HEAD has no branch to advance.
+  let headRef = '';
+  try { headRef = String(git(['symbolic-ref', '-q', 'HEAD']) ?? '').trim(); } catch { headRef = ''; }
+  if (!headRef.startsWith('refs/heads/')) throw new Error('deliver: HEAD is detached — check out the branch first');
+  return { remote, branch, tip: tracked, head, headRef };
+}
+
+/**
+ * Commit exactly `entries` and push THAT commit — built with git plumbing, never through the work tree's index.
+ *
+ *   - the committed bytes are the VALIDATED bytes: each entry is hashed from the exact buffer that was checked
+ *     (`hash-object --stdin` applies no clean filter), so nothing a filter or an editor does afterwards can change what
+ *     is published (the working-tree file is never re-read);
+ *   - the commit is built in a PRIVATE index (GIT_INDEX_FILE) from HEAD plus our paths, so whatever else is staged in
+ *     the real index is never touched or replaced; only our own entries are then mirrored into it;
+ *   - the branch moves with a compare-and-swap from the gated HEAD, so a commit made by anyone else after the gate fails
+ *     the exporter instead of riding along;
+ *   - the push is pinned with a LEASE on the observed remote tip: it cannot overwrite anything the remote gained since
+ *     (and, HEAD being exactly that tip, it is a plain fast-forward — nothing is ever forced past newer work);
+ *   - `push.followTags` is off; the destination is an explicit remote and ref, never what push.default says;
+ *   - on a failed push the outcome is established from the remote, and only a CONFIRMED non-delivery is undone.
+ */
+function commitAndPush(git, dest, entries, message) {
+  const head = String(git(['rev-parse', 'HEAD']) ?? '').trim();
+  let nowRef = '';
+  try { nowRef = String(git(['symbolic-ref', '-q', 'HEAD']) ?? '').trim(); } catch { nowRef = ''; }
+  if (head !== dest.head || nowRef !== dest.headRef) throw new Error('deliver: the branch moved since the gate passed — retry (nothing was committed)');
+
+  const indexFile = path.join(os.tmpdir(), `telemetry-index-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
+  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+  const blobs = [];
+  let ours;
+  try {
+    git(['read-tree', head], { env });
+    for (const e of entries) {
+      const blob = String(git(['hash-object', '-w', '--stdin'], { input: e.bytes }) ?? '').trim();
+      blobs.push(blob);
+      git(['update-index', '--add', '--cacheinfo', `100644,${blob},${e.path}`], { env });
+    }
+    const tree = String(git(['write-tree'], { env }) ?? '').trim();
+    ours = String(git(['commit-tree', tree, '-p', head, '-m', message]) ?? '').trim();
+  } finally {
+    try { fs.unlinkSync(indexFile); } catch { /* never created, or already gone */ }
+  }
+
+  // Advance the branch only if it is STILL where the gate saw it; then mirror just our own paths into the real index.
+  git(['update-ref', '-m', 'telemetry-export: commit an export', dest.headRef, ours, head]);
+  // Our paths are NEW (absent from HEAD, so no staged version of the user's can be overwritten here). If mirroring them
+  // into the index fails, the commit has not been published: put the branch back rather than strand an unpushed commit
+  // that the gate would then refuse forever.
+  const undo = () => {
+    try {
+      git(['update-ref', '-m', 'telemetry-export: undo an undelivered export commit', dest.headRef, head, ours]);
+      const fresh = entries.filter((e) => !e.wasStaged).map((e) => e.path);
+      if (fresh.length) git(['reset', '-q', '--', ...fresh]);   // a path the user had already staged stays staged
+    } catch { /* leave it: the gate will report the unpushed commit */ }
+  };
+  try {
+    entries.forEach((e, i) => git(['update-index', '--add', '--cacheinfo', `100644,${blobs[i]},${e.path}`]));
+  } catch (err) { undo(); throw err; }
+
+  try {
+    git(['-c', 'push.followTags=false', 'push', '--no-follow-tags', `--force-with-lease=refs/heads/${dest.branch}:${dest.tip}`,
+      dest.remote, `${ours}:refs/heads/${dest.branch}`]);
+  } catch (err) {
+    // A push can reach the remote and still report an error (the connection dies before the acknowledgement), so a
+    // failed push is NOT proof of non-delivery. Ask the remote, and act only on what can be established:
+    //   - it has our commit            -> delivered; bring the local tracking ref up to date, undo nothing
+    //   - it is exactly where it was   -> confirmed not delivered; safe to undo our own commit
+    //   - unreadable, or it moved      -> UNKNOWN; leave everything as it is and say so
+    let remoteTip = null;
+    try { remoteTip = String(git(['ls-remote', dest.remote, `refs/heads/${dest.branch}`]) ?? '').trim().split(/\s+/)[0] || null; } catch { remoteTip = null; }
+    if (remoteTip === ours) {
+      // A confirmed delivery whose acknowledgement was lost: git never updated the tracking ref, so the clone would read
+      // as one commit ahead forever. Move it (compare-and-swap from the tip we gated on).
+      try { git(['update-ref', `refs/remotes/${dest.remote}/${dest.branch}`, ours, dest.tip]); } catch { /* the next fetch will reconcile it */ }
+      return;
+    }
+    if (remoteTip === null || remoteTip !== dest.tip) {
+      throw new Error('deliver: the push failed and the remote\'s state could not be established — verify what the remote has before retrying (nothing was undone locally)');
+    }
+    // Undo ONLY our commit, atomically (the branch moves back only if it is STILL our commit), then drop just our own
+    // index entries; anything else staged in the work tree is left exactly as it was found.
+    undo();
+    throw err;
+  }
+}
 
 /**
  * @param {object} doc a validated export
@@ -61,15 +233,12 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   const rel = exportFileName(doc);
   const [aliasDir, fileName] = rel.split('/');
   const aliasPath = path.join(root, aliasDir);
-  const git = (args) => exec('git', args, { cwd: root, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, windowsHide: true });
+  const git = makeGit(exec, root);
 
   // Validate the Git destination BEFORE publishing anything: a refusal here must not leave a published file
   // behind it, and "delivery failed" must never describe a file that was in fact written.
-  if (push) {
-    const top = String(git(['rev-parse', '--show-toplevel']) ?? '').trim();
-    // The drop directory must BE the work tree's root, not a folder inside some other repository.
-    if (!top || fs.realpathSync(top) !== root) throw new Error('deliver: --push needs the drop directory to be the root of its own Git work tree');
-  }
+  const dest = push ? pushGate(git, root) : null;
+  if (push) refuseIfIgnored(git, rel);
 
   // The alias directory is created by us or is a plain directory: never a symlink (which could point out of the drop).
   let st = null;
@@ -95,9 +264,9 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
   // Unique per call (random suffix), so two deliveries — even in one process, even in one millisecond — never
   // share a temp name, and the cleanup below can only ever remove a file this call created.
   const tmp = path.join(realAlias, `.${fileName}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
+  const body = Buffer.from(`${JSON.stringify(doc, null, 2)}${String.fromCharCode(10)}`, 'utf8');
   try {
-    fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}
-`, { flag: 'wx' });
+    fs.writeFileSync(tmp, body, { flag: 'wx' });
     try {
       link(tmp, target);   // atomic, and fails EEXIST rather than replacing: exports are immutable
     } catch (err) {
@@ -124,10 +293,76 @@ export function deliverExport({ doc, dropDir, push = false, exec = execFileSync,
 
   let pushed = false;
   if (push) {
-    git(['add', '--', rel]);
-    git(['commit', '-q', '-m', `telemetry export ${doc.consumerAlias} ${doc.generatedAt.slice(0, 10)}`, '--', rel]);
-    git(['push']);
+    commitAndPush(git, dest, [{ path: rel, bytes: body }], `telemetry export ${doc.consumerAlias} ${doc.generatedAt.slice(0, 10)}`);
     pushed = true;
   }
   return { file: target, pushed };
+}
+
+/**
+ * Deliver what is already written but not yet COMMITTED, for ONE alias.
+ *
+ * Why this exists: the throttle (`--if-older-than`) treats a recent valid file as "an export exists", but a file written
+ * by an earlier run whose push failed (offline, rejected) is NOT delivered, and would otherwise suppress every later
+ * attempt for the whole throttle window. This stages, commits and pushes ONLY validated exports of this alias, through
+ * the same `pushGate` as a fresh export. Commits that already exist but were never pushed are NOT pushed on the
+ * exporter's behalf (the gate refuses and says so): they were not written by it, and inspecting arbitrary history is
+ * not something an exporter should pretend to do safely.
+ *
+ * @param {object} p
+ * @param {string} p.dropDir
+ * @param {string} p.alias
+ * @param {(cmd: string, args: string[], opts: object) => any} [p.exec]
+ * @returns {{pending: boolean, pushed: boolean}}
+ */
+export function pushPending({ dropDir, alias, exec = execFileSync }) {
+  if (!ALIAS_RE.test(alias)) throw new Error('deliver: not a valid alias');
+  if (!fs.existsSync(dropDir) || !fs.statSync(dropDir).isDirectory()) throw new Error('deliver: the drop directory does not exist');
+  const root = fs.realpathSync(dropDir);
+  const git = makeGit(exec, root);
+  const dest = pushGate(git, root);
+
+  // Uncommitted files in this alias's directory. ONLY validated exports may ride along: a stray file here would
+  // otherwise be committed and pushed without ever meeting the schema or the redaction check, so anything else (an
+  // unrelated file, a hand-edited export, a symlink) stops the retry rather than being swept in.
+  const pathRe = new RegExp(String.raw`^${alias}/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`);
+  const status = String(git(['status', '--porcelain=v1', '-z', '-uall', '--ignored', '--', `${alias}/`]) ?? '');
+  const entries = status.split('\0').filter(Boolean);
+  const ignoredExport = entries.find((e) => e.startsWith('!! ') && pathRe.test(e.slice(3)));
+  if (ignoredExport) throw new Error('deliver: an export in the drop is git-ignored and can never be delivered (retry stopped)');
+  // A rename or copy record is followed by a second NUL-separated path that would be read as an entry of its own;
+  // exports are never renamed, so such a record means something else is going on here: stop.
+  if (entries.some((e) => /^[RC]/.test(e))) throw new Error('deliver: a rename or copy is staged in the alias directory — not an export (retry stopped)');
+  const dirty = entries.filter((e) => !e.startsWith('!! ')).map((e) => ({ code: e.slice(0, 2), p: e.slice(3) }));
+  const dirtyPaths = dirty.map((d) => d.p);
+  const staged = [];
+  for (const { code, p } of dirty) {
+    const name = p.split('/').pop();
+    // Exports are immutable: only a NEW file qualifies (untracked, or staged-as-added with no later edit, so the index
+    // and the work tree agree). A modified or deleted export that is already in history is never republished.
+    if (code !== '??' && code !== 'A ') throw new Error(`deliver: "${name}" is a modification of a tracked or partly-staged export — exports are immutable (retry stopped)`);
+    if (!pathRe.test(p)) throw new Error(`deliver: refusing to stage "${name}" — not a telemetry export (retry stopped; nothing was staged)`);
+    const full = path.join(root, ...p.split('/'));
+    // lstat, never a followed read: a symlink would validate as its TARGET's JSON while git commits the link itself.
+    const st = fs.lstatSync(full);
+    if (st.isSymbolicLink() || !st.isFile()) throw new Error(`deliver: "${name}" is not a regular file (retry stopped)`);
+    // Read ONCE: the buffer validated here is the buffer that is committed (never re-read from the work tree).
+    const bytes = fs.readFileSync(full);
+    let doc;
+    try { doc = JSON.parse(bytes.toString('utf8')); } catch { throw new Error(`deliver: "${name}" is not valid JSON (retry stopped)`); }
+    const v = validateExport(doc);
+    if (!v.ok || v.doc.consumerAlias !== alias) throw new Error(`deliver: "${name}" does not validate as an export of this alias (retry stopped)`);
+    assertExportClean(v.doc);   // throws ExportRefusedError (category only)
+    // Validate and publish the SAME representation: the parsed object can differ from its bytes (duplicate keys, where
+    // an earlier value is hidden by a later one). The exporter only ever writes one canonical serialisation, so any
+    // other byte sequence is not something it wrote and is refused rather than committed.
+    if (!bytes.equals(Buffer.from(`${JSON.stringify(v.doc, null, 2)}\n`, 'utf8'))) {
+      throw new Error(`deliver: "${name}" is not byte-identical to the canonical form of its validated content (retry stopped)`);
+    }
+    staged.push({ path: p, bytes, wasStaged: code === 'A ' });
+  }
+  if (dirtyPaths.length === 0) return { pending: false, pushed: false };
+
+  commitAndPush(git, dest, staged, `telemetry export ${alias} (retry of an undelivered export)`);
+  return { pending: true, pushed: true };
 }

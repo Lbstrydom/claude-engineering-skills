@@ -401,6 +401,14 @@ export const CHECKS = [
     steps: [{ script: 'workflow-cadence-doctor.mjs', args: ['--strict'] }],
   },
   {
+    key: 'telemetry-export',
+    label: 'Telemetry export for a store CES cannot reach (opt-in; at most one export per day)',
+    // Opt-in on BOTH names: with either unset the check is skipped, so this is invisible to a consumer that never
+    // chose it. `--if-older-than 24` makes a repeat run read nothing and write nothing.
+    requiredEnv: ['TELEMETRY_CONSUMER_ALIAS', 'TELEMETRY_DROP_DIR'],
+    steps: [{ script: 'telemetry-export.mjs', args: ['--if-older-than', '24'] }],
+  },
+  {
     // AUDIT_DB_URL only — NOT an LLM credential. remediation-reconcile.mjs
     // degrades gracefully with no Claude credential (it still applies the
     // free mechanical "file deleted" resolutions and reports the rest as

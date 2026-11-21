@@ -24,6 +24,7 @@ import { SHADOW_REMEDY } from '../env-provenance.mjs';
 import {
   STORE_VERDICT, classifyStoreReachability, readStoreSetupPointer, renderStoreDetail, probeStoreReachability,
 } from './store-reachability.mjs';
+import { scanDrop } from '../telemetry-export/reader.mjs';
 
 // ── sync-isolation-verify gate adapter (§2.3a) ──────────────────────────────
 //
@@ -323,6 +324,47 @@ const STORE_REACHABILITY_PROBE = {
   },
 };
 
+// ── Machine-state probe: telemetry export freshness (never gates — D9) ──────
+
+/**
+ * For a consumer that OPTED IN to the telemetry export (docs/plans/private-store-telemetry-path.md): has it
+ * actually been exporting? Not configured is `not_applicable` — the feature is off by default and silence is
+ * correct. Configured, the verdict follows the newest valid export for this alias in the drop directory:
+ * within 8 days (a weekly cadence plus a day's grace) is a pass; older, absent or unreadable is a warning that
+ * says which — "overdue" and "never exported" are different facts, and an unreadable drop is neither.
+ */
+const TELEMETRY_EXPORT_PROBE = {
+  id: 'machine/telemetry-export',
+  title: 'Telemetry export freshness (opt-in)',
+  class: 'machine',
+  fix: 'Run the exporter (`node scripts/telemetry-export.mjs`, see docs/runbooks/telemetry-export.md) or enable the weekly maintenance check; then re-run the doctor.',
+  async run(ctx) {
+    const env = loadEnv(ctx.subjectRoot);
+    const alias = (process.env.TELEMETRY_CONSUMER_ALIAS || env.TELEMETRY_CONSUMER_ALIAS || '').trim();
+    const dropRaw = (process.env.TELEMETRY_DROP_DIR || env.TELEMETRY_DROP_DIR || '').trim();
+    // A relative path in the SUBJECT's own .env means relative to the subject, not to wherever the doctor runs.
+    const dropDir = dropRaw ? path.resolve(ctx.subjectRoot, dropRaw) : '';
+    if (!alias && !dropDir) return { status: 'not_applicable', detail: 'telemetry export is not configured (opt-in; off by default)' };
+    if (!alias || !dropDir) {
+      return { status: 'warn', detail: `telemetry export is half-configured: ${alias ? 'TELEMETRY_DROP_DIR' : 'TELEMETRY_CONSUMER_ALIAS'} is missing` };
+    }
+    const scan = (ctx.scanTelemetryDrop ?? scanDrop)({ dropDir, expected: [{ alias, cadence: 'on-demand' }], now: new Date() });
+    const a = scan.aliases[0];
+    if (a.state === 'drop-unreadable' || a.state === 'scan-incomplete') {
+      return { status: 'warn', detail: `could not read the drop directory (${scan.scanError ?? a.reason ?? a.state}) — export freshness is unknown, not overdue` };
+    }
+    if (a.state === 'never-received') return { status: 'warn', detail: 'no export has ever been written for this alias — run the exporter' };
+    if (a.state === 'rejected') return { status: 'warn', detail: `only rejected files found (newest: ${a.latestRejected?.reason ?? 'unknown'}) — nothing valid has been exported` };
+    // Only `received` carries a valid, parsed export: anything else (a state this probe does not know, a missing or
+    // unparseable timestamp) is reported as unknown, never waved through as healthy.
+    const hours = (Date.now() - Date.parse(a.generatedAt)) / 3_600_000;
+    if (a.state !== 'received' || !Number.isFinite(hours)) return { status: 'unknown', detail: `could not judge export freshness (state ${a.state})` };
+    if (hours > TELEMETRY_OVERDUE_HOURS) return { status: 'warn', detail: `export overdue: the newest valid export is ${a.ageDays} day(s) old (weekly cadence + one day of grace)` };
+    return { status: 'pass', detail: `last export ${a.ageDays} day(s) ago` };
+  },
+};
+const TELEMETRY_OVERDUE_HOURS = 8 * 24;
+
 // ── Machine-state probe: browser (never gates — D9) ─────────────────────────
 
 const BROWSER_PROBE = {
@@ -506,6 +548,7 @@ export const PROBES = [
   ...SYNC_ISOLATION_PROBES,
   ...CHECK_SETUP_PROBES,
   STORE_REACHABILITY_PROBE,
+  TELEMETRY_EXPORT_PROBE,
   BROWSER_PROBE,
   AUTOCRLF_PROBE,
   ...NAMED_COMMAND_PROBES,
