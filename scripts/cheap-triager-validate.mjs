@@ -34,7 +34,7 @@
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import {

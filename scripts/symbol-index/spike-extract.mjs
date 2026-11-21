@@ -24,7 +24,7 @@
  * @module scripts/symbol-index/spike-extract
  */
 
-import { Project } from 'ts-morph';
+import '../lib/help-guard-run.mjs'; import { Project } from 'ts-morph';
 import { cruise } from 'dependency-cruiser';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

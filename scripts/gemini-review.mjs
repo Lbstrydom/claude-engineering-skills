@@ -22,7 +22,7 @@
  */
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
-import { statSync } from 'node:fs';
+import './lib/help-guard-run.mjs'; import { statSync } from 'node:fs';
 import { once } from 'node:events';
 import crypto from 'node:crypto';
 import { z } from 'zod';

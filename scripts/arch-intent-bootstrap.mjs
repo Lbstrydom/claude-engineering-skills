@@ -24,6 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { detectRepoStack } from './lib/repo-stack.mjs';
 import { loadArchIntentConfig } from './lib/arch-intent/load-config.mjs';
 import { inventoryFiles } from './lib/arch-intent/adapter-contract.mjs';
@@ -108,12 +109,37 @@ async function generateBaseline() {
   const raw = JSON.parse(fs.readFileSync(DOMAIN_MAP_PATH, 'utf-8'));
   raw.allowedDeps = baselineMap;
   atomicWriteFileSync(DOMAIN_MAP_PATH, JSON.stringify(raw, null, 2) + '\n');
-  log(`Wrote baseline: ${Object.keys(baselineMap).length} domains, ${report.violations.length} edges`);
+  // `report` is block-scoped to the adapter loop above; count the persisted edges instead
+  // (the old reference threw a ReferenceError AFTER the baseline was written, exiting 1).
+  const edgeCount = Object.values(baselineMap).reduce((n, arr) => n + arr.length, 0);
+  log(`Wrote baseline: ${Object.keys(baselineMap).length} domains, ${edgeCount} edges`);
   return true;
 }
 
+const KNOWN_FLAGS = ['--baseline-from-graph', '--help', '-h'];
+
+const USAGE = [
+  'usage: node scripts/arch-intent-bootstrap.mjs [--baseline-from-graph]',
+  '  (no flag)              copy docs/architecture-intent.template.md if the live doc is absent; leave allowedDeps unset',
+  '  --baseline-from-graph  also seed allowedDeps in .audit-loop/domain-map.json from the current import graph',
+  '  --help, -h             print this and exit; writes nothing',
+].join('\n');
+
 async function main() {
-  const flags = new Set(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // `--help` is handled BEFORE any side effect, and unknown flags are refused:
+  // this CLI used to ignore both, so `--help` ran the bootstrap (2026-11-21).
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'arch-intent-bootstrap' });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
+  const flags = new Set(argv);
   log(`Bootstrap starting in ${REPO_ROOT}`);
 
   await copyTemplate();

@@ -88,6 +88,7 @@ export const ARCHIVE_LANE_CHECK_CLASSIFICATION = Object.freeze({
   'cli:flags:gate': S('drift-only ratchet'),
   'emit:exit:gate': S('drift-only ratchet'),
   'stdout:flush:gate': S('drift-only ratchet'),
+  'help:readonly:gate': S('--help read-only census over tracked scripts, absolute (no baseline)'),
   // Not P: it reads tracked `scripts/**/*.mjs` and the committed
   // `.anthropic-pin-census.json` and judges whether every unpinned Anthropic-client
   // construction is declared — it never inspects the content being pushed for

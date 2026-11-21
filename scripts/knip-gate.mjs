@@ -27,7 +27,7 @@
  * @module scripts/knip-gate
  */
 
-import { execFileSync } from 'node:child_process';
+import './lib/help-guard-run.mjs'; import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';

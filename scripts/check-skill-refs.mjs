@@ -19,7 +19,7 @@
  *
  * @module scripts/check-skill-refs
  */
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { lintSkill } from './lib/skill-refs-parser.mjs';
 

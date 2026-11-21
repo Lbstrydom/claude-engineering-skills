@@ -24,7 +24,7 @@
  * @module scripts/meta-assess
  */
 
-import './lib/load-env.mjs';
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { computePassEffectiveness, FalsePositiveTracker } from './lib/findings.mjs';

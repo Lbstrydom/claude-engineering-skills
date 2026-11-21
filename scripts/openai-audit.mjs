@@ -26,7 +26,7 @@
  */
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
-import fs from 'node:fs';
+import './lib/help-guard-run.mjs'; import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';

@@ -460,6 +460,11 @@ const MANDATORY = {
   // opt-outs, which is the part no runtime test can see because each opt-out is
   // individually legitimate API.
   'emit:exit:gate': ['emit-exit-gate-detects-a-new-declared-opt-out'],
+  // Added 2026-11-21 with the gate itself (docs/plans/fleet-feedback-cluster1-bugs.md). Post-
+  // 2026-07-31, so a pill is mandatory. `--help` on a CLI that ignores the flag simply RUNS
+  // (arch-intent-bootstrap ran its bootstrap), so the pill overlays a CLI with no help contract
+  // that writes regardless of argv, and the control run must stay green.
+  'help:readonly:gate': ['help-readonly-gate-rejects-a-cli-that-runs-on-help'],
   // Added 2026-09-04 with the gate itself. Post-2026-07-31, so a pill is
   // mandatory. The pill understates the baseline rather than editing a source
   // file, because the defect has no textual tell: `process.stdout.write(report);

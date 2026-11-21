@@ -53,7 +53,7 @@
  *
  * @module scripts/prepush-check
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import './lib/help-guard-run.mjs'; import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

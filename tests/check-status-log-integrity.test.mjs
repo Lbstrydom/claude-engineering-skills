@@ -417,7 +417,9 @@ describe('an empty commit range is not an empty comparison', () => {
       if (seen.has(rel)) continue;
       seen.add(rel);
       const src = fs.readFileSync(path.join(REPO, rel), 'utf-8');
-      for (const m of src.matchAll(/(?:from\s+|import\s*\(\s*)'(\.[^']+)'/g)) {
+      // `from '…'`, dynamic `import('…')`, AND side-effect `import '…'` (the help guard is one,
+      // and it may sit after a `;` on the same line as another import).
+      for (const m of src.matchAll(/(?:from\s+|import\s*\(\s*|(?:^|;)\s*import\s+)'(\.[^']+)'/gm)) {
         const next = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
         if (fs.existsSync(path.join(REPO, next))) queue.push(next);
       }

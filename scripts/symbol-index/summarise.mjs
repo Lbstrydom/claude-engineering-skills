@@ -15,7 +15,7 @@
  * @module scripts/symbol-index/summarise
  */
 
-import readline from 'node:readline';
+import '../lib/help-guard-run.mjs'; import readline from 'node:readline';
 import { briefConfig } from '../lib/config.mjs';
 import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';

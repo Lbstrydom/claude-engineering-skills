@@ -66,7 +66,7 @@
 
 // config.mjs (not bare 'dotenv/config') so a shared ~/.audit-loop.env DSN is
 // picked up the same way cache-hitrate-check.mjs and every other CLI here does.
-import './lib/config.mjs';
+import './lib/help-guard-run.mjs'; import './lib/config.mjs';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

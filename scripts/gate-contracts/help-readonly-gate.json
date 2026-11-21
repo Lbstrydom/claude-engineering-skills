@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "gate": "help:readonly:gate",
+  "guards": "`--help` stays a pure read on every CLI: no filesystem write, no network, no mutating child process, and a --help / unknown-flag contract in the code",
+  "gates": [
+    {
+      "id": "help-readonly-gate-rejects-a-cli-that-runs-on-help",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "npm run help:readonly:gate",
+      "implementation": "scripts/check-help-readonly.mjs",
+      "tests": [
+        "tests/gate-poison-pills.test.mjs",
+        "tests/help-readonly-gate.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "needsGit": false,
+        "argv": [
+          "scripts/check-help-readonly.mjs"
+        ],
+        "overlay": {
+          "scripts/anthropic-ping.mjs": "tests/fixtures/poison/help-readonly-unguarded.mjs.txt"
+        },
+        "expectExit": 1,
+        "expectStderr": "help-readonly/offender",
+        "why": "`arch-intent-bootstrap.mjs --help` RAN the bootstrap (2026-11-21) because the CLI ignored the flag. The census this gate encodes then found 54 CLIs where `--help` did real work, including a created git worktree and provider API calls. The pill overlays a CLI with no help contract that writes a file regardless of argv; the control run (the real, guarded CLI) must exit 0, so a crash in the harness cannot read as a detection."
+      }
+    }
+  ]
+}
