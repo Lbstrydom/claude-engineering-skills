@@ -28,6 +28,8 @@ const FileEntry = z.strictObject({
    * removed key outside these reads `loosening` (an uncapped value is a raised cap).
    */
   allowanceKeys: z.array(z.string()).optional(),
+  /** `numeric-cap` only: the top-level numeric field holding the DEFAULT cap an exception falls back to (read at the HEAD). */
+  allowanceDefaultKey: z.string().optional(),
   note: z.string().optional(),
 });
 

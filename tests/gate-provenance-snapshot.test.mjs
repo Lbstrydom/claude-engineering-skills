@@ -460,3 +460,102 @@ test('cli: a CRASH exits 3 under --mode enforce AND --mode=enforce, and 0 in obs
     assert.match(obs.stderr, /runner crashed/);
   } finally { r.cleanup(); }
 });
+
+// ── audit round 2 ──────────────────────────────────────────────────────────────────────────────────────────────────────
+function twoGateScenario() {
+  const r = makeRepo();
+  baseFixture(r);
+  r.put('.gate-files.json', JSON.stringify({ ...REG, gates: [{ id: 'g1', argv: ['scripts/gate.mjs'] }, { id: 'g2', argv: ['scripts/gate.mjs', 'two'] }] }, null, 2));
+  const base = r.commit('two gates');
+  r.put('src/app.mjs', 'export const app = 2;\n');
+  return { r, base, head: r.commit('pr') };
+}
+
+test('isolation: ALL verdict runs finish before ANY shadow run starts, so a shadow cannot change a verdict', () => {
+  const { r, base, head } = twoGateScenario();
+  try {
+    const calls = [];
+    const runGate = ({ cwd, argv }) => {
+      const shadow = path.basename(cwd) === 'shadow';
+      const nm = path.join(cwd, 'node_modules', 'poison');
+      calls.push(`${shadow ? 'shadow' : 'verdict'}:${argv.join(' ')}`);
+      // A fixture gate that WRITES into the shared node_modules, as a hostile shadow run could.
+      if (shadow) { fs.writeFileSync(nm, 'x'); return { exit: 0 }; }
+      return { exit: fs.existsSync(nm) ? 1 : 0 };
+    };
+    const rep = A(r, base, head, { deps: { installDeps: fakeInstall, runGate } });
+    assert.deepEqual(rep.gateRuns.runs.map((g) => g.verdict.exit), [0, 0], 'no verdict saw the shadow write');
+    assert.equal(rep.state, 'clean', rep.reason);
+    const firstShadow = calls.findIndex((c) => c.startsWith('shadow'));
+    assert.ok(calls.slice(0, firstShadow).every((c) => c.startsWith('verdict')) && calls.slice(firstShadow).every((c) => c.startsWith('shadow')), calls.join(' | '));
+    assert.equal(calls.length, 4);
+  } finally { r.cleanup(); }
+});
+
+test('literal pathspecs: a tracked caps[1].json beside caps1.json restores ONLY the protected file', () => {
+  const r = makeRepo();
+  try {
+    r.put('.gate-files.json', JSON.stringify({ version: 1, files: [{ path: 'caps[1].json', kind: 'numeric-cap' }, { path: 'package.json', kind: 'opaque' }], gates: [] }, null, 2));
+    r.put('caps[1].json', JSON.stringify({ limit: 10 }));
+    r.put('caps1.json', JSON.stringify({ unrelated: 'base' }));
+    r.put('package.json', '{}');
+    const base = r.commit('base');
+    r.put('caps[1].json', JSON.stringify({ limit: 99 }));
+    r.put('caps1.json', JSON.stringify({ unrelated: 'pr-work' }));
+    r.put('extra[2].json', '{}');
+    const head = r.commit('pr');
+    const snap = buildSnapshot({ repoRoot: r.dir, base, head, install: false });
+    try {
+      const read = (p) => fs.readFileSync(path.join(snap.dir, p), 'utf8');
+      assert.equal(JSON.parse(read('caps[1].json')).limit, 10, 'the protected file is the base version');
+      assert.equal(JSON.parse(read('caps1.json')).unrelated, 'pr-work', 'the glob-lookalike is NOT swept up by the pathspec');
+    } finally { snap.cleanup(); }
+    // and the removal side: a registered path with glob characters that the PR added is removed literally
+    r.put('.gate-files.json', JSON.stringify({ version: 1, files: [{ path: 'caps[1].json', kind: 'numeric-cap' }, { path: 'extra[2].json', kind: 'opaque' }, { path: 'package.json', kind: 'opaque' }], gates: [] }, null, 2));
+    const head2 = r.commit('registers extra');
+    r.put('extra2.json', '{}');
+    const head3 = r.commit('adds lookalike');
+    const snap2 = buildSnapshot({ repoRoot: r.dir, base, head: head3, install: false });
+    try {
+      assert.equal(fs.existsSync(path.join(snap2.dir, 'extra[2].json')), false, 'the protected path absent at base is removed');
+      const idx = execFileSync('git', ['ls-files'], { cwd: snap2.dir, encoding: 'utf8', env: sanitizeGitEnv(snap2.dir) }).split(String.fromCharCode(10));
+      assert.ok(idx.includes('extra2.json') && fs.existsSync(path.join(snap2.dir, 'extra2.json')), 'its glob-lookalike stays tracked and on disk');
+      assert.ok(head2);
+    } finally { snap2.cleanup(); }
+  } finally { r.cleanup(); }
+});
+
+test('unlink: only ENOENT is ignored; anything else is a snapshot failure (unmeasured), and cleanup still happens', () => {
+  const { r, base, head } = scenario((x) => x.put('extra-baseline.json', JSON.stringify({ n: 1 })));
+  try {
+    const failing = (code) => ({ ...fs, unlinkSync: (p) => { if (String(p).endsWith('extra-baseline.json')) throw Object.assign(new Error(`${code} injected`), { code }); return fs.unlinkSync(p); } });
+    assert.throws(() => buildSnapshot({ repoRoot: r.dir, base, head, install: false, fsImpl: failing('EACCES') }), /EACCES injected/);
+    assert.equal(r.git('worktree', 'list').split('\n').length, 1, 'the failed snapshot left no worktree behind');
+    const ok = buildSnapshot({ repoRoot: r.dir, base, head, install: false, fsImpl: failing('ENOENT') });
+    ok.cleanup();
+    const rep = A(r, base, head, { deps: { installDeps: fakeInstall, runGate: () => ({ exit: 0 }), fsImpl: failing('EPERM'), facts: facts({ baseSha: base, headSha: head }) } });
+    assert.equal(rep.state === 'unmeasured' || rep.state === 'violation', true);
+    assert.match(rep.gateRuns.reason, /snapshot construction failed: EPERM injected/);
+    assert.equal(rep.gateRuns.state, 'unmeasured');
+  } finally { r.cleanup(); }
+});
+
+test('report shape: a range failure builds the same report (unmeasuredParts present) in JSON and text output', () => {
+  const { r, base } = scenario((x) => x.put('caps.json', JSON.stringify({ limit: 5 })));
+  try {
+    for (const badBase of ['not a revision', '0123456789abcdef0123456789abcdef01234567']) {
+      const json = cli(['--repo-root', r.dir, '--base', badBase, '--json'], r.dir);
+      assert.equal(json.status, 0, json.stderr);
+      const rep = JSON.parse(json.stdout);
+      assert.equal(rep.state, 'unmeasured');
+      assert.ok(Array.isArray(rep.unmeasuredParts) && rep.unmeasuredParts.length === 1, `unmeasuredParts: ${JSON.stringify(rep.unmeasuredParts)}`);
+      assert.equal(rep.contractVersion, 1);
+      const text = cli(['--repo-root', r.dir, '--base', badBase], r.dir);
+      assert.equal(text.status, 0);
+      assert.match(text.stdout, /UNMEASURED:/);
+      assert.doesNotMatch(text.stderr, /runner crashed/);
+      assert.match(text.stdout, /::notice title=audit-loop-gate-provenance::state=unmeasured/);
+    }
+    assert.ok(base);
+  } finally { r.cleanup(); }
+});

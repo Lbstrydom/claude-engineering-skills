@@ -290,7 +290,7 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
   neither registered nor inside the protected closure.
 - **One protected-set model** (`scripts/lib/gate-provenance/protected-set.mjs`): registry entries + the base import closure of
   each registered gate entry point + the **subprocess helpers** a closure module spawns (a string literal naming a repo script in a
-  module that calls spawn/execFile/fork, followed recursively with its own closure) + install inputs. The snapshot, the
+  module that imports child_process under any binding (aliases and namespace imports included), followed recursively with its own closure) + install inputs. The snapshot, the
   classification and the registered-only authorization check all read this one set. A module in it that is not registered and
   that the PR changes classifies as `opaque`, so `unknown`, so loosening. Residual: a script path computed at runtime is not followed.
 - **Classifier** (`scripts/lib/gate-provenance/classify.mjs`, `GATE_DIFF_CONTRACT_VERSION = 1`): every changed protected file
@@ -310,9 +310,18 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
   exits 0; a crash is printed as unmeasured and still exits 0. `--mode enforce` (or `--mode=enforce`) exits 1 on a violation and 3
   on unmeasured or a crash, and is not enabled in CI. In CI the step runs before the PR `npm ci`, from a worktree of the base
   sha, and a failed base install prints an unmeasured notice and lets the job continue.
-- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost). On a
-  `numeric-cap` baseline, removing a per-site exception listed under the entry `allowanceKeys` (`files`, `ids`) restores
-  the default cap and reads `tightening`; removing any other key reads `loosening`.
+- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost); the effective-cap rule for baseline exceptions is below.
+- **Isolation and output**: all verdict runs finish before any shadow run starts (the shadow shares the base `node_modules`), and
+  every untrusted string that reaches stdout or a `::notice` line (filenames, reasons, `gh` text) is Actions-escaped
+  (`%`, CR, LF), so a filename cannot start a workflow command. Snapshot pathspecs are `:(literal)`-prefixed, never
+  `--literal-pathspecs`, which leaks into hooks.
+- **Effective cap**: on a `numeric-cap` baseline an `allowanceKeys` exception removed at or above the default it falls back to
+  (the head value of `allowanceDefaultKey`, e.g. `limitLines`) is `tightening`; below it, `loosening`; with no declared default
+  or a non-numeric value only an ids-style array member is `tightening`, anything else `unknown`.
+- **Named residual - the step lives in a PR-controlled workflow**: observe mode runs inside the `pull_request` workflow that
+  the PR itself can edit, so a PR can delete or neutralise the step. Observe mode is a notice, not a control. The enforce-mode
+  follow-up MUST be a base-defined required check (for example `pull_request_target` running only base code, with no PR
+  checkout executed), never a step in the PR own workflow file.
 
 **Requesting a loosening**: a PR whose gate diff is `loosening` or `unknown` is allowed only when every changed file (both sides
 of a rename) is inside the protected set, it carries the label `gate-loosening`, the PR base and head from the API equal the

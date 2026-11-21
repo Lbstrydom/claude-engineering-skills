@@ -25,7 +25,8 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { resolvePushRange, describePushRange } from './lib/push-range.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
-import { analyze, formatReport, summaryLine } from './lib/gate-provenance/analyze.mjs';
+import { analyze, formatReport, summaryLine, unmeasuredReport } from './lib/gate-provenance/analyze.mjs';
+import { escapeData } from './lib/gate-provenance/actions-escape.mjs';
 
 const KNOWN_FLAGS = ['--base', '--head', '--repo-root', '--mode', '--json', '--pr', '--repo', '--no-gate-runs', '--base-install-dir', '--help', '-h', '--selfcheck-relocation'];
 const NOTICE = '::notice title=audit-loop-gate-provenance::';
@@ -89,7 +90,7 @@ async function main() {
       gateRuns: !argv.includes('--no-gate-runs'),
     };
   } catch (err) {
-    if (err instanceof ArgvError || /requires a value/.test(String(err?.message))) { process.stderr.write(`${err.message}\n`); await finishAndExit(2); return; }
+    if (err instanceof ArgvError || /requires a value/.test(String(err?.message))) { process.stderr.write(`${escapeData(err.message)}\n`); await finishAndExit(2); return; }
     throw err;
   }
   if (process.env.GATE_PROVENANCE_CRASH_FOR_TEST === "1") throw new Error("injected crash (test seam)");
@@ -99,14 +100,14 @@ async function main() {
   const range = resolvePushRange({ env: { AUDIT_PUSH_RANGE_BASE: opts.base, AUDIT_PUSH_RANGE_HEAD: opts.head }, requireExplicit: true, run });
   let report;
   if (!range.ok) {
-    report = { mode: opts.mode, base: opts.base, head: opts.head, state: 'unmeasured', reason: `base not usable: ${range.message}`, classification: null, authorization: null, gateRuns: null };
+    report = unmeasuredReport({ mode: opts.mode, base: opts.base, head: opts.head, reason: `base not usable: ${range.message}` });
   } else {
-    process.stderr.write(`gate-provenance: ${describePushRange(range)}\n`);
+    process.stderr.write(`gate-provenance: ${escapeData(describePushRange(range))}\n`);
     const sha = (rev) => run(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
     const baseSha = sha(range.base);
     const headSha = sha(range.head);
     if (!baseSha || !headSha) {
-      report = { mode: opts.mode, base: opts.base, head: opts.head, state: 'unmeasured', reason: 'base or head does not resolve to a commit', classification: null, authorization: null, gateRuns: null };
+      report = unmeasuredReport({ mode: opts.mode, base: opts.base, head: opts.head, reason: 'base or head does not resolve to a commit' });
     } else {
       report = analyze({ repoRoot: opts.repoRoot, base: baseSha, head: headSha, mode: opts.mode, gateRuns: opts.gateRuns, repo: opts.repo, pr: opts.pr, baseInstallDir: opts.baseInstallDir });
     }
@@ -128,8 +129,8 @@ if (isInvokedAsScript(import.meta.url)) {
   main().catch(async (err) => {
     // A crash is an UNMEASURED verdict, said as such; observe mode still exits 0, enforce refuses to pass it.
     const first = String(err?.message ?? err).split('\n')[0];
-    process.stderr.write(`gate-provenance: ${err?.stack ?? err}\n`);
-    process.stderr.write(`${NOTICE}state=unmeasured | runner crashed: ${first}\n`);
+    process.stderr.write(`gate-provenance: ${escapeData(err?.stack ?? err)}\n`);
+    process.stderr.write(`${NOTICE}state=unmeasured | runner crashed: ${escapeData(first)}\n`);
     await finishAndExit(MODE === "enforce" ? 3 : 0);
   });
 }

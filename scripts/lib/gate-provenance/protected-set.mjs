@@ -11,13 +11,14 @@
  */
 import { collectImportClosure } from '../module-graph.mjs';
 
-const SPAWN_CALL = /\b(spawn|spawnSync|execFile|execFileSync|fork|exec|execSync)\s*\(/;
+// ANY way of reaching child_process: a static import (named, aliased, namespace or default), require, or a dynamic import.
+const CHILD_PROCESS = /(?:from|require[(]|import[(])[^'"`]{0,20}['"](?:node:)?child_process['"]/;
 const SCRIPT_LITERAL = /['"`]((?:\.\/)?scripts\/[A-Za-z0-9_./-]+\.mjs)['"`]/g;
 const JOIN_LITERAL = /['"`]scripts['"`]\s*,\s*['"`]([A-Za-z0-9_./-]+\.mjs)['"`]/g;
 
-/** Existing repo scripts named by a module that spawns processes. */
+/** Existing repo scripts named by a module that imports child_process (any binding). */
 export function subprocessScripts(content, repoFiles) {
-  if (typeof content !== 'string' || !SPAWN_CALL.test(content)) return [];
+  if (typeof content !== 'string' || !CHILD_PROCESS.test(content)) return [];
   const out = new Set();
   for (const m of content.matchAll(SCRIPT_LITERAL)) out.add(m[1].replace(/^\.\//, ''));
   for (const m of content.matchAll(JOIN_LITERAL)) out.add(`scripts/${m[1]}`);

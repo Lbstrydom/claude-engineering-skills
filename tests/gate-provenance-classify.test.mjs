@@ -72,8 +72,8 @@ test('numeric-cap: entry removed and entry added both loosen when no allowance k
 });
 
 test('numeric-cap: removing a per-site exception under allowanceKeys tightens (the default cap applies again); adding one loosens', () => {
-  const capA = { ...cap, allowanceKeys: ['files', 'ids'] };
-  assert.equal(verdict(capA, { files: { a: 5, b: 6 } }, { files: { a: 5 } }), 'tightening');
+  const capA = { ...cap, allowanceKeys: ['files', 'ids'], allowanceDefaultKey: 'limit' };
+  assert.equal(verdict(capA, { limit: 3, files: { a: 5, b: 6 } }, { limit: 3, files: { a: 5 } }), 'tightening');
   assert.equal(verdict(capA, { ids: ['x', 'y'] }, { ids: ['x'] }), 'tightening');
   assert.equal(verdict(capA, { files: { a: 5 } }, { files: { a: 5, b: 6 } }), 'loosening');
   // negative control: a removed key OUTSIDE the allowance keys still loosens
@@ -215,4 +215,37 @@ test('an unregistered module in the protected closure classifies opaque (unknown
   });
   assert.equal(out.verdict, 'unknown');
   assert.deepEqual(out.files.map((f) => [f.path, f.kind]), [['scripts/lib/dep.mjs', 'opaque']]);
+});
+
+// ── effective cap: a removed exception tightens only when it falls back to a cap that is no looser ─────────────────────
+const sized = { path: 'size.json', kind: 'numeric-cap', allowanceKeys: ['files'], allowanceDefaultKey: 'limitLines' };
+
+test('effective cap: removing an exception at or above the default is tightening; below it is loosening', () => {
+  const base = { limitLines: 1000, files: { 'a.mjs': 1200, 'b.mjs': 800, 'c.mjs': 1000 } };
+  assert.equal(verdict(sized, base, { limitLines: 1000, files: { 'b.mjs': 800, 'c.mjs': 1000 } }), 'tightening', 'a 1200 exception falls back to 1000');
+  assert.equal(verdict(sized, base, { limitLines: 1000, files: { 'a.mjs': 1200, 'c.mjs': 1000 } }), 'loosening', 'an 800 exception falls back to 1000, which allows growth');
+  assert.equal(verdict(sized, base, { limitLines: 1000, files: { 'a.mjs': 1200, 'b.mjs': 800 } }), 'tightening', 'exactly at the default counts as at or above');
+});
+
+test('effective cap: the HEAD default is read; no declared default, a missing default or a non-numeric value is not tightening', () => {
+  const noKey = { path: 'size.json', kind: 'numeric-cap', allowanceKeys: ['files'] };
+  assert.equal(verdict(noKey, { limitLines: 1000, files: { a: 1200 } }, { limitLines: 1000, files: {} }), 'unknown', 'numeric exception without a declared default');
+  assert.equal(verdict(sized, { limitLines: 1000, files: { a: 1200 } }, { files: {} }), 'loosening', 'default gone at head: the cap itself was removed');
+  assert.equal(verdict(sized, { limitLines: 1000, files: { a: 1200 } }, { limitLines: 500, files: {} }), 'tightening', 'head default lowered to 500 and 1200 >= 500');
+  assert.equal(verdict(sized, { limitLines: 1000, files: { a: 1200 } }, { limitLines: 2000, files: {} }), 'loosening', 'head default raised above the removed value');
+  assert.equal(verdict(sized, { limitLines: 1000, files: { a: 'text' } }, { limitLines: 1000, files: {} }), 'unknown', 'a non-numeric exception value');
+});
+
+test('effective cap: ids-style array exceptions tighten when removed, with or without a default', () => {
+  const ids = { path: 'ids.json', kind: 'numeric-cap', allowanceKeys: ['ids'] };
+  assert.equal(verdict(ids, { ids: ['x', 'y'] }, { ids: ['x'] }), 'tightening');
+  assert.equal(verdict(ids, { ids: ['x'] }, { ids: ['x', 'z'] }), 'loosening');
+});
+
+test('registry diff: changing allowanceDefaultKey loosens', () => {
+  const entry = { path: REGISTRY_PATH, kind: 'opaque' };
+  const mk = (e) => j({ version: 1, files: [e], gates: [] });
+  const b = { path: 'a.json', kind: 'numeric-cap', allowanceKeys: ['files'], allowanceDefaultKey: 'limitLines' };
+  assert.equal(run(entry, mk(b), mk({ ...b, allowanceDefaultKey: 'other' })).verdict, 'loosening');
+  assert.equal(run(entry, mk(b), mk({ path: 'a.json', kind: 'numeric-cap', allowanceKeys: ['files'] })).verdict, 'loosening');
 });

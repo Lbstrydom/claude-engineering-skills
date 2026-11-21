@@ -63,7 +63,7 @@ function diffEntries(base, head, t, { removed, added, changed, removedFor = () =
   const h = flatten(head);
   for (const [k, bv] of b) {
     const hv = h.get(k);
-    if (!hv) { t.add(removedFor(k), `entry removed: ${k}`); continue; }
+    if (!hv) { t.add(removedFor(k, bv), `entry removed: ${k}`); continue; }
     if (bv.num && hv.num) {
       if (hv.value > bv.value) t.add('loosening', `cap raised ${bv.value} -> ${hv.value}: ${k}`);
       else if (hv.value < bv.value) t.add('tightening', `cap lowered ${bv.value} -> ${hv.value}: ${k}`);
@@ -75,14 +75,26 @@ function diffEntries(base, head, t, { removed, added, changed, removedFor = () =
 }
 
 /**
- * `numeric-cap`: a raised cap and an added entry (a new allowance) loosen. A removed entry under one of the entry's
- * `allowanceKeys` is a per-site exception going away, so the default cap applies again: tightening. Any other removed
- * entry loosens (an uncapped value is a raised cap).
+ * `numeric-cap`: a raised cap and an added entry (a new allowance) loosen. A removed entry under one of the entry
+ * `allowanceKeys` is a per-site exception going away, so the DEFAULT cap applies again - but that is tightening only when
+ * the removed value is at or above the default it falls back to (the HEAD value of `allowanceDefaultKey`): an exception
+ * BELOW the default was a stricter cap, and removing it lets the file grow. A member of an ids-style array tightens;
+ * a numeric exception with no declared default, or a non-numeric one, is `unknown`; a declared default that is gone at the
+ * head means the cap itself was removed (loosening). Any other removed entry loosens (an uncapped value is a raised cap).
  */
 const classifyNumericCap = (base, head, t, entry = {}) => {
   const allow = (entry.allowanceKeys || []).map((k) => `/${k}`);
   const isAllowance = (k) => allow.some((p) => k === p || k.startsWith(`${p}/`) || k.startsWith(`${p}[]=`));
-  diffEntries(base, head, t, { removed: 'loosening', added: 'loosening', changed: 'unknown', removedFor: (k) => (isAllowance(k) ? 'tightening' : 'loosening') });
+  const defKey = entry.allowanceDefaultKey;
+  const def = defKey && isObj(head) && typeof head[defKey] === 'number' ? head[defKey] : null;
+  const removedFor = (k, bv) => {
+    if (!isAllowance(k)) return 'loosening';
+    if (k.includes('[]=')) return 'tightening';
+    if (!bv.num) return 'unknown';
+    if (def === null) return defKey ? 'loosening' : 'unknown';
+    return bv.value >= def ? 'tightening' : 'loosening';
+  };
+  diffEntries(base, head, t, { removed: 'loosening', added: 'loosening', changed: 'unknown', removedFor });
 };
 
 /** `set-of-allowances`: removing an allowance tightens, adding one loosens; numeric leaves inside it are still caps. */
@@ -136,7 +148,7 @@ function classifyRegistryChange(baseText, headText, t) {
       const strip = (v) => ({ ...v, note: undefined });
       if (!same(strip(x), strip(e))) {
         const keys = new Set([...Object.keys(x), ...Object.keys(e)].filter((k) => k !== 'note' && k !== 'kind' && !same(x[k], e[k])));
-        const known = [...keys].every((k) => k === 'knownFields' || k === 'allowanceKeys');
+        const known = [...keys].every((k) => k === 'knownFields' || k === 'allowanceKeys' || k === 'allowanceDefaultKey');
         t.add(known ? 'loosening' : 'unknown', `registry entry changed (${[...keys].join(', ')}): ${p}`);
       }
     }

@@ -25,7 +25,8 @@
       ],
       "allowanceKeys": [
         "files"
-      ]
+      ],
+      "allowanceDefaultKey": "limitLines"
     },
     {
       "path": ".skill-size-baseline.json",
@@ -38,7 +39,8 @@
       ],
       "allowanceKeys": [
         "files"
-      ]
+      ],
+      "allowanceDefaultKey": "limitChars"
     },
     {
       "path": ".stdout-flush-baseline.json",

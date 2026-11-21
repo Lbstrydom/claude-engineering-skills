@@ -30,6 +30,15 @@ export const INSTALL_INPUTS = Object.freeze(['package.json', 'package-lock.json'
 
 const rmDir = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
+/**
+ * NUL-delimited pathspec file body in which every path is LITERAL (`:(literal)`): a tracked `caps[1].json` must not match
+ * `caps1.json`. Not `--literal-pathspecs` / GIT_LITERAL_PATHSPECS: those leak into hooks, and checkout runs post-checkout.
+ */
+export function literalPathspecs(paths) {
+  const nul = String.fromCharCode(0);
+  return paths.map((p) => `:(literal)${p}${nul}`).join('');
+}
+
 /** Run git in `cwd`; throws on a non-zero exit. */
 export function git(cwd, args, { input } = {}) {
   return execFileSync('git', args, {
@@ -75,13 +84,27 @@ export function loadSide(repoRoot, rev, { show = showAt } = {}) {
  * @returns {{protectedPaths: string[], restore: string[], remove: string[], closure: string[], helpers: string[], unresolved: object[]}}
  */
 export function computeProtected(baseSide, headSide) {
-  const entryPoints = gateEntryPoints(baseSide.registry).filter((p) => baseSide.set.has(p));
+  // Both registries are expanded over the UNION of both inventories: a registered path that exists in only one revision
+  // (added or deleted by the PR, or governed by a glob that only one registry still carries) is protected all the same.
+  const unionFiles = [...new Set([...baseSide.files, ...headSide.files])];
+  const registered = new Map();
+  for (const reg of [baseSide.registry, headSide.registry]) {
+    if (!reg) continue;
+    for (const [p, e] of expandRegistry(reg, unionFiles)) if (!registered.has(p)) registered.set(p, e);
+  }
+  // Roots: every gate entry point AND every implementation a registered contract names (read from the BASE; an
+  // unparseable contract is the classifier concern, not a reason to crash here).
+  const implementations = new Set();
+  for (const [p, e] of registered) {
+    if (e.kind !== 'contract-set' || !baseSide.set.has(p)) continue;
+    try {
+      const doc = JSON.parse(baseSide.read(p));
+      for (const g of Array.isArray(doc?.gates) ? doc.gates : []) if (typeof g?.implementation === 'string') implementations.add(g.implementation);
+    } catch { /* not a contract document */ }
+  }
+  const entryPoints = [...new Set([...gateEntryPoints(baseSide.registry), ...implementations])].filter((p) => baseSide.set.has(p));
   const closure = protectedClosure({ entryPoints, repoFiles: baseSide.set, readFile: baseSide.read });
-  const registered = new Set([
-    ...expandRegistry(baseSide.registry, baseSide.files).keys(),
-    ...(headSide.registry ? expandRegistry(headSide.registry, headSide.files).keys() : []),
-  ]);
-  const wanted = new Set([...registered, ...closure.files, ...INSTALL_INPUTS, REGISTRY_PATH]);
+  const wanted = new Set([...registered.keys(), ...closure.files, ...INSTALL_INPUTS, REGISTRY_PATH]);
   const protectedPaths = [...wanted].sort();
   return {
     protectedPaths,
@@ -115,7 +138,7 @@ export function npmCiIgnoreScripts(dir) {
  * @param {string} [args.baseInstallDir] an existing, trusted base install to link instead of installing again
  * @returns {{dir: string, shadowDir: string, nodeModules: string, nodeModulesReason?: string, inventories: object, cleanup: () => void}}
  */
-export function buildSnapshot({ repoRoot, base, head, install = true, installDeps = npmCiIgnoreScripts, baseInstallDir, baseSide, headSide, prot }) {
+export function buildSnapshot({ repoRoot, base, head, install = true, installDeps = npmCiIgnoreScripts, baseInstallDir, baseSide, headSide, prot, fsImpl = fs }) {
   for (const r of [base, head]) if (!isSafeGitRevision(r)) throw new Error(`unsafe revision: ${JSON.stringify(r)}`);
   const bs = baseSide ?? loadSide(repoRoot, base);
   const hs = headSide ?? loadSide(repoRoot, head);
@@ -139,12 +162,15 @@ export function buildSnapshot({ repoRoot, base, head, install = true, installDep
     worktrees.push(shadowDir);
     // `checkout <base> -- <paths>` writes AND stages: a path the PR deleted comes back tracked.
     if (protectedSet.restore.length) {
-      git(dir, ['checkout', base, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${protectedSet.restore.join('\0')}\0` });
+      git(dir, ['checkout', base, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: literalPathspecs(protectedSet.restore) });
     }
     // A protected path the base never had is removed from index AND disk: the verdict run sees only the base set.
     if (protectedSet.remove.length) {
-      git(dir, ['rm', '--cached', '--quiet', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: `${protectedSet.remove.join('\0')}\0` });
-      for (const p of protectedSet.remove) { try { fs.unlinkSync(path.join(dir, p)); } catch { /* already gone */ } }
+      git(dir, ['rm', '--cached', '--quiet', '--ignore-unmatch', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: literalPathspecs(protectedSet.remove) });
+      for (const p of protectedSet.remove) {
+        // Only a file that is already gone is fine; any other failure leaves a protected path on disk, so the snapshot is not what it claims.
+        try { fsImpl.unlinkSync(path.join(dir, p)); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
+      }
     }
     let nodeModules = 'unmeasured';
     let nodeModulesReason = 'dependency install skipped';

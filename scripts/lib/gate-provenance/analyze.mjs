@@ -15,6 +15,7 @@ import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { classifyGateDiff, needsAuthorization, GATE_DIFF_CONTRACT_VERSION } from './classify.mjs';
 import { buildSnapshot, loadSide, computeProtected, runGate } from './snapshot.mjs';
 import { evaluateLoosening, fetchPrFacts } from './authorize.mjs';
+import { escapeData as E } from './actions-escape.mjs';
 
 /** Files changed between the two revisions. `--no-renames` lists BOTH sides of a move, so a move out of or into a registered path is seen. */
 function changedBetween(repoRoot, base, head) {
@@ -26,12 +27,12 @@ function changedBetween(repoRoot, base, head) {
  * Run every registered gate twice: VERDICT (base protected set, in the snapshot) and SHADOW (a clean worktree of the head).
  * @returns {{state: 'measured'|'unmeasured', reason?: string, runs: object[]}}
  */
-function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, installDeps, baseInstallDir, run }) {
+function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, installDeps, baseInstallDir, fsImpl, run }) {
   const gates = baseSide.registry.gates;
   if (!gates.length) return { state: 'unmeasured', reason: 'the base registry declares no gates', runs: [] };
   let snap;
   try {
-    snap = buildSnapshot({ repoRoot, base, head, install, installDeps, baseInstallDir, baseSide, headSide, prot });
+    snap = buildSnapshot({ repoRoot, base, head, install, installDeps, baseInstallDir, baseSide, headSide, prot, fsImpl });
   } catch (e) {
     return { state: 'unmeasured', reason: `snapshot construction failed: ${String(e.message).split('\n')[0]}`, runs: [] };
   }
@@ -39,15 +40,31 @@ function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, ins
     if (snap.nodeModules !== 'linked') {
       return { state: 'unmeasured', reason: `no base dependency install (${snap.nodeModulesReason})`, runs: [], inventories: snap.inventories };
     }
-    const runs = gates.map((g) => {
-      const verdict = run({ cwd: snap.dir, argv: g.argv });
-      const shadow = run({ cwd: snap.shadowDir, argv: g.argv });
-      return { id: g.id, verdict, shadow, diverges: verdict.exit !== shadow.exit };
-    });
+    // ALL verdict runs complete and are recorded before ANY shadow run starts: the shadow shares the base node_modules, so a
+    // shadow gate that writes there must not be able to change a verdict.
+    const verdicts = gates.map((g) => run({ cwd: snap.dir, argv: g.argv }));
+    const shadows = gates.map((g) => run({ cwd: snap.shadowDir, argv: g.argv }));
+    const runs = gates.map((g, i) => ({ id: g.id, verdict: verdicts[i], shadow: shadows[i], diverges: verdicts[i].exit !== shadows[i].exit }));
     return { state: 'measured', runs, inventories: snap.inventories };
   } finally {
     snap.cleanup();
   }
+}
+
+/** The ONE report constructor: every report, including the synthetic ones for a failed range or revision, has this shape. */
+export function newReport({ mode, base, head }) {
+  return {
+    contractVersion: GATE_DIFF_CONTRACT_VERSION, mode, base, head, state: 'unmeasured', reason: null,
+    classification: null, authorization: null, gateRuns: null, unmeasuredParts: [],
+  };
+}
+
+/** A report for a run that could not even start measuring: unmeasured, with the reason listed as its one unmeasured part. */
+export function unmeasuredReport({ mode, base, head, reason }) {
+  const r = newReport({ mode, base, head });
+  r.reason = reason;
+  r.unmeasuredParts.push(reason);
+  return r;
 }
 
 function bootstrapReason(baseSide) {
@@ -69,10 +86,7 @@ function bootstrapReason(baseSide) {
  * @param {object} [args.deps] injected seams for tests: facts, installDeps, install, runGate, show
  */
 export function analyze({ repoRoot, base, head, mode, gateRuns = true, repo, pr, baseInstallDir, deps = {} }) {
-  const report = {
-    contractVersion: GATE_DIFF_CONTRACT_VERSION, mode, base, head, state: 'unmeasured', reason: null,
-    classification: null, authorization: null, gateRuns: null, unmeasuredParts: [],
-  };
+  const report = newReport({ mode, base, head });
   const unmeasured = (why) => report.unmeasuredParts.push(why);
   const finish = () => {
     const failing = (report.gateRuns?.runs ?? []).filter((r) => r.verdict.exit !== 0).map((r) => r.id);
@@ -124,7 +138,7 @@ export function analyze({ repoRoot, base, head, mode, gateRuns = true, repo, pr,
   } else {
     report.gateRuns = runGates({
       repoRoot, base, head, baseSide, headSide, prot, install: deps.install ?? true, installDeps: deps.installDeps,
-      baseInstallDir, run: deps.runGate ?? runGate,
+      baseInstallDir, fsImpl: deps.fsImpl, run: deps.runGate ?? runGate,
     });
   }
   if (report.gateRuns.state !== 'measured') unmeasured(`gate runs unmeasured: ${report.gateRuns.reason}`);
@@ -136,29 +150,29 @@ export function summaryLine(r) {
   const parts = [`state=${r.state}`, `mode=${r.mode}`];
   if (r.classification) parts.push(`gateDiff=${r.classification.verdict}`, `files=${r.classification.files.length}`);
   if (r.gateRuns?.state === 'measured') parts.push(`gateRuns=${r.gateRuns.runs.filter((g) => g.verdict.exit === 0).length}/${r.gateRuns.runs.length} pass from base`);
-  if (r.reason) parts.push(r.reason);
+  if (r.reason) parts.push(E(r.reason));
   return parts.join(' | ');
 }
 
 export function formatReport(r) {
-  const lines = [`gate provenance (contract v${r.contractVersion}, ${r.mode} mode)`, `base ${r.base}  head ${r.head}`, ''];
-  if (!r.classification) lines.push(`UNMEASURED: ${r.reason}`);
+  const lines = [`gate provenance (contract v${r.contractVersion}, ${r.mode} mode)`, `base ${E(r.base)}  head ${E(r.head)}`, ''];
+  if (!r.classification) lines.push(`UNMEASURED: ${E(r.reason)}`);
   else {
     lines.push(`gate diff: ${r.classification.verdict}`);
     for (const f of r.classification.files) {
-      lines.push(`  ${f.verdict.padEnd(10)} ${f.path} [${f.kind}]`);
-      for (const why of f.reasons.slice(0, 6)) lines.push(`      ${why}`);
+      lines.push(`  ${f.verdict.padEnd(10)} ${E(f.path)} [${f.kind}]`);
+      for (const why of f.reasons.slice(0, 6)) lines.push(`      ${E(why)}`);
     }
-    if (r.authorization) lines.push('', `authorization: ${r.authorization.state}${r.authorization.reasons.length ? ` (${r.authorization.reasons.join('; ')})` : ''}`);
+    if (r.authorization) lines.push('', `authorization: ${r.authorization.state}${r.authorization.reasons.length ? ` (${E(r.authorization.reasons.join('; '))})` : ''}`);
     lines.push('');
     if (r.gateRuns?.state === 'measured') {
       lines.push('registered gates (verdict = base protected set; shadow = clean worktree of the head):');
-      for (const g of r.gateRuns.runs) lines.push(`  ${g.id.padEnd(22)} verdict exit ${g.verdict.exit}  shadow exit ${g.shadow.exit}${g.diverges ? '  DIVERGES' : ''}`);
+      for (const g of r.gateRuns.runs) lines.push(`  ${E(g.id).padEnd(22)} verdict exit ${g.verdict.exit}  shadow exit ${g.shadow.exit}${g.diverges ? '  DIVERGES' : ''}`);
       const inv = r.gateRuns.inventories;
       if (inv) lines.push(`protected set: ${inv.protectedPaths.length} paths (${inv.restored.length} restored from base, ${inv.removed.length} removed as absent at base, ${inv.helperScripts.length} spawned helper scripts)`);
-    } else if (r.gateRuns) lines.push(`gate runs: UNMEASURED (${r.gateRuns.reason})`);
+    } else if (r.gateRuns) lines.push(`gate runs: UNMEASURED (${E(r.gateRuns.reason)})`);
   }
-  for (const p of r.unmeasuredParts) lines.push(`UNMEASURED: ${p}`);
+  for (const p of r.unmeasuredParts) lines.push(`UNMEASURED: ${E(p)}`);
   lines.push('', summaryLine(r));
   return lines.join('\n');
 }
