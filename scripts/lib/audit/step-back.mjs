@@ -73,7 +73,7 @@ export function parseStepBackOutput(raw) {
 export const PACK_LIMITS = Object.freeze({ perFileChars: 60_000, totalChars: 600_000, maxImporterScan: 5000, maxArchNeighbours: 8 });
 
 /** Import scanning is bound to what the module graph can resolve (its own extension list), not a list kept here; JSON is resolvable but has no imports. */
-const isImportScannable = (rel) => RESOLVABLE_EXTENSIONS.some((e) => e !== '.json' && rel.endsWith(e));
+export const isImportScannable = (rel) => RESOLVABLE_EXTENSIONS.some((e) => e !== '.json' && rel.endsWith(e));
 const looksLikePath = (s) => typeof s === 'string' && s.length < 260 && !/\s/.test(s) && /[\w-]\.[A-Za-z0-9]{1,6}$/.test(s);
 const posix = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '');
 
