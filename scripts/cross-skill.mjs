@@ -240,7 +240,7 @@ export const KNOWN_FLAGS = [
   // rows it is missing, refusing unless staleness has been ruled out AND the
   // disposition RESOLVES. `--allow-exempt` opts in to the one kind no
   // referential check can validate.
-  '--affected-path', '--id', '--note', '--before', '--disposition', '--gate',
+  '--affected-path', '--id', '--note', '--before', '--disposition', '--gate', '--export', '--slug',
   '--apply', '--allow-exempt',
   // ── repoint-regression-spec ───────────────────────────────────────────────
   // `--delete` removes a lock outright: where NO test discharges the finding,

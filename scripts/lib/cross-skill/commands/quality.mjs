@@ -234,8 +234,10 @@ export async function upstreamCmd(ctx) {
       return { ok: true, cloud, ...r };
     }
 
-    const drain = await drainIfPending();
+    // Before the drain: a refused export must perform no drain (and write nothing).
+    if (sub === 'report' && ctx.hasFlag('export')) return exportBranch(ctx, m, { repoRoot, cloud, drainIfPending, scopedRepoId });
 
+    const drain = await drainIfPending();
     if (sub === 'report') {
       const body = ctx.flag('body') ?? await readStdin();
       const res = await m.upstreamReport({
@@ -567,4 +569,45 @@ async function readStdin() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
   return Buffer.concat(chunks).toString('utf-8');
+}
+
+/**
+ * `upstream report --export` (docs/plans/policy-private-consumer-stores.md §2.4): body on
+ * stdin only, a sanitized Markdown copy for a PUBLIC issue, written locally. The
+ * implementation lives in lib/upstream/export.mjs; this is argv shaping.
+ */
+async function exportBranch(ctx, m, { repoRoot, cloud, drainIfPending, scopedRepoId }) {
+  const x = await import('../../upstream/export.mjs');
+  const { resolveRepoIdentity } = await import('../../repo-identity.mjs');
+  if (ctx.hasFlag('body')) {
+    throw new CommandError('BAD_INPUT',
+      '--export reads the body from stdin only: a backtick in an argv --body runs as shell command substitution. Pipe the text in instead.');
+  }
+  const slug = ctx.flag('slug');
+  if (!slug) throw new CommandError('BAD_INPUT', '--slug is required with --export (letters, digits and hyphens, up to 32)');
+  const repoUuid = resolveRepoIdentity(repoRoot).repoUuid;
+  const res = await x.exportReport({
+    repoRoot, repoUuid, slug,
+    storeFingerprint: cloud ? await currentStoreFingerprint() : null,
+    title: ctx.flag('title'),
+    body: await readStdin(),
+    severity: (ctx.flag('severity') || 'MEDIUM').toUpperCase(),
+    affectedPath: ctx.flag('affected-path'),
+    fileFn: async (args) => m.upstreamReport({
+      repoRoot, repoUuid, repoId: cloud ? await scopedRepoId() : null, ...args,
+      actor: ctx.flag('actor') || null, cloudEnabled: cloud,
+      recordFn: (p) => ctx.deps.recordUpstreamIssue(p),
+    }),
+  });
+  if (!res.ok) {
+    // A later step can fail after the Markdown was written: the file exists, so the warning is owed (R3 M2).
+    if (res.exists?.exportPath) process.stderr.write(`${x.PUBLIC_WARNING}\n`);
+    throw new CommandError(res.code, res.errors.join('; '),
+      { step: res.step, exists: res.exists, ...(res.categories ? { categories: res.categories } : {}) },
+      res.code === 'BAD_INPUT' ? 2 : 1);
+  }
+  process.stderr.write(`${x.PUBLIC_WARNING}\n`);
+  const drain = await drainIfPending();
+  for (const w of res.filing.warnings || []) process.stderr.write(`  [upstream] ${w}\n`);
+  return { ...res.filing, exportPath: res.exportPath, exportRecord: res.recordPath, public: true, drain };
 }

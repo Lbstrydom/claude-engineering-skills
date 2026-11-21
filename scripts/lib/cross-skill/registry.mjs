@@ -868,7 +868,8 @@ export const REGISTRY = Object.freeze([
   {
     name: 'upstream',
     flags: ['title', 'body', 'severity', 'affected-path', 'actor', 'id', 'note', 'commit',
-      'state', 'before', 'limit', 'repo-id', 'disposition', { name: 'worksheet', kind: 'boolean' },
+      'state', 'before', 'limit', 'repo-id', 'disposition', 'slug', { name: 'worksheet', kind: 'boolean' },
+      { name: 'export', kind: 'boolean' },
       // `--gate` (round-3 audit H5 compromise): `reconcile --gate` exits non-zero
       // when any terminal db row still carries the migration-generated catch-all
       // sentinel disposition — a post-deploy release-completion check, not just

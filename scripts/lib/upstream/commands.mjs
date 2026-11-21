@@ -420,7 +420,7 @@ export function validateReportInput({ title, body, severity, affectedPath }) {
  * that one blanket-redacts any 20+ char token and would corrupt report prose
  * (the same rule AGENTS.md states for incident text).
  */
-function redactReport(payload) {
+export function redactReport(payload) {
   const r = (v) => (typeof v === 'string' && v ? redactSecrets(v).text : v);
   return { ...payload, title: r(payload.title), body: r(payload.body), affectedPath: r(payload.affectedPath) };
 }
