@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { atomicWriteFileSync } from '../file-io.mjs';
-import { canonicaliseRemoteUrl, resolveRepoIdentity } from '../repo-identity.mjs';
+import { canonicaliseRemoteUrl } from '../repo-identity.mjs';
 import { scanForLeaks } from '../telemetry-export/redact.mjs';
 import { destRelToSourceRel } from '../sync-path-map.mjs';
 import {
