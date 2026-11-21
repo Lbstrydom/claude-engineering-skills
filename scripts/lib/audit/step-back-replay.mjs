@@ -31,10 +31,25 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { estimateCostUsd, preflightEstimateUsd } from '../brainstorm/pricing.mjs';
+import { priceFor, FALLBACK_PRICE_USD } from '../model-pricing.mjs';
 import { buildCheckpointSnapshot } from './step-back-snapshot.mjs';
+import { buildExportSnapshot } from './step-back-export.mjs';
+import { createRevisionFs } from './step-back-gitfs.mjs';
 import { buildStepBackPack, initialStepBackRecord, runStepBack, STEP_BACK_SYSTEM_PROMPT } from './step-back.mjs';
 import { createStepBackProvider, STEP_BACK_MAX_OUTPUT_TOKENS } from './step-back-provider.mjs';
+
+/** Cost of a metered call in USD, or null when the model is unpriced (tier-aware: input tokens are forwarded). */
+export function estimateCostUsd({ modelId, inputTokens, outputTokens }) {
+  const rate = priceFor(modelId, { inputTokens });
+  return rate ? (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000 : null;
+}
+
+/** Pre-call ceiling from chars/4; an unpriced model uses the conservative fallback rate, never zero. */
+export function preflightEstimateUsd({ modelId, inputChars, maxOutputTokens }) {
+  const inputTokens = Math.ceil(inputChars / 4);
+  const rate = priceFor(modelId, { inputTokens }) || FALLBACK_PRICE_USD;
+  return (inputTokens * rate.input + maxOutputTokens * rate.output) / 1_000_000;
+}
 
 export const REPLAY_ARMS = Object.freeze(['none', 'same', 'different']);
 export const PAID_ARMS = Object.freeze(['same', 'different']);
@@ -51,6 +66,7 @@ export async function gitCheckout(sha, { cwd = process.cwd() } = {}) {
 
 /** Build the snapshot + pack for every recoverable PR-checkpoint; unrecoverable ones are listed, never reconstructed. */
 export async function prepareItems({ dataset, deps = {} }) {
+  if (dataset.source === 'store-export') return prepareStoreItems({ dataset, deps });
   const checkout = deps.checkout || gitCheckout;
   const readJson = deps.readJson;
   const items = []; const unrecoverable = [];
@@ -95,7 +111,8 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
   if (!dryRun && !(Number.isFinite(maxUsd) && maxUsd > 0)) throw new Error('runReplay: a positive --max-usd is required for a paid run');
   const makeProvider = deps.makeProvider || ((arm) => createStepBackProvider(arm));
   const providers = Object.fromEntries(paid.map((a) => [a, makeProvider(a)]));
-  const { items, unrecoverable } = await prepareItems({ dataset, deps });
+  const prepared = await prepareItems({ dataset, deps });
+  const { items, unrecoverable } = prepared;
 
   const measured = Object.fromEntries(paid.map((a) => [a, []]));
   const plan = []; const calls = [];
@@ -128,7 +145,7 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
       });
     }
   }
-  return { plan, calls, unrecoverable, spentUsd: spent, stopped, estimatedUsd: plan.reduce((s, p) => s + p.estimateUsd, 0), preparedPrs: items.length };
+  return { plan, calls, unrecoverable, controls: prepared.controls || [], spentUsd: spent, stopped, estimatedUsd: plan.reduce((s, p) => s + p.estimateUsd, 0), preparedPrs: items.length };
 }
 
 /**
@@ -170,10 +187,38 @@ export function scoreReplay({ calls, truth, arms, plan }) {
 }
 
 /** The dry-run text: every planned call and the estimated total, nothing sent. */
-export function renderDryRun({ plan, unrecoverable, estimatedUsd, maxUsd = null, preparedPrs = 0 }) {
+export function renderDryRun({ plan, unrecoverable, estimatedUsd, maxUsd = null, preparedPrs = 0, controls = [] }) {
   const lines = ['step-back-replay DRY RUN - no provider call was made'];
   plan.forEach((p, i) => lines.push(`  call ${i + 1}: PR #${p.pr} R${p.checkpoint} arm=${p.arm} model=${p.model} pack=${p.packChars} chars est $${p.estimateUsd.toFixed(4)}`));
   lines.push(`planned calls: ${plan.length} (${preparedPrs} PR-checkpoints), estimated total $${estimatedUsd.toFixed(2)}${maxUsd ? ` against a hard stop of $${Number(maxUsd).toFixed(2)}` : ''}`);
   if (unrecoverable.length) lines.push(`unrecoverable (excluded, never imputed): ${unrecoverable.map((u) => `#${u.pr}${u.checkpoint ? ` R${u.checkpoint}` : ''} (${u.reason})`).join('; ')}`);
+  if (controls.length) lines.push(`controls (no checkpoint, no call): ${controls.map((c) => `#${c.pr} (${c.rounds} rounds)`).join(', ')}`);
   return lines.join('\n');
+}
+
+/**
+ * Store-export datasets: snapshots are reconstructed from the exported events and repo content is read with
+ * `git show <audited_sha>:<path>` through a virtual revision fs — never a checkout, never the current tree.
+ * A revision git cannot read makes that checkpoint unrecoverable (counted), not a junk pack.
+ */
+async function prepareStoreItems({ dataset, deps }) {
+  const exp = deps.readExport ? deps.readExport(dataset.exportPath) : JSON.parse(fs.readFileSync(dataset.exportPath, 'utf8'));
+  const items = []; const unrecoverable = []; const controls = [];
+  for (const pr of dataset.prs) {
+    if (pr.status !== 'recoverable') { unrecoverable.push({ pr: pr.pr, checkpoint: null, reason: pr.reason }); continue; }
+    if (pr.control) controls.push({ pr: pr.pr, rounds: pr.rounds, note: 'fewer than 3 rounds: the step-back cannot fire' });
+    for (const cp of pr.checkpoints) {
+      if (cp.status !== 'recoverable') { unrecoverable.push({ pr: pr.pr, checkpoint: cp.checkpoint, reason: cp.reason }); continue; }
+      const snap = buildExportSnapshot({ exp, branch: pr.branch, checkpoint: cp.checkpoint });
+      if (!snap.ok) { unrecoverable.push({ pr: pr.pr, checkpoint: cp.checkpoint, reason: snap.reason }); continue; }
+      const rev = (deps.openRevision || createRevisionFs)({ sha: snap.snapshot.auditedSha });
+      if (!rev.ok) { unrecoverable.push({ pr: pr.pr, checkpoint: cp.checkpoint, reason: rev.reason }); continue; }
+      const pack = await buildStepBackPack({
+        repoRoot: rev.root, fsImpl: rev.fs, planFile: snap.snapshot.planFile, ledgerEntries: snap.snapshot.ledgerEntries, rounds: snap.snapshot.rounds,
+        repoFiles: rev.repoFiles, archNeighbours: null, ...(deps.topicOf ? { topicOf: deps.topicOf } : {}),
+      });
+      items.push({ pr: pr.pr, label: pr.label, checkpoint: cp.checkpoint, auditedSha: snap.snapshot.auditedSha, pack, inputChars: STEP_BACK_SYSTEM_PROMPT.length + pack.text.length });
+    }
+  }
+  return { items, unrecoverable, controls };
 }
