@@ -25,7 +25,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { resolveAndClassify, formatSkipLog } from '../sensitive-paths.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
-import { parseImports, resolveSpecifier } from '../module-graph.mjs';
+import { parseImports, resolveSpecifier, RESOLVABLE_EXTENSIONS } from '../module-graph.mjs';
 import { findingFiles } from '../concern-identity.mjs';
 import { defaultTopicOf } from './round-signals.mjs';
 
@@ -72,7 +72,8 @@ export function parseStepBackOutput(raw) {
 
 export const PACK_LIMITS = Object.freeze({ perFileChars: 60_000, totalChars: 600_000, maxImporterScan: 5000, maxArchNeighbours: 8 });
 
-const CODE_EXT_RE = /\.(?:mjs|cjs|js|jsx|ts|tsx)$/;
+/** Import scanning is bound to what the module graph can resolve (its own extension list), not a list kept here; JSON is resolvable but has no imports. */
+const isImportScannable = (rel) => RESOLVABLE_EXTENSIONS.some((e) => e !== '.json' && rel.endsWith(e));
 const looksLikePath = (s) => typeof s === 'string' && s.length < 260 && !/\s/.test(s) && /[\w-]\.[A-Za-z0-9]{1,6}$/.test(s);
 const posix = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '');
 
@@ -137,7 +138,7 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   const importersOf = new Map();
   for (const rel of cited) {
     const body = readBody(rel);
-    if (body == null || !CODE_EXT_RE.test(rel)) continue;
+    if (body == null || !isImportScannable(rel)) continue;
     for (const spec of parseImports(body)) {
       const r = resolveSpecifier({ fromFile: rel, specifier: spec, repoFiles: repoSet });
       if (r.kind === 'repo' && r.resolved && !cited.includes(r.resolved)) imports.set(r.resolved, 'import-of-cited');
@@ -145,7 +146,7 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   }
   // Importers: scan code files; each is classified BEFORE it is read.
   const citedSet = new Set(cited);
-  const scan = [...repoSet].filter((f) => CODE_EXT_RE.test(f) && !citedSet.has(f)).sort();
+  const scan = [...repoSet].filter((f) => isImportScannable(f) && !citedSet.has(f)).sort();
   if (scan.length > limits.maxImporterScan) notes.push(`importer scan truncated to ${limits.maxImporterScan} of ${scan.length} code files`);
   for (const rel of scan.slice(0, limits.maxImporterScan)) {
     const c = classify(rel); if (!c.ok) continue;
