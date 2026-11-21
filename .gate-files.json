@@ -8,6 +8,10 @@
         "count",
         "files",
         "ids"
+      ],
+      "allowanceKeys": [
+        "files",
+        "ids"
       ]
     },
     {
@@ -17,6 +21,9 @@
         "_description",
         "limitLines",
         "toleranceLines",
+        "files"
+      ],
+      "allowanceKeys": [
         "files"
       ]
     },
@@ -28,6 +35,9 @@
         "limitChars",
         "toleranceChars",
         "files"
+      ],
+      "allowanceKeys": [
+        "files"
       ]
     },
     {
@@ -37,6 +47,10 @@
         "_description",
         "total",
         "envelope",
+        "files",
+        "ids"
+      ],
+      "allowanceKeys": [
         "files",
         "ids"
       ]

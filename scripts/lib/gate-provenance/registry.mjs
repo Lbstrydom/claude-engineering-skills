@@ -22,6 +22,12 @@ const FileEntry = z.strictObject({
   kind: z.enum(CLASSIFIER_KINDS),
   /** Optional closed list of top-level JSON fields; any other top-level field on either side reads `unknown`. */
   knownFields: z.array(z.string()).optional(),
+  /**
+   * `numeric-cap` only: top-level keys whose members are per-site EXCEPTIONS to a default cap (`files`, `ids`). Removing a
+   * member restores the default, stricter cap, so it reads `tightening`; adding one is a new allowance (`loosening`). A
+   * removed key outside these reads `loosening` (an uncapped value is a raised cap).
+   */
+  allowanceKeys: z.array(z.string()).optional(),
   note: z.string().optional(),
 });
 

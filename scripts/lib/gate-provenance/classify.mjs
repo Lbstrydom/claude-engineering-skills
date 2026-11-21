@@ -58,12 +58,12 @@ function flatten(doc) {
   return out;
 }
 
-function diffEntries(base, head, t, { removed, added, changed }) {
+function diffEntries(base, head, t, { removed, added, changed, removedFor = () => removed }) {
   const b = flatten(base);
   const h = flatten(head);
   for (const [k, bv] of b) {
     const hv = h.get(k);
-    if (!hv) { t.add(removed, `entry removed: ${k}`); continue; }
+    if (!hv) { t.add(removedFor(k), `entry removed: ${k}`); continue; }
     if (bv.num && hv.num) {
       if (hv.value > bv.value) t.add('loosening', `cap raised ${bv.value} -> ${hv.value}: ${k}`);
       else if (hv.value < bv.value) t.add('tightening', `cap lowered ${bv.value} -> ${hv.value}: ${k}`);
@@ -74,8 +74,16 @@ function diffEntries(base, head, t, { removed, added, changed }) {
   for (const k of h.keys()) if (!b.has(k)) t.add(added, `entry added: ${k}`);
 }
 
-/** `numeric-cap`: a raised cap, a removed entry (an uncapped file is a raised cap) and an added entry (a new allowance) all loosen. */
-const classifyNumericCap = (base, head, t) => diffEntries(base, head, t, { removed: 'loosening', added: 'loosening', changed: 'unknown' });
+/**
+ * `numeric-cap`: a raised cap and an added entry (a new allowance) loosen. A removed entry under one of the entry's
+ * `allowanceKeys` is a per-site exception going away, so the default cap applies again: tightening. Any other removed
+ * entry loosens (an uncapped value is a raised cap).
+ */
+const classifyNumericCap = (base, head, t, entry = {}) => {
+  const allow = (entry.allowanceKeys || []).map((k) => `/${k}`);
+  const isAllowance = (k) => allow.some((p) => k === p || k.startsWith(`${p}/`) || k.startsWith(`${p}[]=`));
+  diffEntries(base, head, t, { removed: 'loosening', added: 'loosening', changed: 'unknown', removedFor: (k) => (isAllowance(k) ? 'tightening' : 'loosening') });
+};
 
 /** `set-of-allowances`: removing an allowance tightens, adding one loosens; numeric leaves inside it are still caps. */
 const classifyAllowances = (base, head, t) => diffEntries(base, head, t, { removed: 'tightening', added: 'loosening', changed: 'loosening' });
@@ -180,7 +188,7 @@ export function classifyFile({ path, entry, baseText, headText }) {
     if (t.verdict === 'unknown') return out();
   }
   const rules = { 'numeric-cap': classifyNumericCap, 'set-of-allowances': classifyAllowances, 'contract-set': classifyContractSet };
-  rules[entry.kind](pb.doc, ph.doc, t);
+  rules[entry.kind](pb.doc, ph.doc, t, entry);
   return out();
 }
 

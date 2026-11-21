@@ -297,9 +297,10 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
 - **Observe mode** (the only mode CI runs): prints the report and a `::notice title=audit-loop-gate-provenance::` line and
   exits 0. Anything it could not measure (no base, the bootstrap PR whose base has no runner, no `gh`, no base install) prints as
   `unmeasured`, never as clean. Enforce mode (`--mode enforce`) exists for a later, separate PR.
-- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost). A
-  shrink of a `numeric-cap` baseline (an entry removed) reads `loosening` by the plan rule, so an honest re-baseline after
-  fixing a site also needs the label below.
+- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost). In a
+  `numeric-cap` baseline, removing a per-site exception listed under the entry's `allowanceKeys` (`files`, `ids`) restores
+  the default cap and reads `tightening`, so an honest re-baseline after fixing a site needs no label; removing any other
+  key reads `loosening`.
 
 **Requesting a loosening**: a PR whose gate diff is `loosening` or `unknown` is allowed only when it changes nothing but
 registered files, carries the label `gate-loosening`, and has a standing approving review by `Lbstrydom`. Open it as its own

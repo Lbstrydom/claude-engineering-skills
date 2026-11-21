@@ -66,9 +66,18 @@ test('fixed row: an unknown top-level field is unknown', () => {
 
 test('opaque: any change is unknown', () => assert.equal(run(opaque, 'a', 'b').verdict, 'unknown'));
 
-test('numeric-cap: entry removed and entry added both loosen', () => {
+test('numeric-cap: entry removed and entry added both loosen when no allowance keys are declared', () => {
   assert.equal(verdict(cap, { files: { a: 5, b: 6 } }, { files: { a: 5 } }), 'loosening');
   assert.equal(verdict(cap, { files: { a: 5 } }, { files: { a: 5, b: 6 } }), 'loosening');
+});
+
+test('numeric-cap: removing a per-site exception under allowanceKeys tightens (the default cap applies again); adding one loosens', () => {
+  const capA = { ...cap, allowanceKeys: ['files', 'ids'] };
+  assert.equal(verdict(capA, { files: { a: 5, b: 6 } }, { files: { a: 5 } }), 'tightening');
+  assert.equal(verdict(capA, { ids: ['x', 'y'] }, { ids: ['x'] }), 'tightening');
+  assert.equal(verdict(capA, { files: { a: 5 } }, { files: { a: 5, b: 6 } }), 'loosening');
+  // negative control: a removed key OUTSIDE the allowance keys still loosens
+  assert.equal(verdict(capA, { limit: 1000, files: {} }, { files: {} }), 'loosening');
 });
 
 test('numeric-cap: worst of per-entry verdicts (one raise among many lowerings)', () => {
