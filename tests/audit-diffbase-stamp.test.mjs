@@ -53,6 +53,36 @@ describe('resolveAllowlistBase — an explicit base beside --files is validated 
   });
 });
 
+describe('resolveAllowlistBase against a REAL repository (the resolver openai-audit wires in)', () => {
+  it('an ancestor base resolves to its full sha; a non-ancestor base stops the run', async () => {
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { spawnSync, execFileSync } = await import('node:child_process');
+    const { resolveRangeSnapshot, makeGitRunner } = await import('../scripts/lib/worktree-identity.mjs');
+    // a hook-exported GIT_DIR must not retarget the fixture
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('GIT_')));
+    Object.assign(env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffbase-stamp-'));
+    try {
+      const g = (...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', ...a], { cwd: dir, env, encoding: 'utf8' }).trim();
+      g('init', '-q', '-b', 'main');
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n'); g('add', 'a.txt'); g('commit', '-q', '-m', 'one');
+      const base = g('rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'b\n'); g('commit', '-q', '-am', 'two');
+      g('checkout', '-q', '-b', 'side', base); fs.writeFileSync(path.join(dir, 's.txt'), 's\n'); g('add', 's.txt'); g('commit', '-q', '-m', 'side');
+      const side = g('rev-parse', 'HEAD');
+      g('checkout', '-q', 'main');
+      const run = makeGitRunner(dir, { spawn: (cmd, args, o) => spawnSync(cmd, args, { ...o, env }) });
+      const resolve = (a) => resolveRangeSnapshot({ ...a, run });
+      assert.equal(resolveAllowlistBase({ source: 'allowlist', explicitBase: base.slice(0, 10), resolve }), base);
+      assert.throws(() => resolveAllowlistBase({ source: 'allowlist', explicitBase: side, resolve }), (e) => e.auditScopeFatal === true);
+      assert.throws(() => resolveAllowlistBase({ source: 'allowlist', explicitBase: 'no-such-ref', resolve }), (e) => e.auditScopeFatal === true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
 describe('openai-audit.mjs uses the ONE decision at every stamp site', () => {
   const src = fs.readFileSync(new URL('../scripts/openai-audit.mjs', import.meta.url), 'utf8');
   it('both stampAuditRound call sites for code rounds go through diffBaseToStamp, and the old coverage-only ternary is gone', () => {
