@@ -11,10 +11,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv } from './helpers/fleet-repo.mjs';
-import os from 'node:os';
 import { git } from './helpers/git.mjs';
 import { setup as harness } from './helpers/fleet-cli-harness.mjs';
-import { addBranch } from './helpers/fleet-repo.mjs';
+import { addBranch, tmpRoot } from './helpers/fleet-repo.mjs';
 import { T0, world } from './helpers/fleet-lease-world.mjs';
 import { emptyLease } from '../scripts/lib/fleet/lease.mjs';
 import { endTurnWorkGone } from '../scripts/lib/fleet/lease-turns.mjs';
@@ -205,7 +204,7 @@ describe('D1 fleet release ends the turn of a repo whose work is gone (the 16:17
 describe('D1 end to end through the real facts pipeline (merged evidence, a real CI window)', () => {
   it('releasing a squash-merged last session clears its running CI window and ends its turn, and journals why', () => {
     const s = harness();
-    const machine = fs.mkdtempSync(path.join(os.tmpdir(), 'c2-machine-'));
+    const machine = tmpRoot('c2-machine-'); // registered with cleanupFleetRoots
     const env = { FLEET_MACHINE_DIR: machine, FLEET_NOW: T0, FLEET_TELEMETRY: 'off' };
     addBranch(s.fx.repo, 'feat-a', { 'shared/a.txt': 'A\n' });
     git(['checkout', '-q', 'feat-a'], s.fx.repo);
