@@ -118,6 +118,12 @@ describe('completeness, round 2: unknown and unresolved are never success', () =
     const q = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }], idx([v('K1', 'H1', 'UNDETERMINED')]));
     assert.equal(q.complete, false); assert.match(q.incompleteReasons.join(';'), /UNDETERMINED/); assert.equal(q.notClean, 0);
   });
+  it('a repeated or missing case id is INCOMPLETE even when the findings are disjoint or the cases are clean', () => {
+    const disjoint = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }, { kdId: 'K1', outcome: 'flagged', findings: [f('H2')] }], idx([v('K1', 'H1', 'WRONG'), v('K1', 'H2', 'WRONG')]));
+    assert.equal(disjoint.complete, false); assert.deepEqual(disjoint.duplicateCases, ['K1']);
+    assert.equal(score([{ kdId: 'K3', outcome: 'clean' }, { kdId: 'K3', outcome: 'clean' }], idx([])).complete, false, 'two clean entries for one case');
+    assert.equal(score([{ outcome: 'clean' }], idx([])).complete, false, 'a case with no id');
+  });
   it('a repeated case id cannot receive the same verdict twice: the duplicate is ambiguous across the WHOLE report', () => {
     const q = score([{ kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }, { kdId: 'K1', outcome: 'flagged', findings: [f('H1')] }], idx([v('K1', 'H1', 'REAL')]));
     assert.equal(q.complete, false); assert.equal(q.realDefects, 1, 'applied once'); assert.deepEqual(q.ambiguous, ['K1:backend:H1']);
@@ -139,6 +145,37 @@ describe('completeness, round 2: unknown and unresolved are never success', () =
     assert.equal(indexAdjudications([fp('H1'), fp('H2')]).allFingerprinted, true);
     assert.equal(indexAdjudications([fp('H1'), v('K1', 'H2', 'WRONG')]).allFingerprinted, false);
     assert.equal(indexAdjudications([]).allFingerprinted, false, 'an empty list ties nothing');
+  });
+});
+
+describe('fingerprints end to end: built from the real findings, indexed, matched and accepted together', () => {
+  const rich = (id) => ({ id, pass: 'backend', severity: 'HIGH', category: 'c', section: 's', detail: `claim ${id}` });
+  const findings = [rich('H1'), rich('H2')];
+  const rep = { kdId: 'K1', outcome: 'flagged', findings };
+  const withFp = (over = {}) => findings.map((x) => ({ kdId: 'K1', id: x.id, pass: x.pass, class: 'WRONG', fingerprint: findingFingerprint(x), ...over }));
+
+  it('verdicts fingerprinted from the report findings need no run binding: indexAdjudications derives allFingerprinted and the score is complete', () => {
+    const r = indexAdjudications(withFp());
+    assert.equal(r.ok, true); assert.equal(r.allFingerprinted, true); assert.equal(r.reportRunId, null);
+    const q = scoreAdjudicated([rep], r.byKey, { partial: false, costComplete: true, bound: false, allFingerprinted: r.allFingerprinted });
+    assert.equal(q.complete, true); assert.equal(q.falseClaims, 2); assert.deepEqual(q.stale, []);
+  });
+  it('NEGATIVE CONTROL: one wrong fingerprint makes that verdict stale and the score INCOMPLETE', () => {
+    const list = withFp(); list[1] = { ...list[1], fingerprint: findingFingerprint({ ...findings[1], detail: 'something else' }) };
+    const r = indexAdjudications(list);
+    const q = scoreAdjudicated([rep], r.byKey, { partial: false, costComplete: true, bound: false, allFingerprinted: r.allFingerprinted });
+    assert.equal(q.complete, false); assert.deepEqual(q.stale, ['K1:backend:H2']); assert.equal(q.falseClaims, 1);
+  });
+  it('through the CLI: a bare array of fingerprinted verdicts exits 0, and a changed fingerprint exits 3', () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'adj-fp-')); dirs.push(d);
+    const report = { runId: 'x', suite: 'expect_clean', partial: false, budgetStop: null, costComplete: true, perCase: [rep] };
+    const call = (verdicts) => {
+      fs.writeFileSync(path.join(d, 'r.json'), JSON.stringify(report)); fs.writeFileSync(path.join(d, 'a.json'), JSON.stringify(verdicts));
+      return spawnSync('node', [path.join(ROOT, 'scripts', 'model-eval-auditor.mjs'), '--adjudicate-report', path.join(d, 'r.json'), '--adjudications', path.join(d, 'a.json'), '--out', path.join(d, 'o.json')], { encoding: 'utf8' });
+    };
+    assert.equal(call(withFp()).status, 0);
+    const tampered = withFp(); tampered[0].fingerprint = '0000000000000000';
+    const r = call(tampered); assert.equal(r.status, 3); assert.match(r.stdout, /different finding under the same id/);
   });
 });
 

@@ -63,6 +63,8 @@ export function indexAdjudications(input) {
 export function scoreAdjudicated(perCase, byKey, source = {}) {
   const seen = new Set(); const stale = []; const ambiguous = []; const inconsistent = [];
   const keysInReport = new Set(); // across the WHOLE report: a repeated case id must not let one verdict be applied twice
+  const caseIds = new Set(); const dupCases = [];
+  for (const c of perCase) { if (typeof c?.kdId !== 'string' || c.kdId === '' || caseIds.has(c.kdId)) dupCases.push(c?.kdId ?? '(no kdId)'); else caseIds.add(c.kdId); }
   const cases = []; const t = { REAL: 0, NOT_A_DEFECT: 0, WRONG: 0, UNDETERMINED: 0, unadjudicated: 0 };
   for (const c of perCase) {
     const counts = { REAL: 0, NOT_A_DEFECT: 0, WRONG: 0, UNDETERMINED: 0, unadjudicated: 0 };
@@ -89,6 +91,7 @@ export function scoreAdjudicated(perCase, byKey, source = {}) {
   if (t.unadjudicated > 0) reasons.push(`${t.unadjudicated} finding(s) have no verdict`);
   if (orphaned.length > 0) reasons.push(`${orphaned.length} verdict(s) match no finding`);
   if (stale.length > 0) reasons.push(`${stale.length} verdict(s) were made for a different finding under the same id`);
+  if (dupCases.length > 0) reasons.push(`case id(s) missing or repeated, so a case's findings and verdicts cannot be told apart: ${[...new Set(dupCases)].join(', ')}`);
   if (ambiguous.length > 0) reasons.push(`${ambiguous.length} finding(s) have a missing or duplicate id`);
   if (inconsistent.length > 0) reasons.push(`flagged case(s) kept no findings: ${inconsistent.join(', ')}`);
   if (failed.length > 0) reasons.push(`the source run failed case(s): ${failed.join(', ')}`);
@@ -111,7 +114,7 @@ export function scoreAdjudicated(perCase, byKey, source = {}) {
     notCleanIntroducedByCommit: cases.filter((c) => c.realDefectIntroducedByCommit).length,
     casesWithFalseClaim: cases.filter((c) => c.WRONG > 0).length,
     measuredCases: cases.filter((c) => c.outcome !== 'failed').length,
-    orphaned, stale, ambiguous, inconsistent, failedCases: failed,
+    orphaned, stale, ambiguous, inconsistent, duplicateCases: dupCases, failedCases: failed,
     perCase: cases,
   };
 }
