@@ -71,9 +71,11 @@ export function findingGateClass(f) {
  */
 export function gatesForCount(f, { inDiff }) {
   if (!inDiff) {
-    return f?.newly_reachable === true
-      ? { gates: true, reason: 'pre-existing-newly-reachable' }
-      : { gates: false, reason: 'mechanically-pre-existing' };
+    if (f?.newly_reachable !== true) return { gates: false, reason: 'mechanically-pre-existing' };
+    // It counts either way (conservative); the REASON says why: a contradictory or half-stated tag set is named as such, not
+    // reported as a clean "newly reachable" (final gate G1). A nit made reachable still counts: the nit excusal is in-diff only.
+    const g = findingGateClass(f);
+    return { gates: true, reason: g.gates ? g.reason : 'pre-existing-newly-reachable' };
   }
   const g = findingGateClass(f);
   // A model claim of pre_existing on a line the mechanical scope places IN the diff contradicts it: the finding gates, and

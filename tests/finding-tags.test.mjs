@@ -67,6 +67,17 @@ describe('gatesForCount - the mechanical scope outranks the model', () => {
     assert.equal(gatesForCount(full({ importance: 'nit' }), { inDiff: true }).gates, false);
     assert.equal(gatesForCount(full({ importance: 'nit', severity: 'HIGH' }), { inDiff: true }).gates, true);
     assert.equal(gatesForCount({ severity: 'LOW', importance: 'nit', pre_existing: false }, { inDiff: true }).gates, true);   // half-stated nit
+    // final gate G1: an OUT-of-diff finding with newly_reachable true counts in every case, and its reason names a contradiction
+    for (const [tags, reason] of [
+      [{ importance: 'important', pre_existing: false, newly_reachable: true }, 'tag-contradiction'],
+      [{ importance: null, pre_existing: null, newly_reachable: true }, 'importance-unstated'],
+      [{ importance: 'nit', pre_existing: true, newly_reachable: true }, 'pre-existing-newly-reachable'],
+      [{ importance: 'important', pre_existing: true, newly_reachable: true }, 'pre-existing-newly-reachable'],
+    ]) {
+      const g = gatesForCount({ severity: 'MEDIUM', ...tags }, { inDiff: false });
+      assert.equal(g.gates, true, JSON.stringify(tags));
+      assert.equal(g.reason, reason, JSON.stringify(tags));
+    }
     // audit R2 H2/M2: an in-diff NIT that claims pre_existing contradicts the mechanical scope - it gates, never excused as a nit
     const nitClaimsOld = gatesForCount(full({ importance: 'nit', pre_existing: true, newly_reachable: false }), { inDiff: true });
     assert.equal(nitClaimsOld.gates, true);
