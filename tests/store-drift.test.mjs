@@ -178,3 +178,24 @@ describe('the drift-found exit code carries DATA, not failure', () => {
     assert.match(src, /parseDriftOutput\(String\(err\.stdout\)\)/);
   });
 });
+
+describe('collectDrift — a policy-private consumer is never a count', () => {
+  const policy = [{ repo: 'orgx-tools', alias: 'orgx', reason: 'unreachable-by-policy' }];
+
+  it('0 eligible stores + 1 policy consumer: NOTHING WAS CHECKED plus the policy line', () => {
+    const result = collectDrift({ stores: [], unresolved: [], policyUnreachable: policy, query: () => assert.fail('queried') });
+    assert.equal(result.storesQueried, 0);
+    assert.equal(result.storesUnqueried, 0);
+    assert.deepEqual(result.policyUnreachable, policy);
+    const card = renderDrift(result);
+    assert.match(card, /NOTHING WAS CHECKED/);
+    assert.match(card, /unreachable-by-policy orgx — declared private; never queried, NOT counted/);
+    assert.doesNotMatch(card, /all current/);
+  });
+
+  it('negative control: an answering store is still "all current" and the policy line is still printed', () => {
+    const card = renderDrift(collectDrift({ stores: [STORE_A], unresolved: [], policyUnreachable: policy, query: clean }));
+    assert.match(card, /all current/);
+    assert.match(card, /unreachable-by-policy orgx/);
+  });
+});

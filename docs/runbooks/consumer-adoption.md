@@ -209,6 +209,26 @@ that is present but unusable is reported as such (never as absent), and the file
 must be committed — `.audit-loop/` is not ignored wholesale, so it travels with
 every clone.
 
+#### A store that must never be queried from outside: `"upstreamReachable": false`
+
+If your organisation's policy forbids any read of the store from outside it, say
+so in the same file (alone, or beside `check` / `docs`):
+
+```json
+{ "upstreamReachable": false }
+```
+
+The upstream maintainer's fan-out (`upstream:queues`, `stores:drift`) then **never
+queries** that consumer: it is listed as `unreachable-by-policy <alias>` on every
+path, never counted as an empty queue, and never added to a total. The value must
+be a JSON boolean; anything else (`"no"`, `0`) is a problem, never coerced, and
+an unreadable or malformed file is treated as private (`policy-undeterminable`) —
+a typo in a privacy declaration must not become a query of the store it protects.
+If another consumer resolves to the same store, that store is refused as
+`shared-with-policy-consumer` rather than read through the other consumer. Your
+own `doctor` prints `upstream: unreachable-by-policy` so you can see the
+declaration took effect. Absent or `true` behaves exactly as before.
+
 ---
 
 ## Runtime prerequisites — and non-Node consumers

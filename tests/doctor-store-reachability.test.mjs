@@ -47,11 +47,11 @@ describe('classifyStoreReachability', () => {
 
 describe('readStoreSetupPointer', () => {
   it('absent file is present:false', () => {
-    assert.deepEqual(readStoreSetupPointer(repoWithPointer(undefined)), { present: false });
+    assert.deepEqual(readStoreSetupPointer(repoWithPointer(undefined)), { present: false, policy: 'absent' });
   });
   it('reads check and docs', () => {
     const p = readStoreSetupPointer(repoWithPointer('{"check":"pwsh setup.ps1 -DryRun","docs":"tools/README.md"}'));
-    assert.deepEqual(p, { present: true, check: 'pwsh setup.ps1 -DryRun', docs: 'tools/README.md', problems: [] });
+    assert.deepEqual(p, { present: true, check: 'pwsh setup.ps1 -DryRun', docs: 'tools/README.md', upstreamReachable: null, policy: 'absent', problems: [] });
   });
   it('malformed is reported as malformed, never as absent', () => {
     for (const body of ['{not json', '[]', '"x"', '{}', '{"check": 5}']) {

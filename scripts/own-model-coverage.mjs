@@ -19,6 +19,8 @@ import './lib/load-env.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { assertKnownFlags, ArgvError, arg, finishAndExit } from './lib/cli-io.mjs';
 import { validateConfig, buildMeasureSql, evaluateEntry, exitCodeFor, checkStatic } from './lib/telemetry/coverage.mjs';
+import { ambientPopulation } from './lib/store/population-ambient.mjs';
+import { renderPopulationLine } from './lib/population.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -78,11 +80,14 @@ async function snapshotAllColumns(tables) {
   return out;
 }
 
-async function main(argv) {
+export async function main(argv, deps = {}) {
+  const measure = deps.measureLive ?? measureLive;
+  const initStore = deps.initStore ?? (async () => (await import('./lib/store/repo.mjs')).initLearningStore());
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   const sub = argv[2];
   assertKnownFlags(argv.slice(3), ['--static', '--live', '--out', '--config', '--tables', '--all-columns'], { cli: 'own-model-coverage', from: 0 });
   if (sub !== 'check' && sub !== 'snapshot') throw new ArgvError('usage: own-model-coverage.mjs check --static|--live | snapshot [--tables a,b --all-columns] --out <file>');
+  if (sub === 'check' && argv.includes('--static') && argv.includes('--live')) throw new ArgvError('check takes --static OR --live, not both');
   const config = loadConfig(arg(argv, '--config'));
   const cfgErrs = validateConfig(config);
   if (cfgErrs.length) { process.stderr.write(`own-model-coverage: invalid config: ${cfgErrs.join('; ')}
@@ -98,24 +103,33 @@ async function main(argv) {
   const { closePool } = await import('./lib/db/client.mjs');
   try {
     if (sub === 'check') {
-      const results = await measureLive(config.entries, config.windowDays ?? 30);
+      const results = await measure(config.entries, config.windowDays ?? 30);
       const code = exitCodeFor(results);
-      console.log(JSON.stringify({ mode: 'live', ok: code === 0, exitCode: code, measuredAt: new Date().toISOString(), results }));
+      // Store-wide: the measure SQL has no repo predicate, so every consumer on this store is in the population,
+      // BUT only if the store actually answered: with no measured entry nothing was measured from it.
+      const answered = results.some((r) => !String(r.status).startsWith('unmeasured'));
+      const population = await ambientPopulation({ scope: 'store', answered });
+      console.log(JSON.stringify({ mode: 'live', ok: code === 0, exitCode: code, measuredAt: new Date().toISOString(), population, results }));
+      process.stderr.write(`${renderPopulationLine(population)}\n`);
       return code;
     }
     // snapshot
     const outFile = arg(argv, '--out');
     if (!outFile) throw new ArgvError('snapshot needs --out <file>');
-    const { initLearningStore } = await import('./lib/store/repo.mjs');
-    if (!await initLearningStore()) { process.stderr.write('own-model-coverage: no store configured\n'); return 3; }
+    if (!await initStore()) { process.stderr.write('own-model-coverage: no store configured\n'); return 3; }
     const doc = { schema: 'own-model-coverage-snapshot/v1', measuredAt: new Date().toISOString(), note: 'counts and null rates only; no row content' };
     if (argv.includes('--all-columns')) {
       const tables = String(arg(argv, '--tables') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
       if (!tables.length) throw new ArgvError('--all-columns needs --tables a,b');
       doc.tables = await snapshotAllColumns(tables);
     } else {
-      doc.tracked = await measureLive(config.entries, config.windowDays ?? 30);
+      doc.tracked = await measure(config.entries, config.windowDays ?? 30);
     }
+    // Same derivation as `check --live`: store-wide, and measured only if the store actually answered. The column
+    // snapshot (no per-entry status) counts as answered: it would have thrown had the store not responded.
+    const answered = doc.tracked ? doc.tracked.some((r) => !String(r.status).startsWith('unmeasured')) : true;
+    doc.population = await ambientPopulation({ scope: 'store', answered });
+    process.stderr.write(`${renderPopulationLine(doc.population)}\n`);
     fs.writeFileSync(outFile, `${JSON.stringify(doc, null, 2)}\n`);
     console.log(JSON.stringify({ ok: true, out: outFile }));
     return 0;

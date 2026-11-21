@@ -44,6 +44,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,9 +52,11 @@ import './lib/load-env.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
-  discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
+  discoverStores, describeStore, readRepoEnvText, readSharedEnvText, renderPolicyUnreachable,
 } from './lib/upstream/store-discovery.mjs';
+import { readStoreSetupPointer } from './lib/doctor/store-reachability.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
+import { populationFromFanout, renderPopulationLine } from './lib/population.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
 import { scanRegistered } from './lib/telemetry-export/registered.mjs';
 import { renderTelemetryExports } from './lib/telemetry-export/reader.mjs';
@@ -133,10 +136,11 @@ function parseDriftOutput(out) {
  * @param {object} input
  * @param {Array<object>} input.stores
  * @param {Array<{repo: string, reason: string}>} input.unresolved
+ * @param {Array<{repo: string, alias: string|null, reason: string}>} [input.policyUnreachable] — never queried, never counted
  * @param {(store: object) => {ok: boolean, drift: object|null, reason: string|null}} input.query
  * @returns {object}
  */
-export function collectDrift({ stores, unresolved, query }) {
+export function collectDrift({ stores, unresolved, query, policyUnreachable = [] }) {
   const queried = [];
   const unqueried = [];
   const behind = [];
@@ -144,7 +148,7 @@ export function collectDrift({ stores, unresolved, query }) {
   for (const store of stores) {
     const res = query(store);
     if (!res.ok) {
-      unqueried.push({ store: describeStore(store), reason: res.reason });
+      unqueried.push({ store: describeStore(store), reason: res.reason, fingerprint: store.fingerprint, aliases: store.aliases ?? [] });
       continue;
     }
     const d = res.drift.drift ?? {};
@@ -153,7 +157,7 @@ export function collectDrift({ stores, unresolved, query }) {
     const live = res.drift.liveConstraints;
     const liveBroken = live?.measured ? [...(live.missing || []), ...(live.altered || [])] : [];
     queried.push({
-      store: describeStore(store), unapplied: unapplied.length, shaMismatch: shaMismatch.length,
+      store: describeStore(store), fingerprint: store.fingerprint, aliases: store.aliases ?? [], unapplied: unapplied.length, shaMismatch: shaMismatch.length,
       liveMeasured: !!live?.measured, liveBroken: liveBroken.length,
     });
     // `orphanLedger` is DELIBERATELY not counted as behind: it means the store
@@ -181,6 +185,7 @@ export function collectDrift({ stores, unresolved, query }) {
     queried,
     unqueried,
     unresolved,
+    policyUnreachable,
     behind,
   };
 }
@@ -236,6 +241,8 @@ export function renderDrift(result) {
   for (const u of result.unresolved) {
     lines.push(`  ${Y}no store${X} ${u.repo} ${D}(${u.reason}) — this consumer's schema state is invisible${X}`);
   }
+  for (const p of result.policyUnreachable ?? []) lines.push(`  ${Y}${renderPolicyUnreachable(p)}${X}`);
+  if (result.population) lines.push(`  ${D}${renderPopulationLine(result.population)}${X}`);
   return lines.join('\n');
 }
 
@@ -248,18 +255,22 @@ async function main() {
   }
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
-  const { stores, unresolved } = discoverStores({
+  const { stores, unresolved, policyUnreachable } = discoverStores({
     repos: CONSUMER_REPOS,
     self: {
       name: 'this repo',
+      path: REPO_ROOT,
       url: process.env.AUDIT_DB_URL || null,
       sslMode: process.env.AUDIT_DB_SSL_MODE || null,
     },
     readEnvText: readRepoEnvText,
     fingerprintOf: storeFingerprint,
+    readSetupPointer: readStoreSetupPointer,
+    repoExists: (p) => fs.existsSync(p),
     sharedEnvText: readSharedEnvText(),
   });
-  const result = collectDrift({ stores, unresolved, query: queryStoreDrift });
+  const collected = collectDrift({ stores, unresolved, policyUnreachable, query: queryStoreDrift });
+  const result = { ...collected, population: populationFromFanout({ ...collected, registry: CONSUMER_REPOS }) };
 
   // Consumers whose store CES cannot reach push a redacted summary instead (opt-in; null = nobody expected).
   const telemetry = scanRegistered();
