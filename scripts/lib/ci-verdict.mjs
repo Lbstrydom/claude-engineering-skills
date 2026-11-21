@@ -71,16 +71,34 @@ export function selectRun({ runs, head, pr = null, defaultBranch, workflowPath }
  * record is its LATEST attempt only; earlier attempts come from `priorAttempts[runId]` (docs/plans/verification-lessons.md 2.1:
  * a rerun may diagnose, never clear). A prior attempt that is absent or unreadable is `why`-labelled, never skipped.
  */
+/** A run's own attempt count, or null when it is missing or not a positive integer (never assumed to be 1). */
+export const attemptCountOf = (r) => (Number.isInteger(r?.run_attempt) && r.run_attempt >= 1 ? r.run_attempt : null);
+
+/**
+ * Is an attempt record one the classifier can judge? A status it knows, and — when completed — a string conclusion. Anything else
+ * (an unknown status, a completed attempt with no conclusion) is unreadable evidence, never "not failed".
+ */
+export function isReadableAttempt(a) {
+  if (!a || typeof a.status !== 'string') return false;
+  if (a.status === 'completed') return typeof a.conclusion === 'string' && a.conclusion.length > 0;
+  return PENDING_STATUSES.has(a.status);
+}
+
 function attemptsOf(accepted, priorAttempts) {
   const out = [];
   for (const r of accepted) {
-    const latest = Number.isInteger(r.run_attempt) && r.run_attempt >= 1 ? r.run_attempt : 1;
+    const count = attemptCountOf(r);
+    if (count === null) {
+      // Unknown attempt count: earlier attempts may exist and cannot be enumerated, so a failed one could be hiding.
+      out.push({ runId: r.id, attempt: 0, status: null, conclusion: null, run: r, why: `run_attempt is ${JSON.stringify(r.run_attempt ?? null)}, not a positive integer` });
+    }
+    const latest = count ?? 1;
     const prior = Array.isArray(priorAttempts?.[r.id]) ? priorAttempts[r.id] : [];
     for (let n = 1; n < latest; n += 1) {
       const a = prior.find((x) => x?.attempt === n);
-      out.push(a && !a.why && typeof a.status === 'string'
+      out.push(a && !a.why && isReadableAttempt(a)
         ? { runId: r.id, attempt: n, status: a.status, conclusion: a.conclusion ?? null, run: r }
-        : { runId: r.id, attempt: n, status: null, conclusion: null, run: r, why: a?.why ?? 'not read' });
+        : { runId: r.id, attempt: n, status: null, conclusion: null, run: r, why: a?.why ?? (a ? `unreadable attempt record (status ${JSON.stringify(a.status ?? null)}, conclusion ${JSON.stringify(a.conclusion ?? null)})` : 'not read') });
     }
     out.push({ runId: r.id, attempt: latest, status: String(r.status ?? ''), conclusion: r.conclusion ?? null, run: r });
   }
@@ -281,11 +299,11 @@ export function gatherCiEvidence({ run, pr = null, head = null }) {
   // Every attempt BEFORE each accepted run's latest (the run record carries only the latest): a rerun may diagnose, never clear.
   const priorAttempts = {};
   for (const r of selectRun({ runs, head: headSha, pr, defaultBranch, workflowPath }).accepted) {
-    const latest = Number.isInteger(r.run_attempt) ? r.run_attempt : 1;
+    const latest = attemptCountOf(r) ?? 1; // a malformed count is reported unverified by the classifier, not read here
     priorAttempts[r.id] = [];
     for (let n = 1; n < latest; n += 1) {
       const a = runJson(run, 'gh', ['api', `repos/${nwo}/actions/runs/${r.id}/attempts/${n}`]);
-      priorAttempts[r.id].push(a.ok && typeof a.value?.status === 'string'
+      priorAttempts[r.id].push(a.ok && isReadableAttempt(a.value)
         ? { attempt: n, status: a.value.status, conclusion: a.value.conclusion ?? null }
         : { attempt: n, why: a.ok ? 'malformed attempt record' : a.why });
     }

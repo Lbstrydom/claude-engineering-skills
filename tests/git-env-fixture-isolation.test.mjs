@@ -33,6 +33,8 @@ function headOf(dir, env) {
   }
 }
 
+const makeFleetRepoBare = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mfrb-')); execFileSync('git', ['init', '-q', d], { env: gitFixtureEnv() }); return d; };
+
 describe('fixture helpers are immune to a leaked GIT_DIR/GIT_WORK_TREE', () => {
   let victim;
   let savedGitDir;
@@ -263,7 +265,12 @@ describe('fixture repositories never run detached background maintenance (docs/p
 
   it('the fleet template repo and its bare origin both say maintenance.auto=false', () => {
     const fx = makeFleetRepo();
-    assert.equal(readCfg(fx.repo, gitFixtureEnv()), 'false');
-    assert.equal(readCfg(fx.origin, gitFixtureEnv()), 'false');
+    // --local reads ONLY the repository's own config file, so the GIT_CONFIG_COUNT injection gitFixtureEnv() carries cannot
+    // satisfy this assertion: it proves the template PERSISTS the setting (a copy of it runs without our env).
+    const readLocal = (dir) => execFileSync('git', ['config', '--local', '--get', 'maintenance.auto'], { cwd: dir, encoding: 'utf-8', env: gitFixtureEnv() }).trim();
+    assert.equal(readLocal(fx.repo), 'false');
+    assert.equal(readLocal(fx.origin), 'false');
+    // negative control: the injected setting alone is invisible to --local
+    assert.throws(() => execFileSync('git', ['config', '--local', '--get', 'maintenance.auto'], { cwd: makeFleetRepoBare(), encoding: 'utf-8', env: gitFixtureEnv(), stdio: 'pipe' }));
   });
 });

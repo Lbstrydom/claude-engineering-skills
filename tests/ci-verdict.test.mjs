@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { classifyCiVerdict, ciVerdict, gatherCiEvidence, parseVerdictTarget } from '../scripts/lib/ci-verdict.mjs';
+import { CI_VERDICT_EXIT, classifyCiVerdict, ciVerdict, gatherCiEvidence, parseVerdictTarget } from '../scripts/lib/ci-verdict.mjs';
+import { flakeExit } from '../scripts/lib/ci-flake-rerun.mjs';
 import { parseSummary, parseHeavyList, selectTier } from '../scripts/lib/test-tier.mjs';
 import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 
@@ -136,6 +137,21 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
       const r3 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })] }));
       assert.equal(r3.verdict, 'unverified', 'no attempt evidence at all');
     });
+    it('a missing or malformed run_attempt is unverified: earlier attempts cannot be enumerated (never assumed to be 1)', () => {
+      for (const n of [undefined, null, 0, -1, 1.5, '2']) {
+        const r = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: n, conclusion: 'success' })] }));
+        assert.equal(r.verdict, 'unverified', `run_attempt ${JSON.stringify(n)}`);
+        assert.match(r.reason, /run_attempt/);
+      }
+      // a known failure still wins over the unknown count
+      assert.equal(classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: null, conclusion: 'failure' })] })).verdict, 'failed');
+    });
+    it('a prior attempt with an unknown status, or completed with no conclusion, is unreadable evidence, never "not failed"', () => {
+      for (const a of [{ attempt: 1, status: 'completed', conclusion: null }, { attempt: 1, status: 'completed' }, { attempt: 1, status: 'exploded', conclusion: 'success' }]) {
+        const r = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [a] } }));
+        assert.equal(r.verdict, 'unverified', JSON.stringify(a));
+      }
+    });
     it('an in-progress prior attempt or an in-progress other run is pending, never passed', () => {
       const r1 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [att(1, null, 'in_progress')] } }));
       assert.equal(r1.verdict, 'pending');
@@ -165,6 +181,8 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
       assert.equal(r.verdict, 'failed', JSON.stringify(r));
       assert.match(r.reason, /failed-then-rerun/);
       assert.ok(calls.some((c) => c.includes('actions/runs/5/attempts/1')));
+      // the exit decision cmdCiVerdict makes for this verdict (no rerun) is the failed class
+      assert.equal(flakeExit(r.verdict, null, CI_VERDICT_EXIT, null), CI_VERDICT_EXIT.failed);
     });
   });
 
