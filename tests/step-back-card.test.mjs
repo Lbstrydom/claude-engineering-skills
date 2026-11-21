@@ -5,7 +5,7 @@ import { checkpointFor, buildCheckpointSection, renderPostSixDefault, STEP_BACK_
 import { createStepBackProvider, STEP_BACK_ARM_MODELS } from '../scripts/lib/audit/step-back-provider.mjs';
 
 const S = (c) => c.repeat(40);
-const DIFF = ['--- a/a.mjs', '+++ b/a.mjs', '@@ -1 +1,3 @@'].join('\n');
+const DIFF = ['--- a/a.mjs', '+++ b/a.mjs', '@@ -1 +1,3 @@', '-o', '+n1', '+n2', '+n3'].join('\n');
 const git = (args) => (args[0] === 'diff' ? { status: 0, stdout: DIFF } : { status: 0, stdout: '' });
 const f = (id, line) => ({ id, severity: 'HIGH', _primaryFile: 'a.mjs', affectedFiles: ['a.mjs'], line });
 const rounds = [

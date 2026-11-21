@@ -2,7 +2,9 @@
 /**
  * @fileoverview CLI — the step-back replay harness and its dataset freezer
  * (docs/plans/verification-lessons.md §2.4). A PAID run needs --confirm-spend, --max-usd and --results (a JSONL file
- * every paid call is appended to BEFORE scoring); --dry-run prints the planned calls and the UPPER-BOUND cost and makes none.
+ * every paid call is appended to BEFORE scoring); --dry-run prints the planned calls and the preflight cost bound and makes none.
+ * The bound is conservative, not absolute: characters cannot truly upper-bound tokens, so the hard stop is enforced on METERED
+ * actuals after each call. A paid run REFUSES an existing --results path (it never truncates); a resume is `score` only.
  *
  *   node scripts/step-back-replay.mjs export --branches a,b --since 2026-11-19 --out .audit/step-back-export.json   (READ-ONLY SELECTs, filtered by repo_id)
  *   node scripts/step-back-replay.mjs propose --export .audit/step-back-export.json        (PROPOSES run-id lists per branch; pins nothing)
@@ -27,7 +29,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { freezeDataset, scoringPathFor } from './lib/audit/step-back-dataset.mjs';
 import { exportRows, freezeFromExport, proposeRuns } from './lib/audit/step-back-export.mjs';
-import { runReplay, scoreReplay, renderDryRun, readResultsJsonl, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
+import { runReplay, scoreReplay, renderDryRun, readResultsJsonl, verifyDatasetInputs, sha256Hex, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
 
 const KNOWN_FLAGS = ['--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
 export const EXIT_BUDGET_STOP = 5;
@@ -89,7 +91,10 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     const exportPath = flag('--export');
     const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
     const { dataset, scoring } = exportPath
-      ? freezeFromExport({ exp: JSON.parse(fs.readFileSync(exportPath, 'utf8')), spec, exportPath })
+      ? freezeFromExport({
+        exp: JSON.parse(fs.readFileSync(exportPath, 'utf8')), spec, exportPath,
+        inputs: { exportSha256: sha256Hex(fs.readFileSync(exportPath)), specPath, specSha256: sha256Hex(fs.readFileSync(specPath)) },
+      })
       : freezeDataset({ spec });
     writeJson(out, dataset); writeJson(scoringPathFor(out), scoring);
     const rec = dataset.prs.filter((p) => p.status === 'recoverable').length;
@@ -122,7 +127,16 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     throw new ArgvError('step-back-replay: a paid run needs --max-usd <n>, --confirm-spend and --results <file.jsonl> (use --dry-run to see the plan and cost).');
   }
   const dataset = JSON.parse(fs.readFileSync(datasetPath, 'utf8'));
-  if (!dryRun) { fs.mkdirSync(path.dirname(path.resolve(resultsPath)), { recursive: true }); fs.writeFileSync(resultsPath, ''); }
+  verifyDatasetInputs(dataset, deps.readBytes || ((p) => fs.readFileSync(p)));
+  if (!dryRun) {
+    // Never truncate: an existing results file may hold paid output. Refuse it, and refuse any path that is also an input.
+    const target = path.resolve(resultsPath);
+    const inputPaths = [datasetPath, scoringPathFor(datasetPath), dataset.exportPath, dataset.inputs?.specPath, flag('--out')].filter(Boolean).map((p) => path.resolve(p));
+    if (inputPaths.includes(target)) throw new ArgvError('step-back-replay: --results must not be the dataset, scoring, export, spec or --out path.');
+    if (fs.existsSync(target)) throw new ArgvError(`step-back-replay: --results ${resultsPath} already exists; a paid run never overwrites or appends to it (resume with the score subcommand).`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '', { flag: 'wx' });
+  }
   // Every record is appended (and flushed by the synchronous write) as it is produced: a later failure cannot lose paid output.
   const onRecord = dryRun ? undefined : (rec) => fs.appendFileSync(resultsPath, `${JSON.stringify(rec)}\n`);
   const res = await runReplay({ dataset, arms, maxUsd, dryRun, deps: { ...deps, onRecord } });

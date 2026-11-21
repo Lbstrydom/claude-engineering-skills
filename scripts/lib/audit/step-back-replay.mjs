@@ -27,12 +27,14 @@
  *
  * @module scripts/lib/audit/step-back-replay
  */
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { priceFor, FALLBACK_PRICE_USD } from '../model-pricing.mjs';
 import { buildCheckpointSnapshot } from './step-back-snapshot.mjs';
+import { assertNoDuplicates } from './step-back-dataset.mjs';
 import { buildExportSnapshot } from './step-back-export.mjs';
 import { createRevisionFs } from './step-back-gitfs.mjs';
 import { buildStepBackPack, initialStepBackRecord, runStepBack, STEP_BACK_SYSTEM_PROMPT } from './step-back.mjs';
@@ -45,11 +47,14 @@ export function estimateCostUsd({ modelId, inputTokens, outputTokens }) {
 }
 
 /**
- * UPPER bound of one call's cost: input = chars / 3 tokens (conservative) at the input price + the output ceiling at the
- * output price. An unpriced model uses the conservative fallback rate, never zero.
+ * PREFLIGHT bound of one call's cost: input = chars / 2 tokens (conservative) at the input price + the output ceiling at the
+ * output price. An unpriced model uses the conservative fallback rate, never zero. Characters cannot truly upper-bound
+ * tokens (a pathological text can exceed 2 chars per token), so this is conservative, NOT absolute: the hard stop is
+ * ultimately enforced on METERED actuals after every call (spent is the sum of provider-reported cost), and the preflight
+ * bound only decides whether the next call may start.
  */
 export function upperBoundUsd({ modelId, inputChars, outputCeilingTokens = STEP_BACK_MAX_OUTPUT_TOKENS }) {
-  const inputTokens = Math.ceil(inputChars / 3);
+  const inputTokens = Math.ceil(inputChars / 2);
   const rate = priceFor(modelId, { inputTokens }) || FALLBACK_PRICE_USD;
   return (inputTokens * rate.input + outputCeilingTokens * rate.output) / 1_000_000;
 }
@@ -68,7 +73,29 @@ export async function gitCheckout(sha, { cwd = process.cwd() } = {}) {
 }
 
 /** Build the snapshot + pack for every recoverable PR-checkpoint; unrecoverable ones are listed, never reconstructed. */
+/** sha256 hex of bytes. */
+export const sha256Hex = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * A store-export dataset records the sha256 of the export file and the spec it was frozen from; `run` verifies both
+ * BEFORE any call, so a regenerated or edited input can never be replayed under an old freeze.
+ * @param {object} dataset
+ * @param {(p: string) => Buffer|string} readBytes
+ */
+export function verifyDatasetInputs(dataset, readBytes) {
+  if (dataset.source !== 'store-export') return;
+  const inp = dataset.inputs;
+  if (!inp?.exportSha256 || !inp?.specSha256 || !inp?.specPath) throw new Error('dataset records no input hashes (exportSha256, specSha256, specPath): re-freeze it');
+  const check = (label, p, want) => {
+    let got; try { got = sha256Hex(readBytes(p)); } catch (err) { throw new Error(`cannot read the ${label} (${p}) to verify it: ${err?.code || err?.message}`); }
+    if (got !== want) throw new Error(`the ${label} (${p}) changed since the dataset was frozen (sha256 ${got.slice(0, 12)} != ${want.slice(0, 12)}): re-freeze`);
+  };
+  check('export file', dataset.exportPath, inp.exportSha256);
+  check('spec file', inp.specPath, inp.specSha256);
+}
+
 export async function prepareItems({ dataset, deps = {} }) {
+  assertNoDuplicates(dataset.prs);
   if (dataset.source === 'store-export') return prepareStoreItems({ dataset, deps });
   const checkout = deps.checkout || gitCheckout;
   const readJson = deps.readJson;
@@ -94,8 +121,8 @@ export async function prepareItems({ dataset, deps = {} }) {
 /**
  * Run (or plan) the replay.
  *
- * **Spend is bounded by an UPPER bound per call**, never an estimate: input = pack chars / 3 (a conservative
- * chars-per-token) at the input price, plus the provider's output ceiling at the output price. Before each call,
+ * **Spend is gated by a conservative preflight bound per call, and enforced on metered actuals**: input = pack chars / 2 (a conservative
+ * chars-per-token; chars cannot truly upper-bound tokens) at the input price, plus the provider's output ceiling at the output price. Before each call,
  * `spent + upperBound <= maxUsd` or the run stops. A call that returns no usable usage, or fails after the provider
  * may have processed it, is charged its upper bound, never $0.
  *

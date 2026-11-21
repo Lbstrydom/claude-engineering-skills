@@ -8,10 +8,10 @@ import {
 const S1 = 'a'.repeat(40); const S2 = 'b'.repeat(40); const S3 = 'c'.repeat(40);
 
 const DIFF = [
-  'diff --git a/a.mjs b/a.mjs', '--- a/a.mjs', '+++ b/a.mjs', '@@ -9,2 +10,5 @@', '+x',
-  'diff --git a/old/c.mjs b/new/c.mjs', 'similarity index 90%', 'rename from old/c.mjs', 'rename to new/c.mjs', '--- a/old/c.mjs', '+++ b/new/c.mjs', '@@ -1 +1,2 @@',
-  'diff --git a/gone.mjs b/gone.mjs', '--- a/gone.mjs', '+++ /dev/null', '@@ -1,3 +0,0 @@',
-  'diff --git a/b.mjs b/b.mjs', '--- a/b.mjs', '+++ b/b.mjs', '@@ -3,0 +3 @@',
+  'diff --git a/a.mjs b/a.mjs', '--- a/a.mjs', '+++ b/a.mjs', '@@ -9,2 +10,5 @@', '-o1', '-o2', '+n1', '+n2', '+n3', '+n4', '+n5',
+  'diff --git a/old/c.mjs b/new/c.mjs', 'similarity index 90%', 'rename from old/c.mjs', 'rename to new/c.mjs', '--- a/old/c.mjs', '+++ b/new/c.mjs', '@@ -1 +1,2 @@', '-o1', '+n1', '+n2',
+  'diff --git a/gone.mjs b/gone.mjs', '--- a/gone.mjs', '+++ /dev/null', '@@ -1,3 +0,0 @@', '-o1', '-o2', '-o3',
+  'diff --git a/b.mjs b/b.mjs', '--- a/b.mjs', '+++ b/b.mjs', '@@ -3,0 +3 @@', '+n1',
 ].join('\n');
 
 /** A fake git keyed on the subcommand; every sha reachable unless listed in `bad`. */

@@ -84,7 +84,12 @@ export function unquoteGitPath(p) {
 export function parsePostImageHunks(diffText) {
   const out = new Map();
   let file = null;
+  let oldLeft = 0; let newLeft = 0; // lines still owed by the current hunk: inside it, "+++ x" is an added line, not a header
   for (const line of String(diffText || '').split('\n')) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('-')) oldLeft--; else if (line.startsWith('+')) newLeft--;
+      continue;
+    }
     if (line.startsWith('+++ ')) {
       const p = unquoteGitPath(line.slice(4).trim());
       file = p === '/dev/null' ? null : p.replace(/^b\//, '');
@@ -92,6 +97,11 @@ export function parsePostImageHunks(diffText) {
       continue;
     }
     const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (m) {
+      const h = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+      oldLeft = h[1] === undefined ? 1 : Number(h[1]);
+      newLeft = h[2] === undefined ? 1 : Number(h[2]);
+    }
     if (m && file) {
       const start = Number(m[1]);
       const len = m[2] === undefined ? 1 : Number(m[2]);
@@ -225,8 +235,11 @@ function retiredAt({ round, rounds, select, ledgerEntries, topicOf }) {
   if (!ledgerEntries) return { unmeasured: 'no ledger' };
   const prevTopics = new Set(select(prev.findings).map(topicOf));
   const curTopics = new Set((cur.findings || []).map(topicOf)); // any finding of that topic in N (not only selected) keeps it open
-  const ruled = ledgerEntries.filter((e) => prevTopics.has(e?.topicId));
-  if (ruled.length === 0 && prevTopics.size > 0) return { unmeasured: `round ${round - 1} has no rulings in the ledger (not triaged)` };
+  // A ledger entry WITHOUT an adjudicationOutcome is not a ruling; every previous-round topic needs one.
+  const ruled = ledgerEntries.filter((e) => prevTopics.has(e?.topicId) && e?.adjudicationOutcome);
+  const ruledTopics = new Set(ruled.map((e) => e.topicId));
+  const unruled = [...prevTopics].filter((t) => !ruledTopics.has(t)).length;
+  if (unruled > 0) return { unmeasured: `round ${round - 1}: ${unruled} of ${prevTopics.size} topics have no ruling with an adjudicationOutcome (not triaged)` };
   const accepted = ruled.filter((e) => ACCEPTED_OUTCOMES.has(e.adjudicationOutcome));
   const closed = accepted.filter((e) => !curTopics.has(e.topicId));
   return { retired: closed.length, closed };

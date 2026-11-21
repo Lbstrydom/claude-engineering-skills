@@ -63,3 +63,20 @@ test('H11: the default git helpers take the cwd they are given', async () => {
   const r = gitRunner(dir)(['rev-parse', '--show-toplevel']);
   assert.notEqual(r.status, 0, 'a non-repo cwd is what git sees, not the process cwd');
 });
+
+test('R2-H7: truncation always terminates; a budget below the fixed markup is an explicit error, not a hang', { timeout: 20_000 }, async () => {
+  const { args } = bigRepo();
+  await assert.rejects(() => buildStepBackPack({ ...args, limits: { perFileChars: 60_000, totalChars: 10, maxImporterScan: 5000, maxArchNeighbours: 8 } }), /cannot fit totalChars=10/);
+  // A budget that fits only the markup plus a little still completes and stays within it.
+  const tight = await buildStepBackPack({ ...args, limits: { perFileChars: 60_000, totalChars: 300, maxImporterScan: 5000, maxArchNeighbours: 8 } }).catch((e) => e);
+  assert.ok(tight instanceof Error ? /cannot fit/.test(tight.message) : tight.text.length <= 300);
+});
+
+test('R2-M5: an importer that passes classification but cannot be read is recorded in skipped with its reason', async () => {
+  const { root, args } = bigRepo();
+  const bad = Object.create(fs);
+  bad.readFileSync = (p, ...r) => { if (String(p).endsWith('c.mjs')) throw Object.assign(new Error('EIO'), { code: 'EIO' }); return fs.readFileSync(p, ...r); };
+  const pack = await buildStepBackPack({ ...args, repoRoot: root, fsImpl: bad });
+  assert.ok(pack.skipped.some((s) => s.path === 'src/c.mjs' && s.pattern === 'read-failed' && s.unreadable));
+  assert.ok(pack.excluded.unreadable >= 1);
+});

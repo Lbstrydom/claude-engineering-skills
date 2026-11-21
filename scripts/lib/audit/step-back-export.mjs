@@ -26,7 +26,7 @@
  *
  * @module scripts/lib/audit/step-back-export
  */
-import { DATASET_VERSION, CHECKPOINTS } from './step-back-dataset.mjs';
+import { DATASET_VERSION, CHECKPOINTS, assertNoDuplicates } from './step-back-dataset.mjs';
 
 export const EXPORT_VERSION = 1;
 
@@ -57,6 +57,14 @@ export async function exportRows({ branches, since, repoId, query }) {
 const ts = (s) => Date.parse(s);
 const HOUR_MS = 3_600_000;
 
+/**
+ * The gap that delimits a session in `proposeRuns`, and the window after run N within which its own rulings count when
+ * there is no run N+1. Same constant on purpose: an event more than this long after run N is outside the session the
+ * pinned list describes (a later session's triage, or a re-adjudication), so reading it would be look-ahead; an unbounded
+ * cutoff would admit exactly that.
+ */
+export const SESSION_GAP_MS = 3 * HOUR_MS;
+
 /** The pinned runs of a PR, in the listed order. `missing` names listed ids the export does not hold. */
 export function pinnedRuns(exp, runIds) {
   const byId = new Map(exp.runs.map((r) => [r.id, r]));
@@ -69,7 +77,7 @@ export function pinnedRuns(exp, runIds) {
  * exceeds `gapMs` (default 3h). It never pins anything: the operator copies the chosen group's ids into the spec.
  * @returns {Array<{runIds: string[], from: string, to: string, count: number, shas: number}>}
  */
-export function proposeRuns(exp, branch, { gapMs = 3 * HOUR_MS } = {}) {
+export function proposeRuns(exp, branch, { gapMs = SESSION_GAP_MS } = {}) {
   const runs = exp.runs.filter((r) => r.branch === branch && (r.mode ?? 'code') === 'code')
     .sort((a, b) => ts(a.created_at) - ts(b.created_at) || String(a.id).localeCompare(String(b.id)));
   const groups = [];
@@ -100,8 +108,8 @@ const findingView = (f) => ({
 
 /**
  * Checkpoint snapshot from the export and the PR's pinned run ids; same shape as `buildCheckpointSnapshot`'s `snapshot`.
- * Rounds 1..N must ALL be present. The cutoff is run N+1's created_at; with no run N+1 there is NO time cutoff, only the
- * round <= N filter, so round N's own rulings are kept. A finding belongs to its run (ordinal <= N).
+ * Rounds 1..N must ALL be present. The cutoff is run N+1's created_at; with no run N+1 it is run N's created_at plus
+ * SESSION_GAP_MS (3h), so round N's own rulings are kept but a much later event is not. A finding belongs to its run (ordinal <= N).
  * @returns {{ok: true, snapshot: object}|{ok: false, status: 'unrecoverable', reason: string}}
  */
 export function buildExportSnapshot({ exp, runIds, checkpoint }) {
@@ -111,7 +119,7 @@ export function buildExportSnapshot({ exp, runIds, checkpoint }) {
   const run = runs[checkpoint - 1];
   if (!run.audited_sha) return { ok: false, status: 'unrecoverable', reason: `run ${checkpoint} has no audited_sha` };
   const next = runs[checkpoint];
-  const cutoffMs = next ? ts(next.created_at) : Infinity;
+  const cutoffMs = next ? ts(next.created_at) : ts(run.created_at) + SESSION_GAP_MS;
   const ordinalOfRun = new Map(runs.map((r, i2) => [r.id, i2 + 1]));
   const rounds = runs.slice(0, checkpoint).map((r, i2) => ({
     round: i2 + 1, auditedSha: r.audited_sha, verdict: null,
@@ -136,7 +144,8 @@ export function buildExportSnapshot({ exp, runIds, checkpoint }) {
  * PINS the exact ordered `audit_runs.id` list: a PR with no list, or whose listed runs are not all present, is refused
  * (unrecoverable), never guessed from the branch. PRs with fewer than 3 runs are CONTROLS: no checkpoint, no call.
  */
-export function freezeFromExport({ exp, spec, exportPath }) {
+export function freezeFromExport({ exp, spec, exportPath, inputs = null }) {
+  assertNoDuplicates(spec.prs);
   const prs = []; const truth = {};
   for (const p of spec.prs) {
     const base = { pr: p.pr, label: p.label, branch: p.branch, runIds: p.runIds ?? null };
@@ -158,5 +167,5 @@ export function freezeFromExport({ exp, spec, exportPath }) {
     }
     truth[p.pr] = { label: p.label, acceptedHighRounds: [...rounds].sort((a, b) => a - b), lastRound: runs.length };
   }
-  return { dataset: { version: DATASET_VERSION, source: 'store-export', exportPath, prs }, scoring: { version: DATASET_VERSION, truth } };
+  return { dataset: { version: DATASET_VERSION, source: 'store-export', exportPath, inputs, prs }, scoring: { version: DATASET_VERSION, truth } };
 }

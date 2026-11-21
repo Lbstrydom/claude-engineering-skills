@@ -22,6 +22,20 @@ import path from 'node:path';
 export const DATASET_VERSION = 1;
 export const CHECKPOINTS = Object.freeze([3, 6]);
 
+/** Refuse duplicate PR numbers and duplicate (pr, checkpoint) pairs in a spec or a dataset. */
+export function assertNoDuplicates(prs) {
+  const seen = new Set(); const pairs = new Set();
+  for (const p of prs || []) {
+    if (seen.has(p.pr)) throw new Error(`duplicate PR number #${p.pr}`);
+    seen.add(p.pr);
+    for (const c of p.checkpoints || []) {
+      const k = `${p.pr}@${c.checkpoint}`;
+      if (pairs.has(k)) throw new Error(`duplicate (pr, checkpoint) pair #${p.pr} R${c.checkpoint}`);
+      pairs.add(k);
+    }
+  }
+}
+
 const readJsonDefault = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 
 /** Round numbers with >= 1 finding adjudicated `accepted` at HIGH in the (final) ledger entries. */
@@ -40,6 +54,7 @@ export function acceptedHighRounds(entries) {
  * @returns {{dataset: object, scoring: object}}
  */
 export function freezeDataset({ spec, readJson = readJsonDefault, listDir = (d) => fs.readdirSync(d), exists = (p) => fs.existsSync(p) }) {
+  assertNoDuplicates(spec.prs);
   const prs = []; const truth = {};
   for (const p of spec.prs) {
     const base = { pr: p.pr, label: p.label, sid: p.sid, auditDir: p.auditDir, planFile: p.planFile ?? null };
