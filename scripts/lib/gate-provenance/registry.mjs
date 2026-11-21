@@ -45,6 +45,11 @@ export const RegistrySchema = z.strictObject({
   version: z.literal(1),
   files: z.array(FileEntry),
   gates: z.array(GateEntry),
+}).superRefine((reg, ctx) => {
+  // One entry per path and one gate per id: with duplicates, matching (first wins) and the registry diff (last wins) disagree.
+  const dup = (xs) => [...new Set(xs.filter((x, i) => xs.indexOf(x) !== i))];
+  for (const p of dup(reg.files.map((f) => f.path))) ctx.addIssue({ code: 'custom', path: ['files'], message: `duplicate path ${JSON.stringify(p)}` });
+  for (const id of dup(reg.gates.map((g) => g.id))) ctx.addIssue({ code: 'custom', path: ['gates'], message: `duplicate gate id ${JSON.stringify(id)}` });
 });
 
 /**

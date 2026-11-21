@@ -43,6 +43,15 @@ function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, ins
     // ALL verdict runs complete and are recorded before ANY shadow run starts: the shadow shares the base node_modules, so a
     // shadow gate that writes there must not be able to change a verdict.
     const verdicts = gates.map((g) => run({ cwd: snap.dir, argv: g.argv }));
+    // A verdict run with no exit status measured nothing: the whole gate run is unmeasured, never a violation.
+    const unrun = gates.map((g, i) => ({ id: g.id, v: verdicts[i] })).filter((x) => x.v?.measured === false || !Number.isInteger(x.v?.exit));
+    if (unrun.length) {
+      return {
+        state: 'unmeasured',
+        reason: `verdict run did not complete: ${unrun.map((x) => `${x.id} (${x.v?.reason ?? 'no exit status'})`).join('; ')}`,
+        runs: gates.map((g, i) => ({ id: g.id, verdict: verdicts[i], diverges: false })), inventories: snap.inventories,
+      };
+    }
     // The shadow executes PR code, so it is opt-in (--shadow) and never requested by CI.
     const shadows = shadow ? gates.map((g) => run({ cwd: snap.shadowDir, argv: g.argv })) : null;
     const runs = gates.map((g, i) => (shadows
@@ -95,7 +104,8 @@ export function analyze({ repoRoot, base, head, mode, gateRuns = true, shadow = 
   const report = newReport({ mode, base, head });
   const unmeasured = (why) => report.unmeasuredParts.push(why);
   const finish = () => {
-    const failing = (report.gateRuns?.runs ?? []).filter((r) => r.verdict.exit !== 0).map((r) => r.id);
+    // Only a MEASURED non-zero exit is a failure; a run with no exit status measured nothing (it is listed as unmeasured).
+    const failing = (report.gateRuns?.runs ?? []).filter((r) => r.verdict?.measured !== false && Number.isInteger(r.verdict?.exit) && r.verdict.exit !== 0).map((r) => r.id);
     if (report.authorization?.state === 'not-authorized') {
       report.state = 'violation';
       report.reason = `the gate diff is ${report.classification.verdict} and not authorized: ${report.authorization.reasons.join('; ')}`;

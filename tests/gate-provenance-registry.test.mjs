@@ -40,6 +40,18 @@ test('schema is strict: an unknown field or kind fails to parse', () => {
   assert.equal(parseRegistry('{nope').ok, false);
 });
 
+test('a duplicate path or gate id fails to parse (matching is first-wins, the diff is last-wins: audit R4 H6)', () => {
+  const g = { id: 'g', argv: ['scripts/x.mjs'] };
+  const dupPath = parseRegistry(JSON.stringify({ version: 1, files: [{ path: 'a.json', kind: 'opaque' }, { path: 'a.json', kind: 'numeric-cap' }], gates: [] }));
+  assert.equal(dupPath.ok, false);
+  assert.match(dupPath.error, /duplicate path "a\.json"/);
+  const dupGate = parseRegistry(JSON.stringify({ version: 1, files: [], gates: [g, g] }));
+  assert.equal(dupGate.ok, false);
+  assert.match(dupGate.error, /duplicate gate id "g"/);
+  // negative control: distinct paths and ids parse
+  assert.equal(parseRegistry(JSON.stringify({ version: 1, files: [{ path: 'a.json', kind: 'opaque' }, { path: 'b.json', kind: 'opaque' }], gates: [g] })).ok, true);
+});
+
 test('glob: * stays in a segment, ** crosses segments, regex metacharacters are literal', () => {
   assert.ok(globToRegExp('skills/*/gate-contract.json').test('skills/plan/gate-contract.json'));
   assert.ok(!globToRegExp('skills/*/gate-contract.json').test('skills/a/b/gate-contract.json'));

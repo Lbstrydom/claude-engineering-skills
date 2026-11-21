@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sanitizeGitEnv } from '../scripts/lib/git-env-sanitize.mjs';
-import { buildSnapshot, loadSide, computeProtected } from '../scripts/lib/gate-provenance/snapshot.mjs';
+import { buildSnapshot, loadSide, computeProtected, runGate } from '../scripts/lib/gate-provenance/snapshot.mjs';
 
 const rm = (d) => fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 const REG = {
@@ -213,6 +213,33 @@ test('analyze: tightening-only PR with every part measured is clean', () => {
     assert.equal(rep.gateRuns.runs[0].id, 'g');
     assert.match(summaryLine(rep), /state=clean/);
   } finally { r.cleanup(); }
+});
+
+test('a verdict gate run with no exit status (timeout, signal, spawn failure) is unmeasured, never a violation (audit R4 H3/M2)', () => {
+  const { r, base, head } = scenario((x) => x.put('caps.json', JSON.stringify({ limit: 5 })));
+  try {
+    const rep = A(r, base, head, { deps: pass({ runGate: () => ({ exit: null, measured: false, reason: 'timed out after 300000 ms' }) }) });
+    assert.equal(rep.state, 'unmeasured');
+    assert.match(rep.reason, /timed out/);
+    // and the real runGate classifies a spawn that produced no status as measured:false
+    const t = runGate({ cwd: r.dir, argv: ['x'], spawn: () => ({ status: null, signal: null, error: { code: 'ETIMEDOUT' }, stdout: '', stderr: '' }) });
+    assert.equal(t.measured, false);
+    assert.match(t.reason, /timed out/);
+    assert.equal(runGate({ cwd: r.dir, argv: ['x'], spawn: () => ({ status: 1, stdout: '', stderr: '' }) }).measured, true);
+  } finally { r.cleanup(); }
+});
+
+test('--shadow never links the reused --base-install-dir: the shadow executes PR code (audit R4 H5)', () => {
+  const { r, base, head } = scenario((x) => x.put('caps.json', JSON.stringify({ limit: 5 })));
+  const shared = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-shared-'));
+  try {
+    fs.mkdirSync(path.join(shared, 'node_modules'));
+    const rep = A(r, base, head, { shadow: true, baseInstallDir: shared, deps: pass() });
+    assert.equal(rep.state, 'unmeasured');
+    assert.match(rep.reason, /cannot share a reused --base-install-dir/);
+    // negative control: without --shadow the same reused install is accepted
+    assert.equal(A(r, base, head, { baseInstallDir: shared, deps: pass() }).state, 'clean');
+  } finally { r.cleanup(); fs.rmSync(shared, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
 });
 
 test('UNMEASURED DOMINATES: every unmeasured input forces unmeasured, never clean or authorized', () => {

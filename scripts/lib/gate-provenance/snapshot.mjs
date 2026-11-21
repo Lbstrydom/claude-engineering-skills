@@ -184,6 +184,8 @@ export function buildSnapshot({ repoRoot, base, head, install = true, installDep
     let nodeModules = 'unmeasured';
     let nodeModulesReason = 'dependency install skipped';
     if (install) {
+      // A reused install is long-lived and shared: the PR-code shadow must never be linked to it (it could rewrite it).
+      if (shadow && baseInstallDir) throw new Error('--shadow cannot share a reused --base-install-dir: the shadow executes PR code');
       let installDir = baseInstallDir;
       let r = { ok: true };
       if (!installDir) {
@@ -215,9 +217,16 @@ export function buildSnapshot({ repoRoot, base, head, install = true, installDep
   }
 }
 
-/** Run one gate: `node <argv...>` in `cwd`. Reports the exit and the tail of output; never throws. */
-export function runGate({ cwd, argv, timeoutMs = 5 * 60 * 1000 }) {
-  const r = spawnSync(process.execPath, argv, { cwd, encoding: 'utf8', timeout: timeoutMs, env: sanitizeGitEnv(cwd), maxBuffer: 64 * 1024 * 1024 });
+/**
+ * Run one gate: `node <argv...>` in `cwd`. Reports the exit and the tail of output; never throws. A run that produced no exit
+ * status (timeout, signal, spawn failure) did not evaluate anything: it is `measured: false`, never a gate violation.
+ */
+export function runGate({ cwd, argv, timeoutMs = 5 * 60 * 1000, spawn = spawnSync }) {
+  const r = spawn(process.execPath, argv, { cwd, encoding: 'utf8', timeout: timeoutMs, env: sanitizeGitEnv(cwd), maxBuffer: 64 * 1024 * 1024 });
   const tail = (s) => (s || '').trim().split('\n').slice(-3).join(' | ').slice(0, 400);
-  return { exit: r.status ?? (r.signal ? `signal:${r.signal}` : 'error'), stderrTail: tail(r.stderr), stdoutTail: tail(r.stdout) };
+  const out = { stderrTail: tail(r.stderr), stdoutTail: tail(r.stdout) };
+  if (Number.isInteger(r.status)) return { exit: r.status, measured: true, ...out };
+  const why = r.error?.code === 'ETIMEDOUT' ? `timed out after ${timeoutMs} ms`
+    : r.signal ? `killed by ${r.signal}` : `did not run (${r.error?.code ?? r.error?.message ?? 'no exit status'})`;
+  return { exit: null, measured: false, reason: why, ...out };
 }
