@@ -40,7 +40,7 @@ const redactDeep = (v) => {
 };
 
 /**
- * The findings that drove a false positive, kept in full so the outcome can be adjudicated: a bare `false_positive` with a pass name
+ * The findings that drove a false positive, kept in full so the outcome can be adjudicated: a bare `flagged` with a pass name
  * cannot say whether the claim was real, wrong or a nit. Same attribution and the same MEDIUM+ filter as the scorer, so what is
  * kept is exactly what made the case a false positive. Free text goes through the audit's own secret redaction.
  */
@@ -110,7 +110,7 @@ export async function runExpectCleanReport({ runId, arm, route, cases, scope, pa
       }
     }
     // The findings that made the case a false positive ride with it: the report must be adjudicable without a re-run.
-    const drivers = scored.outcome === 'false_positive' && Array.isArray(gen?.findings) ? retainDrivers(gen.findings, files) : undefined;
+    const drivers = scored.outcome === 'flagged' && Array.isArray(gen?.findings) ? retainDrivers(gen.findings, files) : undefined;
     perCase.push({ kdId, ...scored, ...(drivers ? { findings: drivers } : {}) });
   }
   return { perCase, summary: summarizeExpectClean(perCase), usageEvents, budgetStop, unaccounted };
