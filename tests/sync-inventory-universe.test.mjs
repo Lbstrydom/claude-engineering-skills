@@ -47,7 +47,7 @@ describe('buildFileUniverse enumerates what the repo owns, never gitignored-untr
       readdirSync: (dir, opts) => {
         listed.push(path.relative(root, dir).split(path.sep).join('/'));
         const entries = fs.readdirSync(dir, opts);
-        if (path.basename(dir) === 'probe') fs.rmSync(path.join(dir, 'sub'), { recursive: true, force: true });
+        if (path.basename(dir) === 'probe') fs.rmSync(path.join(dir, 'sub'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
         return entries;
       },
     };
@@ -69,7 +69,7 @@ describe('buildFileUniverse enumerates what the repo owns, never gitignored-untr
       existsSync: (p) => fs.existsSync(p),
       readdirSync: (dir, opts) => {
         const entries = fs.readdirSync(dir, opts);
-        if (path.basename(dir) === 'gone') fs.rmSync(path.join(dir, 'sub'), { recursive: true, force: true });
+        if (path.basename(dir) === 'gone') fs.rmSync(path.join(dir, 'sub'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
         return entries;
       },
     };
