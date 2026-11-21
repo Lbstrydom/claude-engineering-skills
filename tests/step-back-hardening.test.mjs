@@ -64,6 +64,16 @@ test('H11: the default git helpers take the cwd they are given', async () => {
   assert.notEqual(r.status, 0, 'a non-repo cwd is what git sees, not the process cwd');
 });
 
+test('final gate G2: a text section is cut to the RESERVED budget, so only the sections that must shrink do, and the pack fits', async () => {
+  const { args } = bigRepo();
+  const textOnly = { ...args, rounds: [{ round: 1, findings: [] }], repoFiles: ['plan.md'] };   // no files: only text sections
+  const full = await buildStepBackPack(textOnly);
+  const limit = full.text.length - 2000;   // cutting the ledger alone (5000 chars) is enough
+  const capped = await buildStepBackPack({ ...textOnly, limits: { perFileChars: 60_000, totalChars: limit, maxImporterScan: 5000, maxArchNeighbours: 8 } });
+  assert.ok(capped.text.length <= limit, `pack ${capped.text.length} > ${limit}`);
+  assert.deepEqual(capped.truncations.map((t) => t.section), ['ledger'], 'rounds and plan must not be cut when the ledger alone suffices');
+});
+
 test('R2-H7: truncation always terminates; a budget below the fixed markup is an explicit error, not a hang', { timeout: 20_000 }, async () => {
   const { args } = bigRepo();
   await assert.rejects(() => buildStepBackPack({ ...args, limits: { perFileChars: 60_000, totalChars: 10, maxImporterScan: 5000, maxArchNeighbours: 8 } }), /cannot fit totalChars=10/);
