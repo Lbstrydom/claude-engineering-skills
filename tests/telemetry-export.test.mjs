@@ -386,6 +386,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
       if (verb === 'push') pushed = true;
       if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return dir;
       if (args[0] === 'rev-parse' && args[1] === 'HEAD') return 'tipsha';
+      if (args[0] === 'symbolic-ref') return 'refs/heads/main';
       if (args[0] === 'hash-object') return 'blobsha';
       if (args[0] === 'write-tree') return 'treesha';
       if (args[0] === 'commit-tree') return 'shaours';
@@ -409,7 +410,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: gitStub(dir, calls) });
     assert.equal(r.pushed, true);
     const verbs = calls.map((c) => c[1] === '-c' ? c[3] : c[1]);
-    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'remote', 'remote', 'rev-parse', 'ls-remote', 'rev-list', 'rev-parse', 'check-ignore', 'rev-parse', 'read-tree', 'hash-object', 'update-index', 'write-tree', 'commit-tree', 'update-ref', 'update-index', 'push']);
+    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'remote', 'remote', 'rev-parse', 'ls-remote', 'rev-list', 'rev-parse', 'symbolic-ref', 'check-ignore', 'rev-parse', 'symbolic-ref', 'read-tree', 'hash-object', 'update-index', 'write-tree', 'commit-tree', 'update-ref', 'update-index', 'push']);
     const push = calls.at(-1);
     assert.deepEqual(push.slice(1), ['-c', 'push.followTags=false', 'push', '--no-follow-tags', '--force-with-lease=refs/heads/main:tipsha', 'origin', 'shaours:refs/heads/main'],
       'the destination is explicit and the commit is named by SHA: nothing config-driven and nothing committed later can ride along');
@@ -425,7 +426,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const undo = calls.filter((c) => c[1] === 'update-ref')[1];   // the first update-ref is the commit's own
     // An ATOMIC compare-and-swap (new value, then the EXPECTED old value): the branch moves back only if it is still
     // our commit, and the index is never touched; then only OUR paths are unstaged.
-    assert.deepEqual(undo.slice(-3), ['HEAD', 'tipsha', 'shaours']);
+    assert.deepEqual(undo.slice(-3), ['refs/heads/main', 'tipsha', 'shaours']);
     const unstage = calls.find((c) => c[1] === 'reset');
     assert.deepEqual(unstage.slice(1, 4), ['reset', '-q', '--']);
     assert.equal(calls.some((c) => c.includes('--mixed') || c.includes('--hard') || c.includes('--soft')), false);
