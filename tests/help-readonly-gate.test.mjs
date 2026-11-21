@@ -170,6 +170,29 @@ describe('probe instrument gaps from the code audit', () => {
     assert.ok(r.violations.length >= 4, `saw ${r.violations.map((v) => v.detail).join(' | ')}`);
   });
 
+  it('blocks shell-chained exec, a mutating `git branch <name>`, fd-based writes, and an env-stripped node child', async () => {
+    const f = fixture('spawns.mjs', `import cp from 'node:child_process'; import fs from 'node:fs';
+      try { cp.execSync('git status && echo hi'); } catch {}
+      try { cp.execFileSync('git', ['branch', 'new-branch-xyz']); } catch {}
+      try { const fd = fs.openSync(${JSON.stringify(import.meta.filename)}, 'r'); fs.fchmodSync(fd, 0o600); } catch {}
+      try { cp.execFileSync(process.execPath, ['-e', "require('node:fs').writeFileSync(" + ${JSON.stringify(JSON.stringify(path.join(dir, 'child-wrote.txt')))} + ", 'x')"], { env: {} }); } catch {}`);
+    const r = await probeHelp(f, { cwd: dir });
+    assert.ok(r.kinds.includes('spawn') && r.kinds.includes('fs-write'), r.kinds.join(','));
+    const details = r.violations.map((v) => v.detail).join(' | ');
+    assert.match(details, /git status && echo hi/);
+    assert.match(details, /git branch new-branch-xyz/);
+    assert.match(details, /fchmodSync/);
+    assert.equal(fs.existsSync(path.join(dir, 'child-wrote.txt')), false, 'the env-stripped child must still be instrumented');
+  });
+
+  it('read-only git forms and stdout fd writes are allowed (negative control)', async () => {
+    const f = fixture('allowed.mjs', `import cp from 'node:child_process'; import fs from 'node:fs';
+      cp.execFileSync('git', ['-C', ${JSON.stringify(ROOT)}, 'rev-parse', '--show-toplevel']);
+      cp.execFileSync('git', ['branch', '--show-current'], { cwd: ${JSON.stringify(ROOT)} });
+      fs.writeSync(1, 'ok\\n');`);
+    assert.deepEqual((await probeHelp(f, { cwd: ROOT })).kinds, []);
+  });
+
   it('a read-only numeric open is NOT flagged (negative control)', async () => {
     const f = fixture('ro.mjs', `import fs from 'node:fs'; fs.closeSync(fs.openSync(${JSON.stringify(import.meta.filename)}, fs.constants.O_RDONLY));`);
     assert.deepEqual((await probeHelp(f, { cwd: dir })).kinds, []);

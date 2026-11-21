@@ -242,6 +242,8 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
       "node -e \"require('./scripts/.claude-skills/skills-hydrate.mjs')\"",
       'node --import=tsx scripts/.claude-skills/skills-hydrate.mjs',
       'node --require ./preload.js scripts/.claude-skills/skills-hydrate.mjs',
+      "node -r ./scripts/.claude-skills/boot.js -e \"console.log(1)\"",
+      'node --import=./scripts/.claude-skills/boot.mjs -e "0"',
     ]) {
       const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
       assert.equal(r.ok, false, body);
@@ -273,6 +275,8 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
       const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
       assert.deepEqual(r.missing, ['skills:hydrate'], String(body));
     }
+    const viaFlag = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run --silent real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.deepEqual(viaFlag.circular, ['skills:hydrate'], 'npm run --silent <name> must still resolve the target');
     // negative control: a delegating remedy that stays in tracked content is fine.
     const ok = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run real', real: 'node scripts/skills-hydrate.mjs' } }) });
     assert.equal(ok.ok, true);

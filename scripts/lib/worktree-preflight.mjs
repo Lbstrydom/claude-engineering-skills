@@ -176,7 +176,10 @@ const CIRCULAR_REMEDY = /(?:^|[\s&|;(])(?:node|npx|tsx)\s+(?:--?[\w-]+(?:=\S+)?\
 const CIRCULAR_LOAD = /(?:require|import)\s*\(\s*["'`][^"'`]*\.claude-skills[\\/]/;
 
 /** `npm|pnpm|yarn|bun [run] <script>` — the script name an indirection points at. */
-const SCRIPT_INDIRECTION = /(?:^|[\s&|;(])(?:npm|pnpm|yarn|bun)\s+(?:run(?:-script)?\s+)?([\w:.-]+)/g;
+const SCRIPT_INDIRECTION = /(?:^|[\s&|;(])(?:npm|pnpm|yarn|bun)\s+(?:run(?:-script)?\s+(?:--?[\w-]+(?:=\S+)?\s+)*)?([\w:.-]+)/g;
+
+/** A Node preload option whose VALUE is under the tree: it loads before any inline code runs. */
+const CIRCULAR_PRELOAD = /(?:^|\s)(?:-r|--require|--import|--loader|--experimental-loader)(?:=|\s+)["']?[^\s"']*\.claude-skills[\\/]/;
 
 /**
  * Does a remedy script run a file from the gitignored tooling tree — directly, or
@@ -188,7 +191,7 @@ const SCRIPT_INDIRECTION = /(?:^|[\s&|;(])(?:npm|pnpm|yarn|bun)\s+(?:run(?:-scri
  */
 export function isCircularRemedy(body, scripts = {}, seen = new Set()) {
   if (typeof body !== 'string') return false;
-  if (CIRCULAR_REMEDY.test(body) || CIRCULAR_LOAD.test(body)) return true;
+  if (CIRCULAR_REMEDY.test(body) || CIRCULAR_LOAD.test(body) || CIRCULAR_PRELOAD.test(body)) return true;
   for (const m of body.matchAll(SCRIPT_INDIRECTION)) {
     const name = m[1];
     if (seen.has(name) || !Object.prototype.hasOwnProperty.call(scripts, name)) continue;
