@@ -38,7 +38,7 @@ import { normalizePath } from '../file-io.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
 import { isInDiff } from '../finding-scope.mjs';
-import { findingGateClass } from '../finding-tags.mjs';
+import { gatesForCount } from '../finding-tags.mjs';
 import { captureStageFindings } from '../model-eval/stage-recall.mjs';
 import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
@@ -832,9 +832,8 @@ export async function assembleFindings(data) {
     .filter(countsTowardVerdict)
     // 8a: a PRE-EXISTING finding (outside the change; finding-scope.mjs) is stored and reported but is not the author's to fix, so it
     // moves neither the verdict nor convergence.
-    .filter(isInDiff)
-    // Model-asserted tags (finding-tags.mjs) sit BESIDE the mechanical scope: a finding gates only if both agree.
-    .filter((f) => findingGateClass(f).gates);
+    // Mechanical scope outranks the model's tags (finding-tags.mjs gatesForCount): a model can never excuse an in-diff finding.
+    .filter((f) => gatesForCount(f, { inDiff: isInDiff(f) }).gates);
   const high = countFor.filter(f => effSeverity(f) === 'HIGH').length;
   const medium = countFor.filter(f => effSeverity(f) === 'MEDIUM').length;
   const low = countFor.filter(f => effSeverity(f) === 'LOW').length;
@@ -852,7 +851,7 @@ export async function assembleFindings(data) {
   // `quickFix` deliberately counts ALL findings (the gate's population, as
   // run-persistence.mjs has always counted it), not `countFor`. Changing the
   // gate's population is a different decision from making telemetry equal it.
-  const quickFix = allFindings.filter((f) => f.is_quick_fix && isInDiff(f) && findingGateClass(f).gates).length;
+  const quickFix = allFindings.filter((f) => f.is_quick_fix && gatesForCount(f, { inDiff: isInDiff(f) }).gates).length;
   // `resolveDetectorResultForRound` is where "ledger present" is kept apart
   // from "detectors absent": an R2+ round whose ledger is missing/corrupt
   // (`suppressionUnavailable`) resolves to `detector-not-run`, never to a

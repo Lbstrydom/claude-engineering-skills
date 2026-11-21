@@ -37,22 +37,48 @@ export const FindingTagsPersisted = {
 };
 
 /**
+ * What the model's tags, read ALONE, say about a finding. Absence of ANY of the three tags gates (checked before any excusal:
+ * a half-stated nit gates), so unknown never relaxes. For a count decision use `gatesForCount`, which also asks the mechanical
+ * scope: the model's tags never override it.
  * @param {object} f a finding (producer-shaped, persisted-shaped or legacy)
  * @returns {{gates: boolean, reason: string}}
  */
 export function findingGateClass(f) {
   const importance = f?.importance ?? null;
   const preExisting = f?.pre_existing ?? null;
+  const newlyReachable = f?.newly_reachable ?? null;
   if (importance !== 'important' && importance !== 'nit') return { gates: true, reason: 'importance-unstated' };
   if (typeof preExisting !== 'boolean') return { gates: true, reason: 'pre-existing-unstated' };
+  if (typeof newlyReachable !== 'boolean') return { gates: true, reason: 'newly-reachable-unstated' };
   // Contradictory pairs: the tags disagree with each other or with the independent severity axis.
-  if (f.newly_reachable === true && preExisting === false) return { gates: true, reason: 'tag-contradiction' };
+  if (newlyReachable === true && preExisting === false) return { gates: true, reason: 'tag-contradiction' };
   if (importance === 'nit' && f.severity === 'HIGH') return { gates: true, reason: 'tag-contradiction' };
   if (importance === 'nit') return { gates: false, reason: 'nit' };
-  // `newly_reachable` unstated on a pre-existing finding reads as TRUE (impact, not authorship).
-  if (preExisting && f.newly_reachable !== false) return { gates: true, reason: 'pre-existing-newly-reachable' };
-  if (preExisting) return { gates: false, reason: 'pre-existing-not-reachable' };
+  if (preExisting && !newlyReachable) return { gates: false, reason: 'pre-existing-not-reachable' };
+  if (preExisting) return { gates: true, reason: 'pre-existing-newly-reachable' };
   return { gates: true, reason: 'important' };
+}
+
+/**
+ * Does a finding count toward the verdict / convergence? `inDiff` is the MECHANICAL scope (`isInDiff`) and outranks the model.
+ *  - mechanically pre-existing (`inDiff` false): not counted, EXCEPT `newly_reachable === true` - a pre-existing defect the
+ *    change made reachable counts, which is the point of the tag.
+ *  - in the diff: counts, unless the tag set is complete AND `nit` AND not HIGH. A model-claimed `pre_existing` on an
+ *    in-diff line is ignored and recorded as `tag-contradiction`; it can never excuse the finding.
+ * @param {object} f
+ * @param {{inDiff: boolean}} ctx
+ * @returns {{gates: boolean, reason: string}}
+ */
+export function gatesForCount(f, { inDiff }) {
+  if (!inDiff) {
+    return f?.newly_reachable === true
+      ? { gates: true, reason: 'pre-existing-newly-reachable' }
+      : { gates: false, reason: 'mechanically-pre-existing' };
+  }
+  const g = findingGateClass(f);
+  if (g.reason === 'nit') return g;
+  if (!g.gates) return { gates: true, reason: 'tag-contradiction' };
+  return g;
 }
 
 /**

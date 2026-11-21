@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { findingGateClass, NON_LLM_FINDING_TAGS } from '../scripts/lib/finding-tags.mjs';
+import { findingGateClass, gatesForCount, NON_LLM_FINDING_TAGS } from '../scripts/lib/finding-tags.mjs';
 import {
   ProducerFindingSchema, ProducerFindingV2Schema, makeProducerFindingV3Schema, PersistedFindingSchema,
 } from '../scripts/lib/schemas.mjs';
@@ -25,14 +25,16 @@ const f = (o) => ({ ...base, ...o });
 describe('findingGateClass - the only reader', () => {
   const rows = [
     ['legacy: no tags at all', f({}), true, 'importance-unstated'],
-    ['importance null (persisted legacy)', f({ importance: null, pre_existing: false }), true, 'importance-unstated'],
+    ['importance null (persisted legacy)', f({ importance: null, pre_existing: false, newly_reachable: false }), true, 'importance-unstated'],
     ['important, pre_existing absent', f({ importance: 'important' }), true, 'pre-existing-unstated'],
     ['nit, pre_existing absent (half-stated never relaxes)', f({ importance: 'nit' }), true, 'pre-existing-unstated'],
+    ['nit, newly_reachable absent: a half-stated nit gates (checked BEFORE the nit branch)', f({ importance: 'nit', pre_existing: false }), true, 'newly-reachable-unstated'],
+    ['nit, newly_reachable null', f({ importance: 'nit', pre_existing: false, newly_reachable: null }), true, 'newly-reachable-unstated'],
+    ['pre-existing, newly_reachable absent: half-stated gates', f({ importance: 'important', pre_existing: true }), true, 'newly-reachable-unstated'],
     ['important, in-diff', f({ importance: 'important', pre_existing: false, newly_reachable: false }), true, 'important'],
-    ['nit, in-diff', f({ importance: 'nit', pre_existing: false, newly_reachable: false }), false, 'nit'],
+    ['nit, fully stated', f({ importance: 'nit', pre_existing: false, newly_reachable: false }), false, 'nit'],
     ['pre-existing, not reachable', f({ importance: 'important', pre_existing: true, newly_reachable: false }), false, 'pre-existing-not-reachable'],
     ['pre-existing AND newly reachable', f({ importance: 'important', pre_existing: true, newly_reachable: true }), true, 'pre-existing-newly-reachable'],
-    ['pre-existing, newly_reachable unstated reads as true', f({ importance: 'important', pre_existing: true }), true, 'pre-existing-newly-reachable'],
     ['contradiction: newly_reachable with pre_existing false', f({ importance: 'nit', pre_existing: false, newly_reachable: true }), true, 'tag-contradiction'],
     ['contradiction: nit with HIGH', { severity: 'HIGH', importance: 'nit', pre_existing: false, newly_reachable: false }, true, 'tag-contradiction'],
     ['nit + pre-existing + newly reachable: nit never gates', f({ importance: 'nit', pre_existing: true, newly_reachable: true }), false, 'nit'],
@@ -44,6 +46,30 @@ describe('findingGateClass - the only reader', () => {
     assert.equal(findingGateClass(null).gates, true);
     assert.equal(findingGateClass(undefined).gates, true);
   });
+});
+
+describe('gatesForCount - the mechanical scope outranks the model', () => {
+  const full = (o) => ({ severity: 'MEDIUM', importance: 'important', pre_existing: false, newly_reachable: false, ...o });
+  it('H18: an in-diff finding the model tagged pre_existing/not-reachable STILL gates, as tag-contradiction', () => {
+    assert.deepEqual(gatesForCount(full({ pre_existing: true, newly_reachable: false }), { inDiff: true }), { gates: true, reason: 'tag-contradiction' });
+  });
+  it('negative control: the same tags WITHOUT the in-diff scope are excused (so the case above is not vacuous)', () => {
+    assert.equal(gatesForCount(full({ pre_existing: true, newly_reachable: false }), { inDiff: false }).gates, false);
+  });
+  it('H18: a mechanically pre-existing finding with newly_reachable true now COUNTS', () => {
+    assert.deepEqual(gatesForCount(full({ pre_existing: true, newly_reachable: true }), { inDiff: false }), { gates: true, reason: 'pre-existing-newly-reachable' });
+  });
+  it('negative control: mechanically pre-existing with newly_reachable false / absent does not count', () => {
+    assert.equal(gatesForCount(full({ newly_reachable: false }), { inDiff: false }).gates, false);
+    assert.equal(gatesForCount({ severity: 'HIGH' }, { inDiff: false }).gates, false);
+  });
+  it('in the diff: only a COMPLETE, non-HIGH nit is excused', () => {
+    assert.equal(gatesForCount(full({ importance: 'nit' }), { inDiff: true }).gates, false);
+    assert.equal(gatesForCount(full({ importance: 'nit', severity: 'HIGH' }), { inDiff: true }).gates, true);
+    assert.equal(gatesForCount({ severity: 'LOW', importance: 'nit', pre_existing: false }, { inDiff: true }).gates, true);   // half-stated nit
+    assert.equal(gatesForCount({ severity: 'LOW' }, { inDiff: true }).gates, true);                                         // legacy
+  });
+  it('an in-diff important finding gates', () => assert.equal(gatesForCount(full({}), { inDiff: true }).gates, true));
 });
 
 describe('emitted JSON Schema - producers REQUIRE the tags', () => {
@@ -96,27 +122,27 @@ describe('persisted parse is lenient and null-defaulting', () => {
   });
 });
 
-describe('countFindings wiring (beside isInDiff)', () => {
-  const mk = (o) => ({ severity: 'HIGH', ...o });
+describe('countFindings wiring (the mechanical scope outranks the tags)', () => {
+  const tags = (o) => ({ importance: 'important', pre_existing: false, newly_reachable: false, ...o });
   it('legacy untagged findings count exactly as before', () => {
-    const c = countFindings({ findings: [mk({}), mk({ severity: 'MEDIUM' })] });
+    const c = countFindings({ findings: [{ severity: 'HIGH' }, { severity: 'MEDIUM' }] });
     assert.deepEqual([c.high, c.medium, c.total], [1, 1, 2]);
   });
-  it('a nit and a pre-existing-not-reachable finding do not count; a newly reachable one does', () => {
+  it('a complete nit does not count', () => {
+    assert.equal(countFindings({ findings: [{ severity: 'MEDIUM', ...tags({ importance: 'nit' }) }] }).medium, 0);
+  });
+  it('an in-diff finding the model calls pre-existing still counts (H18)', () => {
+    assert.equal(countFindings({ findings: [{ severity: 'HIGH', ...tags({ pre_existing: true }) }] }).high, 1);
+  });
+  it('a mechanically pre-existing finding does not count, unless newly_reachable', () => {
     const c = countFindings({ findings: [
-      { severity: 'MEDIUM', importance: 'nit', pre_existing: false, newly_reachable: false },
-      { severity: 'HIGH', importance: 'important', pre_existing: true, newly_reachable: false },
-      { severity: 'HIGH', importance: 'important', pre_existing: true, newly_reachable: true },
+      { severity: 'HIGH', scope: 'pre-existing', ...tags({ pre_existing: true }) },
+      { severity: 'HIGH', scope: 'pre-existing', ...tags({ pre_existing: true, newly_reachable: true }) },
     ] });
-    assert.deepEqual([c.high, c.medium, c.total], [1, 0, 1]);
+    assert.deepEqual([c.high, c.total], [1, 1]);
   });
-  it('a contradiction still gates', () => {
-    const c = countFindings({ findings: [{ severity: 'HIGH', importance: 'nit', pre_existing: false, newly_reachable: false }] });
-    assert.equal(c.high, 1);
-  });
-  it('the mechanical scope filter still applies on top', () => {
-    const c = countFindings({ findings: [mk({ scope: 'pre-existing', importance: 'important', pre_existing: false, newly_reachable: false })] });
-    assert.equal(c.high, 0);
+  it('a contradiction still counts', () => {
+    assert.equal(countFindings({ findings: [{ severity: 'HIGH', ...tags({ importance: 'nit' }) }] }).high, 1);
   });
 });
 
@@ -203,5 +229,16 @@ describe('output contract and capture wiring', () => {
     assert.match(src, /captureStageFindings\(\{ stage: 'raw'/);
     assert.match(src, /captureStageFindings\(\{ stage: 'post-verification'/);
     assert.doesNotMatch(src, /stage: 'final-gate'/);
+  });
+});
+
+describe('all three count sites use gatesForCount, never the tags alone', () => {
+  const read = (p) => fs.readFileSync(path.join(REPO, p), 'utf8');
+  it('finding-assembly (verdict count + quickFix) and audit-loop (countFindings)', () => {
+    const fa = read('scripts/lib/audit/finding-assembly.mjs');
+    const al = read('scripts/audit-loop.mjs');
+    assert.equal((fa.match(/gatesForCount\(f, \{ inDiff: isInDiff\(f\) \}\)/g) ?? []).length, 2);
+    assert.equal((al.match(/gatesForCount\(f, \{ inDiff: isInDiff\(f\) \}\)/g) ?? []).length, 1);
+    for (const src of [fa, al]) assert.doesNotMatch(src, /findingGateClass\(/);
   });
 });
