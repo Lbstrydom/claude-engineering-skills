@@ -259,6 +259,22 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "H4",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "no",
+            "cite": ".github/workflows/memory-health.yml L80; migration-drift.yml L95 (hashFiles on /tmp)",
+            "why": "hashFiles cannot see /tmp so the upload step always skipped; confirmed by comment at architectural-drift.yml L105. Not touched by commit; workflows deleted from main."
+          }
+        ]
       }
     },
     {
@@ -274,6 +290,11 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "clean-under-audit",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json"
       }
     },
     {
@@ -289,6 +310,40 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "H2",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/campaign.mjs:84-87,823-827",
+            "why": "arg(redo) returns null for trailing --redo; parseRedo(null)->null so adjudicate runs the ordinary pending path (paid verdicts) instead of refusing. Main arg/parseRedo unchanged."
+          },
+          {
+            "id": "H3",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/campaign.mjs:489-495",
+            "why": "appendCampaignEvent returns {ok:false} on failure and the result is ignored, so verdicts_redone reason event can be lost with only a stderr line and exit unaffected. Main still ignores it."
+          },
+          {
+            "id": "M1",
+            "pass": "backend",
+            "severity": "MEDIUM",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/campaign.mjs:547",
+            "why": "reason=arg(reason) only checked for non-empty, so `--reason --actor alice` records \"--actor\" as the reason (unlike redo value check). Unchanged on main."
+          }
+        ]
       }
     },
     {
@@ -321,6 +376,103 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "H1",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:1379-1396 gate-only branch has no resolveAndAuthorize (normal branch 1400)",
+            "why": "Gate-only branch sends saved gateContext to gateModel with no policy check; --commits with a different --gate-model than the first run can egress a repo to an unauthorized recipient. Present on main."
+          },
+          {
+            "id": "H2",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:612-636 runPass catch -> conformanceMiss",
+            "why": "Both attempts throwing (e.g. persistent 400/auth/outage) collapses to conformance-miss, 0 findings, counted complete, commit state ran: an outage reads as found-nothing. Comment says deliberate, but conflates provider error."
+          },
+          {
+            "id": "H3",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:1080,1451",
+            "why": "runGptPass returns state conformance-miss for absent output_parsed but cmdApparatus hardcodes state ok in recordCall. Ledger state wrong; both states count complete, so low impact."
+          },
+          {
+            "id": "H5",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:988-1010",
+            "why": "budget-exceeded commit keeps its appended findings; resume reruns it with a fresh seen set and appends again, so duplicate rows enter out.findings. Plausible (raise budget, resume). Modest impact."
+          },
+          {
+            "id": "H8",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:835-838",
+            "why": "Resume spreads prior and overwrites model/modelArg; existing label with a different resolved model (latest-* sentinel drift) mixes findings under one provenance. No config compatibility check."
+          },
+          {
+            "id": "H10",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:1946-1955,2010",
+            "why": "Resume trusts prior grades by blind_id alone; re-merge reshuffles IDs so stale F001 grade can be reused and commit skipped. Plausible after re-merge without --force."
+          },
+          {
+            "id": "H11",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:2161-2166",
+            "why": "--allow-apparatus-gaps only skips the refusal; gaps is never used to filter commits/rows, so gap commits stay with solo rows vs no arm A, contradicting the \"score only covered commits\" message."
+          },
+          {
+            "id": "H12",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:2228,1713-1718,1811-1816",
+            "why": "gemini-net-new and solo-generator findings lack _dup, so rows.dup is undefined; if proposeClusters fails/omits, key solo:undefined merges rows across commits and arms."
+          },
+          {
+            "id": "H13",
+            "pass": "be-services",
+            "severity": "HIGH",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:2331-2354,2420",
+            "why": "Coverage counts invalid labels as labeled and denominator is only rows still mapped; invalid labels or deleted rows still yield coverage >=0.9 and decisionStatus final."
+          },
+          {
+            "id": "M11",
+            "pass": "Sustainability",
+            "severity": "MEDIUM",
+            "introducedByCommit": false,
+            "stillOnMain": "yes",
+            "cite": "scripts/solo-control-audit.mjs:1885-1888,1995-2003",
+            "why": "parseCsvLine drops all quote chars (incl. \"\" escapes) and checkpoint rewrites every cell from it, so judged sheet loses literal quotes in detail text. Low impact."
+          }
+        ]
       }
     },
     {
@@ -335,6 +487,11 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "clean-under-audit",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json"
       }
     },
     {
@@ -349,6 +506,22 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "M1",
+            "pass": "backend",
+            "severity": "MEDIUM",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/check-accepted-debt.mjs renderFingerprintDump (registryResult.ok ? rows : [])",
+            "why": "loadRegistry() {ok:false} (e.g. schema error mid-edit) is swallowed: every row marked +, exit 0, so a broken registry reads as all-new. Same code at origin/main L132-134."
+          }
+        ]
       }
     },
     {
@@ -363,6 +536,31 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "H1",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/lib/visual/tokens.mjs cssVarsAdapter.extract L190-204",
+            "why": "theme=sepia (theme is free-form string) with light-dark(): both halves skipped, yet warning says only the sepia half was taken. Misleading diagnostic plus dropped tokens. Same at main L190-204."
+          },
+          {
+            "id": "H2",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/lib/visual/tokens.mjs familyForVar L143-151",
+            "why": "New COLOR_NAME_RE check precedes shadow/border checks: --color-shadow: 0 2px 4px #000 is now colors, warns token_unparsed_color and is dropped (previously shadow). Regression; on main L151."
+          }
+        ]
       }
     },
     {
@@ -377,6 +575,22 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "M1",
+            "pass": "be-services",
+            "severity": "MEDIUM",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/lib/final-review-config.mjs:67 (finalReviewTimeoutMs)",
+            "why": "FINAL_REVIEW_TIMEOUT_MS=000270000 is valid, parses to 270000, but String(raw).trim()!==\"270000\" so a false \"not a positive whole number\" warning is printed. Cosmetic: value is used correctly."
+          }
+        ]
       }
     },
     {
@@ -392,6 +606,11 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "clean-under-audit",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json"
       }
     },
     {
@@ -406,6 +625,76 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "not-clean",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json",
+        "realDefects": [
+          {
+            "id": "H1",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "no",
+            "cite": "supabase/migrations/20260812060000_audit_findings_fingerprint_unique.sql:43-45",
+            "why": "Partial unique index cannot be inferred by bare ON CONFLICT(run_id,finding_fingerprint); later migration 20260812070000 replaces it with a full index citing measured 42P10."
+          },
+          {
+            "id": "H2",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "yes",
+            "cite": "scripts/lib/durable-write.mjs:249-260 (drainSpill apply)",
+            "why": "Drain never checks rowKey; a keyless write interrupted after writeEnvelope (or failed move to lost/, whose comment wrongly says drain quarantines) is replayed. Main drainLocked still lacks a rowKey check."
+          },
+          {
+            "id": "H3",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "no",
+            "cite": "scripts/lib/durable-write.mjs:117-122,165",
+            "why": "Envelope name is content-only so two identical keyless writes share a file; one success rmSync deletes the other in-flight evidence. Main adds a time+random suffix for keyless writers."
+          },
+          {
+            "id": "H5",
+            "pass": "backend",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "no",
+            "cite": "scripts/lib/durable-write.mjs:255",
+            "why": "isTracked?.() skipped when omitted, so the documented tracked-artifact refusal is off by default for every caller. Main resolves a default and fails closed (unavailable)."
+          },
+          {
+            "id": "M1",
+            "pass": "backend",
+            "severity": "MEDIUM",
+            "introducedByCommit": true,
+            "stillOnMain": "no",
+            "cite": "scripts/lib/durable-write.mjs:200,276",
+            "why": "Collision renames to X.json.1 which spillSummary filter(endsWith .json) omits, undercounting lost evidence. Code identical on main but keyless names now unique, so trigger practically gone."
+          },
+          {
+            "id": "H9",
+            "pass": "Sustainability",
+            "severity": "HIGH",
+            "introducedByCommit": true,
+            "stillOnMain": "unknown",
+            "cite": "20260812060000...sql:25-32",
+            "why": "Dedup DELETE ignores dependents; 5 FKs are ON DELETE CASCADE so newer-row children vanish (acknowledged in later migration safety note). Applied once on 1 control-marker row; real hazard, low actual impact."
+          },
+          {
+            "id": "M5",
+            "pass": "Quickfix",
+            "severity": "MEDIUM",
+            "introducedByCommit": true,
+            "stillOnMain": "no",
+            "cite": "tests/durable-write.test.mjs:141-151",
+            "why": "Replay returns applied:true so the envelope is deleted and queue is 0 before and after; assertion vacuous. Main rewrote the test with a throwing writer and before==1 guard."
+          }
+        ]
       }
     },
     {
@@ -421,6 +710,11 @@
       "curation": {
         "method": "human-review",
         "reviewedIn": "docs/experiments/audit-effectiveness/kd-expect-clean-worksheet.md"
+      },
+      "adjudication": {
+        "verdict": "clean-under-audit",
+        "date": "2026-11-20",
+        "source": "docs/experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json"
       }
     }
   ]

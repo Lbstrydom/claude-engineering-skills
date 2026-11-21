@@ -10,7 +10,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   LEGACY_UNCURATED_KD, validateCorpus, selectPool, selectionStamp, stampMismatch, corpusDigest,
-  scoreExpectCleanCase, summarizeExpectClean,
+  scoreExpectCleanCase, summarizeExpectClean, FLAGGED_RATE_NOTE,
 } from '../scripts/lib/model-eval/corpus-selection.mjs';
 import { makeGitFixtureEnv } from './helpers/git-fixture-env.mjs';
 import { loadCorpusCase, CorpusCaseUnavailable } from '../scripts/lib/model-eval/known-defect-corpus.mjs';
@@ -119,10 +119,10 @@ describe('the selection stamp', () => {
 });
 
 describe('expect_clean scoring is judge-free and strict', () => {
-  it('clean / false_positive (pass recorded) / failed', () => {
+  it('clean / flagged (pass recorded) / failed', () => {
     const files = ['a.js'];
     assert.deepEqual(scoreExpectCleanCase({ findings: [] }, files), { outcome: 'clean', passes: [] });
-    assert.deepEqual(scoreExpectCleanCase({ findings: [{ file: 'a.js', severity: 'MEDIUM', pass: 'backend' }] }, files), { outcome: 'false_positive', passes: ['backend'] });
+    assert.deepEqual(scoreExpectCleanCase({ findings: [{ file: 'a.js', severity: 'MEDIUM', pass: 'backend' }] }, files), { outcome: 'flagged', passes: ['backend'] });
     assert.equal(scoreExpectCleanCase({ failed: true }, files).outcome, 'failed');
     assert.equal(scoreExpectCleanCase({ findings: [{ file: 'a.js', severity: 'LOW' }, { file: 'other.js', severity: 'HIGH' }] }, files).outcome, 'clean', 'LOW, or a file outside the case, is not a false positive');
   });
@@ -133,12 +133,12 @@ describe('expect_clean scoring is judge-free and strict', () => {
     assert.equal(scoreExpectCleanCase({ findings: [] }, ['a.js']).outcome, 'clean', 'control: a valid empty array is clean');
   });
   it('equivalent path spellings match (r1 M4)', () => {
-    for (const spelling of ['./a.js', 'A.JS', 'a.js']) assert.equal(scoreExpectCleanCase({ findings: [{ file: spelling, severity: 'HIGH' }] }, ['a.js']).outcome, 'false_positive');
-    assert.equal(scoreExpectCleanCase({ findings: [{ file: 'dir\\b.js', severity: 'HIGH' }] }, ['dir/b.js']).outcome, 'false_positive');
+    for (const spelling of ['./a.js', 'A.JS', 'a.js']) assert.equal(scoreExpectCleanCase({ findings: [{ file: spelling, severity: 'HIGH' }] }, ['a.js']).outcome, 'flagged');
+    assert.equal(scoreExpectCleanCase({ findings: [{ file: 'dir\\b.js', severity: 'HIGH' }] }, ['dir/b.js']).outcome, 'flagged');
   });
   it('the suite block counts a failed case in the denominator; zero cases is unmeasured', () => {
-    const perCase = [{ outcome: 'clean' }, { outcome: 'false_positive' }, { outcome: 'failed' }];
-    assert.deepEqual(summarizeExpectClean(perCase), { cases: 3, clean: 1, falsePositive: 1, failed: 1, fpRate: 1 / 2, measuredRate: 2 / 3 });
+    const perCase = [{ outcome: 'clean' }, { outcome: 'flagged' }, { outcome: 'failed' }];
+    assert.deepEqual(summarizeExpectClean(perCase), { cases: 3, clean: 1, flagged: 1, failed: 1, flaggedRate: 1 / 2, flaggedRateNote: FLAGGED_RATE_NOTE, measuredRate: 2 / 3 });
     assert.deepEqual(summarizeExpectClean([]), { cases: 0, failed: 0, unmeasured: true });
     assert.deepEqual(summarizeExpectClean([{ outcome: 'failed' }, { outcome: 'failed' }]), { cases: 2, failed: 2, unmeasured: true }, 'every audit failed: unmeasured, not fpRate 0 (r1 M8)');
   });

@@ -498,6 +498,22 @@ async function main() {
   const corpusPath = argOption('corpus', DEFAULT_CORPUS_PATH);
   const thresholdsPath = argOption('thresholds', DEFAULT_THRESHOLDS_PATH);
   const outFile = argOption('out');
+  // Offline (no spend, no provider): score an existing expect_clean report against per-finding verdicts.
+  const adjudicateReport = argOption('adjudicate-report');
+  if (adjudicateReport) {
+    const { indexAdjudications, scoreAdjudicated } = await import('./lib/model-eval/expect-clean-adjudication.mjs');
+    const adjPath = argOption('adjudications');
+    if (!adjPath) { process.stderr.write('[model-eval-auditor] --adjudicate-report needs --adjudications <file>\n'); process.exitCode = 2; return; }
+    const report = JSON.parse(fs.readFileSync(adjudicateReport, 'utf8'));
+    const idx = indexAdjudications(JSON.parse(fs.readFileSync(adjPath, 'utf8')));
+    if (!idx.ok) { process.stderr.write(`[model-eval-auditor] invalid adjudications: ${idx.errors.join('; ')}\n`); process.exitCode = 2; return; }
+    if (report.suite !== 'expect_clean' || !Array.isArray(report.perCase)) { process.stderr.write('[model-eval-auditor] --adjudicate-report needs an expect_clean report\n'); process.exitCode = 2; return; }
+    const a = scoreAdjudicated(report.perCase, idx.byKey);
+    writeOutput({ source: { runId: report.runId, report: adjudicateReport, adjudications: adjPath }, adjudicated: a }, outFile,
+      `[model-eval-auditor] adjudicated: falseClaims=${a.falseClaims} realDefects=${a.realDefects} nits=${a.nits} notClean=${a.notClean}/${a.measuredCases} cases${a.complete ? '' : ` INCOMPLETE (unadjudicated=${a.unadjudicated} orphaned=${a.orphaned.length})`}`);
+    process.exitCode = a.complete ? 0 : 3;
+    return;
+  }
   const extraRepoRoots = (argOption('repo-roots', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
   const repoRoots = [process.cwd(), ...extraRepoRoots];
   // D3a cohort passthrough (R1/H2) — set ONLY on a child process the
@@ -704,7 +720,7 @@ async function main() {
       const rep = await runExpectCleanReport({ runId: reportRunId, arm: buildCandidateArm(candidateRoute, { id: 'CAND' }), route: candidateRoute, cases, scope, passes, meter, capUsd: budgetRemainingUsd });
       const cost = costFromEvents(rep.usageEvents);
       writeOutput({ runId: reportRunId, mode: 'report', suite, ...rep.summary, perCase: rep.perCase, budgetStop: rep.budgetStop, partial: rep.budgetStop != null || rep.summary.failed > 0, costComplete: rep.unaccounted === 0, cost, evidence: { mode: 'expect_clean', scope: scope ?? 'diff', passes: passes ?? 'all', selectedKdIds: selectedKds.map((k) => k.id), corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, ...stamp, routeEvidence: routeCatalogInternals.toRouteEvidence(candidateRoute) } },
-        outFile, `[model-eval-auditor] expect_clean report: ${rep.summary.unmeasured ? 'UNMEASURED' : `fpRate=${rep.summary.fpRate}`} cases=${rep.summary.cases} failed=${rep.summary.failed}`);
+        outFile, `[model-eval-auditor] expect_clean report: ${rep.summary.unmeasured ? 'UNMEASURED' : `UNADJUDICATED flagged=${rep.summary.flagged}/${rep.summary.cases} cases (a flagged rate, NOT false positives; adjudicate with --adjudicate-report)`} cases=${rep.summary.cases} failed=${rep.summary.failed}`);
       // A cap stop is a partial report; an unmeasured one (every generation failed) is a failed run, never a success exit.
       const { exitCodeFor } = await import('./lib/model-eval/expect-clean-report.mjs');
       process.exitCode = exitCodeFor(rep, BUDGET_STOPPED_EXIT_CODE);

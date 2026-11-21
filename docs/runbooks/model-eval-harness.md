@@ -152,9 +152,22 @@ and rewritable. So when a run surfaces genuine bugs that were not curated:
   `expect_clean` (`commit`, `files`, `rationale`; no pair, no rubric). `--suite` selects one; `invalidated` entries are never drawn.
 - **Running `expect_clean`.** `node scripts/model-eval-auditor.mjs --candidate <spec> --tier screen --suite expect_clean --out <file>` runs
   the real 5-pass generation arm on each clean commit (the Tier-C extractor forces one defect per case, so it cannot answer "none")
-  and scores it judge-free: a MEDIUM or HIGH finding on the case's files is a `false_positive`, a failed generation is `failed`.
-  The output is a REPORT (`fpRate` over measured cases, or `unmeasured`), carries the stamp, has no verdict and is never stored as a
-  run. A `false_positive` case carries `findings` (the MEDIUM+ ones that drove it: claim, risk, fix, evidence; secret-redacted) so it can be adjudicated without a re-run. It spends real money per case: pin the revision first (`npm run fixture:create`) and state a cap.
+  and scores it judge-free: a MEDIUM or HIGH finding on the case's files makes the case `flagged`, a failed generation is `failed`.
+  The output is a REPORT (`flaggedRate` over measured cases, or `unmeasured`), carries the stamp, has no verdict and is never stored as a
+  run. **`flagged` is not "false positive"**: on 2026-11-20, 11 of 11 cases were flagged while 1 of 107 findings was a false claim and 52 were
+  real defects, so the rate measured the corpus's cleanliness. A `flagged` case carries `findings` (the MEDIUM+ ones that drove it: claim,
+  risk, fix, evidence; secret-redacted) so it can be adjudicated without a re-run. It spends real money per case: pin the revision first
+  (`npm run fixture:create`) and state a cap.
+- **Adjudicating a report (offline, no spend).** Judge each kept finding REAL / NOT_A_DEFECT / WRONG / UNDETERMINED against the code at the case's
+  commit (a JSON array of `{kdId, pass, id, class, preExisting?}`, as in
+  [expect-clean-adjudication-v2-2026-11-20.json](../experiments/audit-effectiveness/expect-clean-adjudication-v2-2026-11-20.json)), then
+  `node scripts/model-eval-auditor.mjs --adjudicate-report <report.json> --adjudications <verdicts.json> --out <file>`. The result is
+  `falseClaims` (WRONG), `realDefects` (REAL), `nits`, `notClean` (cases with a REAL defect) and `falseClaimRate` over judged findings. A
+  finding with no verdict is never counted as anything: the result is INCOMPLETE (exit 3), as is a verdict that matches no finding (orphaned).
+  A candidate is judged on `falseClaims`; `realDefects` and `notClean` are statements about the corpus.
+- **Re-curation.** An `expect_clean` entry may carry `adjudication: {verdict: "not-clean" | "clean-under-audit", date, source, realDefects: [...]}`
+  (validated; `not-clean` must list its evidence). An entry is MARKED, never deleted, so history and stamps stay honest. Marking changes the
+  corpus digest, so runs from before and after do not compare (`stampMismatch`), as for any corpus edit.
 - **Subsets.** `--subset tiny|small|full`. `tiny` is the frozen anchor subset above: hand-listed, never re-drawn.
 - **Stamp.** A run's evidence carries `suite`, `subset`, `corpusVersion`, `corpusDigest`, `corpusLoaderVersion` and
   `selection {seed, requestedN, selectedIds}`; two runs compare only when those match (`stampMismatch`).

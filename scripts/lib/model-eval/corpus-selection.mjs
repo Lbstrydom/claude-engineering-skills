@@ -69,7 +69,9 @@ export function validateCorpus(corpus, { requireCuration = true } = {}) {
     if (suite === 'expect_clean') {
       if (!e.commit || !Array.isArray(e.files) || !e.files.length || !e.rationale) errors.push(`${tag}: expect_clean needs commit, files and rationale`);
       if (e.buggyCommit || e.fixCommit || e.expectedFindingRubric) errors.push(`${tag}: expect_clean must not carry buggyCommit, fixCommit or expectedFindingRubric`);
+      errors.push(...adjudicationErrors(e, tag));
     } else {
+      if (e.adjudication !== undefined) errors.push(`${tag}: only an expect_clean entry carries an adjudication`);
       const str = (v) => typeof v === 'string' && v.length > 0;
       if (!str(e.buggyCommit) || !str(e.fixCommit) || !str(e.expectedFindingRubric)) errors.push(`${tag}: ${suite} needs buggyCommit, fixCommit and expectedFindingRubric`);
       if (suite === 'missed' && e.auditCleared !== true) errors.push(`${tag}: a missed entry needs auditCleared: true (our own audit cleared the buggy commit)`);
@@ -144,11 +146,29 @@ export function stampMismatch(a, b) {
   return canonicalize(a.selection.selectedIds) === canonicalize(b.selection.selectedIds) ? null : 'selection.selectedIds';
 }
 
+/** What a re-curation records on an expect_clean entry: a verdict on whether it really is clean, with the evidence. */
+export const ADJUDICATION_VERDICTS = Object.freeze(['not-clean', 'clean-under-audit']);
+function adjudicationErrors(e, tag) {
+  const a = e.adjudication;
+  if (a === undefined) return [];
+  const errs = [];
+  if (!a || typeof a !== 'object') return [`${tag}: adjudication must be an object`];
+  if (!ADJUDICATION_VERDICTS.includes(a.verdict)) errs.push(`${tag}: adjudication.verdict must be one of ${ADJUDICATION_VERDICTS.join('|')}`);
+  if (typeof a.source !== 'string' || !a.source) errs.push(`${tag}: adjudication.source (the record the verdicts live in) is required`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.date))) errs.push(`${tag}: adjudication.date must be YYYY-MM-DD`);
+  const rd = a.realDefects;
+  if (a.verdict === 'not-clean') {
+    if (!Array.isArray(rd) || rd.length === 0) errs.push(`${tag}: a not-clean adjudication must list its realDefects (the evidence)`);
+    else rd.forEach((d, i) => { if (!d || typeof d.id !== 'string' || typeof d.pass !== 'string' || typeof d.why !== 'string' || !d.why) errs.push(`${tag}: adjudication.realDefects[${i}] needs id, pass and why`); });
+  } else if (rd !== undefined && !(Array.isArray(rd) && rd.length === 0)) errs.push(`${tag}: a clean-under-audit entry cannot list realDefects`);
+  return errs;
+}
+
 const BLOCKING = new Set(['MEDIUM', 'HIGH']);
 const SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
 /**
  * Judge-free expect_clean scoring (sashiko's rule): zero findings at MEDIUM or above on the case's files is `clean`; any such
- * finding is a `false_positive` (its pass recorded); a run that failed is `failed` and counts in the denominator, never as clean.
+ * finding makes the case `flagged` (its pass recorded). FLAGGED is not "false positive": the findings may be real, which only adjudication can say (expect-clean-adjudication.mjs); a run that failed is `failed` and counts in the denominator, never as clean.
  * @param {{failed?:boolean, findings?:Array<{file?:string, severity?:string, pass?:string}>}} out
  */
 // Lowercasing is deliberate: it is the repo-wide MATCHING key (AGENTS.md accepted debt, `normalizePath`) and the loader's own
@@ -166,15 +186,18 @@ export function scoreExpectCleanCase(out, files) {
   if (!out || typeof out !== 'object' || out.failed || !Array.isArray(out.findings)
     || !out.findings.every((f) => f && typeof f === 'object' && typeof f.file === 'string' && f.file.trim() !== '' && SEVERITIES.has(f.severity))) return { outcome: 'failed', passes: [] };
   const hits = driverIndexes(out.findings, files).map((i) => out.findings[i]);
-  return hits.length === 0 ? { outcome: 'clean', passes: [] } : { outcome: 'false_positive', passes: [...new Set(hits.map((h) => h.pass ?? 'unknown'))] };
+  return hits.length === 0 ? { outcome: 'clean', passes: [] } : { outcome: 'flagged', passes: [...new Set(hits.map((h) => h.pass ?? 'unknown'))] };
 }
 
-/** Suite block. The false-positive rate is over the MEASURED cases; no measured case (zero cases, or every audit failed) is `unmeasured`, never fpRate 0. */
+/** Why `flaggedRate` is not a false-positive rate; carried in the report itself so a reader of the JSON alone is told. */
+export const FLAGGED_RATE_NOTE = 'flaggedRate = cases with a MEDIUM+ finding / measured cases. It is NOT a false-positive rate: the findings may be real defects. Adjudicate them (--adjudicate-report) for falseClaims / realDefects / nits.';
+
+/** Suite block. `flaggedRate` is over the MEASURED cases; no measured case (zero cases, or every audit failed) is `unmeasured`, never a rate of 0. */
 export function summarizeExpectClean(perCase) {
   const cases = perCase.length;
   const count = (o) => perCase.filter((c) => c.outcome === o).length;
   const failed = count('failed');
   const measured = cases - failed;
   if (measured === 0) return { cases, failed, unmeasured: true };
-  return { cases, clean: count('clean'), falsePositive: count('false_positive'), failed, fpRate: count('false_positive') / measured, measuredRate: measured / cases };
+  return { cases, clean: count('clean'), flagged: count('flagged'), failed, flaggedRate: count('flagged') / measured, flaggedRateNote: FLAGGED_RATE_NOTE, measuredRate: measured / cases };
 }
