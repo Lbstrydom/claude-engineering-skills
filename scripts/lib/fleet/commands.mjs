@@ -494,7 +494,8 @@ export function materializeRemoteBranch(cwd, name) {
   const tip = runGit(['rev-parse', '--verify', `${full}^{commit}`], cwd);
   if (!tip.ok) return { ok: false, reason: `could not read ${full} (${tip.reason})` };
   const oid = tip.stdout.trim();
-  const made = runGit(['update-ref', '-m', `fleet add: created from ${full.slice('refs/remotes/'.length)}`, `refs/heads/${name}`, oid, '0'.repeat(oid.length)], cwd);
+  // --no-deref: create THE ref, never whatever a dangling symbolic ref at that name points to (an existing symref is refused).
+  const made = runGit(['update-ref', '--no-deref', '-m', `fleet add: created from ${full.slice('refs/remotes/'.length)}`, `refs/heads/${name}`, oid, '0'.repeat(oid.length)], cwd);
   return made.ok ? { ok: true, created: full.slice('refs/remotes/'.length), oid } : { ok: false, reason: `could not create ${name} from ${full} (${made.reason ?? made.stderr?.trim() ?? 'unknown'})` };
 }
 

@@ -84,6 +84,13 @@ describe('#4 fleet add adopts a remote-only branch', () => {
     // A branch whose own name starts with a segment equal to the remote's last segment is not confused with it.
     assert.equal(materializeRemoteBranch(fx.repo, 'origin/feat-x'), null);
   });
+  it('a dangling symbolic ref at the name is refused: creation never follows it to create some other ref', () => {
+    const fx = remoteOnly();
+    git(['symbolic-ref', 'refs/heads/feat-x', 'refs/heads/elsewhere'], fx.repo);
+    const res = materializeRemoteBranch(fx.repo, 'feat-x');
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.notEqual(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/elsewhere'], { cwd: fx.repo }).status, 0, 'the symref target was not created');
+  });
   it('creation is create-only: a branch that appears first is never overwritten', () => {
     const fx = remoteOnly();
     git(['branch', 'feat-x', 'main'], fx.repo);
@@ -349,10 +356,18 @@ describe('--dry-run: the two CLIs that ignored it', () => {
   });
   it('importing write-ledger-r1 writes nothing (only the entry guard runs main)', () => {
     const ledger = path.resolve('.claude/tmp/ledger/audit-1776354886-ledger.json');
-    const existed = fs.existsSync(ledger);
-    const r = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./scripts/write-ledger-r1.mjs'); process.stdout.write('imported');"], { encoding: 'utf8' });
-    assert.equal(r.stdout.trim().endsWith('imported'), true, r.stdout + r.stderr);
-    assert.equal(fs.existsSync(ledger), existed);
+    const had = fs.existsSync(ledger) ? fs.readFileSync(ledger) : null;
+    // A sentinel: an import that wrote (or truncated) the ledger would change these exact bytes.
+    fs.mkdirSync(path.dirname(ledger), { recursive: true });
+    const sentinel = Buffer.from('{"sentinel":true}\n');
+    fs.writeFileSync(ledger, sentinel);
+    try {
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./scripts/write-ledger-r1.mjs'); process.stdout.write('imported');"], { encoding: 'utf8' });
+      assert.equal(r.stdout.trim().endsWith('imported'), true, r.stdout + r.stderr);
+      assert.deepEqual(fs.readFileSync(ledger), sentinel, 'importing the module did not touch the ledger');
+    } finally {
+      if (had) fs.writeFileSync(ledger, had); else fs.rmSync(ledger, { force: true });
+    }
   });
   it('write-ledger-r1 refuses a stray word, including one after the -- terminator', () => {
     for (const args of [['stray'], ['--', '--dry-runn'], ['--dry-run', 'extra']]) {
