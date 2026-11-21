@@ -44,6 +44,7 @@ test('inherited config injection (GIT_CONFIG_COUNT/KEY_n/VALUE_n, GIT_CONFIG_PAR
     for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS']) assert.equal(k in env, false, k);
     assert.equal(fixtureGitEnv({ GIT_CONFIG_COUNT: '0' }).GIT_CONFIG_COUNT, '0');
   } finally {
-    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS']) if (!(k in saved)) delete process.env[k];
+    // restore EXACTLY: a pre-existing value comes back, an absent one is removed
+    for (const k of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS']) { if (k in saved) process.env[k] = saved[k]; else delete process.env[k]; }
   }
 });

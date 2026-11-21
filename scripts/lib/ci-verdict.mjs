@@ -106,7 +106,11 @@ function attemptsOf(accepted, priorAttempts) {
         ? { runId: r.id, attempt: n, status: a.status, conclusion: a.conclusion ?? null, run: r }
         : { runId: r.id, attempt: n, status: null, conclusion: null, run: r, why: a?.why ?? (a ? `unreadable attempt record (status ${JSON.stringify(a.status ?? null)}, conclusion ${JSON.stringify(a.conclusion ?? null)})` : 'not read') });
     }
-    out.push({ runId: r.id, attempt: latest, status: String(r.status ?? ''), conclusion: r.conclusion ?? null, run: r });
+    // The latest attempt (the run record itself) meets the SAME readability contract: an older accepted run whose own record is
+    // malformed could be hiding a failure just as an unreadable earlier attempt could.
+    out.push(isReadableAttempt({ status: r.status, conclusion: r.conclusion })
+      ? { runId: r.id, attempt: latest, status: String(r.status), conclusion: r.conclusion ?? null, run: r }
+      : { runId: r.id, attempt: latest, status: null, conclusion: null, run: r, why: `unreadable run record (status ${JSON.stringify(r.status ?? null)}, conclusion ${JSON.stringify(r.conclusion ?? null)})` });
   }
   return out.sort((a, b) => (Date.parse(a.run.created_at ?? '') || 0) - (Date.parse(b.run.created_at ?? '') || 0) || a.runId - b.runId || a.attempt - b.attempt);
 }

@@ -23,6 +23,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv, makeRepoTemplate, rmrf } from './helpers/fixtures.mjs';
 import { makeGitFixtureEnv, withMaintenanceOff } from './helpers/git-fixture-env.mjs';
+import { fixtureGitEnv } from './helpers/git.mjs';
 import { makeFleetRepo, cleanupFleetRoots } from './helpers/fleet-repo.mjs';
 
 function headOf(dir, env) {
@@ -249,8 +250,8 @@ describe('fixture repositories never run detached background maintenance (docs/p
 
   it('negative control: without the env the same read is NOT false (the instrument can fail)', () => {
     const d = mk('maint-c-');
-    const bare = { ...process.env, GIT_CONFIG_GLOBAL: path.join(d, 'none'), GIT_CONFIG_NOSYSTEM: '1' };
-    for (const k of Object.keys(bare)) if (k.startsWith('GIT_CONFIG_KEY_') || k.startsWith('GIT_CONFIG_VALUE_') || k === 'GIT_CONFIG_COUNT') delete bare[k];
+    // fixtureGitEnv drops inherited repo-selection AND config-injection variables (a hook's GIT_DIR cannot retarget this git init)
+    const bare = fixtureGitEnv({ GIT_CONFIG_GLOBAL: path.join(d, 'none'), GIT_CONFIG_NOSYSTEM: '1' });
     execFileSync('git', ['init', '-q'], { cwd: d, env: bare });
     const r = spawnSync('git', ['config', '--get', 'maintenance.auto'], { cwd: d, encoding: 'utf-8', env: bare });
     assert.notEqual(r.stdout.trim(), 'false');

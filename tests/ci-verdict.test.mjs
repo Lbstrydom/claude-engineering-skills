@@ -152,6 +152,11 @@ describe('classifyCiVerdict — only a completed success on ACCEPTED evidence is
         assert.equal(r.verdict, 'unverified', JSON.stringify(a));
       }
     });
+    it('an OLDER accepted run whose own record is malformed is unverified even when the newest run is green', () => {
+      const older = run({ id: 1, status: 'completed', conclusion: null, created_at: '2026-10-14T09:00:00Z' });
+      const newest = run({ id: 2, conclusion: 'success', created_at: '2026-10-14T10:00:00Z' });
+      assert.equal(classifyCiVerdict(evidence({ runs: [newest, older] })).verdict, 'unverified');
+    });
     it('an in-progress prior attempt or an in-progress other run is pending, never passed', () => {
       const r1 = classifyCiVerdict(evidence({ runs: [run({ id: 5, run_attempt: 2 })], priorAttempts: { 5: [att(1, null, 'in_progress')] } }));
       assert.equal(r1.verdict, 'pending');
