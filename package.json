@@ -223,6 +223,7 @@
     "remediation:reconcile": "node scripts/remediation-reconcile.mjs",
     "remediation:reconcile:apply": "node scripts/remediation-reconcile.mjs --apply",
     "stores:drift": "node scripts/store-drift.mjs",
+    "step-back:replay": "node scripts/step-back-replay.mjs",
     "skills:consumer-refs:gate": "node scripts/check-skill-consumer-refs.mjs"
   },
   "keywords": [

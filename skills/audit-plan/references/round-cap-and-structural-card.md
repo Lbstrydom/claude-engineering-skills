@@ -95,7 +95,7 @@ Read it as evidence for a human call, not as an instruction:
 ## Round signals and the step-back (code rounds 3 and 6)
 
 For a code audit the card (requested for round 4 or 7) also prints three deterministic signals
-(`scripts/lib/audit/round-signals.mjs`): **reopen rate** (findings whose cited lines fall in the post-image hunks of the
+(the round-signals module): **reopen rate** (findings whose cited lines fall in the post-image hunks of the
 fix range, ≥ 0.5 fires), **severity drift** (median per-file change in max severity, ≤ -1 over ≥ 2 files fires) and
 **retired** (accepted topics closed; ≤ 1 for two consecutive rounds fires). An unmeasured signal (no `audited_sha`, no cited
 lines, no ledger) never fires and is never read as quiet; the card says the trigger is unmeasured.
