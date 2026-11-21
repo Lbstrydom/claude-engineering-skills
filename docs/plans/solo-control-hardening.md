@@ -125,3 +125,12 @@ the two fixes no GPT round had read. All four are confirmed and fixed, plus four
   discovered-unit keying (H8,H22), DeepSeek fingerprint absence (H11), retro baseline (H13), judge schema strictness (M1),
   test-interception style (M2), arbitrary-offset chunking (M3). H2 (a billed call lost to a kill before `recordCall`) is new
   but is the same ledger-identity decision as #22.
+
+Follow-up rounds of the same re-audit (R2–R6, each fix red-then-green in `tests/solo-control-reaudit-421.test.mjs`):
+a zero-finding merge is a valid pair; a new sheet beside a legacy map is refused; a blank `merge_id` row counts as unknown; a
+legacy (column-less) grade is re-written as `legacy-unverified`, never stamped with the current judge, and keeps warning;
+`--force` and any resume that discards grades keep a timestamped `<out>.prev-<time>` copy first; `--out` is confined to the
+output dir by REAL path (links, Windows case) and may not name the input, the canonical sheet or the map; the merge guard
+protects any human-only cell (label, proof, pattern); names are taken verbatim from `-z`. Not changed, same rulings as §4/§6:
+`cluster`/`matches` edits (pre-filled by merge, indistinguishable from the proposal), call identity (#22), chunk-marker size
+overhead, retro commands' provenance/baseline, legacy pre-gate artifacts lacking the new fields (unknowable, disclosed).

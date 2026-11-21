@@ -1695,7 +1695,9 @@ async function cmdJudgeGpt() {
   // the checkpoint REPLACES outPath after every commit: it must never be the input sheet NOR the canonical human-labelled sheet / private map
   // (a copied input with --out blind-adjudication.csv overwrote the labels)
   // --out names a file INSIDE the solo-control output dir: `--out ../../.env` used to resolve anywhere on disk
-  if (path.relative(OUT_DIR, outPath).startsWith('..') || path.isAbsolute(path.relative(OUT_DIR, outPath))) { log(`FATAL: --out must stay inside ${path.relative(process.cwd(), OUT_DIR)}`); process.exit(2); }
+  // compared by REAL path: a link inside the output dir that points elsewhere is not inside it
+  const relOut = path.relative(realPath(OUT_DIR), realPath(outPath));
+  if (relOut.startsWith('..') || path.isAbsolute(relOut)) { log(`FATAL: --out must stay inside ${path.relative(process.cwd(), OUT_DIR)}`); process.exit(2); }
   { const why = protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath); if (why) { log(`FATAL: ${path.relative(process.cwd(), outPath)} ${why} — the checkpoint would overwrite it`); process.exit(2); } }
   const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 

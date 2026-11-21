@@ -304,3 +304,16 @@ describe('re-audit round 5', () => {
     assert.equal(fs.readdirSync(d).filter((f) => f.startsWith('out.csv.prev-')).length, 0);
   }));
 });
+
+describe('re-audit round 6', () => {
+  test('a link INSIDE the output dir that points outside it does not smuggle --out out of the dir', (t) => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    const outside = path.join(dir, 'outside'); fs.mkdirSync(outside);
+    try { fs.symlinkSync(outside, path.join(d, 'link'), 'junction'); } catch { t.skip('cannot create a directory link here'); return; }
+    const r = cli(dir, ['judge-gpt', '--out', 'link/result.csv'], refusingPolicy(dir));
+    assert.equal(r.status, 2, r.out);
+    assert.match(r.out, /must stay inside/);
+    assert.deepEqual(fs.readdirSync(outside), [], 'nothing was written outside');
+  }));
+});
