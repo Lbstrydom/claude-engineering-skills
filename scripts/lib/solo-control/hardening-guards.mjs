@@ -8,6 +8,8 @@
  * @module scripts/lib/solo-control/hardening-guards
  */
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** A numeric CLI option that must be a positive integer. `parseInt('0')`, `('abc')` and `('-5')` used to flow straight
  * into a loop increment (`--batch-size 0` re-sent the same PAID judge batch forever) or a slice width (`--max-chars 0`
@@ -89,10 +91,10 @@ export function sheetPairingProblems(map, sheetRows, { mapMergeId = null, sheetM
   if (drift.length) problems.push(`${drift.length} row(s) disagree with the map on commit/severity/category — the sheet and map are from different merges: ${drift.slice(0, 8).join(', ')}`);
   // The merge generation rides IN the sheet (a `merge_id` column) and in the map: two merges that produce identical visible
   // findings with different arm attribution (or the same ids after a re-merge) can no longer pass as a pair.
-  const ids = new Set((sheetMergeIds ?? []).filter(Boolean));
+  const ids = new Set(sheetMergeIds ?? []); // blanks COUNT: a row with no merge_id beside rows with one is a row of unknown generation
   if (mapMergeId && sheetRows.length > 0) { // a zero-finding merge has no rows to carry the id: nothing to pair
     if (ids.size !== 1 || !ids.has(mapMergeId)) problems.push(`the sheet's merge_id (${[...ids].join('|') || 'none'}) is not the map's (${mapMergeId}) — they are from different merges`);
-  } else if (!mapMergeId && ids.size > 0) {
+  } else if (!mapMergeId && [...ids].some(Boolean)) {
     // a sheet that carries a merge_id beside a map that has none: the interrupted first merge after the column existed (new sheet, old map)
     problems.push('the sheet carries a merge_id but the map has none — an interrupted merge left a new sheet beside an old map');
   }
@@ -170,3 +172,15 @@ export const decisionArms = (resultArms, armMeta) => [...new Set([...Object.keys
 /** judge-gpt writes its output with a checkpoint that REPLACES the file: it must never be the input sheet nor the canonical human-labelled one. */
 export const protectedOutputProblem = (outPath, protectedPaths, resolve) => (protectedPaths.some((p) => resolve(p) === resolve(outPath)) ? 'resolves to a protected sheet' : null);
 
+
+/** A path's real location: symlinked parent directories (and Windows case) resolved, so an alias cannot name a protected file under a different string. */
+export const realPath = (p) => {
+  let r;
+  try { r = fs.existsSync(p) ? fs.realpathSync.native(p) : path.join(fs.realpathSync.native(path.dirname(path.resolve(p))), path.basename(p)); } catch { r = path.resolve(p); }
+  return process.platform === 'win32' ? r.toLowerCase() : r; // a case-insensitive filesystem: BLIND-ADJUDICATION.CSV is the same file
+};
+
+/** The operator-facing line for a budget stop — a breached ceiling and an UNCHECKABLE one read differently. */
+export const budgetStopLine = (hit, budgetUsd, where) => `\n✗ ${hit.reason === 'unmeasured'
+  ? `BUDGET UNCHECKABLE: ${hit.unmeasured} ledger call(s) reached a provider with no price, so $${hit.spentUsd.toFixed(2)} is a FLOOR that cannot be compared to the $${budgetUsd} cap (unpriced means unmeasured, never zero)`
+  : `BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}`}. Stopped at ${where}; it and every later commit are partial and will be dropped cohort-wide by score.`;

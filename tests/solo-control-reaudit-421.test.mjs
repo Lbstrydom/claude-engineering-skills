@@ -228,3 +228,29 @@ describe('merge: any human-only cell is work worth protecting', () => {
     assert.match(r.out, /already holds 1/);
   }));
 });
+
+describe('re-audit round 3', () => {
+  const rows = [{ blindId: 'F001', commit: 'abc12345', severity: 'HIGH', category: 'k', file: 'f', detail: 'd' }, { blindId: 'F002', commit: 'abc12345', severity: 'HIGH', category: 'k', file: 'g', detail: 'e' }];
+  const map = { F001: { commit: 'abc12345def', severity: 'HIGH', category: 'k' }, F002: { commit: 'abc12345def', severity: 'HIGH', category: 'k' } };
+  test('a row with a BLANK merge_id beside rows carrying the current one is refused (it was filtered away)', () => {
+    assert.match(sheetPairingProblems(map, rows, { mapMergeId: 'M1', sheetMergeIds: ['M1', ''] }).join(), /different merges/);
+    assert.deepEqual(sheetPairingProblems(map, rows, { mapMergeId: 'M1', sheetMergeIds: ['M1', 'M1'] }), [], 'negative control');
+  });
+  test('the --force backup path is protected too: a copied input named <out>.prev cannot be overwritten', () => inTemp((dir) => {
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText());
+    fs.writeFileSync(path.join(d, 'out.csv.prev'), sheetText('proven', 'f:1'));
+    const before = fs.readFileSync(path.join(d, 'out.csv.prev'), 'utf8');
+    const r = cli(dir, ['judge-gpt', '--csv', path.join(d, 'out.csv.prev'), '--out', 'out.csv', '--force'], refusingPolicy(dir));
+    assert.equal(r.status, 2, r.out);
+    assert.equal(fs.readFileSync(path.join(d, 'out.csv.prev'), 'utf8'), before);
+  }));
+  test('on a case-insensitive filesystem an upper-case spelling of the canonical sheet is the same file', (t) => inTemp((dir) => {
+    if (process.platform !== 'win32' && process.platform !== 'darwin') { t.skip('case-sensitive filesystem'); return; }
+    const d = solo(dir);
+    fs.writeFileSync(path.join(d, 'blind-adjudication.csv'), sheetText('proven', 'f:1'));
+    const r = cli(dir, ['judge-gpt', '--out', 'BLIND-ADJUDICATION.CSV', '--force'], refusingPolicy(dir));
+    assert.equal(r.status, 2, r.out);
+    assert.equal(parseCsv(fs.readFileSync(path.join(d, 'blind-adjudication.csv'), 'utf8'))[1][6], 'proven');
+  }));
+});

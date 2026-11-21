@@ -110,7 +110,7 @@ import { readLedger, aggregateCostForArm, sharedPassCreditRows } from './lib/sol
 import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
 import { chunkDiff, continuationMarker } from './lib/solo-control/chunk-diff.mjs';
 import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
-import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict, LEGACY_JUDGE_IDENTITY, decisionArms, protectedOutputProblem } from './lib/solo-control/hardening-guards.mjs';
+import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict, LEGACY_JUDGE_IDENTITY, decisionArms, protectedOutputProblem, realPath, budgetStopLine } from './lib/solo-control/hardening-guards.mjs';
 import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
@@ -218,16 +218,10 @@ function repoIdentityFor(root) {
 function budgetBreached(budgetUsd) {
   return budgetVerdict(readLedger(CALL_LEDGER_PATH), budgetUsd);
 }
-/** The operator-facing line for a budget stop — a breached ceiling and an UNCHECKABLE one read differently. */
-const budgetStopLine = (hit, budgetUsd, where) => `\n✗ ${hit.reason === 'unmeasured'
-  ? `BUDGET UNCHECKABLE: ${hit.unmeasured} ledger call(s) reached a provider with no price, so $${hit.spentUsd.toFixed(2)} is a FLOOR that cannot be compared to the $${budgetUsd} cap (unpriced means unmeasured, never zero)`
-  : `BUDGET CEILING: $${hit.spentUsd.toFixed(2)} spent across the ledger ≥ $${budgetUsd} cap${hit.complete ? '' : ' (a FLOOR — some rows are unpriced)'}`}. Stopped at ${where}; it and every later commit are partial and will be dropped cohort-wide by score.`;
 /** Parse a validated numeric option or exit 2 — the value reaches a loop increment, a slice width or a spend ceiling. */
 function optOrDie(fn, flag, dflt) { try { return fn(argOption(flag, dflt), flag); } catch (err) { log(`FATAL: ${err.message}`); process.exit(2); } }
 /** Load the recipient policy at the top of any command that sends a diff anywhere; a missing/malformed file is an operator setup error. */
 function policyOrDie() { try { return loadRecipientPolicy(RECIPIENT_POLICY_PATH); } catch (err) { log(`FATAL: recipient policy unavailable (${err.message})`); process.exit(2); } }
-/** A path's real location: symlinked parent directories (and Windows case) resolved, so an alias cannot name a protected file under a different string. */
-const realPath = (p) => { try { return path.join(fs.realpathSync.native(path.dirname(path.resolve(p))), path.basename(p)); } catch { return path.resolve(p); } };
 /** Authorize every model a commit's diff is about to reach, for the repo that holds it → null if cleared, else the refusal text. */
 function refusedFor(models, root, policy) {
   try { authorizeAll(models, repoIdentityFor(root), policy); return null; } catch (err) { return err.message; }
@@ -1700,7 +1694,11 @@ async function cmdJudgeGpt() {
   if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
   // the checkpoint REPLACES outPath after every commit: it must never be the input sheet NOR the canonical human-labelled sheet / private map
   // (a copied input with --out blind-adjudication.csv overwrote the labels)
-  if (protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath)) { log(`FATAL: --out ${path.relative(process.cwd(), outPath)} ${protectedOutputProblem(outPath, [srcPath, BLIND_CSV, BLIND_MAP], realPath)} — the checkpoint would overwrite it`); process.exit(2); }
+  // the output AND its --force backup (<out>.prev) are both written: neither may be a protected file
+  for (const w of [outPath, `${outPath}.prev`]) {
+    const why = protectedOutputProblem(w, [srcPath, BLIND_CSV, BLIND_MAP], realPath);
+    if (why) { log(`FATAL: ${path.relative(process.cwd(), w)} ${why} — the checkpoint would overwrite it`); process.exit(2); }
+  }
   const recipientPolicy = policyOrDie(); // the full diff of every sheet commit goes to GPT
 
   const { header, rows, records } = readBlindSheet(srcPath);
