@@ -204,6 +204,121 @@
     {
       "path": "scripts/check-skill-consumer-refs.mjs",
       "kind": "opaque"
+    },
+    {
+      "path": "scripts/brainstorm-round.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-architecture-intent-drift.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-context-drift.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-db-suite-enrolment.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-mcp-parity.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-skill-descriptions.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-skill-frontmatter.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-synced-doc-links.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-visual-contract-doc-drift.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/check-worktree-preflight.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/debt-auto-capture.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/generate-plans-index.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/harness-retro.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/lib/visual/drift.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/nav-audit.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/persona-consistency-run.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/postgres-parity/check-non-core-references.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/regenerate-skill-copies.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/requirements.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/ship-commit.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/ux-lock-run.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/visual-audit.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
+      "path": "scripts/write-ledger-entries.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
     }
   ],
   "gates": [

@@ -27,7 +27,7 @@ import { resolvePushRange, describePushRange } from './lib/push-range.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { analyze, formatReport, summaryLine } from './lib/gate-provenance/analyze.mjs';
 
-const KNOWN_FLAGS = ['--base', '--head', '--repo-root', '--mode', '--json', '--pr', '--repo', '--no-gate-runs', '--help', '-h', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--base', '--head', '--repo-root', '--mode', '--json', '--pr', '--repo', '--no-gate-runs', '--base-install-dir', '--help', '-h', '--selfcheck-relocation'];
 const NOTICE = '::notice title=audit-loop-gate-provenance::';
 
 /** `--name value` or `--name=value`; a flag present without a usable value is a usage error. */
@@ -44,6 +44,16 @@ function value(argv, name) {
   return null;
 }
 
+/** Tolerant, never-throwing read of the mode (both `--mode enforce` and `--mode=enforce`), done ONCE so a crash handler shares it. */
+let MODE = "observe";
+function modeOf(argv) {
+  for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === "--mode") return argv[i + 1] === "enforce" ? "enforce" : "observe";
+    if (argv[i].startsWith("--mode=")) return argv[i].slice(7) === "enforce" ? "enforce" : "observe";
+  }
+  return "observe";
+}
+
 function gitRunner(repoRoot) {
   return (args) => {
     try {
@@ -54,6 +64,7 @@ function gitRunner(repoRoot) {
 
 async function main() {
   const argv = process.argv;
+  MODE = modeOf(argv);
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); await finishAndExit(0); return; }
   let opts;
   try {
@@ -73,6 +84,7 @@ async function main() {
       repoRoot: path.resolve(value(argv, '--repo-root') ?? process.cwd()),
       pr: value(argv, '--pr') ?? undefined,
       repo: value(argv, '--repo') ?? process.env.GITHUB_REPOSITORY ?? undefined,
+      baseInstallDir: value(argv, "--base-install-dir") ?? undefined,
       json: argv.includes('--json'),
       gateRuns: !argv.includes('--no-gate-runs'),
     };
@@ -80,6 +92,7 @@ async function main() {
     if (err instanceof ArgvError || /requires a value/.test(String(err?.message))) { process.stderr.write(`${err.message}\n`); await finishAndExit(2); return; }
     throw err;
   }
+  if (process.env.GATE_PROVENANCE_CRASH_FOR_TEST === "1") throw new Error("injected crash (test seam)");
 
   const run = gitRunner(opts.repoRoot);
   // One range, one resolver: an explicit base, never inferred, never HEAD~1 or the upstream.
@@ -95,7 +108,7 @@ async function main() {
     if (!baseSha || !headSha) {
       report = { mode: opts.mode, base: opts.base, head: opts.head, state: 'unmeasured', reason: 'base or head does not resolve to a commit', classification: null, authorization: null, gateRuns: null };
     } else {
-      report = analyze({ repoRoot: opts.repoRoot, base: baseSha, head: headSha, mode: opts.mode, gateRuns: opts.gateRuns, repo: opts.repo, pr: opts.pr });
+      report = analyze({ repoRoot: opts.repoRoot, base: baseSha, head: headSha, mode: opts.mode, gateRuns: opts.gateRuns, repo: opts.repo, pr: opts.pr, baseInstallDir: opts.baseInstallDir });
     }
   }
 
@@ -117,6 +130,6 @@ if (isInvokedAsScript(import.meta.url)) {
     const first = String(err?.message ?? err).split('\n')[0];
     process.stderr.write(`gate-provenance: ${err?.stack ?? err}\n`);
     process.stderr.write(`${NOTICE}state=unmeasured | runner crashed: ${first}\n`);
-    await finishAndExit(process.argv.includes('enforce') ? 3 : 0);
+    await finishAndExit(MODE === "enforce" ? 3 : 0);
   });
 }

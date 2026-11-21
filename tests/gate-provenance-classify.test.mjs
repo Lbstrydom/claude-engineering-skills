@@ -192,3 +192,27 @@ test('nothing registered changed: unchanged', () => {
   const r = reg([F('b.json', 'numeric-cap')]);
   assert.equal(diff({ baseReg: r, headReg: r, base: { 'b.json': j({ n: 1 }) }, head: { 'b.json': j({ n: 1 }) } }).verdict, 'unchanged');
 });
+
+test('registry diff compares the WHOLE entry minus note: knownFields/allowanceKeys loosen, an unrecognised field is unknown, note is free', () => {
+  const entry = { path: REGISTRY_PATH, kind: 'opaque' };
+  const mk = (e) => j({ version: 1, files: [e], gates: [] });
+  const base = { path: 'a.json', kind: 'numeric-cap', knownFields: ['n'], allowanceKeys: ['files'] };
+  assert.equal(run(entry, mk(base), mk({ ...base, note: 'reworded' })).reasons.length, 0, 'a note change alone is not a change');
+  assert.equal(run(entry, mk(base), mk({ ...base, allowanceKeys: ['files', 'ids'] })).verdict, 'loosening');
+  assert.equal(run(entry, mk(base), mk({ ...base, allowanceKeys: [] })).verdict, 'loosening');
+  assert.equal(run(entry, mk(base), mk({ ...base, knownFields: ['n', 'm'] })).verdict, 'loosening');
+  assert.equal(run(entry, mk(base), mk({ ...base, kind: 'opaque' })).verdict, 'loosening');
+});
+
+test('an unregistered module in the protected closure classifies opaque (unknown), and an unprotected file stays out', () => {
+  const r = reg([F('b.json', 'numeric-cap')]);
+  const parse = (x) => parseRegistry(x).registry;
+  const out = classifyGateDiff({
+    baseRegistry: parse(r), headRegistry: parse(r),
+    baseFiles: ['scripts/lib/dep.mjs', 'src/x.mjs'], headFiles: ['scripts/lib/dep.mjs', 'src/x.mjs'],
+    readBase: (p) => (p === REGISTRY_PATH ? r : 'a'), readHead: (p) => (p === REGISTRY_PATH ? r : 'b'),
+    protectedPaths: new Set(['scripts/lib/dep.mjs']),
+  });
+  assert.equal(out.verdict, 'unknown');
+  assert.deepEqual(out.files.map((f) => [f.path, f.kind]), [['scripts/lib/dep.mjs', 'opaque']]);
+});

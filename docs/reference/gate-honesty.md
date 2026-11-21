@@ -283,28 +283,41 @@ weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges i
 (the verification-lessons plan, section 2.2, the plan this implements).
 
 - **Registry**: `.gate-files.json` lists every gate-defining path (each ratchet baseline, `scripts/gate-contracts/**`,
-  `skills/*/gate-contract.json`, the prompt seeds, the policy loaders, `package.json`/lockfile/`.npmrc`, the runner, the
-  workflow, the registry itself) with a classifier kind: `numeric-cap`, `set-of-allowances`, `contract-set` or `opaque`.
+  `skills/*/gate-contract.json`, the prompt seeds, the policy loaders, the gate evaluators named by a contract, `package.json`/lockfile/`.npmrc`,
+  the runner, the workflow, the registry itself) with a classifier kind: `numeric-cap`, `set-of-allowances`, `contract-set` or `opaque`.
   `tests/gate-provenance-registry.test.mjs` derives the candidates from the tracked tree and fails on an unregistered
-  `*-baseline.json` or contract file, so a new baseline cannot be forgotten.
-- **Classifier** (`scripts/lib/gate-provenance/classify.mjs`, `GATE_DIFF_CONTRACT_VERSION = 1`): every changed registered file
+  `*-baseline.json` or contract file, on a gate entry point that does not exist, and on a contract `implementation` that is
+  neither registered nor inside the protected closure.
+- **One protected-set model** (`scripts/lib/gate-provenance/protected-set.mjs`): registry entries + the base import closure of
+  each registered gate entry point + the **subprocess helpers** a closure module spawns (a `scripts/x.mjs` string literal in a
+  module that calls spawn/execFile/fork, followed recursively with its own closure) + install inputs. The snapshot, the
+  classification and the registered-only authorization check all read this one set. A module in it that is not registered and
+  that the PR changes classifies as `opaque`, so `unknown`, so loosening. Residual: a script path computed at runtime is not followed.
+- **Classifier** (`scripts/lib/gate-provenance/classify.mjs`, `GATE_DIFF_CONTRACT_VERSION = 1`): every changed protected file
   reads `tightening`, `loosening`, `unknown` or `unchanged`; worst wins, in the order `loosening > unknown > tightening >
-  unchanged`. `unknown` is treated as loosening. A raised cap, an added allowance, a removed entry or a deleted file loosens.
-- **Verdict run**: a detached worktree of the PR head with the protected set (registered files plus the import closure of each
-  registered gate entry point, plus install inputs) checked out from the base; a protected path the base lacked is removed;
-  `node_modules` comes from a separate base worktree installed with `npm ci --ignore-scripts`. Each registered ratchet gate runs
-  there (verdict) and in the PR tree (shadow); a divergence is printed.
+  unchanged`. `unknown` is treated as loosening. A raised cap, an added allowance, a removed entry or a deleted file loosens. A
+  change to the registry compares the whole entry minus `note`, so a field added later is never ignored.
+- **Verdict and shadow runs**: a detached worktree of the PR head with the protected set checked out from the base (a protected
+  path the base lacked is removed from disk and index). `node_modules` is the dependency install of THE BASE (`npm ci
+  --ignore-scripts` in a separate base worktree, or `--base-install-dir`). Each registered ratchet gate runs there (verdict) and
+  in a second clean detached worktree of the resolved head with the same `node_modules` link (shadow), never in the caller
+  working tree; a divergence is printed.
+- **Unmeasured dominates**: any unmeasured input (a git read failure, an unparseable base registry, the snapshot, the base
+  install, the gate runs, `--no-gate-runs`, unreadable PR facts) makes the overall state `unmeasured`, never `clean` or
+  `authorized`; `unmeasuredParts` lists them. A measured `violation` still outranks it. A git read that FAILS is unmeasured;
+  only a path the tree confirms absent reads as absent.
 - **Observe mode** (the only mode CI runs): prints the report and a `::notice title=audit-loop-gate-provenance::` line and
-  exits 0. Anything it could not measure (no base, the bootstrap PR whose base has no runner, no `gh`, no base install) prints as
-  `unmeasured`, never as clean. Enforce mode (`--mode enforce`) exists for a later, separate PR.
-- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost). In a
-  `numeric-cap` baseline, removing a per-site exception listed under the entry's `allowanceKeys` (`files`, `ids`) restores
-  the default cap and reads `tightening`, so an honest re-baseline after fixing a site needs no label; removing any other
-  key reads `loosening`.
+  exits 0; a crash is printed as unmeasured and still exits 0. `--mode enforce` (or `--mode=enforce`) exits 1 on a violation and 3
+  on unmeasured or a crash, and is not enabled in CI. In CI the step runs before the PR `npm ci`, from a worktree of the base
+  sha, and a failed base install prints an unmeasured notice and lets the job continue.
+- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost). On a
+  `numeric-cap` baseline, removing a per-site exception listed under the entry `allowanceKeys` (`files`, `ids`) restores
+  the default cap and reads `tightening`; removing any other key reads `loosening`.
 
-**Requesting a loosening**: a PR whose gate diff is `loosening` or `unknown` is allowed only when it changes nothing but
-registered files, carries the label `gate-loosening`, and has a standing approving review by `Lbstrydom`. Open it as its own
-PR; the unlabelled alternative is to fix the cause so the baseline can shrink instead.
+**Requesting a loosening**: a PR whose gate diff is `loosening` or `unknown` is allowed only when every changed file (both sides
+of a rename) is inside the protected set, it carries the label `gate-loosening`, the PR base and head from the API equal the
+analyzed ones, and the latest review state of `Lbstrydom` is APPROVED on the analyzed head commit (a later push needs a fresh
+approval). Open it as its own PR; the alternative is to fix the cause so the baseline can shrink instead.
 
 ## Explicitly out of scope (v1)
 

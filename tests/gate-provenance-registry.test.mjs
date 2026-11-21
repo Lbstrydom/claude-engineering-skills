@@ -94,3 +94,70 @@ test('expandRegistry returns exactly the tracked files an entry covers', () => {
   assert.equal(m.get('.file-size-baseline.json').kind, 'numeric-cap');
   assert.ok(![...m.keys()].some((f) => f.startsWith('docs/')));
 });
+
+test('glob: ** is segment-aware - a/**/b matches zero, one and many middle segments and never a/foob', () => {
+  const re = globToRegExp('a/**/b');
+  assert.ok(re.test('a/b'), 'zero middle segments');
+  assert.ok(re.test('a/x/b'), 'one');
+  assert.ok(re.test('a/x/y/z/b'), 'many');
+  assert.ok(!re.test('a/foob'), 'a/foob is not a/**/b');
+  assert.ok(!re.test('a/xb'));
+  assert.ok(!re.test('ab'));
+  assert.ok(globToRegExp('**/x.json').test('x.json'));
+  assert.ok(globToRegExp('**/x.json').test('p/q/x.json'));
+  assert.ok(!globToRegExp('**/x.json').test('p/qx.json'));
+  assert.ok(globToRegExp('a/**').test('a/b/c'));
+});
+
+// ── census: gate entry points and contract implementations ──────────────────────────────────────────────────────────
+import { protectedClosure } from '../scripts/lib/gate-provenance/protected-set.mjs';
+
+const trackedSet = new Set(tracked);
+const readTracked = (p) => (trackedSet.has(p) ? fs.readFileSync(path.join(ROOT, p), 'utf8') : null);
+
+/** Registry gate entry points that are not tracked files. */
+const missingEntryPoints = (registry, files) => gateEntryPoints(registry).filter((p) => !files.has(p));
+
+/** Contract implementation paths neither registered nor in the protected closure of the gate entry points. */
+function uncoveredImplementations(registry, files, read, contracts) {
+  const closure = new Set(protectedClosure({ entryPoints: gateEntryPoints(registry).filter((p) => files.has(p)), repoFiles: files, readFile: read }).files);
+  const out = new Set();
+  for (const doc of contracts) for (const g of doc.gates ?? []) {
+    if (typeof g.implementation === 'string' && !matchEntry(registry, g.implementation) && !closure.has(g.implementation)) out.add(g.implementation);
+  }
+  return [...out].sort();
+}
+const realContracts = () => tracked
+  .filter((f) => /^scripts\/gate-contracts\/[^/]+\.json$|^skills\/[^/]+\/gate-contract\.json$/.test(f))
+  .map((f) => JSON.parse(fs.readFileSync(path.join(ROOT, f), 'utf8')));
+
+test('CENSUS: every gate entry point named in the registry gate list exists; a fixture with a ghost entry fails', () => {
+  assert.deepEqual(missingEntryPoints(loaded.registry, trackedSet), []);
+  const ghost = { ...loaded.registry, gates: [...loaded.registry.gates, { id: 'ghost', argv: ['scripts/no-such-gate.mjs'] }] };
+  assert.deepEqual(missingEntryPoints(ghost, trackedSet), ['scripts/no-such-gate.mjs']);
+});
+
+test('CENSUS: every contract implementation path is registered or inside the protected closure; a fixture fails', () => {
+  const contracts = realContracts();
+  assert.ok(contracts.length >= 20, 'the census must actually read the contracts (vacuous-pass guard)');
+  assert.deepEqual(uncoveredImplementations(loaded.registry, trackedSet, readTracked, contracts), []);
+  const fixture = [...contracts, { gates: [{ id: 'new', implementation: 'scripts/brand-new-gate.mjs' }] }];
+  assert.deepEqual(uncoveredImplementations(loaded.registry, trackedSet, readTracked, fixture), ['scripts/brand-new-gate.mjs']);
+  assert.ok(uncoveredImplementations({ ...loaded.registry, files: [] }, trackedSet, readTracked, contracts).length > 0, 'an empty registry leaves implementations uncovered');
+});
+
+test('protected closure follows spawned helper scripts (literal paths in a spawn-calling module), recursively', () => {
+  const files = new Set(['scripts/g.mjs', 'scripts/h.mjs', 'scripts/lib/dep.mjs', 'scripts/unrelated.mjs']);
+  const src = {
+    'scripts/g.mjs': 'import { spawnSync } from "node:child_process";\nspawnSync(process.execPath, ["scripts/h.mjs"]);\n',
+    'scripts/h.mjs': 'import "./lib/dep.mjs";\n',
+    'scripts/lib/dep.mjs': 'export const d = 1;\n',
+    'scripts/unrelated.mjs': 'export const u = 1;\n',
+  };
+  const c = protectedClosure({ entryPoints: ['scripts/g.mjs'], repoFiles: files, readFile: (p) => src[p] ?? null });
+  assert.deepEqual(c.files, ['scripts/g.mjs', 'scripts/h.mjs', 'scripts/lib/dep.mjs']);
+  assert.deepEqual(c.helpers, ['scripts/h.mjs']);
+  // A literal in a module that does NOT spawn anything is not a helper (no process-spawning call in sight).
+  const quiet = { ...src, 'scripts/g.mjs': 'export const p = "scripts/h.mjs";\n' };
+  assert.deepEqual(protectedClosure({ entryPoints: ['scripts/g.mjs'], repoFiles: files, readFile: (p) => quiet[p] ?? null }).helpers, []);
+});

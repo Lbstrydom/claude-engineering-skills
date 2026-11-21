@@ -59,22 +59,22 @@ export function parseRegistry(text) {
 const GLOB_CHARS = /[*?]/;
 export const isGlob = (p) => GLOB_CHARS.test(p);
 
-/** `**` crosses `/`, `*` does not; everything else is literal. */
+/**
+ * Segment-aware glob. `*` stays inside one segment; a whole-segment `**` is zero or more whole segments, so `a/**` + `/b`
+ * matches `a/b`, `a/x/b` and `a/x/y/b` but never `a/foob`; a trailing `**` matches everything below.
+ */
 export function globToRegExp(glob) {
+  const esc = (s) => s.split('').map((c) => ('.+^${}()|[]?'.includes(c) ? String.fromCharCode(92) + c : c)).join('');
+  const seg = (s) => s.split('*').map(esc).join('[^/]*');
+  const parts = glob.split('/');
   let re = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        re += '.*';
-        i++;
-        if (glob[i + 1] === '/') i++;
-      } else re += '[^/]*';
-    } else re += '.+^${}()|[]?'.includes(c) ? String.fromCharCode(92) + c : c;
-  }
+  parts.forEach((p, i) => {
+    const last = i === parts.length - 1;
+    if (p === '**') re += last ? '.*' : '(?:[^/]+/)*';
+    else re += last ? seg(p) : `${seg(p)}/`;
+  });
   return new RegExp(`^${re}$`);
 }
-
 /**
  * The entry that governs `file`: an exact-path entry beats a glob, and among globs the first declared wins.
  * @returns {z.infer<typeof FileEntry>|null}

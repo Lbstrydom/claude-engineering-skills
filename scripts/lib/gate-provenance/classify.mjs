@@ -131,7 +131,15 @@ function classifyRegistryChange(baseText, headText, t) {
     const x = hf.get(p);
     if (!x) t.add('loosening', `registry entry removed: ${p}`);
     else if (x.kind !== e.kind) t.add('loosening', `registry classifier changed: ${p} ${e.kind} -> ${x.kind}`);
-    else if (!same(x.knownFields, e.knownFields)) t.add('unknown', `registry knownFields changed: ${p}`);
+    else {
+      // Every behavior-affecting field: the WHOLE entry minus the free-text note, so a field added later is never ignored.
+      const strip = (v) => ({ ...v, note: undefined });
+      if (!same(strip(x), strip(e))) {
+        const keys = new Set([...Object.keys(x), ...Object.keys(e)].filter((k) => k !== 'note' && k !== 'kind' && !same(x[k], e[k])));
+        const known = [...keys].every((k) => k === 'knownFields' || k === 'allowanceKeys');
+        t.add(known ? 'loosening' : 'unknown', `registry entry changed (${[...keys].join(', ')}): ${p}`);
+      }
+    }
   }
   for (const p of hf.keys()) if (!bf.has(p)) t.add('tightening', `registry entry added: ${p}`);
   const gates = (r) => new Map(r.registry.gates.map((g) => [g.id, g]));
@@ -205,13 +213,15 @@ export function classifyFile({ path, entry, baseText, headText }) {
  * @param {Iterable<string>} args.headFiles tracked paths at the head
  * @param {(p: string) => string|null} args.readBase content at the base, null when absent
  * @param {(p: string) => string|null} args.readHead content at the head, null when absent
+ * @param {Set<string>} [args.protectedPaths] the shared protected set (registry + closure + spawned helpers)
  */
-export function classifyGateDiff({ baseRegistry, headRegistry, baseFiles, headFiles, readBase, readHead }) {
+export function classifyGateDiff({ baseRegistry, headRegistry, baseFiles, headFiles, readBase, readHead, protectedPaths = new Set() }) {
   const files = [];
   let verdict = 'unchanged';
   const universe = new Set([...baseFiles, ...headFiles, REGISTRY_PATH]);
   for (const path of [...universe].sort()) {
-    const entry = matchEntry(baseRegistry, path) ?? matchEntry(headRegistry, path);
+    // An UNREGISTERED module the gates import or spawn is still code the verdict rests on: opaque, so unknown, so loosening.
+    const entry = matchEntry(baseRegistry, path) ?? matchEntry(headRegistry, path) ?? (protectedPaths.has(path) ? { path, kind: "opaque" } : null);
     if (!entry && path !== REGISTRY_PATH) continue;
     const r = classifyFile({ path, entry, baseText: readBase(path), headText: readHead(path) });
     if (r.verdict === 'unchanged') continue;
