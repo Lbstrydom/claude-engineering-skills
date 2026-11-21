@@ -286,7 +286,7 @@ node scripts/openai-audit.mjs rebuttal "$PLAN_FILE" "$REBUTTAL_FILE" --out .audi
 
 Quality threshold: `HIGH == 0 && MEDIUM <= 2 && quickFix == 0`
 
-Counts go through `findingGateClass` (`lib/finding-tags.mjs`, sole reader of the finding tags): `nit` and pre-existing-not-reachable are reported, not counted; unstated or contradictory tags gate.
+Counts go through `findingGateClass` (`lib/finding-tags.mjs`, sole reader of the finding tags): `nit` and pre-existing-not-reachable are reported, not counted; unstated or contradictory tags still count.
 
 Stability uses `_hash` for exact cross-round matching:
 - New hash not in prior set = genuinely new → resets stability
