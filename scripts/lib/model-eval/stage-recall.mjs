@@ -33,7 +33,8 @@ export const FULL_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 const StageFindingSchema = z.object({
   topicId: z.string(),
-  file: z.string(),
+  // null = the finding's location could not be resolved to a path (an anchor by diffPathId only): the unit is not scorable.
+  file: z.string().nullable(),
   line: z.number().int().nullable(),
   severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   // null = the finding predates the tag (legacy / non-LLM): unmeasured, never `nit`.
@@ -56,8 +57,13 @@ function locate(f) {
   const anchor = f.anchor ?? f.triggerAnchor;
   const anchored = anchor?.side === 'base' ? (anchor.oldFile ?? anchor.newFile) : (anchor?.newFile ?? anchor?.oldFile);
   if (anchored) return { file: anchored, line: Number.isInteger(anchor.startLine) ? anchor.startLine : null };
+  if (typeof f.file === 'string' && f.file.includes('/')) return { file: f.file, line: Number.isInteger(f.line) ? f.line : null };
   const m = /^(.*?):(\d+)(?:-\d+)?$/.exec(String(f.section ?? ''));
-  return m ? { file: m[1], line: Number(m[2]) } : { file: String(f.section ?? ''), line: null };
+  if (m) return { file: m[1], line: Number(m[2]) };
+  // An anchor naming its file only by diffPathId, or a section that is not a path, cannot be located: say so (file null) so
+  // the unit is dropped as unlocatable rather than scored as a miss against a non-path (audit R3 M1).
+  const s = String(f.section ?? '');
+  return { file: /[\\/]|\.[A-Za-z0-9]+$/.test(s) ? s : null, line: null };
 }
 
 /** Project in-memory pipeline findings onto the artifact's finding shape. */
@@ -66,7 +72,7 @@ export function projectStageFindings(findings) {
     const out = {
       topicId: String(f.id ?? ''), ...locate(f), severity: f.severity, importance: f.importance ?? null,
     };
-    if (typeof f.detail === 'string' && f.detail.length > 0) out.description = f.detail;
+    if (typeof f.detail === 'string' && f.detail.trim().length > 0) out.description = f.detail;
     return out;
   });
 }
@@ -132,7 +138,8 @@ export function loadEligibleEntries(corpusRev, { cwd = process.cwd(), exec = exe
   return corpus.defects.filter((e) => !e.invalidated);
 }
 
-const hasDescription = (f) => typeof f.description === 'string' && f.description.length > 0;
+// A whitespace-only description is no description (audit R3 H1/M4); a finding with no locatable file cannot match either.
+const hasDescription = (f) => typeof f.description === 'string' && f.description.trim().length > 0 && typeof f.file === 'string' && f.file.length > 0;
 /**
  * A unit is scorable in a stage when it found nothing (a real zero) or EVERY finding carries a description: one undescribed
  * finding could be the one that matches the defect, so scoring it with an empty description would fabricate a miss (audit R2 M1).

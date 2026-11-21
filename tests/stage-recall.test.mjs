@@ -96,6 +96,20 @@ describe('computeStageRecall - the same units in every compared stage (H13/H16/M
     assert.equal(r.stages.raw.recall, null);
     assert.equal(r.droppedUnits[0].reason, 'findings carry no description in stage raw');
   });
+  it('a whitespace-only description is no description (audit R3 H1/M4)', () => {
+    const r = computeStageRecall({ entries, artifacts: [art('raw', 'KD-1', [finding('src/a.js', '   \n\t ')])] });
+    assert.equal(r.stages.raw.recall, null);
+    assert.match(r.droppedUnits[0].reason, /no description/);
+  });
+  it('a finding whose location is not a path (diffPathId-only anchor) is projected with file null and makes the unit unscorable (audit R3 M1)', async () => {
+    const { projectStageFindings } = await import('../scripts/lib/model-eval/stage-recall.mjs');
+    const [p] = projectStageFindings([{ topicId: 't', severity: 'MEDIUM', importance: 'important', detail: 'd', anchor: { diffPathId: 'p3', startLine: 4 }, section: 'Wiring' }]);
+    assert.equal(p.file, null);
+    const [q] = projectStageFindings([{ topicId: 't', severity: 'MEDIUM', importance: 'important', detail: 'd', section: 'src/a.js:12' }]);
+    assert.equal(q.file, 'src/a.js'); // control: a path section still locates
+    const r = computeStageRecall({ entries, artifacts: [art('raw', 'KD-1', [{ ...p }])] });
+    assert.equal(r.stages.raw.recall, null);
+  });
   it('stages with no unit in common report unmeasured, never a fabricated zero', () => {
     const r = computeStageRecall({ entries, artifacts: [art('raw', 'KD-1', [hit]), art('post-verification', 'KD-2', [])] });
     assert.equal(r.stages.raw.recall, null);
