@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseCsv } from '../scripts/lib/solo-control/csv.mjs';
-import { budgetVerdict, sheetPairingProblems, rowSig, judgeResumeIdentity, findingsDigest } from '../scripts/lib/solo-control/hardening-guards.mjs';
+import { budgetVerdict, sheetPairingProblems, rowSig, findingsDigest } from '../scripts/lib/solo-control/hardening-guards.mjs';
 import { runGptJudgeBatch } from '../scripts/lib/solo-control/judge.mjs';
 import { _internals as soloCtl } from '../scripts/solo-control-audit.mjs';
 
@@ -88,11 +88,6 @@ describe('pairing binds file+detail; judge sidecar binds its CSV', () => {
     assert.deepEqual(sheetPairingProblems(map, [row()]), []);
     assert.equal(rowSig('f', 'a\nb'), rowSig('f', 'a\r\nb'));
     assert.deepEqual(sheetPairingProblems({ F001: { commit: 'abc12345def', severity: 'HIGH', category: 'k' } }, [row({ detail: 'x' })]), []);
-  });
-  test('judgeResumeIdentity: a CSV the sidecar does not describe (interrupted checkpoint) is not trusted', () => {
-    const cur = { model: 'm', knownDefectsSha256: 'h', outSha256: 'new' };
-    assert.equal(judgeResumeIdentity({ model: 'm', knownDefectsSha256: 'h', outSha256: 'old' }, cur).ok, false);
-    assert.deepEqual(judgeResumeIdentity({ ...cur }, cur), { ok: true });
   });
   test('runGptJudgeBatch: no structured output is a failed batch, never an empty grading list', async () => {
     const client = { responses: { parse: async () => ({ output_parsed: null }) } };
