@@ -337,7 +337,7 @@ of 44390039181 (`'<path>'` vs `'<msgfile>'`, 11-18) is a different symptom, not 
   if it stops a run before a later accepted `HIGH` (a real finding). Spend: 7 PRs × 2 checkpoints × 2 paid arms = 28
   calls, **estimate ~$14** (measured per-call cost after the first 2 calls replaces it), **hard stop at $20** metered
   from provider usage. The planned spend goes to the coordinator before the first paid call. Verdict →
-  `docs/research/step-back-replay-2026-11.md` (planned).
+  `docs/research/step-back-replay-2026-11.md`.
 
 ### 2.5 Phase 5 — diff-triggered checklist and the AGENTS.md kernel (#5, #11, #20)
 
@@ -452,7 +452,7 @@ Production files the root cause lands in are added to this list when §2.1a is w
 `scripts/lib/audit/step-back.mjs` (create), `scripts/lib/audit/structural-card.mjs` (modify),
 `scripts/audit-structural-card.mjs` (modify), `scripts/step-back-replay.mjs` (create), `tests/round-signals.test.mjs`
 (create), `tests/step-back-contract.test.mjs` (create), `docs/audit/shared-references/round-cap-and-structural-card.md`
-(modify), `docs/research/step-back-replay-2026-11.md` (planned) (create).
+(modify), `docs/research/step-back-replay-2026-11.md` (create).
 
 **Phase 5 — Checklist pilot** (item 5, first half): Files: `.audit-loop/checklist.json` (create), `scripts/checklist.mjs` (create),
 `scripts/lib/checklist/match.mjs` (create), `scripts/lib/checklist/schema.mjs` (create),

@@ -219,7 +219,7 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
       if (idx.length === 0) break;
       if (FILE_GROUPS.has(group)) { const [gone] = parts.splice(idx[idx.length - 1], 1); truncations.push({ section: group, action: 'dropped', path: gone.meta.path }); continue; }
       const p = parts[idx[0]];
-      const keep = Math.max(0, p.body.length - (size() - limits.totalChars) - TRUNCATION_MARKER.length);
+      const keep = Math.max(0, p.body.length - (size() - budget) - TRUNCATION_MARKER.length);
       truncations.push({ section: group, action: 'truncated', from: p.body.length, to: keep });
       p.body = keep > 0 ? `${p.body.slice(0, keep)}${TRUNCATION_MARKER}` : '';
       spent.add(p);
