@@ -163,6 +163,11 @@ function classifyRegistryChange(baseText, headText, t) {
     if (governing && !same(strip(governing), strip(e))) t.add('unknown', `registry entry added over an existing glob and classifies it differently: ${p} (was ${governing.kind} via ${governing.path})`);
     else t.add('tightening', `registry entry added: ${p}`);
   }
+  // Matching is FIRST-match over the entry list, so reordering the entries both revisions share can change which entry governs
+  // a path even when no entry changed: read as unknown (never unchanged).
+  const order = (r, keep) => r.registry.files.map((e) => e.path).filter((p) => keep.has(p));
+  const shared = new Set([...bf.keys()].filter((p) => hf.has(p)));
+  if (!same(order(b, shared), order(h, shared))) t.add('unknown', 'registry entry order changed (first-match semantics)');
   const gates = (r) => new Map(r.registry.gates.map((g) => [g.id, g]));
   const bg = gates(b);
   const hg = gates(h);

@@ -193,6 +193,17 @@ test('aliased spawns: a module importing child_process under ANY binding that na
   assert.deepEqual(helpers('const cp = require("node:child_process");\ncp.execFileSync("node", ["scripts/h.mjs"]);\n'), ['scripts/h.mjs'], 'require');
   assert.deepEqual(helpers('const cp = await import("node:child_process");\ncp.spawn("node", ["scripts/h.mjs"]);\n'), ['scripts/h.mjs'], 'dynamic import');
   assert.deepEqual(helpers('export const where = "scripts/h.mjs";\n'), [], 'a literal in a module with no child_process import is not a spawn');
+  // audit R5 H2: whitespace before the call paren is valid JavaScript
+  assert.deepEqual(helpers('const cp = await import ("node:child_process");\ncp.spawn("node", ["scripts/h.mjs"]);\n'), ['scripts/h.mjs'], 'spaced dynamic import');
+  assert.deepEqual(helpers('const cp = require ("child_process");\ncp.spawn("node", ["scripts/h.mjs"]);\n'), ['scripts/h.mjs'], 'spaced require');
+});
+
+test('a gate root the BASE registry names but the base tree lacks is reported, never silently dropped (audit R5 H1)', () => {
+  const reg = regOf([], [{ id: 'g', argv: ['scripts/gone.mjs'] }]);
+  const side = { registry: reg, files: ['scripts/other.mjs'], set: new Set(['scripts/other.mjs']), read: () => 'export const x = 1;\n' };
+  assert.deepEqual(computeProtected(side, side).missingEntryPoints, ['scripts/gone.mjs']);
+  const present = { ...side, files: ['scripts/gone.mjs'], set: new Set(['scripts/gone.mjs']) };
+  assert.deepEqual(computeProtected(present, present).missingEntryPoints, [], 'negative control: a present root is not reported');
 });
 
 test('union expansion: a registered path that exists in only ONE revision is protected, from either registry', () => {
@@ -258,6 +269,9 @@ test('structural: the CI step never passes --shadow and executes no PR-controlle
   assert.ok(step.includes('gate-provenance.mjs') && step.includes('--mode observe'), 'precondition: the step is where we think it is');
   assert.equal(step.includes('--shadow'), false, 'the shadow run executes PR code; CI must not request it');
   assert.ok(wf.indexOf('- name: Gate provenance') < wf.indexOf('- run: npm ci'), 'and it still runs before the PR npm ci');
+  // audit R5 H5: the head sha is fetched (or reported unmeasured) before it is passed on, like the base sha
+  assert.match(step, /git cat-file -e "\$HEAD_SHA\^\{commit\}"/);
+  assert.match(step, /head sha \$HEAD_SHA is not fetchable/);
 });
 
 test('read vs parse: a read failure PROPAGATES (unmeasured); only a parse failure is an invalid contract', () => {

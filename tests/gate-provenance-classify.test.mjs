@@ -204,6 +204,17 @@ test('registry diff compares the WHOLE entry minus note: knownFields/allowanceKe
   assert.equal(run(entry, mk(base), mk({ ...base, kind: 'opaque' })).verdict, 'loosening');
 });
 
+test('reordering shared registry entries is unknown: matching is first-match (audit R5 H4)', () => {
+  const entry = { path: REGISTRY_PATH, kind: 'opaque' };
+  const a = { path: 'gc/*.json', kind: 'contract-set' };
+  const b = { path: 'gc/**', kind: 'opaque' };
+  const mk = (files) => j({ version: 1, files, gates: [] });
+  const r = run(entry, mk([a, b]), mk([b, a]));
+  assert.equal(r.verdict, 'unknown');
+  assert.ok(r.reasons.some((x) => /order changed/.test(x)));
+  assert.equal(run(entry, mk([a, b]), mk([a, b])).verdict, 'unchanged', 'negative control: same order is unchanged');
+});
+
 test('an unregistered module in the protected closure classifies opaque (unknown), and an unprotected file stays out', () => {
   const r = reg([F('b.json', 'numeric-cap')]);
   const parse = (x) => parseRegistry(x).registry;

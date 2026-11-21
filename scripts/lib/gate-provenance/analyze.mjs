@@ -54,10 +54,15 @@ function runGates({ repoRoot, base, head, baseSide, headSide, prot, install, ins
     }
     // The shadow executes PR code, so it is opt-in (--shadow) and never requested by CI.
     const shadows = shadow ? gates.map((g) => run({ cwd: snap.shadowDir, argv: g.argv })) : null;
+    // A shadow run with no exit status measured nothing: it is never a divergence, and the shadow block says it was partial.
+    const shadowMeasured = (s) => s?.measured !== false && Number.isInteger(s?.exit);
     const runs = gates.map((g, i) => (shadows
-      ? { id: g.id, verdict: verdicts[i], shadow: shadows[i], diverges: verdicts[i].exit !== shadows[i].exit }
+      ? { id: g.id, verdict: verdicts[i], shadow: shadows[i], diverges: shadowMeasured(shadows[i]) && verdicts[i].exit !== shadows[i].exit }
       : { id: g.id, verdict: verdicts[i], diverges: false }));
-    return { state: 'measured', runs, inventories: snap.inventories, shadow: shadow ? { state: 'run' } : { state: 'not-run', reason: SHADOW_NOT_RUN } };
+    const shadowUnrun = shadows ? gates.filter((g, i) => !shadowMeasured(shadows[i])).map((g) => g.id) : [];
+    const shadowState = !shadow ? { state: 'not-run', reason: SHADOW_NOT_RUN }
+      : shadowUnrun.length ? { state: 'partial', reason: `shadow run did not complete: ${shadowUnrun.join(', ')}` } : { state: 'run' };
+    return { state: 'measured', runs, inventories: snap.inventories, shadow: shadowState };
   } finally {
     snap.cleanup();
   }
@@ -129,6 +134,7 @@ export function analyze({ repoRoot, base, head, mode, gateRuns = true, shadow = 
     headSide = loadSide(repoRoot, head, { show: deps.show });
     if (!baseSide.registry) { unmeasured(bootstrapReason(baseSide)); return finish(); }
     prot = computeProtected(baseSide, headSide);
+    if (prot.missingEntryPoints?.length) unmeasured(`base registry names gate roots the base tree lacks: ${prot.missingEntryPoints.join(', ')}`);
     report.classification = classifyGateDiff({
       baseRegistry: baseSide.registry, headRegistry: headSide.registry,
       baseFiles: baseSide.files, headFiles: headSide.files, readBase: baseSide.read, readHead: headSide.read,
@@ -185,7 +191,7 @@ export function formatReport(r) {
     if (r.authorization) lines.push('', `authorization: ${r.authorization.state}${r.authorization.reasons.length ? ` (${E(r.authorization.reasons.join('; '))})` : ''}`);
     lines.push('');
     if (r.gateRuns?.state === 'measured') {
-      lines.push(r.gateRuns.shadow?.state === 'run' ? 'registered gates (verdict = base protected set; shadow = clean worktree of the head):' : 'registered gates (verdict = base protected set, base code over PR data):');
+      lines.push(['run', 'partial'].includes(r.gateRuns.shadow?.state) ?'registered gates (verdict = base protected set; shadow = clean worktree of the head):' : 'registered gates (verdict = base protected set, base code over PR data):');
       for (const g of r.gateRuns.runs) lines.push(`  ${E(g.id).padEnd(22)} verdict exit ${g.verdict.exit}${g.shadow ? `  shadow exit ${g.shadow.exit}${g.diverges ? '  DIVERGES' : ''}` : ''}`);
       if (r.gateRuns.shadow?.state === 'not-run') lines.push(`shadow: not run (${E(r.gateRuns.shadow.reason)})`);
       const inv = r.gateRuns.inventories;

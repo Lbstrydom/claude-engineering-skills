@@ -12,7 +12,7 @@
 import { collectImportClosure } from '../module-graph.mjs';
 
 // ANY way of reaching child_process: a static import (named, aliased, namespace or default), require, or a dynamic import.
-const CHILD_PROCESS = /(?:from|require[(]|import[(])[^'"`]{0,20}['"](?:node:)?child_process['"]/;
+const CHILD_PROCESS = /(?:from|require\s*[(]|import\s*[(])[^'"`]{0,20}['"](?:node:)?child_process['"]/;
 const SCRIPT_LITERAL = /['"`]((?:\.\/)?scripts\/[A-Za-z0-9_./-]+\.mjs)['"`]/g;
 const JOIN_LITERAL = /['"`]scripts['"`]\s*,\s*['"`]([A-Za-z0-9_./-]+\.mjs)['"`]/g;
 

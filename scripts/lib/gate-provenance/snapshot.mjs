@@ -103,7 +103,11 @@ export function computeProtected(baseSide, headSide) {
     try { doc = JSON.parse(text); } catch { /* not a contract document: the classifier reports it as unknown */ }
     for (const g of Array.isArray(doc?.gates) ? doc.gates : []) if (typeof g?.implementation === 'string') implementations.add(g.implementation);
   }
-  const entryPoints = [...new Set([...gateEntryPoints(baseSide.registry), ...gateSpawns(baseSide.registry), ...implementations])].filter((p) => baseSide.set.has(p));
+  const declared = [...new Set([...gateEntryPoints(baseSide.registry), ...gateSpawns(baseSide.registry), ...implementations])];
+  // A root the base registry NAMES but the base tree lacks cannot be protected: reported (the caller marks the run unmeasured),
+  // never silently dropped.
+  const missingEntryPoints = declared.filter((p) => !baseSide.set.has(p)).sort();
+  const entryPoints = declared.filter((p) => baseSide.set.has(p));
   const closure = protectedClosure({ entryPoints, repoFiles: baseSide.set, readFile: baseSide.read });
   const wanted = new Set([...registered.keys(), ...closure.files, ...INSTALL_INPUTS, REGISTRY_PATH]);
   const protectedPaths = [...wanted].sort();
@@ -114,6 +118,7 @@ export function computeProtected(baseSide, headSide) {
   return {
     protectedPaths,
     authorizedPaths,
+    missingEntryPoints,
     restore: protectedPaths.filter((p) => baseSide.set.has(p)),
     remove: protectedPaths.filter((p) => !baseSide.set.has(p) && headSide.set.has(p)),
     closure: closure.files,
@@ -147,6 +152,8 @@ export function npmCiIgnoreScripts(dir) {
  */
 export function buildSnapshot({ repoRoot, base, head, install = true, installDeps = npmCiIgnoreScripts, baseInstallDir, baseSide, headSide, prot, fsImpl = fs, shadow = false }) {
   for (const r of [base, head]) if (!isSafeGitRevision(r)) throw new Error(`unsafe revision: ${JSON.stringify(r)}`);
+  // Absolute, once: a relative dir would be checked against the caller's cwd but linked relative to the temp worktree.
+  if (baseInstallDir) baseInstallDir = path.resolve(baseInstallDir);
   const bs = baseSide ?? loadSide(repoRoot, base);
   const hs = headSide ?? loadSide(repoRoot, head);
   const protectedSet = prot ?? computeProtected(bs, hs);

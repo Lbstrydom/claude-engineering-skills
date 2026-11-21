@@ -79,6 +79,14 @@ jobs:
             notice "state=unmeasured | base sha $BASE_SHA is not fetchable"
             exit 0
           fi
+          # The PR head is a parent of the checked-out merge commit; fetch it explicitly rather than assume the clone holds it.
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$HEAD_SHA" || true
+          fi
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            notice "state=unmeasured | head sha $HEAD_SHA is not fetchable"
+            exit 0
+          fi
           BASE_WT="$RUNNER_TEMP/gate-provenance-base"
           if ! git worktree add --detach "$BASE_WT" "$BASE_SHA"; then
             notice "state=unmeasured | could not create the base worktree"
