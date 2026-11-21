@@ -13,10 +13,10 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildExport } from '../scripts/lib/telemetry-export/build.mjs';
-import { deliverExport } from '../scripts/lib/telemetry-export/deliver.mjs';
+import { deliverExport, pushPending } from '../scripts/lib/telemetry-export/deliver.mjs';
 import { REGISTRY, runProbe } from '../scripts/lib/doctor/registry.mjs';
 import { CHECKS, missingEnv } from '../scripts/maintenance-checks.mjs';
 
@@ -403,6 +403,113 @@ describe('throttle audit round 1: it must really read nothing, deliver what is p
       const r = run(['--alias', 'acme', '--drop-dir', drop, '--if-older-than', '24'], pushEnv);
       assert.equal(r.status, 1);
       assert.match(r.stderr, /earlier export could not be delivered/);
+      assert.equal(lastJson(r).error.code, 'DELIVERY_FAILED', 'M2: a machine reader gets the failure on stdout too');
+    });
+  });
+
+  describe('R7: the commit is built from validated bytes, pinned to the observed remote, and never rebuilds the index', () => {
+    const ID = ['-c', 'user.name=t', '-c', 'user.email=t@example.test'];
+    const mkDoc = () => buildExport({ now: new Date(), consumerAlias: 'acme', storeFingerprint: null, toolBundleSha: null, exportId: crypto.randomUUID(), deps: deps() });
+    /** A drop with TWO pushed commits, so a remote can be reset back to an ancestor. */
+    function twoCommitDrop() {
+      const base = tmp();
+      const remote = path.join(base, 'remote.git');
+      spawnSync('git', ['init', '-q', '--bare', remote], { windowsHide: true });
+      const drop = path.join(base, 'drop');
+      spawnSync('git', ['clone', '-q', remote, drop], { windowsHide: true });
+      fs.writeFileSync(path.join(drop, 'README'), 'x');
+      git(drop, 'add', '.'); git(drop, ...ID, 'commit', '-q', '-m', 'init');
+      const first = git(drop, 'rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(drop, 'README'), 'y');
+      git(drop, ...ID, 'commit', '-q', '-am', 'second');
+      git(drop, 'push', '-q', '-u', 'origin', 'HEAD');
+      return { remote, drop, first, second: git(drop, 'rev-parse', 'HEAD') };
+    }
+    const hooked = (hook) => (cmd, args, opts) => { hook(args); return execFileSync(cmd, args, opts); };
+
+    it('H1: a clean filter on the work tree cannot change what is published — the commit carries the VALIDATED bytes', async () => {
+      const { remote, drop } = twoCommitDrop();
+      const mangle = path.join(tmp(), 'mangle.cjs').split(path.sep).join('/');
+      fs.writeFileSync(mangle, 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(d.split("acme").join("MANGLED")));');
+      fs.writeFileSync(path.join(drop, '.gitattributes'), 'acme/*.json filter=mangle\n');
+      git(drop, 'config', 'filter.mangle.clean', `node ${mangle}`);
+      git(drop, 'add', '.gitattributes'); git(drop, ...ID, 'commit', '-q', '-m', 'attrs'); git(drop, 'push', '-q');
+      const r = deliverExport({ doc: await mkDoc(), dropDir: drop, push: true });
+      const published = spawnSync('git', ['show', `HEAD:acme/${path.basename(r.file)}`], { cwd: remote, windowsHide: true }).stdout;
+      assert.equal(Buffer.compare(published, fs.readFileSync(r.file)), 0, 'published bytes equal the bytes that were validated and written');
+      assert.equal(published.includes('MANGLED'), false, 'the filter never touched the published blob');
+    });
+
+    it('H2: a remote reset between the gate and the push is NOT overwritten (lease pinned to the observed tip)', async () => {
+      const { remote, drop, first, second } = twoCommitDrop();
+      const doc = await mkDoc();
+      let reset = false;
+      const exec = hooked((a) => { if (!reset && a.includes('push')) { reset = true; git(remote, 'update-ref', 'refs/heads/main', first, second); } });
+      assert.throws(() => deliverExport({ doc, dropDir: drop, push: true, exec }), /could not be established|rejected|stale/);
+      assert.equal(git(remote, 'rev-parse', 'refs/heads/main'), first, 'the remote is exactly as the other party left it');
+    });
+
+    it('H3: a commit made after the gate passes is never carried along — the exporter refuses, commits nothing, pushes nothing', async () => {
+      const { remote, drop } = twoCommitDrop();
+      const doc = await mkDoc();
+      let moved = false;
+      const exec = hooked((a) => {
+        if (!moved && a[0] === 'check-ignore') {   // after the gate, before the commit is built
+          moved = true;
+          fs.writeFileSync(path.join(drop, 'other.txt'), 'late'); git(drop, 'add', 'other.txt'); git(drop, ...ID, 'commit', '-q', '-m', 'late work');
+        }
+      });
+      const before = git(remote, 'rev-list', '--all', '--count');
+      assert.throws(() => deliverExport({ doc, dropDir: drop, push: true, exec }), /branch moved since the gate passed/);
+      assert.equal(git(remote, 'rev-list', '--all', '--count'), before, 'nothing was pushed');
+      assert.equal(git(drop, 'log', '-1', '--format=%s'), 'late work', 'the other commit is untouched');
+    });
+
+    it('M3: a push that errors AFTER reaching the remote leaves the tracking ref current (the clone does not read as one commit ahead forever)', async () => {
+      const { remote, drop } = twoCommitDrop();
+      const doc = await mkDoc();
+      // The push REACHES the remote but its acknowledgement is lost, so git never moves the tracking ref: emulate that
+      // by putting the tracking ref back where it was after the real push, then failing.
+      const exec = (cmd, args, opts) => {
+        const before = args.includes('push') ? git(drop, 'rev-parse', 'refs/remotes/origin/main') : null;
+        const out = execFileSync(cmd, args, opts);
+        if (args.includes('push')) { git(drop, 'update-ref', 'refs/remotes/origin/main', before); throw new Error('connection reset before ack'); }
+        return out;
+      };
+      const r = deliverExport({ doc, dropDir: drop, push: true, exec });
+      assert.equal(r.pushed, true);
+      assert.equal(git(drop, 'rev-parse', 'origin/main'), git(remote, 'rev-parse', 'refs/heads/main'));
+      assert.equal(git(drop, 'rev-list', '--count', '@{u}..HEAD'), '0');
+    });
+
+    it('M4 (delivered): unrelated staged work is left staged and is NOT in the exporter\'s commit', async () => {
+      const { remote, drop } = twoCommitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      fs.writeFileSync(path.join(drop, 'other.txt'), 'mine'); git(drop, 'add', 'other.txt');
+      pushPending({ dropDir: drop, alias: 'acme' });
+      assert.equal(git(remote, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n').includes('other.txt'), false, 'unrelated work was not published');
+      assert.equal(git(drop, 'diff', '--cached', '--name-only'), 'other.txt', 'the index still holds exactly the unrelated staged file');
+      assert.equal(git(drop, 'status', '--porcelain', '--', 'acme/'), '', 'the delivered export is clean');
+    });
+
+    it('M4 (rejected): unrelated staged work survives a failed push, and only the export is unstaged', async () => {
+      const { remote, drop } = twoCommitDrop();
+      await put(drop, { ageMs: 3_600_000 });
+      fs.writeFileSync(path.join(drop, 'other.txt'), 'mine'); git(drop, 'add', 'other.txt');
+      fs.writeFileSync(path.join(remote, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const head = git(drop, 'rev-parse', 'HEAD');
+      assert.throws(() => pushPending({ dropDir: drop, alias: 'acme' }));
+      assert.equal(git(drop, 'rev-parse', 'HEAD'), head);
+      assert.equal(git(drop, 'diff', '--cached', '--name-only'), 'other.txt');
+      assert.match(git(drop, 'status', '--porcelain', '-uall', '--', 'acme/'), /\?\? acme\//);
+    });
+
+    it('M1: every usage failure leaves {ok:false,error:{code}} on stdout, not only a stderr line', () => {
+      for (const args of [['--alias', 'acme', '--drop-dir', tmp(), '--if-older-than', '0'], ['--alias', 'acme', '--print', '--if-older-than', '24']]) {
+        const r = run(args);
+        assert.equal(r.status, 2);
+        assert.deepEqual(lastJson(r), { ok: false, error: { code: 'USAGE' } });
+      }
     });
   });
 });
