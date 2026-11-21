@@ -354,20 +354,16 @@ describe('--dry-run: the two CLIs that ignored it', () => {
       assert.doesNotMatch(r.stdout + r.stderr, /pulling canonical/);
     }
   });
-  it('importing write-ledger-r1 writes nothing (only the entry guard runs main)', () => {
+  it('importing write-ledger-r1 runs nothing: main() never executes, so the script prints and writes nothing', () => {
+    // No fixture file is touched: had the import run main(), the script would announce a write (or a dry run) on stdout, and
+    // an existing ledger's mtime would move. Both are checked, and neither depends on overwriting the real ledger.
     const ledger = path.resolve('.claude/tmp/ledger/audit-1776354886-ledger.json');
-    const had = fs.existsSync(ledger) ? fs.readFileSync(ledger) : null;
-    // A sentinel: an import that wrote (or truncated) the ledger would change these exact bytes.
-    fs.mkdirSync(path.dirname(ledger), { recursive: true });
-    const sentinel = Buffer.from('{"sentinel":true}\n');
-    fs.writeFileSync(ledger, sentinel);
-    try {
-      const r = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./scripts/write-ledger-r1.mjs'); process.stdout.write('imported');"], { encoding: 'utf8' });
-      assert.equal(r.stdout.trim().endsWith('imported'), true, r.stdout + r.stderr);
-      assert.deepEqual(fs.readFileSync(ledger), sentinel, 'importing the module did not touch the ledger');
-    } finally {
-      if (had) fs.writeFileSync(ledger, had); else fs.rmSync(ledger, { force: true });
-    }
+    const before = fs.existsSync(ledger) ? fs.statSync(ledger).mtimeMs : null;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', "await import('./scripts/write-ledger-r1.mjs'); process.stdout.write('IMPORTED');"], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /IMPORTED$/);
+    assert.doesNotMatch(r.stdout, /Ledger written|would write/, 'main() did not run');
+    assert.equal(fs.existsSync(ledger) ? fs.statSync(ledger).mtimeMs : null, before, 'the ledger was not touched');
   });
   it('write-ledger-r1 refuses a stray word, including one after the -- terminator', () => {
     for (const args of [['stray'], ['--', '--dry-runn'], ['--dry-run', 'extra']]) {

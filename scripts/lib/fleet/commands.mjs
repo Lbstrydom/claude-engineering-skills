@@ -486,7 +486,7 @@ export function materializeRemoteBranch(cwd, name) {
     .map((r) => `refs/remotes/${r}/${name}`)
     .filter((ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd).ok);
   if (!exact.length) return null;
-  if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first (git branch ${name} <remote>/${name})` };
+  if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first, with exactly one of: ${exact.map((r) => `git branch ${renderCommand([name, r.slice('refs/remotes/'.length)])}`).join(' | ')}` };
   // Read the FULLY QUALIFIED remote ref's commit FIRST (a local branch named `origin/x` must not be able to shadow it), then create
   // the local ref at exactly that oid, only if it does not exist (an all-zero old value): ONE atomic step that both creates it
   // and fixes the oid rollback will compare against, with no window for another process to move it in between.
