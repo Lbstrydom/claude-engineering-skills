@@ -239,12 +239,14 @@ describe('fixture repositories never run detached background maintenance (docs/p
     assert.equal(readCfg(d, gitFixtureEnv()), 'false');
   });
 
-  it('makeGitFixtureEnv() reads maintenance.auto=false through git, and its cleanup removes its dir', () => {
+  it('makeGitFixtureEnv() turns maintenance off through its gitArgs (never GIT_CONFIG_* in the env), and its cleanup removes its dir', () => {
     const f = makeGitFixtureEnv();
     try {
       const d = mk('maint-b-');
       execFileSync('git', ['init', '-q'], { cwd: d, env: f.env });
-      assert.equal(readCfg(d, f.env), 'false');
+      const viaArgs = execFileSync('git', [...f.gitArgs, 'config', '--get', 'maintenance.auto'], { cwd: d, encoding: 'utf-8', env: f.env }).trim();
+      assert.equal(viaArgs, 'false');
+      assert.equal(Object.keys(f.env).some((k) => /^GIT_CONFIG_(COUNT|KEY_|VALUE_|PARAMETERS)/i.test(k)), false, 'no config injection in the env');
     } finally { f.cleanup(); }
   });
 

@@ -39,10 +39,11 @@ export function makeGitFixtureEnv() {
     GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
     GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z',
   });
-  withMaintenanceOff(env);
+  // maintenance.auto=false rides on gitArgs, NOT on GIT_CONFIG_COUNT: this env's contract is that it carries no GIT_CONFIG_*
+  // injection at all (tests/model-eval-subset.test.mjs pins it), and every caller already passes gitArgs.
   return {
     env, emptyDir,
-    gitArgs: ['-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${emptyDir}`],
+    gitArgs: ['-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${emptyDir}`, '-c', 'maintenance.auto=false'],
     cleanup: () => fs.rmSync(emptyDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }),
   };
 }

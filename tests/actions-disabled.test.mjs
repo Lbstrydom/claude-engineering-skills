@@ -97,7 +97,8 @@ describe('ci-verdict: actions-disabled is its own unverified reason', () => {
   });
 
   it('Actions disabled never reads green — even over a completed success, whose run is kept as evidence', () => {
-    const success = { id: 77, path: WF, event: 'pull_request', head_sha: HEAD, status: 'completed', conclusion: 'success', html_url: 'u', pull_requests: [{ number: 7, base: { ref: 'main', sha: DEFAULT_SHA } }] };
+    // run_attempt: every real GitHub run record carries it; a record without one is unverified by design (ci-verdict attemptCountOf).
+    const success = { id: 77, run_attempt: 1, path: WF, event: 'pull_request', head_sha: HEAD, status: 'completed', conclusion: 'success', html_url: 'u', pull_requests: [{ number: 7, base: { ref: 'main', sha: DEFAULT_SHA } }] };
     const ev = { head: HEAD, pr: 7, defaultBranch: 'main', defaultSha: DEFAULT_SHA, workflowPath: WF, workflowBlobHead: BLOB, workflowBlobDefault: BLOB, workflowBlobAtBase: { [DEFAULT_SHA]: { blob: BLOB, why: null } }, runs: [success] };
     assert.equal(classifyCiVerdict({ ...ev, actionsEnabled: null }).verdict, 'full', 'control: unknown permissions keep the evidence-based verdict');
     const off = classifyCiVerdict({ ...ev, actionsEnabled: false });
