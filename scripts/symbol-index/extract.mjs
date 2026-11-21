@@ -38,6 +38,7 @@ import {
 import { shouldSkipForIndexing, formatSkipLog, resolveAndClassify } from '../lib/sensitive-paths.mjs';
 import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
 import { runPythonStage } from '../lib/symbol-index/python-extract.mjs';
+import { readAdmittedSource } from '../lib/symbol-index/admitted-read.mjs';
 import {
   CRUISABLE_EXTENSIONS,
   eligibleFiles,
@@ -356,30 +357,29 @@ function admitFile(abs, { repoRoot, classify = resolveAndClassify }) {
 }
 
 /**
- * Load + parse one admitted file's SourceFile via ts-morph. Isolated from
- * `admitFile` so a parse failure (exception OR ts-morph's `*IfExists` silent
- * undefined return) is the only thing this step can report.
+ * Load + parse one admitted file's SourceFile via ts-morph. The bytes come from
+ * the SAME verified reader the Python stage uses (`readAdmittedSource`: open,
+ * re-admit, dev+ino identity, bounded read) and ts-morph is handed the TEXT —
+ * it never opens the path itself, so a swap after admission cannot reach it.
  *
- * @param {string} canonicalPath
+ * @param {{canonicalPath: string, rel: string}} admission - from `admitFile`
  * @param {import('ts-morph').Project} project
- * @returns {{ok: true, sourceFile: import('ts-morph').SourceFile} | {ok: false, reason: 'parse-error'|'no-source-file', error?: Error}}
+ * @param {{repoRoot: string, readHooks?: object}} ctx - readHooks: test seams for the reader
+ * @returns {{ok: true, sourceFile: import('ts-morph').SourceFile} | {ok: false, reason: 'parse-error'|'read-refused', error?: Error, detail?: string}}
  */
-function loadAndParseFile(canonicalPath, project) {
-  let sf;
+function loadAndParseFile(admission, project, { repoRoot, readHooks }) {
+  const read = readAdmittedSource(admission, {
+    maxBytes: MAX_FILE_BYTES, readmit: () => admitFile(path.join(repoRoot, admission.rel), { repoRoot }), ...readHooks,
+  });
+  if (!read.ok) return { ok: false, reason: 'read-refused', detail: `${read.outcome}: ${read.detail}` };
   try {
-    sf = project.addSourceFileAtPathIfExists(canonicalPath);
+    // utf8 decode + BOM strip, as ts-morph's own file read does; `overwrite`
+    // because a re-run on the same Project must not throw on a known path.
+    const text = read.bytes.toString('utf8').replace(/^\uFEFF/, '');
+    return { ok: true, sourceFile: project.createSourceFile(admission.canonicalPath, text, { overwrite: true }) };
   } catch (err) {
     return { ok: false, reason: 'parse-error', error: err };
   }
-  if (!sf) {
-    // ts-morph's `*IfExists` APIs return undefined instead of throwing on
-    // failure — a non-exception failure a try/catch alone can't see
-    // (audit M5, 2026-07-24: the exception path was counted, this one
-    // wasn't, so a file could fail to load without appearing anywhere in
-    // failure accounting).
-    return { ok: false, reason: 'no-source-file' };
-  }
-  return { ok: true, sourceFile: sf };
 }
 
 /**
@@ -605,14 +605,16 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
     // files over MAX_FILE_BYTES/2.
     emit({ type: 'progress', file: rel });
     // Python goes to its own parser stage (python-extract.mjs), never ts-morph.
-    if (isPythonIndexPath(admission.canonicalPath)) { opts.pythonAdmissions?.push(admission); continue; }
+    if (isPythonIndexPath(admission.canonicalPath)) {
+      // No collector means nobody will parse it: count it, never drop it silently.
+      if (opts.pythonAdmissions) opts.pythonAdmissions.push(admission); else { stats.parseFailures++; emitProgress(`parse-error: ${rel} — no Python stage attached`); }
+      continue;
+    }
 
-    const parsed = loadAndParseFile(admission.canonicalPath, project);
+    const parsed = loadAndParseFile(admission, project, { repoRoot, readHooks: opts.readHooks });
     if (!parsed.ok) {
       stats.parseFailures++;
-      const detail = parsed.reason === 'parse-error'
-        ? parsed.error.message
-        : 'addSourceFileAtPathIfExists returned no source file';
+      const detail = parsed.reason === 'parse-error' ? parsed.error.message : parsed.detail;
       emitProgress(`parse-error: ${rel} — ${detail}`);
       continue;
     }

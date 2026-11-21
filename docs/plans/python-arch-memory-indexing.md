@@ -202,8 +202,7 @@ files, ~1–2 s).
   swapped path component, because the bytes come from the inode that was verified. A deterministic test swaps the
   file between admission and read through an injected `beforeRead` hook and asserts `identity-changed`, with no
   symbol and no import emitted. This holds for **both** scopes, so a universe file used only for imports is
-  admitted and read the same way. (The pre-existing ts-morph path has the analogous race; it is recorded in §8 as
-  out of scope, because this change does not touch that path.) Nothing the helper returns bypasses
+  admitted and read the same way. (The ts-morph path now reads through the same helper; see §8.) Nothing the helper returns bypasses
   `redactAndEmit`: `containsSecrets` on the body, signature redaction, `bodyText: ''` and `SECRET_REDACTED` on a hit.
   Docstrings exist **only** inside `bodyText` (§2.2), so they are scrubbed with it.
 - **Shared-gate inventory** (every reader of `DEFAULT_EXT_ALLOWLIST` / `isExtensionAllowlisted`, from a grep at
@@ -397,10 +396,16 @@ Files: `docs/reference/environment-variables.md` (modify), `docs/reference/archi
   `unresolved`; any other unresolved absolute import is `external` (§2.3). The residual ambiguity is a first-party
   top-level name that does not exist locally at all, which is indistinguishable from a third-party package without
   an installed environment. It is accepted and documented in code.
-- **The pre-existing ts-morph admission-to-read race** (`admitFile` stats, then `addSourceFileAtPathIfExists`
-  opens by path) is analogous to the Python race this plan closes in §2.6. It is out of scope by independence: the
-  Python path never calls ts-morph, and this change does not alter the JS read. It is recorded as a follow-up for
-  the coordinator.
+- **Admission-to-read race, both paths (narrowed 2026-11-21, "option 2").** One shared reader,
+  `scripts/lib/symbol-index/admitted-read.mjs::readAdmittedSource`, serves the Python stage AND ts-morph
+  (`loadAndParseFile` reads the bytes through it and hands ts-morph the text via `createSourceFile`; ts-morph never
+  opens the path). It opens, `fstat`s the descriptor, RE-RUNS the full admission gate on the canonical path, requires
+  the path's dev+ino to equal the descriptor's (before and after the re-admission), reads bounded, and finally
+  re-checks that the path still names the inode it read (a swap after the read drops the bytes). Linux additionally
+  binds to `/proc/self/fd`. **Residual (Windows and macOS only):** a swap held across the open and both stats but
+  released only during the re-admission itself, so it must flip twice inside one window. It is narrowed, not closed;
+  closing it needs a native fd-to-path call. Tests: `tests/admitted-read.test.mjs` (hooks for each window, with a
+  source-mutation negative control per check).
 - **`.pyi` excluded** (§2.1). A stub-only package is not indexed, which is rare and stated.
 - **Interpreter variance**: the helper uses only 3.9+ stdlib APIs. The version floor is enforced by the probe.
 - **Deferred:** `.sql` extraction (field report item 1b, a follow-up); decorators in signatures; nested functions.
@@ -483,11 +488,10 @@ time.
   - `__all__` is trusted only on a single mention;
   - the Python sync banner is ASCII and keeps BOM and cookie positions.
 - **Follow-ups (independent of this change, for the coordinator):**
-  - Decide on the non-Linux residual admission race (accept it, or make Python indexing Linux-only). See the audit
-    summary.
+  - ~~Decide on the non-Linux residual admission race~~ narrowed by the post-open recheck; see §8.
   - The `/audit-code` duplication wave filters candidates with its own JS-only regex
     (`lib/audit/duplication-detector.mjs:60`), so Python is not yet duplicate-checked there.
-  - The ts-morph admission-to-read race (§8).
+  - ~~The ts-morph admission-to-read race (§8).~~ Closed to the same narrowed residual (§8).
   - The `arch-render` "not indexed" callout keys on the allowlist, not on the snapshot's coverage verdict (the
     sibling chip's envelope work).
   - `.sql` extraction.

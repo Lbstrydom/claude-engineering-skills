@@ -39,6 +39,13 @@ describe('python-ast-helper.py ships to consumers', () => {
     assert.ok(bundleForRepo().files.includes(DRIVER), 'and the driver module that runs it');
   });
 
+  it('the shared verified reader (imported by BOTH extract.mjs and python-extract.mjs) reaches consumers as a sibling', () => {
+    const READER = 'scripts/lib/symbol-index/admitted-read.mjs';
+    assert.ok(bundleForRepo().files.includes(READER), 'bundleForRepo() must include the reader');
+    assert.ok(versionContractBundle().files.includes(READER), 'versionContractBundle() must include the reader');
+    assert.equal(path.posix.dirname(sourceRelToDestRel(READER)), path.posix.dirname(sourceRelToDestRel(DRIVER)));
+  });
+
   it('lands as a SIBLING of python-extract.mjs (the invariant new URL(\'./python-ast-helper.py\') relies on)', () => {
     const h = sourceRelToDestRel(HELPER);
     const d = sourceRelToDestRel(DRIVER);
