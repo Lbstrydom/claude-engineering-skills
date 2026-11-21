@@ -53,7 +53,7 @@ function main(argv) {
 }
 
 if (isInvokedAsScript(import.meta.url)) {
-  try { main(process.argv); } catch (e) {
+  try { main(process.argv); await finishAndExit(0); } catch (e) {
     if (e instanceof ArgvError) { process.stderr.write(`${e.message}
 `); await finishAndExit(2); }
     throw e;
