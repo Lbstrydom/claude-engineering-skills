@@ -15,6 +15,7 @@ import { resolveDiffScope } from './diff-scope-resolver.mjs';
 import { processFindings } from './findings-pipeline.mjs';
 import { emitOrphanRunMetrics } from './orphan-metrics.mjs';
 import { ineligibleReason, eligibilityNote, waveRecord } from './wave-eligibility.mjs';
+import { NON_LLM_FINDING_TAGS } from '../finding-tags.mjs';
 
 /**
  * Convert a raw orphan-introduced finding to the standard FindingSchema shape
@@ -39,6 +40,7 @@ function orphanToStandardFinding(raw, idx) {
     is_quick_fix: false,
     is_mechanical: true,
     is_reopened: false,   // mechanical wave — never reopens a prior ruling
+    ...NON_LLM_FINDING_TAGS,
     principle: 'Long-Term Sustainability (#20) — dead code is invisible debt',
     classification: {
       sonarType: 'CODE_SMELL',

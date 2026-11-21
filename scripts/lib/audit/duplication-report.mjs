@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
 import { scanEgressPayload } from '../sensitive-egress-gate.mjs';
+import { NON_LLM_FINDING_TAGS } from '../finding-tags.mjs';
 
 /** Lines of padding around a symbol's [startLine, endLine] span when excerpting for the bouncer prompt. */
 const EXCERPT_PADDING_LINES = 2;
@@ -209,6 +210,7 @@ function buildDuplicationFinding(c, severity, bouncerRationale) {
     is_mechanical: !bouncerRationale,
     is_quick_fix: true,
     is_reopened: false,   // mechanical wave — never reopens a prior ruling
+    ...NON_LLM_FINDING_TAGS,
     principle: '#1 DRY',
   };
 }
@@ -228,6 +230,7 @@ export function buildDetectorFailedFinding(_reason) {
     is_mechanical: true,
     is_quick_fix: true,
     is_reopened: false,   // mechanical wave — never reopens a prior ruling
+    ...NON_LLM_FINDING_TAGS,
     principle: '#15 Error Handling',
   };
 }
@@ -251,6 +254,7 @@ export function finalizeDeterministicFindings(rawRecords) {
         is_mechanical: true,
         is_quick_fix: true,
         is_reopened: false,   // mechanical wave — never reopens a prior ruling
+        ...NON_LLM_FINDING_TAGS,
         principle: '#1 DRY',
       };
     }

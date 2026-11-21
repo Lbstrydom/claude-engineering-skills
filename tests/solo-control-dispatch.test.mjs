@@ -435,7 +435,7 @@ test('runClaudeGateReview: sends the shared prompt verbatim, forces the emit_fin
   let seenParams = null;
   const client = stubAnthropicClient((params) => {
     seenParams = params;
-    return { content: [{ type: 'tool_use', input: { findings: [{ id: 'H1', severity: 'HIGH', category: 'bug', section: 'x.js', detail: 'd', risk: 'r', recommendation: 'fix', is_quick_fix: false, is_mechanical: false, is_reopened: false, principle: 'p', classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'claude-gate' } }] } }], usage: { input_tokens: 10, output_tokens: 5 } };
+    return { content: [{ type: 'tool_use', input: { findings: [{ id: 'H1', severity: 'HIGH', category: 'bug', section: 'x.js', detail: 'd', risk: 'r', recommendation: 'fix', is_quick_fix: false, is_mechanical: false, is_reopened: false, importance: 'important', pre_existing: false, newly_reachable: false, principle: 'p', classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'claude-gate' } }] } }], usage: { input_tokens: 10, output_tokens: 5 } };
   });
   const collected = [{ severity: 'MEDIUM', category: 'style', detail: 'already raised' }];
   const r = await soloCtl.runClaudeGateReview(client, 'claude-sonnet-5', collected, 'DIFF-TEXT', { reasoningEffort: 'medium' });
@@ -569,6 +569,7 @@ test('runDeepseekPass: sends thinking.reasoning_effort, sizes max_tokens to the 
 const coldFinding = () => ({
   id: 'H1', severity: 'HIGH', category: 'bug', section: 'x.js', detail: 'd', risk: 'r', recommendation: 'fix',
   is_quick_fix: false, is_mechanical: false, principle: 'p',
+  importance: 'important', pre_existing: false, newly_reachable: false,
   classification: { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'solo-control' },
 });
 

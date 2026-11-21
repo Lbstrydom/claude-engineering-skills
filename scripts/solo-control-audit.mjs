@@ -416,6 +416,7 @@ const JSON_CONTRACT = [
   'Schema: {"findings":[{"id":string,"severity":"HIGH"|"MEDIUM"|"LOW","category":string,',
   '"section":"file or code section","detail":"what is wrong and why","risk":"what breaks if unfixed",',
   '"recommendation":"a sustainable fix, not a band-aid","is_quick_fix":boolean,"is_mechanical":boolean,',
+  '"importance":"important"|"nit","pre_existing":boolean,"newly_reachable":boolean,',
   '"principle":"which engineering principle","classification":{"sonarType":"BUG"|"VULNERABILITY"|"CODE_SMELL"|"SECURITY_HOTSPOT",',
   '"effort":"TRIVIAL"|"EASY"|"MEDIUM"|"MAJOR"|"CRITICAL","sourceKind":"MODEL","sourceName":"solo-control"}}],"summary":string}',
   'Return {"findings":[],"summary":"..."} if the diff is clean for this concern. Max 50 findings.',
@@ -906,7 +907,7 @@ async function cmdRun() {
             commit: sha, repo: path.basename(root), model, pass: passName,
             severity: f.severity, category: f.category, section: file,
             detail: f.detail, risk: f.risk, recommendation: f.recommendation,
-            is_quick_fix: !!f.is_quick_fix, _dup: h,
+            is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null, _dup: h,
           });
           commitFindings++;
         }
@@ -1295,7 +1296,7 @@ async function cmdApparatus() {
       const h = dupHash(f.category, file, f.detail);
       if (seen.has(h)) continue;
       seen.add(h);
-      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'pregate', severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
+      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'pregate', severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null, _dup: h });
       commitFindings++;
     }
     for (const f of gateFindings) {
@@ -1303,7 +1304,7 @@ async function cmdApparatus() {
       const h = dupHash(f.category, file, f.detail);
       if (seen.has(h)) continue;
       seen.add(h);
-      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'gate', gateModel, severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
+      out.findings.push({ commit: sha, repo: repoBasename, model: out.model, pass: 'apparatus', stage: 'gate', gateModel, severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null, _dup: h });
       commitFindings++;
     }
     log(`      → ${commitFindings} finding(s)`);
@@ -1464,7 +1465,7 @@ async function cmdApparatusBC() {
     const toRow = (f, model) => ({
       commit: sha, repo: path.basename(root), model, pass: 'apparatus-bc',
       severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
-      detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
+      detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null,
       _dup: dupHash(f.category, f.section, f.detail),
     });
     for (const f of bAll) outB.findings.push(toRow(f, outB.model));
@@ -1542,7 +1543,7 @@ async function cmdSonnetGeminiRetro() {
       out.findings.push({
         commit: sha, repo: path.basename(root), model: out.model, pass: 'gemini-net-new',
         severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
-        detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
+        detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null,
       });
     }
     log(`  ${short}: sonnet baseline ${sonnetFindings.length} (reused) → gemini net-new ${rev.findings.length}`);
@@ -1643,7 +1644,7 @@ async function cmdSoloPassRetro() {
       out.findings.push({
         commit: sha, repo: path.basename(root), model, pass: 'solo-generator',
         severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
-        detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
+        detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null,
       });
     }
     log(`      → ${collected.length} finding(s)`);

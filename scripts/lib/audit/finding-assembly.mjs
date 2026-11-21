@@ -38,6 +38,8 @@ import { normalizePath } from '../file-io.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
 import { isInDiff } from '../finding-scope.mjs';
+import { findingGateClass } from '../finding-tags.mjs';
+import { captureStageFindings } from '../model-eval/stage-recall.mjs';
 import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
 import { canaryBlocksEvidence, describeCanaryBlock } from './canary.mjs';
@@ -363,6 +365,9 @@ export async function assembleFindings(data) {
   for (const entry of passRegistry) {
     addFindings(entry.findings, entry._displayPrefix, stampableSourceModel(entry._model));
   }
+  // Stage recall (model-eval/stage-recall.mjs): the `raw` stage = the passes' findings after cross-pass dedup, before
+  // suppression and verification. No-op unless AUDIT_STAGE_CAPTURE_DIR is set.
+  captureStageFindings({ stage: 'raw', runId: debtRunId, findings: allFindings });
 
   if (dedupCount > 0) {
     process.stderr.write(`  Deduped ${dedupCount} cross-pass duplicate(s)\n`);
@@ -751,6 +756,9 @@ export async function assembleFindings(data) {
   } catch (err) {
     process.stderr.write(`  [verify-gate] skipped (non-blocking) — ${err.message}\n`);
   }
+  // Stage recall: `post-verification` = after dedup, suppression and the existence gate. (`final-gate` runs in
+  // gemini-review, a separate process, and is `not captured`.)
+  captureStageFindings({ stage: 'post-verification', runId: debtRunId, findings: allFindings });
 
   // Auto-write ledger (default-on when ledgerFile resolved)
   let ledgerRejectedCount;
@@ -824,7 +832,9 @@ export async function assembleFindings(data) {
     .filter(countsTowardVerdict)
     // 8a: a PRE-EXISTING finding (outside the change; finding-scope.mjs) is stored and reported but is not the author's to fix, so it
     // moves neither the verdict nor convergence.
-    .filter(isInDiff);
+    .filter(isInDiff)
+    // Model-asserted tags (finding-tags.mjs) sit BESIDE the mechanical scope: a finding gates only if both agree.
+    .filter((f) => findingGateClass(f).gates);
   const high = countFor.filter(f => effSeverity(f) === 'HIGH').length;
   const medium = countFor.filter(f => effSeverity(f) === 'MEDIUM').length;
   const low = countFor.filter(f => effSeverity(f) === 'LOW').length;
@@ -842,7 +852,7 @@ export async function assembleFindings(data) {
   // `quickFix` deliberately counts ALL findings (the gate's population, as
   // run-persistence.mjs has always counted it), not `countFor`. Changing the
   // gate's population is a different decision from making telemetry equal it.
-  const quickFix = allFindings.filter((f) => f.is_quick_fix && isInDiff(f)).length;
+  const quickFix = allFindings.filter((f) => f.is_quick_fix && isInDiff(f) && findingGateClass(f).gates).length;
   // `resolveDetectorResultForRound` is where "ledger present" is kept apart
   // from "detectors absent": an R2+ round whose ledger is missing/corrupt
   // (`suppressionUnavailable`) resolves to `detector-not-run`, never to a

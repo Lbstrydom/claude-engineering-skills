@@ -28,6 +28,7 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { AUDIT_ROUND_CAPS, EXIT_CAPPED, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
 import { isInDiff } from './lib/finding-scope.mjs';
+import { findingGateClass } from './lib/finding-tags.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -80,7 +81,9 @@ function parseResults(outFile) {
 function countFindings(results) {
   if (!results) return { high: 0, medium: 0, low: 0, total: 0, failed: true };
   // 8a: pre-existing findings (outside the change) are reported, not counted - they cannot hold a round open.
-  const findings = (results.findings || []).filter(isInDiff);
+  const findings = (results.findings || []).filter(isInDiff)
+    // Model-asserted tags (finding-tags.mjs) sit BESIDE the mechanical scope: a finding gates only if both agree.
+    .filter((f) => findingGateClass(f).gates);
   const high = findings.filter(f => f.severity === 'HIGH').length;
   const medium = findings.filter(f => f.severity === 'MEDIUM').length;
   const low = findings.filter(f => f.severity === 'LOW').length;

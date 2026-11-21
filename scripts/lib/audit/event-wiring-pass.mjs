@@ -12,6 +12,7 @@ import path from 'node:path';
 import { processFindings } from './findings-pipeline.mjs';
 import { isEventWiringSourcePath } from './event-wiring-corpus.mjs';
 import { waveEligibility, ineligibleReason, eligibilityNote, waveRecord } from './wave-eligibility.mjs';
+import { NON_LLM_FINDING_TAGS } from '../finding-tags.mjs';
 import {
   detectEventWiringAsymmetry, resolveEventWiringScopeRefs, buildEventWiringDiffScope, loadEventWiringConfig,
 } from './event-wiring-corpus.mjs';
@@ -45,6 +46,7 @@ function eventWiringToStandardFinding(raw, idx) {
       is_quick_fix: false,
       is_mechanical: true,
       is_reopened: false,
+      ...NON_LLM_FINDING_TAGS,
       principle: 'Single Source of Truth (#10) — a suppression annotation must stay bound to what it suppresses',
       classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'LINTER', sourceName: 'event-wiring-symmetry' },
     };
@@ -64,6 +66,7 @@ function eventWiringToStandardFinding(raw, idx) {
     is_quick_fix: false,
     is_mechanical: true,
     is_reopened: false,
+    ...NON_LLM_FINDING_TAGS,
     principle: 'Wiring Completeness — a dispatch with no consumer is invisible dead fan-out',
     classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'LINTER', sourceName: 'event-wiring-symmetry' },
   };

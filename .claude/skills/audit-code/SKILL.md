@@ -286,6 +286,8 @@ node scripts/openai-audit.mjs rebuttal "$PLAN_FILE" "$REBUTTAL_FILE" --out .audi
 
 Quality threshold: `HIGH == 0 && MEDIUM <= 2 && quickFix == 0`
 
+Counts go through `findingGateClass` (`lib/finding-tags.mjs`, sole reader of the finding tags): `nit` and pre-existing-not-reachable are reported, not counted; unstated or contradictory tags gate.
+
 Stability uses `_hash` for exact cross-round matching:
 - New hash not in prior set = genuinely new → resets stability
 - Mechanical-only findings do NOT require stability rounds
@@ -295,7 +297,7 @@ Stability uses `_hash` for exact cross-round matching:
 | Threshold NOT met | Fix → re-audit |
 | Threshold met, new architectural | Fix → re-audit (stability resets) |
 | Threshold met, mechanical only | Fix → re-audit (stability NOT reset) |
-| Summary line ends `— not convergence evidence` (changed lines, an unrecognised file type, or a `--require` subject not read in full) | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Unrecognised type: `.auditignore` it or report upstream. Required subject: fix the read, never `.auditignore` it |
+| Summary line ends `— not convergence evidence` | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Details: `references/convergence-report.md` §not-convergence remedies |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
 | Round 6, not stable | Run the structural-or-stop card, present it to the operator, then REQUIRED Step 7 |

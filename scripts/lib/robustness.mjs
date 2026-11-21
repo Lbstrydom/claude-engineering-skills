@@ -168,7 +168,8 @@ export function buildReducePayload(findings, budget = MAX_REDUCE_JSON_CHARS) {
   const summarize = (f) => ({
     id: f.id, severity: f.severity, category: f.category,
     section: f.section, detail: f.detail?.slice(0, MAX_DETAIL_CHARS),
-    is_quick_fix: f.is_quick_fix, _mapUnit: f._mapUnit
+    is_quick_fix: f.is_quick_fix,
+    importance: f.importance, pre_existing: f.pre_existing, newly_reachable: f.newly_reachable, _mapUnit: f._mapUnit
   });
 
   let subset = sorted.map(summarize);

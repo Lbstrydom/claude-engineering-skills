@@ -22,6 +22,7 @@ import { loadArchIntentConfig } from '../arch-intent/load-config.mjs';
 import { parseIntentDoc } from '../arch-intent/intent-doc-parser.mjs';
 import { ArchIntentConfigError } from '../arch-intent/errors.mjs';
 import { detectRepoStack } from '../repo-stack.mjs';
+import { NON_LLM_FINDING_TAGS } from '../finding-tags.mjs';
 
 // Architecture-intent system prompt — the LLM-bouncer rubric.  See
 // docs/plans/architecture-intent-framework.md §9.  Static (never
@@ -118,6 +119,7 @@ export async function runArchitecturePass({ openai, repoRoot, focusBlock, planCo
               is_quick_fix: false,
               is_mechanical: false,
               is_reopened: false,   // mechanical wave — never reopens a prior ruling
+              ...NON_LLM_FINDING_TAGS,
               principle: '#5 SSoT',
             })],
             summary: 'Architecture pass aborted — config invalid',
@@ -373,6 +375,7 @@ export function deriveFindingsFromReport(report) {
       is_quick_fix: false,
       is_mechanical: true,
       is_reopened: false,   // mechanical wave — never reopens a prior ruling
+      ...NON_LLM_FINDING_TAGS,
       principle: '#5 SSoT',
     }));
   }
@@ -391,6 +394,7 @@ export function deriveFindingsFromReport(report) {
       is_quick_fix: true,
       is_mechanical: true,
       is_reopened: false,   // mechanical wave — never reopens a prior ruling
+      ...NON_LLM_FINDING_TAGS,
       principle: '#5 SSoT',
     }));
   }
@@ -408,6 +412,7 @@ export function deriveFindingsFromReport(report) {
       is_quick_fix: true,
       is_mechanical: true,
       is_reopened: false,   // mechanical wave — never reopens a prior ruling
+      ...NON_LLM_FINDING_TAGS,
       principle: '#5 SSoT',
     }));
   }
@@ -425,6 +430,7 @@ export function deriveFindingsFromReport(report) {
       is_quick_fix: false,
       is_mechanical: true,
       is_reopened: false,   // mechanical wave — never reopens a prior ruling
+      ...NON_LLM_FINDING_TAGS,
       principle: '#15 Error Handling',
     }));
   }

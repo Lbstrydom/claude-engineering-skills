@@ -24,6 +24,7 @@ const validClassification = {
 };
 
 const baseFindingFields = {
+  importance: 'important', pre_existing: false, newly_reachable: false,   // required on producers (finding-tags)
   id: 'H1',
   severity: 'HIGH',
   category: 'Missing Error Handling',
