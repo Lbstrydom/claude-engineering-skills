@@ -85,7 +85,7 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
-import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes, finalizePriorRoundOutcomes, stampAuditRound } from './lib/finalize-outcomes.mjs';
+import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes, finalizePriorRoundOutcomes, stampAuditRound, resolveAllowlistBase, diffBaseToStamp } from './lib/finalize-outcomes.mjs';
 import { registerPlanAuditRun, completePlanAuditRun } from './lib/audit/plan-audit-cloud.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from './lib/learning/author-tier-observation.mjs';
@@ -523,7 +523,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
   // test harnesses into real multi-provider execution.
   if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
-    const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, opts.coverageChanged ? opts.auditBaseCommit : null, ctx), opts));
+    const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(applyCanaryToUnsupportedPipeline(await runTieredAuditPipeline(ctx)), opts.round, diffBaseToStamp(opts), ctx), opts));
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
@@ -533,7 +533,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
-  const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, opts.coverageChanged ? opts.auditBaseCommit : null, ctx), opts));
+  const mergedResult = withResumeSummary(stampRunNotices(stampAuditRound(await legacyResultPromise, opts.round, diffBaseToStamp(opts), ctx), opts));
   if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });
@@ -812,6 +812,7 @@ async function main() {
     let effectiveFileFilter = scopeResolution.files;
     // VCS change record + policy exclusions for `_coverage`; stay null for an explicit --files/--changed scope (no VCS record).
     let coverageChanged = null, coverageExcluded = null;
+    const allowlistBase = resolveAllowlistBase({ source: scopeResolution.source, explicitBase, resolve: (a) => resolveRangeSnapshot({ ...a, run: makeGitRunner(process.cwd()) }) }); if (allowlistBase) diffBase = allowlistBase;
     if (scopeResolution.source !== 'allowlist' && scopeMode === 'diff') {
       try {
         const { execFileSync } = await import('node:child_process');
@@ -940,7 +941,7 @@ async function main() {
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
     if (planless.planless && !effectiveFileFilter?.length) { console.error('Error: --planless found no changed files to audit, and only a plan can supply plan scope'); process.exit(1); }
-    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { resume, planless: planless.planless, passFilter, fileFilter: effectiveFileFilter, coverageChanged, coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
+    const codeResult = await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { resume, planless: planless.planless, passFilter, fileFilter: effectiveFileFilter, coverageChanged, explicitBaseResolved: Boolean(allowlistBase), coverageExcluded, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, auditIdentity, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty, requiredSubjects: required.subjects });
     // An INCOMPLETE run measured less than the change, and exiting 0 made that
     // indistinguishable from a pass to anything checking `$?` (2026-09-04
     // consumer report). 3, not 1: 1 already means "the CLI itself errored" on

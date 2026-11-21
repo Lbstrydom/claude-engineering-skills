@@ -85,6 +85,35 @@ export function stampAuditRound(result, round, diffBase = null, identity = null)
   return result;
 }
 
+/**
+ * Resolve an explicit `--base` for a round whose scope came from an explicit `--files` allowlist. Without this the scope-diff
+ * block (which validates and resolves the base) never runs for an allowlist, so the round recorded NO `_diffBase` and the final
+ * reviewer could not map changed lines (CES verification-lessons, Cluster B round 3: /cycle's documented cluster command passes
+ * `--files`). Same rule as the scope-diff block: an explicit base that cannot be validated stops the run, never demotes.
+ * @param {{source: string, explicitBase: string|null, resolve: (a: {explicitBase: string, workingTreeDirty: boolean}) => {ok: boolean, baseSha?: string, reason?: string, detail?: string}}} a
+ * @returns {string|null} the resolved full base sha, or null when this is not an allowlist round with an explicit base
+ */
+export function resolveAllowlistBase({ source, explicitBase, resolve }) {
+  if (source !== 'allowlist' || !explicitBase) return null;
+  const snap = resolve({ explicitBase, workingTreeDirty: false });
+  if (!snap?.ok || !isFullObjectId(snap.baseSha)) {
+    const err = new Error(`AGENT FIX: --base ${JSON.stringify(explicitBase)}: ${snap?.reason ?? 'could not be resolved'}${snap?.detail ? ` — ${snap.detail}` : ''}. Pass a base that is an ancestor of HEAD in this checkout.`);
+    err.auditScopeFatal = true;
+    throw err;
+  }
+  return snap.baseSha;
+}
+
+/**
+ * The diff base a round's result records as `_diffBase`: the scope-diff base when `--scope diff` derived the change set, or a
+ * validated explicit `--base` given alongside `--files`. Never the provisional `HEAD~1` (stampAuditRound also refuses a non-sha).
+ * @param {{coverageChanged?: unknown, explicitBaseResolved?: boolean, auditBaseCommit?: unknown}} opts
+ * @returns {string|null}
+ */
+export function diffBaseToStamp(opts = {}) {
+  return (opts.coverageChanged || opts.explicitBaseResolved) && isFullObjectId(opts.auditBaseCommit) ? opts.auditBaseCommit : null;
+}
+
 /** A full git object id (SHA-1 or SHA-256) — the only shape a stamped diff base may take. */
 export function isFullObjectId(value) {
   return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
