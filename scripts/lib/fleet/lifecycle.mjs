@@ -22,7 +22,8 @@ import { originatedBy, readProposals } from './proposals.mjs';
 import { readSessions, transact } from './registry.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
 import { endRepoWorkGone, repairCommand, workGoneLine } from './lease-workgone.mjs';
-import { STALE_READY_DEFAULT_DAYS, STALE_READY_MAX_DAYS, isTerminalState, staleReadyMarks } from './overlap.mjs';
+import { isTerminalState } from './overlap.mjs';
+import { STALE_READY_DEFAULT_DAYS, STALE_READY_MAX_DAYS, staleReadyMarks } from './stale-ready.mjs';
 import { IGNORED_STATUS_ARGS, STATUS_ARGS, classifyEntries, parsePorcelainZ } from './worktree-status.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 

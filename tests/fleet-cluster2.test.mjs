@@ -21,7 +21,8 @@ import { endTurnWorkGone } from '../scripts/lib/fleet/lease-turns.mjs';
 import { afterRetire, cmdReleaseStaleReady, evidenceHolds, retireSession } from '../scripts/lib/fleet/lifecycle.mjs';
 import { repairCommand } from '../scripts/lib/fleet/lease-workgone.mjs';
 import { fleetDir, transact } from '../scripts/lib/fleet/registry.mjs';
-import { broadClaimPatterns, staleReadyMarks } from '../scripts/lib/fleet/overlap.mjs';
+import { broadClaimPatterns } from '../scripts/lib/fleet/overlap.mjs';
+import { staleReadyMarks } from '../scripts/lib/fleet/stale-ready.mjs';
 import { classifyDirective, DIRECTIVE_KINDS } from '../scripts/lib/fleet/directives.mjs';
 import { deriveObligations, verifyDirective } from '../scripts/lib/fleet/obligations.mjs';
 

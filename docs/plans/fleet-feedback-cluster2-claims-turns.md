@@ -138,7 +138,8 @@ session re-claims (`claimMode`: terminal → new) and an invalidated mark is re-
 
 - `scripts/lib/fleet/lease-turns.mjs`, `scripts/lib/fleet/lease-workgone.mjs` — D1 (the pure decision, the bounded lease step)
 - `scripts/lib/fleet/lifecycle.mjs` — D0/D1/D3 (`retireSession`, `afterRetire`, evidence binding, `release --stale-ready`)
-- `scripts/lib/fleet/overlap.mjs` — D2/D3 (`broadClaimPatterns`, `staleReadyMarks`, overlap `ownPatterns`)
+- `scripts/lib/fleet/overlap.mjs` — D2 (`broadClaimPatterns`, overlap `ownPatterns`)
+- `scripts/lib/fleet/stale-ready.mjs` — D3 (`staleReadyMarks`; split out of `overlap.mjs`, which is at the file-size limit)
 - `scripts/lib/fleet/obligations.mjs`, `scripts/lib/fleet/directives.mjs` — D2 (the `narrow` kind, the `broad-claim` obligation)
 - `scripts/lib/fleet/commands.mjs`, `scripts/lib/fleet/argv.mjs`, `scripts/fleet.mjs`, `scripts/lib/fleet/render-train.mjs` — claim warning, flags, usage text
 - `skills/fleet/references/coordination.md`, `skills/fleet/references/participant-rules.md`, `skills/fleet/references/ending-a-session.md` — the documented vocabulary and verbs
