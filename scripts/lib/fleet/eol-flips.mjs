@@ -45,7 +45,9 @@ function numstat(cwd, range, extra) {
  */
 export function eolFlips(cwd, baseOid, oid) {
   if (!baseOid) return { ok: false, reason: 'base not measured' };
-  const range = [baseOid, oid];
+  // `base...head` is the diff from their MERGE BASE to the head: only what the session itself changed. A base that advanced on its
+  // own (an EOL change landed there) is not the author's to restore.
+  const range = [`${baseOid}...${oid}`];
   const raw = numstat(cwd, range, []);
   if (!raw.ok) return { ok: false, reason: raw.reason };
   const real = numstat(cwd, range, ['--ignore-cr-at-eol']);

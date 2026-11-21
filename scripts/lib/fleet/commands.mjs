@@ -27,6 +27,7 @@ import {
   broadClaimPatterns, claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
 import { eolFlipLines, eolFlips, eolJson } from './eol-flips.mjs';
+import { renderCommand } from './shell-quote.mjs';
 import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
 import {
   UNREGISTERED_BUDGET, cacheRecord, coveredBy, groupUnregistered, liveSessionsOf, scanArchiveTags, unregisteredCacheDir, unregisteredWork,
@@ -517,14 +518,21 @@ export function cmdAdd(ctx, flags, positionals) {
    */
   const undo = () => {
     const where = `the local branch ${name} this call created from ${materialized.created}`;
+    const manual = `git branch -d ${renderCommand([name])}`;
     const tx = transact(ctx.dir, (t) => {
       if (t.sessions.some((x) => !isTerminalState(x.state) && x.source?.branch === name)) return 'kept';
-      return runGit(['update-ref', '-d', `refs/heads/${name}`, materialized.oid], ctx.cwd);
+      // A worktree that checked the new branch out meanwhile keeps it (update-ref would not protect it, `git branch -d` does).
+      const wts = listWorktrees(ctx.cwd);
+      if (!wts.queried) return { ok: false, reason: `worktrees not listed: ${wts.reason}` };
+      if (wts.worktrees.some((w) => w.branch === name)) return 'checked-out';
+      // --no-deref: the exact ref this call created, never a symbolic ref someone put in its place.
+      return runGit(['update-ref', '--no-deref', '-d', `refs/heads/${name}`, materialized.oid], ctx.cwd);
     });
-    if (!tx.ok) return `(${where} could NOT be removed: the registry lock was busy — remove it yourself if unwanted: git branch -d ${name})`;
+    if (!tx.ok) return `(${where} could NOT be removed: the registry lock was busy — remove it yourself if unwanted: ${manual})`;
     if (tx.value === 'kept') return `(${where} was KEPT: another session adopted it meanwhile)`;
+    if (tx.value === 'checked-out') return `(${where} was KEPT: a worktree has it checked out meanwhile)`;
     return tx.value.ok ? `(${where} was removed again: nothing was adopted)`
-      : `(${where} was NOT removed (${tx.value.reason}) — it moved or is locked; inspect it, then remove it yourself if unwanted: git branch -d ${name})`;
+      : `(${where} was NOT removed (${tx.value.reason}) — it moved or is locked; inspect it, then remove it yourself if unwanted: ${manual})`;
   };
   let res;
   try { res = adoptOnce(ctx, flags, positionals); } catch (e) {

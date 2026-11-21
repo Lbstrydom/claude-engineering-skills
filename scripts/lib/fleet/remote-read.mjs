@@ -17,7 +17,7 @@ const BACKOFF_MS = Object.freeze([400, 1200]);
 export const sleepSync = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
 /** Did this failed read time out (the remote is hung, not flaky)? */
-export const isTimeoutFailure = (r) => /timed out|time out|timeout/i.test(String(r?.reason ?? ''));
+export const isTimeoutFailure = (r) => /\btimed out\b/i.test(String(r?.reason ?? ''));
 
 /** A failure no retry can fix (credentials, a wrong remote): retrying only delays the real message. Everything else could be a flake. `runGit` and an injected `deps.git` return a structured `{ok, reason}` and never throw - the contract this reads. */
 export const isPermanentFailure = (r) => /Authentication failed|could not read Username|Permission denied|Repository not found|does not appear to be a git repository|not a valid repository name/i.test(String(r?.reason ?? ''));

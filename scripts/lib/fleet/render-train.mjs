@@ -7,6 +7,7 @@
  */
 import { checkBlocksApproval } from './overlap.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import { printable } from './eol-flips.mjs';
 
 const o12 = (o) => String(o ?? '?').slice(0, 12);
 
@@ -154,7 +155,7 @@ export function renderAbandon(r) {
     : !l.dirExists ? 'the directory is gone but git still lists it: preview with `git worktree prune --dry-run -v`, then `git worktree prune` (it clears EVERY stale registration, not only this one)'
     : l.registered === false ? `git no longer lists it, so it is only a directory: inspect it, then delete ${renderCommand([l.path])} yourself`
       : `inspect it first, then: git worktree remove --force --force ${renderCommand([l.path])} (a locked worktree needs --force twice)`);
-  const left = (r.leftBehind ?? []).map((l) => `LEFT BEHIND: ${l.kind} ${l.path} (${l.reason}) — ${fix(l)}`);
+  const left = (r.leftBehind ?? []).map((l) => `LEFT BEHIND: ${l.kind} ${printable(l.path)} (${printable(l.reason)}) — ${fix(l)}`);
   return [head, ...left].join('\n');
 }
 

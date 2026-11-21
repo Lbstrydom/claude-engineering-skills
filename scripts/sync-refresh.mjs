@@ -33,9 +33,14 @@ function capture(cmd, args, cwd) {
   return (r.stdout || '').trim();
 }
 
-function main() {
+async function main() {
   assertKnownFlags(process.argv, ['--target', '--no-pull', '--dry-run'], { cli: 'sync-refresh' });
   const argv = process.argv.slice(2);
+  // Every token must be a known flag or the value right after --target: a stray word, or anything after a `--` terminator (where a
+  // mistyped option hides from the flag check), is refused BEFORE anything runs.
+  const ti0 = argv.indexOf('--target');
+  const stray = argv.filter((a, i) => !['--target', '--no-pull', '--dry-run'].includes(a) && i !== ti0 + 1 && !a.startsWith('--target='));
+  if (stray.length) throw new ArgvError(`sync-refresh: unexpected argument ${JSON.stringify(stray[0])} (accepted: --target <alias>, --no-pull, --dry-run)`);
   const dryRun = argv.includes('--dry-run');
   const ti = argv.indexOf('--target');
   const target = ti >= 0 ? argv[ti + 1] : null;
@@ -44,17 +49,20 @@ function main() {
   if (ti >= 0 && (target === undefined || target.startsWith('--'))) {
     process.stderr.write(`sync-refresh: --target needs a value (one of ${consumerAliases().join(', ')})
 `);
-    process.exit(2);
+    await finishAndExit(2);
+    return;
   }
 
   if (!target) {
     process.stderr.write(`usage: sync-refresh.mjs --target <${consumerAliases().join('|')}> [--no-pull]\n`);
-    process.exit(2);
+    await finishAndExit(2);
+    return;
   }
   const matches = resolveTargets(target);
   if (matches.length === 0) {
     process.stderr.write(`${R}error${X}: unknown target "${target}". Known: ${consumerAliases().join(', ')}\n`);
-    process.exit(2);
+    await finishAndExit(2);
+    return;
   }
 
   // 1. Pull canonical into this clone (read-only from the public remote).
@@ -74,7 +82,8 @@ function main() {
   const sync = run('node', ['scripts/sync-to-repos.mjs', '--target', target, ...(dryRun ? ['--dry-run'] : [])], REPO_ROOT);
   if (sync.status !== 0) {
     process.stderr.write(`${R}sync failed (exit ${sync.status})${X}\n`);
-    process.exit(sync.status || 1);
+    await finishAndExit(sync.status || 1);
+    return;
   }
 
   // A dry run changed nothing in the consumer: say so and stop. (`git status` there would also be a write - it can refresh the index - and
@@ -99,7 +108,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (e) {
   if (e instanceof ArgvError) { process.stderr.write(`${e.message}
 `); await finishAndExit(2); }

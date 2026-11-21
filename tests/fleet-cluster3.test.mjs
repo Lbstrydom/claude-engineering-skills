@@ -145,6 +145,12 @@ describe('#6 a remote READ is retried; nothing else is', () => {
       assert.equal(isPermanentFailure(r), true);
     }
   });
+  it('a URL that merely contains the word "timeout" is not a timeout; the real phrasings are', () => {
+    assert.equal(isTimeoutFailure({ reason: "git ls-remote exited 128: fatal: unable to access 'https://timeout.example/repo.git/': Connection reset" }), false);
+    assert.equal(isTimeoutFailure({ reason: 'git ls-remote timed out after 60000ms' }), true);
+    assert.equal(isTimeoutFailure({ reason: 'git ls-remote exited 128: Operation timed out' }), true);
+    assert.equal(isTimeoutFailure({ reason: 'git ls-remote exited 128: Connection timed out' }), true);
+  });
   it('lsRemote asks through the injected git dep with ls-remote, and retries it', () => {
     const seen = []; let n = 0;
     const git = (args, cwd, opts) => { seen.push({ args, cwd, opts }); n += 1; return n === 1 ? fail('git ls-remote exited 128: flake') : { ok: true, stdout: 'abc\trefs/heads/main\n' }; };
@@ -262,6 +268,25 @@ describe('#7 line-ending flips are disclosed at ready', () => {
     const bad = eolFlips(fx.repo, 'f'.repeat(40), head);
     assert.equal(bad.ok, false);
     assert.match(eolFlipLines(bad)[0], /^note: line-ending churn was not checked/);
+  });
+  it('compares from the MERGE BASE: an EOL change that landed on the base alone is not the session\'s to restore', () => {
+    const lines = Array.from({ length: 120 }, (_, i) => `line ${i}`);
+    const fx = makeFleetRepo({ files: { 'a.txt': 'a\n', 'shared.txt': `${lines.join('\n')}\n` } });
+    git(['config', 'core.autocrlf', 'false'], fx.repo);
+    git(['checkout', '-q', '-b', 'feat'], fx.repo);
+    writeFile(fx.repo, 'a.txt', 'a changed\n');
+    git(['add', '--', 'a.txt'], fx.repo);
+    git([...COMMIT, 'session work'], fx.repo);
+    const head = git(['rev-parse', 'HEAD'], fx.repo);
+    // The BASE advances on its own: someone lands a CRLF rewrite of shared.txt on main.
+    git(['checkout', '-q', 'main'], fx.repo);
+    fs.writeFileSync(path.join(fx.repo, 'shared.txt'), `${lines.join('\r\n')}\r\n`);
+    git(['add', '--', 'shared.txt'], fx.repo);
+    git([...COMMIT, 'base eol rewrite'], fx.repo);
+    const advancedBase = git(['rev-parse', 'main'], fx.repo);
+    const r = eolFlips(fx.repo, advancedBase, head);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.flips, [], 'the base-only rewrite is not reported against the session');
   });
   it('a clean branch yields no lines', () => {
     const fx = makeFleetRepo();
