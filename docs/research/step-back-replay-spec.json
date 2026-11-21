@@ -1,0 +1,11 @@
+{
+  "prs": [
+    { "pr": 410, "label": "bad", "branch": "claude/model-eval-audit-at-commit-tree" },
+    { "pr": 421, "label": "bad", "branch": "claude/solo-control-hardening-bdb23f" },
+    { "pr": 424, "label": "bad", "branch": "ces/telemetry-export-p3" },
+    { "pr": 429, "label": "bad", "branch": "claude/solo-control-reaudit-421" },
+    { "pr": 426, "label": "converged", "branch": "claude/sashiko-adjudicated-scoring" },
+    { "pr": 412, "label": "converged", "branch": "ces/arch-coverage-and-git-timeout" },
+    { "pr": 425, "label": "converged", "branch": "ces/coverage-read-failed" }
+  ]
+}
