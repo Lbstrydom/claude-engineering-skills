@@ -89,13 +89,16 @@ const GetObservationsArgsSchema = z.object({
  * chronological consumer) see the conventional oldest-to-newest shape.
  *
  * @param {{repoIds: string[], sinceDays?: number, limit?: number}} rawArgs
+ * @param {{query?: (sql: string, params?: any[]) => Promise<object[]>}} [opts] `query`: the caller's own statement runner (the
+ *   report's snapshot transaction, under its SAVEPOINT and statement_timeout). When given, a read error is THROWN, not folded
+ *   into `{ok:false}`: the caller owns isolation and needs the SQLSTATE to classify it (a timeout is not a generic failure).
  * @returns {Promise<{ok: boolean, cloud: boolean, rows: object[], truncated?: boolean, error?: string}>}
  */
-export async function getTieredShadowObservations(rawArgs) {
+export async function getTieredShadowObservations(rawArgs, { query } = {}) {
   const args = GetObservationsArgsSchema.parse(rawArgs);
   if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
   try {
-    const rows = await many(
+    const rows = await (query ?? many)(
       `SELECT repo_id, run_id, legacy_ok, shadow_ok, shadow_error, shadow_latency_ms, comparison, created_at
          FROM tiered_shadow_observations
         WHERE repo_id = ANY($1) AND created_at >= now() - ($2 || ' days')::interval
@@ -105,6 +108,7 @@ export async function getTieredShadowObservations(rawArgs) {
     );
     return { ok: true, cloud: true, rows: rows.reverse(), truncated: rows.length === args.limit };
   } catch (err) {
+    if (query) throw err;
     return { ok: false, cloud: true, rows: [], error: err.message };
   }
 }

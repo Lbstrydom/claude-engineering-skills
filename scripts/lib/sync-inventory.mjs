@@ -107,6 +107,10 @@ const CORE_ASSETS = [
   // for a consumer it is pure runtime. The sync loop remaps it to
   // `.audit-loop/expected-schema.json` via sync-path-map.
   'tests/fixtures/expected-schema.json',
+  // `own-model-coverage.mjs` reads its floors from this dotfile via fs, which the
+  // import walker cannot follow. Remapped to `.audit-loop/own-model-coverage.json`
+  // by sync-path-map; without it `check --static` has no config in a consumer.
+  '.own-model-coverage.json',
 ];
 
 /**

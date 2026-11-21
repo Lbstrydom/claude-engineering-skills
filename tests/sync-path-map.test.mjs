@@ -124,3 +124,13 @@ test('isExplicitException covers all known canonical-path surfaces', () => {
 test('LAYOUT_CONSTANTS is frozen', () => {
   assert.throws(() => { LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR = 'evil'; }, TypeError);
 });
+
+test('own-model coverage config: .own-model-coverage.json ↔ .audit-loop/own-model-coverage.json round-trips', () => {
+  assert.equal(LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_SRC, '.own-model-coverage.json');
+  assert.equal(sourceRelToDestRel(LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_SRC), '.audit-loop/own-model-coverage.json');
+  assert.equal(destRelToSourceRel(LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_DEST), '.own-model-coverage.json');
+  assert.equal(destRelToSourceRel(sourceRelToDestRel('.own-model-coverage.json')), '.own-model-coverage.json');
+  // Neighbours under the same `.audit-loop/` prefix are untouched by the exact-path rule.
+  assert.equal(destRelToSourceRel('.audit-loop/expected-schema.json'), 'tests/fixtures/expected-schema.json');
+  assert.equal(destRelToSourceRel('.audit-loop/migrations/x.sql'), 'supabase/migrations/x.sql');
+});

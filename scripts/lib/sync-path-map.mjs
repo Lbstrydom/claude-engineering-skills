@@ -31,6 +31,12 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   // do — a consumer's own `supabase/` must not absorb audit-loop assets.
   EXPECTED_SCHEMA_SRC: 'tests/fixtures/expected-schema.json',
   EXPECTED_SCHEMA_DEST: '.audit-loop/expected-schema.json',
+  // The own-model telemetry coverage config (floors per capture column). Read by
+  // `own-model-coverage.mjs`, which ships so a consumer can check its OWN store.
+  // Same shape as the schema fixture above: a repo-root dotfile here, audit-loop-private
+  // under `.audit-loop/` there, upstream-exclusive (replaced, never merged).
+  OWN_MODEL_COVERAGE_SRC: '.own-model-coverage.json',
+  OWN_MODEL_COVERAGE_DEST: '.audit-loop/own-model-coverage.json',
   MANIFEST_PATH: 'scripts/.sync-manifest.json',
   MARKER_BEGIN: '# managed-by:claude-engineering-skills-sync — DO NOT EDIT INSIDE',
   MARKER_END: '# /managed-by:claude-engineering-skills-sync',
@@ -168,6 +174,10 @@ export function sourceRelToDestRel(sourceRel) {
     return LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST;
   }
 
+  if (p === LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_SRC) {
+    return LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_DEST;
+  }
+
   if (p.startsWith(LAYOUT_CONSTANTS.MIGRATIONS_SRC_PREFIX)) {
     return LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX +
       p.slice(LAYOUT_CONSTANTS.MIGRATIONS_SRC_PREFIX.length);
@@ -200,6 +210,10 @@ export function destRelToSourceRel(destRel) {
   // this is an exact path, not a prefix — order keeps the round-trip total.
   if (p === LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST) {
     return LAYOUT_CONSTANTS.EXPECTED_SCHEMA_SRC;
+  }
+
+  if (p === LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_DEST) {
+    return LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_SRC;
   }
 
   if (p.startsWith(LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX)) {
