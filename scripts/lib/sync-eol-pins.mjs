@@ -68,6 +68,7 @@ export const EOL_PIN_GLOBS = Object.freeze([
   LAYOUT_CONSTANTS.MANIFEST_PATH,
   `${LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX}**`,
   LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST,
+  LAYOUT_CONSTANTS.OWN_MODEL_COVERAGE_DEST,
   RECEIPT_PATH,
   // The windowed-view declaration the Home dashboard reads (CORE_ASSETS). It
   // lands tracked at the consumer's root, so it needs a pin like the other

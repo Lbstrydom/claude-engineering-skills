@@ -17,12 +17,18 @@
  *   node scripts/telemetry-export.mjs --alias <alias> --drop-dir <dir> [--push]
  *   node scripts/telemetry-export.mjs --alias <alias> --print        # build + print, deliver nothing
  *   node scripts/telemetry-export.mjs --alias <alias> --drop-dir <dir> --if-older-than 24   # skip when a recent export exists
+ *   node scripts/telemetry-export.mjs --report                       # human-readable analysis of THIS store; nothing written or sent
+ *
+ * `--report` is for a consumer whose policy forbids any data leaving (docs/plans/policy-private-consumer-stores.md):
+ * the same build, snapshot and redaction as `--print`, plus the capture-v1 (a)-(c) rates, coverage floors and shadow-window
+ * progress, as text a person can read and carry out in prose. It writes no file, opens no network path other than the store, and
+ * is mutually exclusive with --print, --push, --drop-dir and --if-older-than. `--alias` is optional there.
  *
  * Env: TELEMETRY_CONSUMER_ALIAS, TELEMETRY_DROP_DIR (flags win); TELEMETRY_EXPORT_PUSH=1 is --push.
  *
  * `--if-older-than <hours>` makes it cheap to call from any trigger (weekly maintenance, a pre-push hook): when
  * this alias already has a valid export newer than that, it exits 0 having read nothing from the store.
- * Exit: 0 written (or printed) · 1 refused / failed · 2 usage.
+ * Exit: 0 written (or printed, or reported) · 1 refused / failed · 2 usage.
  *
  * @module scripts/telemetry-export
  */
@@ -35,12 +41,16 @@ import { assertKnownFlags, ArgvError, argOption, hasFlag, finishAndExit } from '
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { buildExport } from './lib/telemetry-export/build.mjs';
 import { makeRowReader } from './lib/telemetry-export/sources.mjs';
+import { createReportCollector, assembleReport, renderReport } from './lib/telemetry-export/report.mjs';
+import { resolveCoverageInputsFor, tryLoadCoverageConfig } from './lib/telemetry/coverage-inputs.mjs';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { summarize as summariseShadowRows, windowProgress, normalizeDbRow } from './lib/audit/tiered-shadow-summary.mjs';
 import { deliverExport, pushPending } from './lib/telemetry-export/deliver.mjs';
 import { ExportRefusedError } from './lib/telemetry-export/redact.mjs';
 import { scanDrop } from './lib/telemetry-export/reader.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
 
-const KNOWN_FLAGS = ['--alias', '--drop-dir', '--push', '--print', '--if-older-than', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--alias', '--drop-dir', '--push', '--print', '--report', '--if-older-than', '--selfcheck-relocation'];
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SETUP_CLI = path.join(HERE, 'setup-postgres.mjs');
 
@@ -71,29 +81,47 @@ function parseDrift(out) {
   } catch { return { ok: false, reason: 'read-failed' }; }
 }
 
+/** stdout and termination, replaceable by a test (`main(deps)`); production uses the drained process streams. */
+let io = { out: (t) => process.stdout.write(t), finish: (c) => finishAndExit(c) };
+
 /**
  * Every failure leaves BOTH a diagnostic on stderr (the human) and `{ok:false,error:{code}}` on stdout (the machine),
  * the CLI contract: a caller parsing stdout must not mistake a failure for silence. Codes only — no message text,
  * which can carry a host.
  */
 async function fail(code, exitCode) {
-  process.stdout.write(`${JSON.stringify({ ok: false, error: { code } })}\n`);
-  await finishAndExit(exitCode);
+  io.out(`${JSON.stringify({ ok: false, error: { code } })}\n`);
+  await io.finish(exitCode);
 }
 
-async function main() {
+/**
+ * @param {object} [deps] test seams; production passes none
+ * @param {{out: (t: string) => unknown, finish: (c: number) => unknown}} [deps.io]
+ * @param {object} [deps.modules] the runtime modules (db client/query, repo store, identity, upstream commands, reachability probe)
+ * @param {Function} [deps.readTieredShadow] `getTieredShadowObservations`
+ * @param {Function} [deps.population] `ambientPopulation`
+ */
+export async function main(deps = {}) {
+  io = deps.io ?? { out: (t) => process.stdout.write(t), finish: (c) => finishAndExit(c) };
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'telemetry-export' });
   } catch (err) {
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); await fail('USAGE', 2); return; }
     throw err;
   }
-  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); await finishAndExit(0); return; }
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); await io.finish(0); return; }
 
-  const alias = argOption('alias') || process.env.TELEMETRY_CONSUMER_ALIAS || '';
-  const dropDir = argOption('drop-dir') || process.env.TELEMETRY_DROP_DIR || '';
+  const reportMode = hasFlag('report');
+  if (reportMode && (hasFlag('print') || hasFlag('push') || argOption('drop-dir') || argOption('if-older-than') !== null)) {
+    // Explicit flags only: TELEMETRY_DROP_DIR / TELEMETRY_EXPORT_PUSH may be set in a consumer's environment for its export
+    // cadence, and a report run from that same shell must not be refused for it.
+    process.stderr.write('telemetry-export: --report is mutually exclusive with --print, --push, --drop-dir and --if-older-than (it prints and delivers nothing)\n');
+    await fail('USAGE', 2); return;
+  }
+  const alias = argOption('alias') || process.env.TELEMETRY_CONSUMER_ALIAS || (reportMode ? 'report' : '');
+  const dropDir = reportMode ? '' : (argOption('drop-dir') || process.env.TELEMETRY_DROP_DIR || '');
   const printOnly = hasFlag('print');
-  const push = hasFlag('push') || process.env.TELEMETRY_EXPORT_PUSH === '1';
+  const push = !reportMode && (hasFlag('push') || process.env.TELEMETRY_EXPORT_PUSH === '1');
   const olderThanRaw = argOption('if-older-than');
   const olderThanHours = olderThanRaw === null || olderThanRaw === undefined ? null : Number(olderThanRaw);
   if (olderThanHours !== null && !(Number.isFinite(olderThanHours) && olderThanHours > 0)) {
@@ -108,7 +136,7 @@ async function main() {
     process.stderr.write('telemetry-export: --print and --push are mutually exclusive (printing delivers nothing)\n');
     await fail('USAGE', 2); return;
   }
-  if (!printOnly && !dropDir) {
+  if (!printOnly && !reportMode && !dropDir) {
     process.stderr.write('telemetry-export: no drop directory — pass --drop-dir or set TELEMETRY_DROP_DIR (or use --print)\n');
     await fail('USAGE', 2); return;
   }
@@ -133,24 +161,33 @@ async function main() {
             await fail('DELIVERY_FAILED', 1); return;
           }
         }
-        process.stdout.write(`${JSON.stringify({ ok: true, skipped: 'recent-export', ageHours: Math.floor(hours) })}\n`);
-        await finishAndExit(0); return;
+        io.out(`${JSON.stringify({ ok: true, skipped: 'recent-export', ageHours: Math.floor(hours) })}\n`);
+        await io.finish(0); return;
       }
     }
   }
 
-  const [{ probeStoreReachability }, client, query, repoStore, identity, upstreamCmds] = await Promise.all([
-    import('./lib/doctor/store-reachability.mjs'),
-    import('./lib/db/client.mjs'),
-    import('./lib/db/query.mjs'),
-    import('./lib/store/repo.mjs'),
-    import('./lib/repo-identity.mjs'),
-    import('./lib/upstream/commands.mjs'),
-  ]);
+  const mods = deps.modules ?? await loadRuntimeModules();
+  const { probeStoreReachability } = mods.reachability;
+  const { client, query, repoStore, identity, upstreamCmds } = mods;
 
   const dsn = client.resolveDbUrl?.() ?? process.env.AUDIT_DB_URL ?? null;
   const stamp = upstreamCmds.readBundleStamp(path.resolve(HERE, '..'));
   const sha = stamp?.commitSha && /^[0-9a-f]{40}$/.test(stamp.commitSha) ? stamp.commitSha : null;
+
+  // `--report` only: the groups run INSIDE the export's own snapshot (makeRowReader's extraReads), so they and the export
+  // describe one instant. --print and delivery pass no hook, which keeps the exported document byte-identical.
+  let collector = null;
+  let coverage = { config: null, problem: 'config-missing' };
+  if (reportMode) {
+    coverage = tryLoadCoverageConfig(resolveCoverageInputsFor(findRepoRootFromScript(import.meta.url) || path.resolve(HERE, '..'), fileURLToPath(import.meta.url)));
+    const readTieredShadow = deps.readTieredShadow ?? (await import('./lib/store/tiered-shadow.mjs')).getTieredShadowObservations;
+    collector = createReportCollector({
+      coverageConfig: coverage.config,
+      readTieredShadow,
+      summariseShadow: (rows) => { const n = summariseShadowRows(rows.map(normalizeDbRow)).comparedRuns; return { comparedRuns: n, window: windowProgress(n) }; },
+    });
+  }
 
   let doc;
   try {
@@ -169,7 +206,7 @@ async function main() {
           query: query.query,
           getRepoIdByUuid: (u) => repoStore.getRepoIdByUuid(u, { strict: true }),
           resolveRepoIdentity: () => identity.resolveRepoIdentity(process.cwd()),
-        }),
+        }, collector ? { extraReads: collector.extraReads } : {}),
       },
     });
   } catch (err) {
@@ -182,18 +219,47 @@ async function main() {
     try { await client.closePool?.(); } catch { /* best effort */ }
   }
 
+  if (reportMode) {
+    try {
+      const report = assembleReport({
+        doc, results: collector.results(), coverageConfig: coverage.config, coverageProblem: coverage.problem, tally: collector.tally,
+      });
+      const ambient = deps.population ?? (await import('./lib/store/population-ambient.mjs')).ambientPopulation;
+      // Store-wide: every group's SQL has no repo predicate. `answered` is false when NOTHING measured: then nothing was
+      // measured from the store, whatever it is called.
+      const population = await ambient({ scope: 'store', answered: report.anyMeasured });
+      io.out(`${renderReport(report, population)}\n`);
+      await io.finish(0); return;
+    } catch (err) {
+      process.stderr.write(err instanceof ExportRefusedError ? `${err.message}\n` : 'telemetry-export: the report could not be built (nothing was written)\n');
+      await fail(err instanceof ExportRefusedError ? 'EXPORT_REFUSED' : 'BUILD_FAILED', 1); return;
+    }
+  }
   if (printOnly) {
-    process.stdout.write(`${JSON.stringify(doc, null, 2)}\n`);
-    await finishAndExit(0); return;
+    io.out(`${JSON.stringify(doc, null, 2)}\n`);
+    await io.finish(0); return;
   }
   try {
     const r = deliverExport({ doc, dropDir, push });
-    process.stdout.write(`${JSON.stringify({ ok: true, file: r.file, pushed: r.pushed })}\n`);
-    await finishAndExit(0);
+    io.out(`${JSON.stringify({ ok: true, file: r.file, pushed: r.pushed })}\n`);
+    await io.finish(0);
   } catch (err) {
     process.stderr.write(`telemetry-export: delivery failed (${String(err?.message ?? err).split('\n')[0]})\n`);
     await fail('DELIVERY_FAILED', 1);
   }
+}
+
+/** The runtime modules, loaded lazily: `--selfcheck-relocation` and usage errors must not pay for (or depend on) a DB driver. */
+async function loadRuntimeModules() {
+  const [reachability, client, query, repoStore, identity, upstreamCmds] = await Promise.all([
+    import('./lib/doctor/store-reachability.mjs'),
+    import('./lib/db/client.mjs'),
+    import('./lib/db/query.mjs'),
+    import('./lib/store/repo.mjs'),
+    import('./lib/repo-identity.mjs'),
+    import('./lib/upstream/commands.mjs'),
+  ]);
+  return { reachability, client, query, repoStore, identity, upstreamCmds };
 }
 
 /**

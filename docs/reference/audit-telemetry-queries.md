@@ -12,9 +12,11 @@ audit store, with no new collector:
 capture writer. **Read the eligibility section first** — a query that skips it counts rows the
 fixed writers never produced.
 
-> The SQL between the `sql:` markers is *executed* by `tests/audit-capture-db.test.mjs`
-> (with `:epochs` bound to `capture-v1`), so this page cannot drift from the mappings the tests
-> pin. Edit the SQL here and the test follows.
+> **The code module is the source**: `scripts/lib/telemetry/capture-queries.mjs` holds these recipes as
+> read-only statements (`$1` is the epoch set, the two views are CTEs) and ships to consumers, which this
+> page cannot — `telemetry-export --report` runs them there. `tests/audit-capture-db.test.mjs` pins every
+> block below equal to the module (`:epochs` <-> `$1`, `CREATE TEMP VIEW x AS <body>;` <-> the CTE body),
+> and executes both on a real Postgres. Edit the module and this page together, or the test fails.
 
 ## 1. Eligibility (the cohort is a parameter, never hard-coded)
 
@@ -32,7 +34,7 @@ backfill and no cutoff by date: rows written before the fix keep NULL and are in
 
 A round is the composite key `(repo_id, audit_session_id, audit_round)` over rows with
 `audit_round IS NOT NULL`, and **a retried round has several rows: take the latest
-`created_at` per key** so it counts once. Unified runs (an explicit `--run-id`), and plan A/B and
+`created_at` per key (ties broken by the larger run `id`, so the pick is deterministic)** so it counts once. Unified runs (an explicit `--run-id`), and plan A/B and
 bake-off arm runs, carry `audit_round IS NULL` and are never rounds.
 
 <!-- sql:capture-rounds:start -->
@@ -42,7 +44,7 @@ SELECT DISTINCT ON (r.repo_id, r.audit_session_id, r.audit_round) r.*
   FROM audit_runs r
  WHERE r.capture_epoch = ANY(:epochs) AND r.run_status = 'complete' AND r.mode = 'code'
    AND r.audit_session_id IS NOT NULL AND r.audit_round IS NOT NULL
- ORDER BY r.repo_id, r.audit_session_id, r.audit_round, r.created_at DESC;
+ ORDER BY r.repo_id, r.audit_session_id, r.audit_round, r.created_at DESC, r.id DESC;
 ```
 <!-- sql:capture-rounds:end -->
 
@@ -91,7 +93,8 @@ SELECT f.id AS finding_id, r.repo_id, r.audit_session_id, r.audit_round,
          ELSE 'unknown'
        END AS state
   FROM audit_findings f JOIN capture_rounds r ON r.id = f.run_id
- WHERE f.user_action IS DISTINCT FROM 'auto_dismissed'; -- control markers are not concerns (see the CASE: they map to NULL)
+ -- control markers are not concerns (see the CASE: they map to NULL)
+ WHERE f.user_action IS DISTINCT FROM 'auto_dismissed';
 ```
 <!-- sql:capture-concerns:end -->
 
@@ -105,20 +108,22 @@ SELECT count(*) FILTER (WHERE rounds_seen >= 2)::numeric / NULLIF(count(*), 0) A
 ```
 <!-- sql:reraise-rate:end -->
 
-- **Reopen rate** = concerns re-raised after their terminal state in an earlier **non-final**
-  round was `dismissed` ÷ concerns dismissed in a non-final round:
+- **Reopen rate** = concerns re-raised in a round after their **earliest** `dismissed` state in a
+  **non-final** round ÷ concerns dismissed in a non-final round. Each concern counts **once** (its
+  earliest non-final dismissal), however many rounds dismissed it:
 
 <!-- sql:reopen-rate:start -->
 ```sql
 WITH final_round AS (SELECT repo_id, audit_session_id, max(audit_round) AS last_round FROM capture_rounds GROUP BY 1, 2),
 dismissed AS (
-  SELECT DISTINCT c.repo_id, c.audit_session_id, c.concern_id, c.audit_round
+  SELECT c.repo_id, c.audit_session_id, c.concern_id, min(c.audit_round) AS first_dismissed_round
     FROM capture_concerns c JOIN final_round fr USING (repo_id, audit_session_id)
-   WHERE c.state = 'dismissed' AND c.audit_round < fr.last_round)
+   WHERE c.state = 'dismissed' AND c.audit_round < fr.last_round
+   GROUP BY 1, 2, 3)
 SELECT count(*) FILTER (WHERE EXISTS (
          SELECT 1 FROM capture_concerns later
           WHERE later.repo_id = d.repo_id AND later.audit_session_id = d.audit_session_id
-            AND later.concern_id = d.concern_id AND later.audit_round > d.audit_round))::numeric
+            AND later.concern_id = d.concern_id AND later.audit_round > d.first_dismissed_round))::numeric
        / NULLIF(count(*), 0) AS reopen_rate, count(*) AS dismissed_concerns
   FROM dismissed d;
 ```
@@ -139,12 +144,26 @@ SELECT count(*) FILTER (WHERE outcomes > 1)::numeric / NULLIF(count(*), 0) AS di
 <!-- sql:dispute-rate:end -->
 
 All three are **lower bounds**: report them next to `write_outcomes -> 'equivalence'`
-(`expected`, `written`, `skipped:*`, `spilled`, `lost`) summed over the same runs.
+(`expected`, `written`, `skipped:*`, `spilled`, `lost`) summed over the same runs:
+
+<!-- sql:equivalence-receipt:start -->
+```sql
+SELECT count(*) AS runs_with_receipt,
+       sum((r.write_outcomes -> 'equivalence' ->> 'expected')::int) AS expected,
+       sum((r.write_outcomes -> 'equivalence' ->> 'written')::int) AS written,
+       sum((r.write_outcomes -> 'equivalence' ->> 'spilled')::int) AS spilled,
+       sum((r.write_outcomes -> 'equivalence' ->> 'lost')::int) AS lost,
+       sum((SELECT COALESCE(sum(v.value::int), 0) FROM jsonb_each_text(r.write_outcomes -> 'equivalence') v
+             WHERE v.key LIKE 'skipped:%')) AS skipped
+  FROM capture_rounds r
+ WHERE r.write_outcomes -> 'equivalence' IS NOT NULL;
+```
+<!-- sql:equivalence-receipt:end -->
 
 ## 4. Question (b) — finding quality per auditor model
 
 **Observational, not a controlled eval.** Every output carries *n* and missingness and is
-stratified by repo and pass. A claim that one model "finds better" needs the synchronous
+stratified by pass (the repo is **not** in the output: a report prints a model's counts, never a repo's). A claim that one model "finds better" needs the synchronous
 `model-eval-auditor` harness; this query only shows drift. Two cohorts, **never pooled**:
 
 **Prospective** — `audit_findings.source_model` on eligible capture-v1 runs (terminal state from
@@ -152,16 +171,17 @@ stratified by repo and pass. A claim that one model "finds better" needs the syn
 
 <!-- sql:quality-prospective:start -->
 ```sql
-SELECT f.source_model, r.repo_id, f.pass_name,
+SELECT f.source_model, f.pass_name,
        count(*) AS n,
        count(*) FILTER (WHERE c.state = 'accepted') AS accepted,
        count(*) FILTER (WHERE c.state = 'dismissed') AS dismissed,
+       count(*) FILTER (WHERE c.state = 'severity_adjusted') AS severity_adjusted,
        count(*) FILTER (WHERE c.state IN ('open', 'unknown')) AS unresolved
   FROM capture_concerns c
   JOIN audit_findings f ON f.id = c.finding_id
   JOIN audit_runs r ON r.id = f.run_id
  WHERE r.write_outcomes -> 'outcome_sync' ->> 'written' = r.write_outcomes -> 'outcome_sync' ->> 'expected'
- GROUP BY 1, 2, 3;
+ GROUP BY 1, 2;
 ```
 <!-- sql:quality-prospective:end -->
 
@@ -177,13 +197,14 @@ WITH one_model AS (
   SELECT run_id, pass_name, min(source_model) AS source_model
     FROM audit_pass_stats GROUP BY run_id, pass_name
   HAVING count(*) = 1 AND count(source_model) = 1)
-SELECT m.source_model, count(*) AS n
+SELECT m.source_model, count(*) AS n, false AS excluded
   FROM audit_findings f
   JOIN one_model m ON m.run_id = f.run_id AND m.pass_name = f.pass_name
  GROUP BY m.source_model
 UNION ALL
--- the excluded, counted: findings whose (run_id, pass_name) is NOT a one-model pair
-SELECT '(excluded: zero, several or null-model pass-stat rows)', count(*)
+-- the excluded, counted: findings whose (run_id, pass_name) is NOT a one-model pair. The excluded column is the flag a reader classifies
+-- on; the NULL model is not a label (a pass-stat model may carry any text, including text that looks like one).
+SELECT NULL::text, count(*), true
   FROM audit_findings f
  WHERE NOT EXISTS (SELECT 1 FROM one_model m WHERE m.run_id = f.run_id AND m.pass_name = f.pass_name);
 ```
@@ -220,6 +241,26 @@ END
 | not converged | `APPROVE` | **disagree** |
 | any | NULL verdict, failed or skipped review, or `CONCERNS*` | **unknown** |
 
+Counts per result over eligible complete code runs, `converged` being `round_converged_after IS NOT NULL`:
+
+<!-- sql:c-run-agreement-counts:start -->
+```sql
+SELECT result, count(*) AS n
+  FROM (SELECT CASE
+                 WHEN gemini_verdict IS NULL THEN 'unknown'
+                 WHEN gemini_verdict = 'APPROVE' AND converged THEN 'agree'
+                 WHEN gemini_verdict = 'APPROVE' AND NOT converged THEN 'disagree'
+                 WHEN gemini_verdict = 'REJECT' AND NOT converged THEN 'agree'
+                 WHEN gemini_verdict = 'REJECT' AND converged THEN 'disagree'
+                 ELSE 'unknown'
+               END AS result
+          FROM (SELECT gemini_verdict, (round_converged_after IS NOT NULL) AS converged
+                  FROM audit_runs
+                 WHERE capture_epoch = ANY(:epochs) AND run_status = 'complete' AND mode = 'code') v) x
+ GROUP BY result;
+```
+<!-- sql:c-run-agreement-counts:end -->
+
 **Per finding — the reversal rate.** The reviewer's schema lists **reversals only**
 (`wrongly_dismissed[]`): a presented finding it did not reverse is *not reversed*, never
 *sustained*, and no sustain event exists. The metric is **reversals ÷ `presented_resolved`**, over
@@ -239,7 +280,17 @@ SELECT count(*) AS runs,
 <!-- sql:reversal-rate:end -->
 
 Incomplete reviews are counted separately with `write_outcomes -> 'reviewer' ->> 'status' =
-'incomplete'`. Reviewer events are `finding_adjudication_events` rows with
+'incomplete'`:
+
+<!-- sql:incomplete-reviews:start -->
+```sql
+SELECT count(*) AS incomplete_reviews
+  FROM audit_runs
+ WHERE capture_epoch = ANY(:epochs) AND write_outcomes -> 'reviewer' ->> 'status' = 'incomplete';
+```
+<!-- sql:incomplete-reviews:end -->
+
+ Reviewer events are `finding_adjudication_events` rows with
 `adjudicator_kind = 'reviewer'`, `adjudicator_model` = the primary reviewer,
 `evidence = {reviewing_run_id, review_round}`, written on the **source** finding row (which can sit
 in an earlier round of the session). They never rewrite the finding's own `adjudication_outcome`.

@@ -21,26 +21,18 @@ import { assertKnownFlags, ArgvError, arg, finishAndExit } from './lib/cli-io.mj
 import { validateConfig, buildMeasureSql, evaluateEntry, exitCodeFor, checkStatic } from './lib/telemetry/coverage.mjs';
 import { ambientPopulation } from './lib/store/population-ambient.mjs';
 import { renderPopulationLine } from './lib/population.mjs';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { resolveCoverageInputsFor, loadCoverageConfig, loadSchemaColumns, loadMigrations, CoverageInputMissingError } from './lib/telemetry/coverage-inputs.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IDENT = /^[a-z_][a-z0-9_]*$/;
 
+// Inputs resolve BY LAYOUT (lib/telemetry/coverage-inputs.mjs): counting `..` from here lands on
+// `<consumer>/scripts` once the sync has relocated this file to `scripts/.claude-skills/`.
+const HERE = fileURLToPath(import.meta.url);
+const INPUTS = resolveCoverageInputsFor(findRepoRootFromScript(import.meta.url) || path.resolve(path.dirname(HERE), '..'), HERE);
+
 function loadConfig(p) {
-  return JSON.parse(fs.readFileSync(p ?? path.join(ROOT, '.own-model-coverage.json'), 'utf8'));
-}
-
-function schemaColumns() {
-  const fx = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'expected-schema.json'), 'utf8'));
-  const m = new Map();
-  for (const t of fx.tables ?? []) m.set(t.table_name, new Set((t.columns ?? []).map((c) => c.column_name)));
-  for (const v of fx.views ?? []) m.set(v.view_name ?? v.table_name, new Set((v.columns ?? []).map((c) => c.column_name ?? c)));
-  return m;
-}
-
-function migrations() {
-  const dir = path.join(ROOT, 'supabase', 'migrations');
-  return fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
-    .map((f) => ({ name: f, sql: fs.readFileSync(path.join(dir, f), 'utf8') }));
+  return p ? JSON.parse(fs.readFileSync(p, 'utf8')) : loadCoverageConfig(INPUTS);
 }
 
 async function measureLive(entries, windowDays = 30) {
@@ -88,13 +80,25 @@ export async function main(argv, deps = {}) {
   assertKnownFlags(argv.slice(3), ['--static', '--live', '--out', '--config', '--tables', '--all-columns'], { cli: 'own-model-coverage', from: 0 });
   if (sub !== 'check' && sub !== 'snapshot') throw new ArgvError('usage: own-model-coverage.mjs check --static|--live | snapshot [--tables a,b --all-columns] --out <file>');
   if (sub === 'check' && argv.includes('--static') && argv.includes('--live')) throw new ArgvError('check takes --static OR --live, not both');
-  const config = loadConfig(arg(argv, '--config'));
+  let config;
+  try { config = loadConfig(arg(argv, '--config')); } catch (err) {
+    if (!(err instanceof CoverageInputMissingError)) throw err;
+    process.stderr.write(`own-model-coverage: ${err.message}
+`);
+    return 1;
+  }
   const cfgErrs = validateConfig(config);
   if (cfgErrs.length) { process.stderr.write(`own-model-coverage: invalid config: ${cfgErrs.join('; ')}
 `); console.log(JSON.stringify({ ok: false, errors: cfgErrs })); return 1; }
 
   if (sub === 'check' && argv.includes('--static')) {
-    const errors = checkStatic(config, schemaColumns(), migrations());
+    let errors;
+    try { errors = checkStatic(config, loadSchemaColumns(INPUTS), loadMigrations(INPUTS)); } catch (err) {
+      if (!(err instanceof CoverageInputMissingError)) throw err;
+      process.stderr.write(`own-model-coverage: ${err.message}
+`);
+      return 1;
+    }
     console.log(JSON.stringify({ mode: 'static', ok: errors.length === 0, errors }));
     return errors.length ? 1 : 0;
   }

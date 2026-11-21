@@ -169,6 +169,10 @@ export const CORE_ENTRY = [
   // consumers need it to read THEIR OWN .audit/tiered-shadow-log.jsonl
   // before Phase 14's production-flip decision. Also in CLI_SMOKE_SET.
   'scripts/tiered-shadow-report.mjs',
+  // Own-model telemetry coverage gate CLI. Nothing imports it; a consumer runs it against ITS OWN store
+  // (`check --static|--live`) so a policy-private consumer can answer "are the capture columns filling?"
+  // without any data leaving. Its config ships via sync-inventory's fs-read assets. Also in CLI_SMOKE_SET.
+  'scripts/own-model-coverage.mjs',
   // Deterministic /ship commit helper — validates + appends the AI-*
   // provenance trailer block and performs the commit (docs/reference/commit-provenance.md).
   // /ship SKILL.md shells it, nothing imports it. Walker pulls in

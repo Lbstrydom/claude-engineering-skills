@@ -88,6 +88,7 @@ const CLI_SMOKE_SET = [
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
   'check-windowed-views.mjs', // windowed-view declaration gate — relocation-sensitive twice over (repo root AND migrations dir resolve by layout, and a consumer has both candidate dirs); declared in sync-entry-lists.mjs CORE_ENTRY, verified before adding
+  'own-model-coverage.mjs', // own-model telemetry coverage gate — resolves config/fixture/migrations by LAYOUT; declared in sync-entry-lists.mjs
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'ship-record.mjs', // ship record catch-up; declared in sync-entry-lists.mjs CORE_ENTRY (verified before adding); fleet spawns it as a sibling

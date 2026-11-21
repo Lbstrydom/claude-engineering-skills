@@ -403,3 +403,9 @@ to code. Files: `scripts/lib/telemetry/capture-queries.mjs` (create), `scripts/l
   `self` label) fixed with a red-then-green test. **Debt G2 (LOW)**: a repo-scoped read (`{repo:'self'}` /
   `{repos:[...]}`) always renders `unknownBeyond`, even in the source repo where the registry could name the
   store-mates it did not read — honest but less informative; revisit if a repo-scoped verdict needs the not-measured side.
+- **Cluster B code audit** (SID in `.audit/policy-b-sid`): R1 H6 M9 L1 → R2 H1 M4 L2 → R3 H1 M2 (two defects, both fixed
+  with red-then-green tests). Stopped at R3, the step-back point: nothing structural remained. Decisions recorded:
+  `converged` for (c) is `round_converged_after IS NOT NULL` (no per-run H/M column exists); the reopen-rate denominator
+  now counts each concern once, at its earliest non-final dismissal (a correction to the committed recipe); model ids
+  print only when they are a known public id, else `<family>:other`, because this consumer's Azure deployment names
+  can be private.
