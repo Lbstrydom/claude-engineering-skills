@@ -264,7 +264,9 @@ describe('train ids and manifests', () => {
   it('mintTrainId skips an id that already holds a manifest, and refuses (never overwrites) when none is free', () => {
     const dir = freshDir();
     const now = new Date('2026-10-05T12:34:56.000Z');
-    const taken = newTrainId(now);
+    // A FIXED taken id (suffix 'dead'), not a random one: a random suffix could equal the 'beef' / '0102'
+    // draws below and make the test itself collide.
+    const taken = 't-20261005123456-dead';
     writeTrain(dir, manifest(taken));
     const real = crypto.randomBytes;
     const seq = [Buffer.from(taken.slice(-4), 'hex'), Buffer.from('beef', 'hex')];
