@@ -53,13 +53,16 @@ export function usageFromSource(source, name) {
       block.push(lines[i]);
     }
   } else {
-    const para = [];
-    for (const l of lines) {
-      if (l.startsWith('@')) { if (para.length) break; continue; }
-      if (l.trim() === '' && para.length) break;
-      if (l.trim()) para.push(l);
+    // No `Usage:` block: the whole header up to its first @tag (a one-paragraph
+    // cut dropped documented flags and examples), capped so a long header stays a screenful.
+    const body = [];
+    for (const raw of lines) {
+      // `@fileoverview <text>` carries the first line of prose: keep the text, drop the tag.
+      const l = raw.replace(/^@fileoverview\s*/, '');
+      if (l.startsWith('@')) { if (body.some((b) => b.trim())) break; continue; }
+      body.push(l);
     }
-    block = para;
+    block = body.slice(0, 40);
   }
   const text = block.join('\n').trimEnd();
   return `${text || `${name}: see the header of scripts/${name}`}\n\n(--help is read-only: nothing was run.)\n`;
@@ -81,6 +84,10 @@ export function helpGuardEntry(io = {}) {
   try { entry = fs.realpathSync(path.resolve(argv[1] ?? '')); } catch { return false; }
   let source;
   try { source = fs.readFileSync(entry, 'utf-8'); } catch { return false; }
+  // Fire only when the ENTRY itself opted in. A guarded LIBRARY (learning-store is
+  // imported by 36 scripts) must never swallow `--help` for an entry that has its
+  // own help handling, or an app importing it would be terminated by a CLI contract.
+  if (!source.includes('help-guard-run')) return false;
   const text = usageFromSource(source, path.basename(entry));
   const exit = io.exit ?? ((c) => process.exit(c));
   if (io.out) { io.out(text); exit(0); return true; }
@@ -88,7 +95,12 @@ export function helpGuardEntry(io = {}) {
   // once and the remaining imports (the very side effects this guard precedes)
   // keep evaluating until the callback fires. The text is small, so a blocking
   // write to fd 1 cannot meaningfully stall.
-  try { fs.writeSync(1, text); } catch { /* a closed stdout still must not run the CLI */ }
+  try {
+    // writeSync may write fewer bytes than asked: loop until the buffer is out.
+    const buf = Buffer.from(text, 'utf-8');
+    let off = 0;
+    while (off < buf.length) off += fs.writeSync(1, buf, off, buf.length - off);
+  } catch { /* a closed stdout still must not run the CLI */ }
   exit(0);
   return true;
 }

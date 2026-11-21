@@ -59,9 +59,11 @@ export function listEntryPoints(root = ROOT, smokeSet = []) {
   // CLI_SMOKE_SET members under scripts/lib (which ship to consumers as CLIs).
   // Library modules among them are probed too (harmless: nothing runs) but only a
   // file that looks like a CLI owes the static contract — see `looksLikeCli`.
+  // Only the ROOT `scripts/lib` and `node_modules` are excluded (below, at the top
+  // level); a `scripts/<subsystem>/lib/tool.mjs` is a nested CLI like any other.
   const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
     .flatMap((e) => {
-      if (e.isDirectory()) return e.name === 'lib' || e.name === 'node_modules' ? [] : walk(path.join(d, e.name));
+      if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(path.join(d, e.name));
       return e.name.endsWith('.mjs') ? [path.join(d, e.name)] : [];
     });
   const nested = fs.readdirSync(dir, { withFileTypes: true })
@@ -90,8 +92,19 @@ export function looksLikeCli(text) {
   return /^#!\/usr\/bin\/env node|isInvokedAsScript\(|process\.argv/m.test(text);
 }
 
+/** Source with block and line comments removed, so a docstring cannot satisfy the contract. */
+export function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
+}
+
+/**
+ * The code (not the comments) must handle `--help` or refuse unknown flags. A
+ * token anywhere in code still can't prove it runs BEFORE a side effect — the
+ * dynamic probe is what tests reachability; this is the necessary backstop.
+ */
 export function hasHelpContract(text) {
-  return /--help|help-guard-run|['"]-h['"]|assertKnownFlags|parseArgs\s*\(|ArgvError|unknown (?:flag|option)/i.test(text);
+  const code = stripComments(text);
+  return /--help|help-guard-run|['"]-h['"]|assertKnownFlags\s*\(|parseArgs\s*\(|new ArgvError\s*\(|unknown (?:flag|option)/i.test(code);
 }
 
 /** Add the static `no-help-contract` finding to a probe result. */
@@ -126,7 +139,13 @@ async function main() {
   const only = onlyIdx !== -1 ? process.argv[onlyIdx + 1] : null;
   const { _internals } = await import('./lib/sync-isolation-verify.mjs');
   let files = listEntryPoints(ROOT, _internals.CLI_SMOKE_SET);
-  if (only) files = files.filter((f) => labelOf(f) === only);
+  if (onlyIdx !== -1) {
+    // A filter that matches nothing must not read as a pass over zero CLIs, and a
+    // missing value must not silently fall back to the full census.
+    if (!only || only.startsWith('--')) { process.stderr.write('check-help-readonly: --only requires a scripts-relative path\n'); return finishAndExit(2); }
+    files = files.filter((f) => labelOf(f) === only);
+    if (files.length === 0) { process.stderr.write(`check-help-readonly: --only ${only} matches no CLI in the census\n`); return finishAndExit(2); }
+  }
 
   const results = (await mapPool(files, CONCURRENCY, (f) => probeHelp(f, { cwd: ROOT, label: labelOf(f) })))
     .map((r) => withStaticFinding(r));

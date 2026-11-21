@@ -151,29 +151,51 @@ export function checkMarkerRemedies(rootDir, io = {}) {
     // every named script missing rather than passing on absence of evidence.
     return { ok: false, missing: checked, circular: [], checked };
   }
-  const missing = checked.filter((name) => !Object.prototype.hasOwnProperty.call(scripts, name));
+  // A script that is PRESENT but not a runnable command (null, a number, an empty
+  // string) is as absent as no entry: `hasOwnProperty` alone passed it.
+  const runnable = (v) => typeof v === 'string' && v.trim() !== '';
+  const missing = checked.filter((name) => !Object.prototype.hasOwnProperty.call(scripts, name) || !runnable(scripts[name]));
   // PRESENT is not RUNNABLE. A remedy whose body is `node scripts/.claude-skills/…`
   // lives inside the very gitignored tree it exists to copy, so in a fresh linked
   // worktree it dies on MODULE_NOT_FOUND — the bootstrap problem, reintroduced by
   // the consumer's own spelling (consumer field report 2026-11-21; AGENTS.md
   // "seven shapes" #4). Existence checks passed throughout.
-  const circular = checked.filter((name) => !missing.includes(name) && isCircularRemedy(scripts[name]));
+  const circular = checked.filter((name) => !missing.includes(name) && isCircularRemedy(scripts[name], scripts));
   return { ok: missing.length === 0 && circular.length === 0, missing, circular, checked };
 }
 
-/** `node <path under scripts/.claude-skills/>` as the executed file (not a dir string inside `node -e`). */
-const CIRCULAR_REMEDY = /(?:^|[\s&|;(])(?:node|npx|tsx)\s+(?:--?[\w-]+\s+)*["']?(?:\.\/)?[\w./\\-]*scripts[\\/]\.claude-skills[\\/]/;
-
 /**
- * Does a remedy script run a file from the gitignored tooling tree?
- * @param {unknown} body
- * @returns {boolean}
+ * `node [flags] <path under scripts/.claude-skills/>` as the EXECUTED file. A flag may
+ * be `--x`, `--x=v` or take a separate value (`--require ./a`, `--import tsx`); the
+ * optional value group backtracks, so a boolean flag followed by the path still matches.
+ * A directory merely NAMED inside `node -e "…"` (the canonical one-liner) is not matched.
  */
+const CIRCULAR_REMEDY = /(?:^|[\s&|;(])(?:node|npx|tsx)\s+(?:--?[\w-]+(?:=\S+)?\s+(?:[^\s-]\S*\s+)?)*["']?(?:\.\/)?[\w./\\-]*scripts[\\/]\.claude-skills[\\/]/;
+
 /** `node -e` code that LOADS a file from the tree (`require('./scripts/.claude-skills/x')`, `import(...)`). */
 const CIRCULAR_LOAD = /(?:require|import)\s*\(\s*["'`][^"'`]*\.claude-skills[\\/]/;
 
-export function isCircularRemedy(body) {
-  return typeof body === 'string' && (CIRCULAR_REMEDY.test(body) || CIRCULAR_LOAD.test(body));
+/** `npm|pnpm|yarn|bun [run] <script>` — the script name an indirection points at. */
+const SCRIPT_INDIRECTION = /(?:^|[\s&|;(])(?:npm|pnpm|yarn|bun)\s+(?:run(?:-script)?\s+)?([\w:.-]+)/g;
+
+/**
+ * Does a remedy script run a file from the gitignored tooling tree — directly, or
+ * through another npm script it delegates to (`"skills:hydrate": "npm run hydrate:real"`)?
+ * @param {unknown} body
+ * @param {Record<string, unknown>} [scripts] the package.json scripts map, for indirection
+ * @param {Set<string>} [seen] cycle guard
+ * @returns {boolean}
+ */
+export function isCircularRemedy(body, scripts = {}, seen = new Set()) {
+  if (typeof body !== 'string') return false;
+  if (CIRCULAR_REMEDY.test(body) || CIRCULAR_LOAD.test(body)) return true;
+  for (const m of body.matchAll(SCRIPT_INDIRECTION)) {
+    const name = m[1];
+    if (seen.has(name) || !Object.prototype.hasOwnProperty.call(scripts, name)) continue;
+    seen.add(name);
+    if (isCircularRemedy(scripts[name], scripts, seen)) return true;
+  }
+  return false;
 }
 
 /**

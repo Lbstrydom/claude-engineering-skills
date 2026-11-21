@@ -44,21 +44,24 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
     child.on('close', (exitCode) => {
       clearTimeout(timer);
       const violations = [];
+      // An unobservable probe is NOT a clean one: an unreadable log or a torn line
+      // means this run cannot vouch for the CLI, so it is itself a finding.
       try {
         for (const line of fs.readFileSync(log, 'utf-8').split('\n')) {
           if (!line.trim()) continue;
-          try { violations.push(JSON.parse(line)); } catch { /* torn line */ }
+          try { violations.push(JSON.parse(line)); } catch { violations.push({ kind: 'probe-error', detail: 'torn log line' }); }
         }
-      } catch { /* log unreadable -> no violations recorded */ }
+      } catch (err) { violations.push({ kind: 'probe-error', detail: `log unreadable: ${err.message}` }); }
       fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       if (timedOut) violations.push({ kind: 'hang', detail: `no exit within ${timeoutMs}ms` });
       const kinds = [...new Set(violations.map((v) => v.kind))].sort();
       resolve({ file: label, kinds, violations, exitCode, timedOut });
     });
-    child.on('error', () => {
+    child.on('error', (err) => {
       clearTimeout(timer);
       fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-      resolve({ file: label, kinds: [], violations: [], exitCode: null, timedOut: false });
+      // A CLI that could not even be spawned was not shown read-only.
+      resolve({ file: label, kinds: ['probe-error'], violations: [{ kind: 'probe-error', detail: `spawn failed: ${err.message}` }], exitCode: null, timedOut: false });
     });
   });
 }

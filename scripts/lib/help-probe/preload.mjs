@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import net from 'node:net';
 import dns from 'node:dns';
+import dgram from 'node:dgram';
 import http from 'node:http';
 import https from 'node:https';
 import cp from 'node:child_process';
@@ -65,15 +66,23 @@ for (const base of WRITE_NAMES) {
   patchTable(fsp, base);
   patchTable(fs.promises, base);
 }
-// `open` is a write only for a writing flag.
-for (const n of ['open', 'openSync']) {
-  const orig = fs[n];
-  fs[n] = function patchedOpen(p, flags, ...rest) {
-    if (typeof flags === 'string' && /[wa+]/.test(flags)) {
+// `open` is a write only for a writing flag — string ('w', 'a+', 'r+') or numeric
+// (O_WRONLY | O_RDWR | O_APPEND | O_CREAT | O_TRUNC). Callback, sync and promise forms.
+const WRITE_MASK = fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_APPEND
+  | fs.constants.O_CREAT | fs.constants.O_TRUNC;
+function isWritingFlag(flags) {
+  if (typeof flags === 'string') return /[wa+]/.test(flags);
+  if (typeof flags === 'number') return (flags & WRITE_MASK) !== 0;
+  return false;
+}
+for (const [target, n] of [[fs, 'open'], [fs, 'openSync'], [fsp, 'open'], [fs.promises, 'open']]) {
+  const orig = target[n];
+  target[n] = function patchedOpen(p, flags, ...rest) {
+    if (isWritingFlag(flags)) {
       record2('fs-write', `${n}(${flags}) ${String(p).slice(0, 200)}`);
       throw new Error(`help-probe: blocked fs-write ${n} ${String(p).slice(0, 200)}`);
     }
-    return orig.call(fs, p, flags, ...rest);
+    return orig.call(target, p, flags, ...rest);
   };
 }
 
@@ -82,6 +91,21 @@ net.Socket.prototype.connect = function patchedConnect(...args) {
   record2('network', `connect ${JSON.stringify(args[0])?.slice(0, 120)}`);
   throw new Error('help-probe: blocked network connect');
 };
+for (const n of ['resolve', 'resolve4', 'resolve6', 'resolveAny', 'resolveTxt', 'resolveSrv', 'reverse']) {
+  for (const target of [dns, dns.promises]) {
+    if (typeof target[n] !== 'function') continue;
+    target[n] = function blockedResolve(host) {
+      record2('network', `dns.${n} ${String(host).slice(0, 80)}`);
+      throw new Error(`help-probe: blocked dns.${n}`);
+    };
+  }
+}
+for (const n of ['send', 'connect', 'bind']) {
+  dgram.Socket.prototype[n] = function blockedDgram() {
+    record2('network', `dgram.${n}`);
+    throw new Error(`help-probe: blocked dgram.${n}`);
+  };
+}
 dns.lookup = function blockedLookup(host, ...rest) {
   record2('network', `dns ${host}`);
   const cb = rest.find((x) => typeof x === 'function');

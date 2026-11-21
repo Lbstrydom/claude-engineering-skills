@@ -131,11 +131,59 @@ describe('help-guard — usage comes from the CLI own header', () => {
   });
   it('helpGuardEntry prints and exits only when --help is present', () => {
     const outs = []; let code = null;
-    const script = path.join(ROOT, 'scripts', 'arch-intent-bootstrap.mjs');
+    const script = path.join(ROOT, 'scripts', 'anthropic-ping.mjs');
     assert.equal(helpGuardEntry({ argv: ['node', script, '--bogus'], out: (s) => outs.push(s), exit: (c) => { code = c; } }), false);
     assert.equal(code, null);
     assert.equal(helpGuardEntry({ argv: ['node', script, '--help'], out: (s) => outs.push(s), exit: (c) => { code = c; } }), true);
     assert.equal(code, 0);
-    assert.match(outs[0], /arch-intent-bootstrap/);
+    assert.match(outs[0], /anthropic:ping/);
+  });
+
+  it('an entry that did NOT opt in is never intercepted (a guarded LIBRARY must not swallow its importer --help)', () => {
+    // arch-intent-bootstrap handles --help itself and does not import the guard.
+    const outs = []; let code = null;
+    const script = path.join(ROOT, 'scripts', 'arch-intent-bootstrap.mjs');
+    assert.equal(helpGuardEntry({ argv: ['node', script, '--help'], out: (s) => outs.push(s), exit: (c) => { code = c; } }), false);
+    assert.equal(code, null);
+    assert.deepEqual(outs, []);
+  });
+
+  it('a header with no Usage: block prints the whole header, not one paragraph', () => {
+    const src = ['/**', ' * @fileoverview first paragraph', ' *', ' * second paragraph with a --flag', ' *', ' * @module x', ' */', ''].join('\n');
+    const text = usageFromSource(src, 'x.mjs');
+    assert.match(text, /first paragraph/);
+    assert.match(text, /second paragraph with a --flag/);
+  });
+});
+
+describe('probe instrument gaps from the code audit', () => {
+  it('blocks promise-form and numeric-flag opens, dns.resolve and dgram', async () => {
+    const f = fixture('gaps.mjs', `import fs from 'node:fs'; import fsp from 'node:fs/promises'; import dns from 'node:dns'; import dgram from 'node:dgram';
+      try { await fsp.open(${JSON.stringify(path.join(dir, 'p1'))}, 'w'); } catch {}
+      try { fs.openSync(${JSON.stringify(path.join(dir, 'p2'))}, fs.constants.O_WRONLY | fs.constants.O_CREAT); } catch {}
+      try { dns.resolve4('example.invalid', () => {}); } catch {}
+      try { dgram.createSocket('udp4').send('x', 9, '127.0.0.1'); } catch {}`);
+    const r = await probeHelp(f, { cwd: dir });
+    assert.deepEqual(r.kinds, ['fs-write', 'network']);
+    assert.equal(fs.existsSync(path.join(dir, 'p1')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'p2')), false);
+    assert.ok(r.violations.length >= 4, `saw ${r.violations.map((v) => v.detail).join(' | ')}`);
+  });
+
+  it('a read-only numeric open is NOT flagged (negative control)', async () => {
+    const f = fixture('ro.mjs', `import fs from 'node:fs'; fs.closeSync(fs.openSync(${JSON.stringify(import.meta.filename)}, fs.constants.O_RDONLY));`);
+    assert.deepEqual((await probeHelp(f, { cwd: dir })).kinds, []);
+  });
+
+  it('a CLI that cannot be spawned is a finding, never a clean result', async () => {
+    const r = await probeHelp(path.join(dir, 'does-not-exist.mjs'), { cwd: path.join(dir, 'no-such-cwd') });
+    assert.deepEqual(r.kinds, ['probe-error']);
+  });
+});
+
+describe('static contract — comments do not count', () => {
+  it('a --help mentioned only in a comment or docstring is no contract', () => {
+    assert.equal(hasHelpContract('/** Usage: node x.mjs --help */\n// handles --help later\nawait main();'), false);
+    assert.equal(hasHelpContract("if (process.argv.includes('--help')) usage();"), true);
   });
 });

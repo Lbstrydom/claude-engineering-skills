@@ -240,6 +240,8 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
       'node scripts\\.claude-skills\\skills-hydrate.mjs',
       'node --no-warnings "scripts/.claude-skills/skills-hydrate.mjs"',
       "node -e \"require('./scripts/.claude-skills/skills-hydrate.mjs')\"",
+      'node --import=tsx scripts/.claude-skills/skills-hydrate.mjs',
+      'node --require ./preload.js scripts/.claude-skills/skills-hydrate.mjs',
     ]) {
       const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
       assert.equal(r.ok, false, body);
@@ -262,6 +264,18 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
+  });
+
+  it('an INDIRECT remedy (npm run X where X runs the tree) is circular; null/empty bodies are missing, not present', () => {
+    const viaIndirect = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run real', real: 'node scripts/.claude-skills/skills-hydrate.mjs' } }) });
+    assert.deepEqual(viaIndirect.circular, ['skills:hydrate']);
+    for (const body of [null, '', '   ', 42]) {
+      const r = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': body } }) });
+      assert.deepEqual(r.missing, ['skills:hydrate'], String(body));
+    }
+    // negative control: a delegating remedy that stays in tracked content is fine.
+    const ok = checkMarkerRemedies('/x', { readPackageJson: () => ({ scripts: { 'skills:hydrate': 'npm run real', real: 'node scripts/skills-hydrate.mjs' } }) });
+    assert.equal(ok.ok, true);
   });
 
   it('negative control: the canonical one-liner and a tracked-script remedy are NOT circular', () => {

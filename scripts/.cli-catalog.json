@@ -806,7 +806,7 @@
       "category": "diagnostic"
     },
     "help:readonly:gate": {
-      "description": "Gate: `--help` must be a pure read on every CLI. Runs each scripts/*.mjs (plus nested CLI_SMOKE_SET members) with --help under an instrumented preload that records and blocks filesystem writes, network and non-read-only spawns, and checks the source for a --help / unknown-flag contract. Absolute, no baseline: fix an offender by making `import './lib/help-guard-run.mjs'` its first import (part of `npm run check`).",
+      "description": "Gate: `--help` must be a pure read on every CLI. Runs every top-level scripts/*.mjs, every nested scripts/<subsystem>/**/*.mjs and the scripts/lib members of CLI_SMOKE_SET with --help under an instrumented preload that records and blocks filesystem writes, network and non-read-only spawns, and checks the code (comments stripped) for a --help / unknown-flag contract. A hang or an unobservable probe is an offender. Absolute, no baseline: fix an offender by making `import './lib/help-guard-run.mjs'` its first import (part of `npm run check`).",
       "category": "diagnostic"
     },
     "windowed-views": {

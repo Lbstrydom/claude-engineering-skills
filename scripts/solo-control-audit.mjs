@@ -77,7 +77,7 @@
  * @module scripts/solo-control-audit
  */
 
-import './lib/load-env.mjs'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, keys)
+import './lib/help-guard-run.mjs'; import './lib/load-env.mjs'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, keys)
 
 import { execFileSync } from 'node:child_process';
 import crypto, { createHash } from 'node:crypto';
