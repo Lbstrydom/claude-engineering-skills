@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   SCHEMA_ID, validateExport, TelemetryExportSchema, MAX_UPSTREAM_ROWS, SEVERITIES, PASSES,
 } from '../scripts/lib/telemetry-export/schema.mjs';
@@ -489,6 +489,19 @@ describe('R5 fixes: multiplicity, machine-readable failures, print/push', () => 
       assert.equal(r.status, status, args.join(' '));
       assert.deepEqual(lastJson(r), { ok: false, error: { code } }, args.join(' '));
     }
+  });
+
+  it('an INITIALISATION failure (a dynamic import that throws) is still {ok:false,BUILD_FAILED} on stdout, not an unhandled rejection', () => {
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'hooks.mjs'), "export async function resolve(spec, ctx, next) { if (spec.endsWith('upstream/commands.mjs')) throw new Error('injected init failure'); return next(spec, ctx); }");
+    fs.writeFileSync(path.join(dir, 'reg.mjs'), "import { register } from 'node:module'; register('./hooks.mjs', import.meta.url);");
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(path.join(dir, 'reg.mjs')).href, path.join(ROOT, 'scripts', 'telemetry-export.mjs'), '--alias', 'acme', '--print'], {
+      cwd: ROOT, encoding: 'utf-8', timeout: 90000, windowsHide: true,
+      env: { ...process.env, AUDIT_DB_URL: '', TELEMETRY_CONSUMER_ALIAS: '', TELEMETRY_DROP_DIR: '' },
+    });
+    assert.equal(r.status, 1, r.stderr);
+    assert.deepEqual(lastJson(r), { ok: false, error: { code: 'BUILD_FAILED' } });
+    assert.equal(r.stdout.includes('injected init failure'), false, 'no message text on stdout');
   });
 
   it('CONTROL — a success is still {ok:true,…} and exits 0', () => {

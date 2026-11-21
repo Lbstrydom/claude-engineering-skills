@@ -159,4 +159,17 @@ async function main() {
   }
 }
 
-if (isInvokedAsScript(import.meta.url)) await main();
+/**
+ * The outermost boundary: anything that escapes `main` (a failed dynamic import, URL resolution, the bundle-stamp read) is
+ * still a failure with a machine-readable code, never an unhandled rejection with a stack and no `{ok:false}`.
+ */
+async function guarded() {
+  try {
+    await main();
+  } catch {
+    process.stderr.write('telemetry-export: initialisation failed (nothing was written)\n');
+    await fail('BUILD_FAILED', 1);
+  }
+}
+
+if (isInvokedAsScript(import.meta.url)) await guarded();
