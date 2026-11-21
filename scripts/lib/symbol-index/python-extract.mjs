@@ -27,6 +27,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PYTHON_EXT_ALLOWLIST, isPythonIndexPath } from '../sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing, resolveAndClassify } from '../sensitive-paths.mjs';
+import { readAdmittedSource, READ_OUTCOME } from './admitted-read.mjs';
 import { COVERAGE_DEFAULTS } from './graph-verdict.mjs';
 import {
   discoverPythonRoots, buildPythonModuleIndex, resolvePythonImport,
@@ -61,9 +62,7 @@ export const OUTCOME = Object.freeze({
   DECODE_ERROR: 'decode-error',
   TIMEOUT: 'timeout',
   HELPER_DIED: 'helper-died',
-  IDENTITY_CHANGED: 'identity-changed',
-  SIZE_CAP: 'size-cap',
-  READ_ERROR: 'read-error',
+  ...READ_OUTCOME,
 });
 
 const VERSION_CHECK = 'import sys,ast;print("%d.%d.%d" % sys.version_info[:3])';
@@ -119,97 +118,6 @@ export function probePythonParser({
     ? `${PYTHON_ENV_VAR} interpreter unusable (${tried.join('; ')})`
     : `no Python >= ${PYTHON_MIN_VERSION.join('.')} interpreter found (${tried.join('; ')})`;
   return { available: false, interpreter: null, version: null, helperPath, reason };
-}
-
-const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
-
-/**
- * The opened descriptor's real path, where the OS exposes one (Linux
- * `/proc/self/fd`); `null` when it cannot be asked — never a guess.
- */
-function descriptorPath(fd) {
-  if (process.platform !== 'linux') return null;
-  try { return fs.realpathSync(`/proc/self/fd/${fd}`); } catch { return null; }
-}
-
-/**
- * Read an ADMITTED file, bound to an admission decision made AFTER the open
- * (§2.6). Open-then-verify: open the canonical path, `fstat` the descriptor,
- * then RE-RUN the full admission gate (`readmit`) and require that the inode
- * now at the re-admitted canonical path IS the descriptor's inode (dev+ino).
- *
- * Why after, not before: any check made before the open leaves a window in
- * which a symlink component can be swapped at a sensitive target, the file
- * opened, and the path restored. Verifying after the open binds the bytes the
- * fd will yield to a classification of the path as it stands NOW: a swap is
- * either seen by the re-admission (refused) or restored before it (the restored
- * path names a different inode than the fd — refused).
- *
- * The read is bounded (`maxBytes + 1`, into a buffer sized to the file) and a
- * post-read `fstat` must show the same size and mtime.
- *
- * @param {{canonicalPath: string}} admission - from extract.mjs `admitFile`
- * @param {{maxBytes: number, readmit: () => {admitted: boolean, canonicalPath?: string},
- *          beforeOpen?: () => void, afterOpen?: () => void}} opts - the two hooks are test seams
- * @returns {{ok: true, bytes: Buffer} | {ok: false, outcome: string, detail: string}}
- */
-export function readAdmittedSource(admission, { maxBytes, readmit, beforeOpen, afterOpen } = {}) {
-  if (typeof readmit !== 'function') throw new Error('readAdmittedSource: readmit is required (open-then-verify)');
-  const canonical = admission.canonicalPath;
-  let fd = null;
-  try {
-    if (typeof beforeOpen === 'function') beforeOpen();
-    // O_NONBLOCK where it exists: a path swapped to a FIFO with no writer must
-    // not hang the open (regular files ignore the flag). Windows has no FIFOs here.
-    fd = fs.openSync(canonical, OPEN_FLAGS);
-    const st1 = fs.fstatSync(fd, { bigint: true });
-    if (!st1.isFile()) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened path is not a regular file' };
-    }
-    if (typeof afterOpen === 'function') afterOpen();
-    const same = (st) => st.dev === st1.dev && st.ino === st1.ino;
-    // The descriptor's OWN path, where the OS exposes it, is authoritative: no
-    // later path lookup can be swapped under it.
-    const fdPath = descriptorPath(fd);
-    if (fdPath !== null && fdPath !== canonical) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not at the admitted canonical path' };
-    }
-    // Elsewhere, sandwich the re-admission between two identity checks: a swap
-    // must hold the sensitive target for the open, release it for the
-    // re-admission, and hold it again for both stats.
-    if (!same(fs.statSync(canonical, { bigint: true }))) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not the file at the admitted path' };
-    }
-    const again = readmit();
-    if (!again?.admitted || again.canonicalPath !== canonical) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'path no longer admitted at its canonical location' };
-    }
-    if (!same(fs.statSync(canonical, { bigint: true }))) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'opened file is not the file at the admitted path' };
-    }
-    if (st1.size > BigInt(maxBytes)) {
-      return { ok: false, outcome: OUTCOME.SIZE_CAP, detail: `size ${st1.size} > ${maxBytes}` };
-    }
-    // Sized to the file (+1 to detect growth), never maxBytes: a retained subarray
-    // of a maxBytes buffer per small file is what made memory scale with the cap.
-    const buf = Buffer.alloc(Number(st1.size) + 1);
-    let total = 0;
-    while (total < buf.length) {
-      const n = fs.readSync(fd, buf, total, buf.length - total, total);
-      if (n === 0) break;
-      total += n;
-    }
-    if (total > maxBytes) return { ok: false, outcome: OUTCOME.SIZE_CAP, detail: 'file grew past the cap during read' };
-    const st2 = fs.fstatSync(fd, { bigint: true });
-    if (st2.size !== st1.size || st2.mtimeNs !== st1.mtimeNs || BigInt(total) !== st1.size) {
-      return { ok: false, outcome: OUTCOME.IDENTITY_CHANGED, detail: 'file changed during read' };
-    }
-    return { ok: true, bytes: buf.subarray(0, total) };
-  } catch (err) {
-    return { ok: false, outcome: OUTCOME.READ_ERROR, detail: err.code || err.message };
-  } finally {
-    if (fd !== null) { try { fs.closeSync(fd); } catch { /* already closed */ } }
-  }
 }
 
 /**
