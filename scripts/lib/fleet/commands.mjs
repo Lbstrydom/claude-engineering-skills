@@ -26,6 +26,7 @@ import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts
 import {
   broadClaimPatterns, claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
+import { eolFlipLines, eolFlips, eolJson } from './eol-flips.mjs';
 import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
 import {
   UNREGISTERED_BUDGET, cacheRecord, coveredBy, groupUnregistered, liveSessionsOf, scanArchiveTags, unregisteredCacheDir, unregisteredWork,
@@ -466,8 +467,57 @@ warning: startOid not recorded — ${start.reason}` : '')
 
 // ── add (adoption) ──────────────────────────────────────────────────────────
 
-/** `fleet add <branch|#PR|--all>` — adopt work that already exists. Advisory only; never blocks. */
+/**
+ * A branch that exists only as a remote-tracking ref (`refs/remotes/<remote>/<name>`), made local so it can be adopted
+ * (fleet feedback #4: `fleet add <branch>` refused a branch a teammate had pushed). Creates `<name>` from the remote ref with
+ * NO tracking configuration (so rolling it back is just the ref) and NO checkout. Never overwrites: a local branch of that name is the caller's to use. Ambiguity (the name on two
+ * remotes) is refused, naming both — a guess would adopt the wrong tip.
+ * @returns {{ok: true, created: string}|{ok: false, reason: string}|null} null when there is nothing to create (no remote ref)
+ */
+export function materializeRemoteBranch(cwd, name) {
+  if (!runGit(['check-ref-format', '--branch', name], cwd).ok) return null;
+  const refs = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${name}`], cwd);
+  if (!refs.ok) return { ok: false, reason: `could not list remote-tracking refs (${refs.stderr?.trim() || 'git failed'})` };
+  const found = refs.stdout.split('\n').map((l) => l.trim()).filter((l) => l && !l.endsWith('/HEAD'));
+  // The pattern also matches a longer remote-relative path; keep only the exact <remote>/<name>.
+  const exact = found.filter((r) => r.slice('refs/remotes/'.length).split('/').slice(1).join('/') === name);
+  if (!exact.length) return null;
+  if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first (git branch ${name} <remote>/${name})` };
+  const remoteRef = exact[0].slice('refs/remotes/'.length);
+  const made = runGit(['branch', '--no-track', '--', name, remoteRef], cwd);
+  const tip = made.ok ? runGit(['rev-parse', `refs/heads/${name}`], cwd) : null;
+  if (made.ok && !tip.ok) return { ok: false, reason: `created ${name} but could not read its tip (${tip.reason})` };
+  return made.ok ? { ok: true, created: remoteRef, oid: tip.stdout.trim() } : { ok: false, reason: `git branch ${name} ${remoteRef} failed (${made.stderr?.trim() || 'unknown'})` };
+}
+
+/**
+ * `fleet add <branch|#PR|--all>` — adopt work that already exists. Advisory only; never blocks.
+ *
+ * A branch only a remote has is made local BEFORE the facts are read, so adoption sees it like any other. Order and recovery:
+ * the ref is created first (an atomic `git branch`: a concurrent creator makes it fail, never overwrite), adoption persists the
+ * session, and if NOTHING was adopted (refused, failed, already tracked, or a throw) the ref this call created is removed with a
+ * compare-and-swap on the oid it created - a branch someone moved or made since is never deleted.
+ */
 export function cmdAdd(ctx, flags, positionals) {
+  const name = !flags['--all'] && positionals.length === 1 ? positionals[0] : null;
+  let materialized = null;
+  if (name && !name.startsWith('#') && !runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${name}^{commit}`], ctx.cwd).ok) {
+    materialized = materializeRemoteBranch(ctx.cwd, name);
+    if (materialized && !materialized.ok) return refused(materialized.reason);
+  }
+  const undo = () => { if (materialized?.ok) runGit(['update-ref', '-d', `refs/heads/${name}`, materialized.oid], ctx.cwd); };
+  let res;
+  try { res = adoptOnce(ctx, flags, positionals); } catch (e) { undo(); throw e; }
+  if (!materialized?.ok) return res;
+  if (res.ok && res.added?.length) {
+    return { ...res, createdFrom: materialized.created, text: [`created local branch ${name} from ${materialized.created} (nothing checked out)`, res.text].join('\n') };
+  }
+  undo();
+  return { ...res, text: `${res.text}
+(the local branch ${name} this call created from ${materialized.created} was removed again: nothing was adopted)` };
+}
+
+function adoptOnce(ctx, flags, positionals) {
   if (flags['--all'] && positionals.length) throw new ArgvError('fleet add: pass a branch/#PR OR --all, not both');
   if (!flags['--all'] && !positionals.length) throw new ArgvError('fleet add: pass a branch, #<PR> or --all');
   if (flags['--all'] && flags['--id']) throw new ArgvError('fleet add: --id cannot be combined with --all');
@@ -564,6 +614,8 @@ export function cmdReady(ctx, flags) {
   // Checks opted into `runIn: ["ready"]` run BEFORE the mark, outside the lock (slow, consumer-owned).
   const gate = readyChecks({ cwd: ctx.cwd, config: ctx.config, session: peek, oid, baseOid: readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null });
   const gateLines = gate.findings.map((f) => `  ${f.level}: ${f.message}`);
+  // Advisory (never blocks): files whose CRLF/LF endings flipped bury the real change (fleet feedback #7).
+  const eol = eolFlips(ctx.cwd, readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null, oid);
   if (gate.blocks) {
     const reason = `${gate.blocks} — ${id} was NOT marked ready`;
     return refused(reason, { checks: gate.results, text: [`REFUSED: ${reason}`, ...gateLines].join('\n') });
@@ -590,7 +642,7 @@ export function cmdReady(ctx, flags) {
   const deferred = fullSuiteOf(ctx) === 'train';
   const suiteLine = deferred ? [`full suite: deferred to the train (.fleet.json fullSuite: "train") — \`${ctx.cmd} land\` is its one full-suite run; your plan's test log says "${FULL_SUITE_LOG_LINE}"`] : [];
   const landingLine = landingOf(ctx) === 'rollup' ? [landingRollupLine(ctx.cmd)] : [];
-  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine, ...suiteLine, ...landingLine].join('\n') });
+  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), eol: eolJson(eol), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...eolFlipLines(eol), ...pushLine, ...suiteLine, ...landingLine].join('\n') });
 }
 
 /**

@@ -11,6 +11,7 @@
  * Usage:
  *   node scripts/sync-refresh.mjs --target work
  *   node scripts/sync-refresh.mjs --target work --no-pull   # sync only, skip the git pull
+ *   node scripts/sync-refresh.mjs --target work --dry-run   # no pull; sync-to-repos --dry-run (shows what would change, writes nothing)
  *
  * @module scripts/sync-refresh
  */
@@ -19,6 +20,7 @@ import './lib/help-guard-run.mjs'; import { spawnSync } from 'node:child_process
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveTargets, consumerAliases } from './lib/consumer-repos.mjs';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
@@ -32,10 +34,18 @@ function capture(cmd, args, cwd) {
 }
 
 function main() {
+  assertKnownFlags(process.argv, ['--target', '--no-pull', '--dry-run'], { cli: 'sync-refresh' });
   const argv = process.argv.slice(2);
+  const dryRun = argv.includes('--dry-run');
   const ti = argv.indexOf('--target');
   const target = ti >= 0 ? argv[ti + 1] : null;
   const noPull = argv.includes('--no-pull');
+  // The target value is validated before anything runs: a missing one, or another flag standing in for it, is a usage error.
+  if (ti >= 0 && (target === undefined || target.startsWith('--'))) {
+    process.stderr.write(`sync-refresh: --target needs a value (one of ${consumerAliases().join(', ')})
+`);
+    process.exit(2);
+  }
 
   if (!target) {
     process.stderr.write(`usage: sync-refresh.mjs --target <${consumerAliases().join('|')}> [--no-pull]\n`);
@@ -48,7 +58,10 @@ function main() {
   }
 
   // 1. Pull canonical into this clone (read-only from the public remote).
-  if (!noPull) {
+  if (dryRun) {
+    process.stdout.write(`${D}--dry-run: not pulling canonical (a pull rewrites this clone); syncing as a dry run${X}
+`);
+  } else if (!noPull) {
     process.stdout.write(`${G}→ pulling canonical${X} ${D}(claude-engineering-skills)${X}\n`);
     const pull = run('git', ['pull', '--ff-only'], REPO_ROOT);
     if (pull.status !== 0) {
@@ -58,7 +71,7 @@ function main() {
 
   // 2. Sync into the consumer (one-directional filesystem write).
   process.stdout.write(`${G}→ syncing → ${matches.map((m) => m.name).join(', ')}${X}\n`);
-  const sync = run('node', ['scripts/sync-to-repos.mjs', '--target', target], REPO_ROOT);
+  const sync = run('node', ['scripts/sync-to-repos.mjs', '--target', target, ...(dryRun ? ['--dry-run'] : [])], REPO_ROOT);
   if (sync.status !== 0) {
     process.stderr.write(`${R}sync failed (exit ${sync.status})${X}\n`);
     process.exit(sync.status || 1);
@@ -78,4 +91,10 @@ function main() {
   }
 }
 
-main();
+try {
+  main();
+} catch (e) {
+  if (e instanceof ArgvError) { process.stderr.write(`${e.message}
+`); await finishAndExit(2); }
+  throw e;
+}

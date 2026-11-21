@@ -17,6 +17,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { OID_RE } from './contracts.mjs';
+import { lsRemote } from './remote-read.mjs';
 import { assertManaged, fleetDir, listTrains, readTrain } from './registry.mjs';
 import { payloadFromStatus } from './facts.mjs';
 import { approvable } from './overlap.mjs';
@@ -71,7 +72,7 @@ function writeRollupRecord(dir, rec) {
 
 /** The remote tip of a branch, or null. */
 function remoteTip(deps, cwd, remote, branch) {
-  const r = deps.git(['ls-remote', remote, `refs/heads/${branch}`], cwd, { timeoutMs: 60_000 });
+  const r = lsRemote(deps.git, [remote, `refs/heads/${branch}`], cwd, { timeoutMs: 60_000 }, { sleep: deps.sleep });
   const oid = r.ok ? r.stdout.trim().split(/\s+/)[0] : '';
   return OID_RE.test(oid) ? oid : null;
 }
@@ -326,7 +327,7 @@ function preflight({ dir, trainId, deps }) {
 
 /** The lowest free `rollup/<date>-<n>` on the remote. */
 function freeBranch(deps, cwd, remote, now) {
-  const r = deps.git(['ls-remote', remote, 'refs/heads/rollup/*'], cwd, { timeoutMs: 60_000 });
+  const r = lsRemote(deps.git, [remote, 'refs/heads/rollup/*'], cwd, { timeoutMs: 60_000 }, { sleep: deps.sleep });
   if (!r.ok) return null;
   const taken = new Set(r.stdout.split('\n').map((l) => l.split(/\s+/)[1]?.replace('refs/heads/', '')).filter(Boolean));
   for (let n = 1; n < 1000; n += 1) { const b = rollupBranchName(now, n); if (!taken.has(b)) return b; }
