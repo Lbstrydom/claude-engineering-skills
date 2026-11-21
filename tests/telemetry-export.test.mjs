@@ -379,14 +379,16 @@ describe('delivery: one primitive — a file in the drop directory', () => {
 
   /** A scripted git: the gate's three reads, then whatever is allowed to follow. */
   const gitStub = (dir, calls, { ahead = '0', upstream = 'origin/main', fetchSpec = '+refs/heads/*:refs/remotes/origin/*', pushUrl = 'https://x.example.test/drop.git', ignored = false, remoteTip = 'tipsha', afterPushRemoteTip = null, ignoreError = false } = {}) => {
-    let head = 0;
     let pushed = false;
     return (cmd, args) => {
       const verb = args[0] === '-c' ? args[2] : args[0];
       calls.push([cmd, ...args]);
       if (verb === 'push') pushed = true;
       if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return dir;
-      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return `sha${head++ === 0 ? 'parent' : 'ours'}\n`;
+      if (args[0] === 'rev-parse' && args[1] === 'HEAD') return 'tipsha';
+      if (args[0] === 'hash-object') return 'blobsha';
+      if (args[0] === 'write-tree') return 'treesha';
+      if (args[0] === 'commit-tree') return 'shaours';
       if (args[0] === 'rev-parse' && args[1] === '@{u}') return 'tipsha';
       if (args[0] === 'rev-parse') { if (!upstream) throw new Error('no upstream'); return upstream; }
       if (args[0] === 'config') return fetchSpec;
@@ -407,9 +409,9 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const r = deliverExport({ doc: await build(), dropDir: dir, push: true, exec: gitStub(dir, calls) });
     assert.equal(r.pushed, true);
     const verbs = calls.map((c) => c[1] === '-c' ? c[3] : c[1]);
-    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'remote', 'remote', 'rev-parse', 'ls-remote', 'rev-list', 'check-ignore', 'add', 'rev-parse', 'commit', 'rev-parse', 'push']);
+    assert.deepEqual(verbs, ['rev-parse', 'rev-parse', 'config', 'remote', 'remote', 'rev-parse', 'ls-remote', 'rev-list', 'rev-parse', 'check-ignore', 'rev-parse', 'read-tree', 'hash-object', 'update-index', 'write-tree', 'commit-tree', 'update-ref', 'update-index', 'push']);
     const push = calls.at(-1);
-    assert.deepEqual(push.slice(1), ['-c', 'push.followTags=false', 'push', '--no-follow-tags', 'origin', 'shaours:refs/heads/main'],
+    assert.deepEqual(push.slice(1), ['-c', 'push.followTags=false', 'push', '--no-follow-tags', '--force-with-lease=refs/heads/main:tipsha', 'origin', 'shaours:refs/heads/main'],
       'the destination is explicit and the commit is named by SHA: nothing config-driven and nothing committed later can ride along');
     assert.ok(calls.every((c) => c[0] === 'git'));
     assert.equal(push.some((a) => /^(--force|-f|--delete|--all|--mirror|--tags)$/.test(a)), false);
@@ -420,10 +422,10 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const calls = [];
     const stub = gitStub(dir, calls);
     assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: (c, a) => { if (a.includes('push')) throw new Error('rejected'); return stub(c, a); } }), /rejected/);
-    const undo = calls.find((c) => c[1] === 'update-ref');
+    const undo = calls.filter((c) => c[1] === 'update-ref')[1];   // the first update-ref is the commit's own
     // An ATOMIC compare-and-swap (new value, then the EXPECTED old value): the branch moves back only if it is still
     // our commit, and the index is never touched; then only OUR paths are unstaged.
-    assert.deepEqual(undo.slice(-3), ['HEAD', 'shaparent', 'shaours']);
+    assert.deepEqual(undo.slice(-3), ['HEAD', 'tipsha', 'shaours']);
     const unstage = calls.find((c) => c[1] === 'reset');
     assert.deepEqual(unstage.slice(1, 4), ['reset', '-q', '--']);
     assert.equal(calls.some((c) => c.includes('--mixed') || c.includes('--hard') || c.includes('--soft')), false);
@@ -441,7 +443,8 @@ describe('delivery: one primitive — a file in the drop directory', () => {
         return stub(c, a);
       };
       assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec }), /could not be established/, mode);
-      assert.equal(calls.some((c) => c[1] === 'update-ref' || c[1] === 'reset'), false, `${mode}: nothing may be undone`);
+      assert.equal(calls.filter((c) => c[1] === 'update-ref').length, 1, `${mode}: only the commit's own update-ref ran`);
+      assert.equal(calls.some((c) => c[1] === 'reset'), false, `${mode}: nothing may be undone`);
     }
   });
 
@@ -452,6 +455,8 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const r = deliverExport({ doc: await_(), dropDir: dir, push: true, exec: (c, a) => { const out = stub(c, a); if (a.includes('push')) throw new Error('connection reset before ack'); return out; } });
     assert.equal(r.pushed, true);
     assert.equal(calls.some((c) => c[1] === 'reset'), false, 'a delivered commit must not be undone locally');
+    const track = calls.find((c) => c[1] === 'update-ref' && c[2] === 'refs/remotes/origin/main');
+    assert.deepEqual(track?.slice(2), ['refs/remotes/origin/main', 'shaours', 'tipsha'], 'M3: the tracking ref follows a confirmed delivery (compare-and-swap from the gated tip)');
   });
 
   it('a remote that moved since the last fetch, a rewrite that splits fetch and push, and an unreadable ignore check are refused BEFORE anything is written', async () => {
@@ -482,7 +487,7 @@ describe('delivery: one primitive — a file in the drop directory', () => {
     const calls = [];
     assert.throws(() => deliverExport({ doc: await_(), dropDir: dir, push: true, exec: gitStub(dir, calls, { ahead: '2' }) }), /2 commit\(s\) are committed but not pushed/);
     assert.equal(fs.existsSync(path.join(dir, 'acme')), false, 'nothing was published');
-    assert.equal(calls.some((c) => c[1] === 'push' || c[1] === 'commit' || c[1] === 'add'), false);
+    assert.equal(calls.some((c) => c[1] === 'push' || c[1] === 'commit-tree' || c[1] === 'update-ref'), false);
   });
 
   it('no upstream is an UNKNOWN delivery state: refused before anything is written', async () => {

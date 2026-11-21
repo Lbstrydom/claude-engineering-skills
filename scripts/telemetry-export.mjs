@@ -98,7 +98,7 @@ async function main() {
   const olderThanHours = olderThanRaw === null || olderThanRaw === undefined ? null : Number(olderThanRaw);
   if (olderThanHours !== null && !(Number.isFinite(olderThanHours) && olderThanHours > 0)) {
     process.stderr.write('telemetry-export: --if-older-than needs a positive number of hours\n');
-    await finishAndExit(2); return;
+    await fail('USAGE', 2); return;
   }
   if (!/^[a-z0-9-]{1,32}$/.test(alias)) {
     process.stderr.write('telemetry-export: --alias (or TELEMETRY_CONSUMER_ALIAS) must match [a-z0-9-]{1,32}\n');
@@ -116,7 +116,7 @@ async function main() {
   // Throttle: a recent valid export for THIS alias means there is nothing to do (and nothing to read).
   if (olderThanHours !== null && printOnly) {
     process.stderr.write('telemetry-export: --print and --if-older-than are mutually exclusive (printing is never throttled; it also delivers nothing)\n');
-    await finishAndExit(2); return;
+    await fail('USAGE', 2); return;
   }
   if (olderThanHours !== null && dropDir) {
     const prior = scanDrop({ dropDir, expected: [{ alias, cadence: 'on-demand' }], now: new Date() }).aliases[0];
@@ -130,7 +130,7 @@ async function main() {
         if (push) {
           try { pushPending({ dropDir, alias }); } catch (err) {
             process.stderr.write(`telemetry-export: an earlier export could not be delivered (${String(err?.message ?? err).split('\n')[0]})\n`);
-            await finishAndExit(1); return;
+            await fail('DELIVERY_FAILED', 1); return;
           }
         }
         process.stdout.write(`${JSON.stringify({ ok: true, skipped: 'recent-export', ageHours: Math.floor(hours) })}\n`);
