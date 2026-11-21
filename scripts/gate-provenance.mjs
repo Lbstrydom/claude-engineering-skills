@@ -1,0 +1,122 @@
+#!/usr/bin/env node
+/**
+ * @fileoverview Gate provenance: judge a PR by the gates of its BASE (the verification-lessons plan, section 2.2).
+ *
+ * Classifies how the PR changed every registered gate-defining file (.gate-files.json), builds the trusted verdict
+ * snapshot (PR tree with the protected set swapped for the base version), runs each registered ratchet gate there (verdict)
+ * and in the PR tree (shadow), and checks the loosening authorization (label `gate-loosening` + an approving review).
+ *
+ * Usage:
+ *   node scripts/gate-provenance.mjs --base <sha> [--head <rev>] [--repo-root <dir>] [--mode observe|enforce] [--json]
+ *                                    [--pr <n> --repo <owner/name>] [--no-gate-runs]
+ *
+ * OBSERVE mode (the default, and the only mode CI runs) prints the report plus a
+ * `::notice title=audit-loop-gate-provenance::` line and exits 0 - only an argv error exits 2. ENFORCE exits 1 on a
+ * violation and 3 on an unmeasured state, because an unmeasured verdict must not pass. Unmeasured states (no base, a base
+ * without the runner, no gh, no dependency install) are printed as `unmeasured`, never as clean.
+ *
+ * Exit codes: 0 ok / observe | 1 violation (enforce) | 2 usage error | 3 unmeasured (enforce)
+ *
+ * @module scripts/gate-provenance
+ */
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
+import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { resolvePushRange, describePushRange } from './lib/push-range.mjs';
+import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import { analyze, formatReport, summaryLine } from './lib/gate-provenance/analyze.mjs';
+
+const KNOWN_FLAGS = ['--base', '--head', '--repo-root', '--mode', '--json', '--pr', '--repo', '--no-gate-runs', '--help', '-h', '--selfcheck-relocation'];
+const NOTICE = '::notice title=audit-loop-gate-provenance::';
+
+/** `--name value` or `--name=value`; a flag present without a usable value is a usage error. */
+function value(argv, name) {
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === name) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('--')) throw new ArgvError(`gate-provenance: ${name} requires a value`);
+      return v;
+    }
+    if (a.startsWith(`${name}=`)) return a.slice(name.length + 1);
+  }
+  return null;
+}
+
+function gitRunner(repoRoot) {
+  return (args) => {
+    try {
+      return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: sanitizeGitEnv(repoRoot) }).trim() || null;
+    } catch { return null; }
+  };
+}
+
+async function main() {
+  const argv = process.argv;
+  if (argv.includes('--selfcheck-relocation')) { console.log('OK'); await finishAndExit(0); return; }
+  let opts;
+  try {
+    assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'gate-provenance' });
+    if (argv.includes('--help') || argv.includes('-h')) {
+      process.stderr.write('Usage: node scripts/gate-provenance.mjs --base <sha> [--head <rev>] [--repo-root <dir>] [--mode observe|enforce] [--json] [--pr <n> --repo <owner/name>] [--no-gate-runs]\n');
+      await finishAndExit(0);
+      return;
+    }
+    const mode = value(argv, '--mode') ?? 'observe';
+    if (mode !== 'observe' && mode !== 'enforce') throw new ArgvError(`gate-provenance: --mode must be observe or enforce, got ${JSON.stringify(mode)}`);
+    const base = value(argv, '--base');
+    if (!base) throw new ArgvError('gate-provenance: --base <sha> is required');
+    opts = {
+      mode, base,
+      head: value(argv, '--head') ?? 'HEAD',
+      repoRoot: path.resolve(value(argv, '--repo-root') ?? process.cwd()),
+      pr: value(argv, '--pr') ?? undefined,
+      repo: value(argv, '--repo') ?? process.env.GITHUB_REPOSITORY ?? undefined,
+      json: argv.includes('--json'),
+      gateRuns: !argv.includes('--no-gate-runs'),
+    };
+  } catch (err) {
+    if (err instanceof ArgvError || /requires a value/.test(String(err?.message))) { process.stderr.write(`${err.message}\n`); await finishAndExit(2); return; }
+    throw err;
+  }
+
+  const run = gitRunner(opts.repoRoot);
+  // One range, one resolver: an explicit base, never inferred, never HEAD~1 or the upstream.
+  const range = resolvePushRange({ env: { AUDIT_PUSH_RANGE_BASE: opts.base, AUDIT_PUSH_RANGE_HEAD: opts.head }, requireExplicit: true, run });
+  let report;
+  if (!range.ok) {
+    report = { mode: opts.mode, base: opts.base, head: opts.head, state: 'unmeasured', reason: `base not usable: ${range.message}`, classification: null, authorization: null, gateRuns: null };
+  } else {
+    process.stderr.write(`gate-provenance: ${describePushRange(range)}\n`);
+    const sha = (rev) => run(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+    const baseSha = sha(range.base);
+    const headSha = sha(range.head);
+    if (!baseSha || !headSha) {
+      report = { mode: opts.mode, base: opts.base, head: opts.head, state: 'unmeasured', reason: 'base or head does not resolve to a commit', classification: null, authorization: null, gateRuns: null };
+    } else {
+      report = analyze({ repoRoot: opts.repoRoot, base: baseSha, head: headSha, mode: opts.mode, gateRuns: opts.gateRuns, repo: opts.repo, pr: opts.pr });
+    }
+  }
+
+  const notice = `${NOTICE}${summaryLine(report)}`;
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    process.stderr.write(`${notice}\n`);
+  } else {
+    process.stdout.write(`${formatReport(report)}\n${notice}\n`);
+  }
+  let code = 0;
+  if (opts.mode === 'enforce') code = report.state === 'violation' ? 1 : report.state === 'unmeasured' ? 3 : 0;
+  await finishAndExit(code);
+}
+
+if (isInvokedAsScript(import.meta.url)) {
+  main().catch(async (err) => {
+    // A crash is an UNMEASURED verdict, said as such; observe mode still exits 0, enforce refuses to pass it.
+    const first = String(err?.message ?? err).split('\n')[0];
+    process.stderr.write(`gate-provenance: ${err?.stack ?? err}\n`);
+    process.stderr.write(`${NOTICE}state=unmeasured | runner crashed: ${first}\n`);
+    await finishAndExit(process.argv.includes('enforce') ? 3 : 0);
+  });
+}

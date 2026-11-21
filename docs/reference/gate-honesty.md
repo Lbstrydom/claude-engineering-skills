@@ -276,6 +276,35 @@ The ratchet is proven non-opt-in by a worktree integration test
 it runs the **real** checker binary against an otherwise-valid synthetic skill
 in a throwaway git worktree and asserts the checker fails and names the skill.
 
+## Gate provenance (observe mode)
+
+A PR is judged by the gates it carries, so a PR could loosen the gate that judges it: raise a ratchet cap, add an allowance,
+weaken a contract, or edit the gate code. `scripts/gate-provenance.mjs` judges it from its BASE instead
+(the verification-lessons plan, section 2.2, the plan this implements).
+
+- **Registry**: `.gate-files.json` lists every gate-defining path (each ratchet baseline, `scripts/gate-contracts/**`,
+  `skills/*/gate-contract.json`, the prompt seeds, the policy loaders, `package.json`/lockfile/`.npmrc`, the runner, the
+  workflow, the registry itself) with a classifier kind: `numeric-cap`, `set-of-allowances`, `contract-set` or `opaque`.
+  `tests/gate-provenance-registry.test.mjs` derives the candidates from the tracked tree and fails on an unregistered
+  `*-baseline.json` or contract file, so a new baseline cannot be forgotten.
+- **Classifier** (`scripts/lib/gate-provenance/classify.mjs`, `GATE_DIFF_CONTRACT_VERSION = 1`): every changed registered file
+  reads `tightening`, `loosening`, `unknown` or `unchanged`; worst wins, in the order `loosening > unknown > tightening >
+  unchanged`. `unknown` is treated as loosening. A raised cap, an added allowance, a removed entry or a deleted file loosens.
+- **Verdict run**: a detached worktree of the PR head with the protected set (registered files plus the import closure of each
+  registered gate entry point, plus install inputs) checked out from the base; a protected path the base lacked is removed;
+  `node_modules` comes from a separate base worktree installed with `npm ci --ignore-scripts`. Each registered ratchet gate runs
+  there (verdict) and in the PR tree (shadow); a divergence is printed.
+- **Observe mode** (the only mode CI runs): prints the report and a `::notice title=audit-loop-gate-provenance::` line and
+  exits 0. Anything it could not measure (no base, the bootstrap PR whose base has no runner, no `gh`, no base install) prints as
+  `unmeasured`, never as clean. Enforce mode (`--mode enforce`) exists for a later, separate PR.
+- **Known limits**: the test-suite gates run PR code by design and are out of the registry; `knip:gate` is not re-run (cost). A
+  shrink of a `numeric-cap` baseline (an entry removed) reads `loosening` by the plan rule, so an honest re-baseline after
+  fixing a site also needs the label below.
+
+**Requesting a loosening**: a PR whose gate diff is `loosening` or `unknown` is allowed only when it changes nothing but
+registered files, carries the label `gate-loosening`, and has a standing approving review by `Lbstrydom`. Open it as its own
+PR; the unlabelled alternative is to fix the cause so the baseline can shrink instead.
+
 ## Explicitly out of scope (v1)
 
 All 16 skills are now contracted (Phase C) and the ratchet keeps them so

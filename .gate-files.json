@@ -1,0 +1,259 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "path": ".emit-exit-baseline.json",
+      "kind": "numeric-cap",
+      "knownFields": [
+        "count",
+        "files",
+        "ids"
+      ]
+    },
+    {
+      "path": ".file-size-baseline.json",
+      "kind": "numeric-cap",
+      "knownFields": [
+        "_description",
+        "limitLines",
+        "toleranceLines",
+        "files"
+      ]
+    },
+    {
+      "path": ".skill-size-baseline.json",
+      "kind": "numeric-cap",
+      "knownFields": [
+        "_description",
+        "limitChars",
+        "toleranceChars",
+        "files"
+      ]
+    },
+    {
+      "path": ".stdout-flush-baseline.json",
+      "kind": "numeric-cap",
+      "knownFields": [
+        "_description",
+        "total",
+        "envelope",
+        "files",
+        "ids"
+      ]
+    },
+    {
+      "path": ".gate-contract-baseline.json",
+      "kind": "set-of-allowances",
+      "knownFields": [
+        "version",
+        "exemptions"
+      ]
+    },
+    {
+      "path": ".gitignore-policy-baseline.json",
+      "kind": "set-of-allowances",
+      "knownFields": [
+        "_description",
+        "keys"
+      ]
+    },
+    {
+      "path": ".knip-baseline.json",
+      "kind": "set-of-allowances",
+      "knownFields": [
+        "generated",
+        "keys"
+      ]
+    },
+    {
+      "path": ".skill-consumer-refs-baseline.json",
+      "kind": "set-of-allowances",
+      "knownFields": [
+        "$comment",
+        "totalSites",
+        "refs"
+      ]
+    },
+    {
+      "path": ".anthropic-pin-census.json",
+      "kind": "set-of-allowances",
+      "knownFields": [
+        "_description",
+        "unpinnedConstructions",
+        "indirectPins"
+      ]
+    },
+    {
+      "path": "scripts/gate-contracts/_exemptions.json",
+      "kind": "set-of-allowances",
+      "knownFields": [
+        "_comment",
+        "exempt"
+      ]
+    },
+    {
+      "path": "scripts/gate-contracts/*.json",
+      "kind": "contract-set"
+    },
+    {
+      "path": "skills/*/gate-contract.json",
+      "kind": "contract-set"
+    },
+    {
+      "path": "scripts/lib/prompt-seeds.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-gate-contracts.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/lib/gate-honesty/**",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/lib/audit/round-cap.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": ".test-tiers.json",
+      "kind": "opaque"
+    },
+    {
+      "path": ".windowed-views.json",
+      "kind": "opaque"
+    },
+    {
+      "path": ".own-model-coverage.json",
+      "kind": "opaque"
+    },
+    {
+      "path": "package.json",
+      "kind": "opaque"
+    },
+    {
+      "path": "package-lock.json",
+      "kind": "opaque"
+    },
+    {
+      "path": ".npmrc",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/gate-provenance.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/lib/gate-provenance/**",
+      "kind": "opaque"
+    },
+    {
+      "path": ".github/workflows/full-suite.yml",
+      "kind": "opaque"
+    },
+    {
+      "path": ".gate-files.json",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/file-size-ratchet.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/skill-size-ratchet.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-stdout-flush.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-emit-exit-agreement.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-gitignore-policy.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-anthropic-pins.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-windowed-views.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/own-model-coverage.mjs",
+      "kind": "opaque"
+    },
+    {
+      "path": "scripts/check-skill-consumer-refs.mjs",
+      "kind": "opaque"
+    }
+  ],
+  "gates": [
+    {
+      "id": "size-ratchet",
+      "argv": [
+        "scripts/file-size-ratchet.mjs"
+      ]
+    },
+    {
+      "id": "skills-size",
+      "argv": [
+        "scripts/skill-size-ratchet.mjs"
+      ]
+    },
+    {
+      "id": "stdout-flush",
+      "argv": [
+        "scripts/check-stdout-flush.mjs"
+      ]
+    },
+    {
+      "id": "emit-exit",
+      "argv": [
+        "scripts/check-emit-exit-agreement.mjs"
+      ]
+    },
+    {
+      "id": "gitignore-policy",
+      "argv": [
+        "scripts/check-gitignore-policy.mjs"
+      ]
+    },
+    {
+      "id": "anthropic-pins",
+      "argv": [
+        "scripts/check-anthropic-pins.mjs"
+      ]
+    },
+    {
+      "id": "windowed-views",
+      "argv": [
+        "scripts/check-windowed-views.mjs"
+      ]
+    },
+    {
+      "id": "own-model-coverage",
+      "argv": [
+        "scripts/own-model-coverage.mjs",
+        "check",
+        "--static"
+      ]
+    },
+    {
+      "id": "skills-consumer-refs",
+      "argv": [
+        "scripts/check-skill-consumer-refs.mjs"
+      ]
+    },
+    {
+      "id": "gate-contracts",
+      "argv": [
+        "scripts/check-gate-contracts.mjs"
+      ]
+    }
+  ]
+}

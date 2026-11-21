@@ -31,6 +31,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read   # gate-provenance reads labels and reviews of the PR
 
 jobs:
   full-suite:
@@ -56,6 +57,35 @@ jobs:
           git config --global init.defaultBranch main
 
       - run: npm ci
+
+      # Gate provenance, OBSERVE mode (the verification-lessons plan, section 2.2): classify how this PR changed the
+      # files that define the gates judging it, and run each registered ratchet gate against the BASE protected set. The
+      # runner itself comes from a detached worktree of the immutable base sha, so a PR that edits the runner, the registry
+      # or the classifier cannot change how it is judged. Observe mode exits 0 by design (no continue-on-error is needed);
+      # on the bootstrap PR the base has no runner and the step says so.
+      - name: Gate provenance (observe)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+          fi
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "::notice title=audit-loop-gate-provenance::state=unmeasured | base sha $BASE_SHA is not fetchable"
+            exit 0
+          fi
+          BASE_WT="$RUNNER_TEMP/gate-provenance-base"
+          git worktree add --detach "$BASE_WT" "$BASE_SHA"
+          if [ -f "$BASE_WT/scripts/gate-provenance.mjs" ]; then
+            (cd "$BASE_WT" && npm ci --ignore-scripts --no-audit --no-fund)
+            node "$BASE_WT/scripts/gate-provenance.mjs" --repo-root "$GITHUB_WORKSPACE" --base "$BASE_SHA"               --pr "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --mode observe
+          else
+            echo "::notice title=audit-loop-gate-provenance::state=unmeasured | the base has no scripts/gate-provenance.mjs (bootstrap PR: the one change that cannot be judged by base code)"
+          fi
+          git worktree remove --force "$BASE_WT" || true
 
       # tests/visual-extract.test.mjs fails (by design) when Chromium is missing in CI.
       - name: Install Chromium for the extract integration test
