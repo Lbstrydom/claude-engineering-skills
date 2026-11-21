@@ -14,10 +14,30 @@ import { execFileSync } from 'node:child_process';
 /**
  * @param {string[]} args - git argv, e.g. `['worktree', 'list', '--porcelain']`
  * @param {string} cwd
+ * @param {Record<string, string>} [env] extra variables layered over the sanitised `process.env` (e.g. a pinned `GIT_COMMITTER_DATE`)
  * @returns {string} stdout, trimmed
  */
-export function git(args, cwd) {
+/**
+ * Repository-SELECTION variables: inherited from a hook or a parent git (pre-push exports GIT_DIR), any of them retargets the
+ * command away from `cwd`. They are dropped from the INHERITED environment always (matched case-insensitively — Windows env names
+ * are); a caller that means one passes it in `env`, deliberately.
+ */
+export const REPO_SELECTION_VARS = Object.freeze(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_PREFIX', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']);
+const SELECTION = new Set(REPO_SELECTION_VARS);
+
+/** Inherited config INJECTION (`GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_n`/`VALUE_n`, `GIT_CONFIG_PARAMETERS`) can override a fixture's own config. */
+const isConfigInjection = (K) => K === 'GIT_CONFIG_COUNT' || K === 'GIT_CONFIG_PARAMETERS' || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(K);
+
+/** `process.env` without the repository-selection and config-injection variables, with `extra` layered on top. */
+export function fixtureGitEnv(extra = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(process.env)) { const K = k.toUpperCase(); if (!SELECTION.has(K) && !isConfigInjection(K)) out[k] = v; }
+  return { ...out, ...extra };
+}
+
+export function git(args, cwd, env) {
   return execFileSync('git', args, {
-    cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], env: fixtureGitEnv(env ?? {}),
   }).trim();
 }

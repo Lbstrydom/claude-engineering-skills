@@ -152,3 +152,10 @@ ledger (PR #395's four extra rounds each did). Relay it this way:
 > If that crosses the soft cap, show me the structural card instead.
 
 A new SID is for a different subject only (a new plan, or a re-scoped base); the chip says `new SID: <reason>` on its round card.
+
+## 9. A rerun may diagnose, never clear
+
+A red CI run is not made green by running it again. `ci-verdict` counts every attempt of every run for the head sha, so a head
+that ever failed reads `failed` (`failed-then-rerun`, exit 4) even when a later attempt passes. `--rerun-unrelated-flake`
+(`landing.md`, rule 8) is a diagnostic: its result is information beside the red verdict, never a merge basis. Only a new commit
+clears the head: fix the cause, or delete the test with a written reason naming the coverage lost. Never a sleep, retry or skip.

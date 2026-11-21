@@ -436,6 +436,8 @@ every push to `main` stay full). The Actions budget is gated by
 storyline stay local-first. [Plan](docs/plans/ci-full-suite-actions.md) ·
 [runbook](docs/runbooks/gate-cost.md) §6.
 
+**A rerun may diagnose, never clear.** `ci-verdict` counts every attempt for the head sha, so a head that ever failed reads `failed` (`failed-then-rerun`, exit 4) even when a rerun is green; only a new commit clears it, never a retry, sleep or skip. [Plan](docs/plans/verification-lessons.md) §2.1.
+
 #### A spend-bearing run PINS its revision — it never shares the working tree
 
 The store refuses a snapshot whose arms disagree, so two died on 2026-08-17

@@ -59,10 +59,13 @@ never `gh run rerun` by hand, never twice. It re-runs attempt 1 only when every
 failed job names its failing test files (`run-tests/v1 failed-files:`), the only
 failed step is `npm test`, no changed file is a shared input (package files, the
 selector, the workflow) and no failing file is changed or reached by the diff.
-It files a `ci-flakes` proposal with the run as evidence. Exit 3: re-run
-accepted, wait for it. Exit 4: ineligible or refused, fix the failure. Exit 1:
-indeterminate, check `gh run view <id>` and decide; the tool never sends a
-second request. A `conflicting` reason means GitHub ran nothing: merge the base
+It files a `ci-flakes` proposal with the run as evidence. **A rerun may
+diagnose, never clear**: the verdict counts every attempt for the head, so a
+head that failed once stays `failed` (`failed-then-rerun`, exit 4) even when
+attempt 2 is green; the re-run only says "reproduces" or "did not reproduce".
+Only a new commit clears it: fix the cause, or delete the test with a written
+reason. Exit 4: the failure stands (re-run or not). Exit 1: indeterminate,
+check `gh run view <id>` and decide; the tool never sends a second request. A `conflicting` reason means GitHub ran nothing: merge the base
 in first. The reservation lives on one coordinator machine.
 
 ## `land --approve <train> --serial`

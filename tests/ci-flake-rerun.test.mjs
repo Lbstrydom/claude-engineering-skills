@@ -195,6 +195,8 @@ describe('rerunUnrelatedFlake: the reservation', () => {
       const g = github();
       const r = await call(d, g);
       assert.equal(r.rerun, 'accepted');
+      assert.equal(r.outcome, 'diagnosed', 'the re-run is a diagnosis, never a clearance');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(d, 'owner__repo__99.json'), 'utf8')).outcome, 'diagnosed');
       assert.match(r.proposal, /^recorded p-1$/);
       assert.equal(g.dispatches, 1);
       assert.match(g.proposals[0].evidence, new RegExp(flakeKey(NWO, 99)));
@@ -357,7 +359,7 @@ describe('audit round 1 regressions', () => {
     assert.equal(flakeExit('pending', { rerun: 'accepted' }, X), 3);
     assert.equal(flakeExit('unverified', null, X), 3);
     assert.equal(flakeExit('failed', null, X), 4);
-    assert.equal(flakeExit('failed', { rerun: 'accepted' }, X), 3);
+    assert.equal(flakeExit('failed', { rerun: 'accepted' }, X), 4, 'a diagnostic re-run never defers or clears: the failed head stays failed');
     assert.equal(flakeExit('failed', { rerun: 'rejected' }, X), 4);
     assert.equal(flakeExit('failed', { rerun: 'ineligible' }, X), 4);
     assert.equal(flakeExit('failed', { rerun: 'indeterminate' }, X), 1);
@@ -386,5 +388,21 @@ describe('audit round 1 regressions', () => {
       assert.equal(r.rerun, 'accepted');
       assert.equal(sends, 1, 'the restart reconciled by reading, never by sending again');
     } finally { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
+describe('a diagnostic re-run can never turn the verdict green (docs/plans/verification-lessons.md 2.1)', () => {
+  test('attempt 1 failed + the diagnostic attempt 2 green: the verdict is failed-then-rerun and the CLI exit is the failed exit', async () => {
+    const { classifyCiVerdict } = await import('../scripts/lib/ci-verdict.mjs');
+    const BLOB = 'd'.repeat(40);
+    const v = classifyCiVerdict({
+      head: HEAD, pr: 7, defaultBranch: 'main', defaultSha: BASE, workflowPath: WF,
+      workflowBlobHead: BLOB, workflowBlobDefault: BLOB, workflowBlobErrors: {}, workflowBlobAtBase: { [BASE]: { blob: BLOB, why: null } },
+      runs: [{ id: 99, path: WF, event: 'pull_request', head_sha: HEAD, run_attempt: 2, status: 'completed', conclusion: 'success', created_at: '2026-10-14T10:00:00Z', pull_requests: [{ number: 7, base: { ref: 'main', sha: BASE } }] }],
+      priorAttempts: { 99: [{ attempt: 1, status: 'completed', conclusion: 'failure' }] },
+    });
+    assert.equal(v.verdict, 'failed');
+    assert.match(v.reason, /failed-then-rerun/);
+    assert.equal(flakeExit(v.verdict, { rerun: 'accepted', outcome: 'diagnosed' }, { full: 0, notYet: 3, failed: 4, error: 1 }, 2), 4);
   });
 });
