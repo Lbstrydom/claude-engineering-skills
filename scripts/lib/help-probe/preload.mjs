@@ -215,7 +215,11 @@ const PROBE_ENV_KEYS = ['NODE_OPTIONS', 'HELP_PROBE_LOG'];
 function withProbeEnv(opts) {
   if (!opts || typeof opts !== 'object' || !opts.env) return opts;
   const env = { ...opts.env };
-  for (const k of PROBE_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k];
+  // Keep the child's OWN NODE_OPTIONS and append the preload token if absent; never overwrite it.
+  const mine = process.env.NODE_OPTIONS ?? '';
+  const preload = mine.split(/\s+/).find((t) => t.startsWith('--import=') && t.includes('preload.mjs'));
+  if (preload && !(env.NODE_OPTIONS ?? '').includes(preload)) env.NODE_OPTIONS = [env.NODE_OPTIONS, preload].filter(Boolean).join(' ');
+  if (process.env.HELP_PROBE_LOG !== undefined) env.HELP_PROBE_LOG = process.env.HELP_PROBE_LOG;
   return { ...opts, env };
 }
 

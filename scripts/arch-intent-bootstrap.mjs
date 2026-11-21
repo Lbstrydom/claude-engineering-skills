@@ -109,7 +109,10 @@ async function generateBaseline() {
   const raw = JSON.parse(fs.readFileSync(DOMAIN_MAP_PATH, 'utf-8'));
   raw.allowedDeps = baselineMap;
   atomicWriteFileSync(DOMAIN_MAP_PATH, JSON.stringify(raw, null, 2) + '\n');
-  log(`Wrote baseline: ${Object.keys(baselineMap).length} domains, ${report.violations.length} edges`);
+  // `report` is block-scoped to the adapter loop above; count the persisted edges instead
+  // (the old reference threw a ReferenceError AFTER the baseline was written, exiting 1).
+  const edgeCount = Object.values(baselineMap).reduce((n, arr) => n + arr.length, 0);
+  log(`Wrote baseline: ${Object.keys(baselineMap).length} domains, ${edgeCount} edges`);
   return true;
 }
 

@@ -33,7 +33,8 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
   const env = {
     ...process.env,
     HELP_PROBE_LOG: log,
-    NODE_OPTIONS: `--import=${pathToFileURL(PRELOAD).href}`,
+    // APPENDED to any ambient NODE_OPTIONS (--no-warnings, memory limits, loaders), never replacing it.
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(PRELOAD).href}`].filter(Boolean).join(' '),
     AUDIT_DB_URL: '', AUDIT_DB_TEST_URL: '', DATABASE_URL: '',
     HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9',
   };

@@ -202,6 +202,23 @@ describe('probe instrument gaps from the code audit', () => {
     assert.deepEqual((await probeHelp(forker, { cwd: dir })).kinds, []);
   });
 
+  it('an ambient NODE_OPTIONS is preserved (appended to, not replaced), and a child with its own NODE_OPTIONS keeps it', async () => {
+    const f = fixture('nodeopts.mjs', `import cp from 'node:child_process';
+      const out = cp.execFileSync(process.execPath, ['-p', 'process.env.NODE_OPTIONS'], { env: { NODE_OPTIONS: '--no-warnings' }, encoding: 'utf8' });
+      if (!out.includes('--no-warnings') || !out.includes('preload.mjs')) { try { (await import('node:fs')).writeFileSync('x', 'bad'); } catch {} }`);
+    const r = await probeHelp(f, { cwd: dir });
+    assert.deepEqual(r.kinds, [], r.violations.map((v) => v.detail).join(' | '));
+    const prev = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = '--no-warnings';
+    try {
+      // the probe child must see the ambient option AND the preload; a missing one makes it attempt a (blocked, recorded) write
+      const h = fixture('ambient2.mjs', `if (!process.env.NODE_OPTIONS.includes('--no-warnings') || !process.env.NODE_OPTIONS.includes('preload.mjs')) { try { (await import('node:fs')).writeFileSync('x', 'bad'); } catch {} }`);
+      assert.deepEqual((await probeHelp(h, { cwd: dir })).kinds, []);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = prev;
+    }
+  });
+
   it('read-only git forms and stdout fd writes are allowed (negative control)', async () => {
     const f = fixture('allowed.mjs', `import cp from 'node:child_process'; import fs from 'node:fs';
       cp.execFileSync('git', ['-C', ${JSON.stringify(ROOT)}, 'rev-parse', '--show-toplevel']);
