@@ -95,6 +95,12 @@ const ALLOWED_TOOLS_TOKEN_RE = /Bash\(([^()]+)\)/g;
 // (sync-rewriter.mjs COMMAND_REGEX); fold it back so both layouts validate
 // against the one source-layout list.
 const CONSUMER_LAYOUT_RE = /^node scripts\/\.claude-skills\//;
+const toSourceLayout = (command) => command.replace(CONSUMER_LAYOUT_RE, 'node scripts/');
+// The sync rewrites the string literals ABOVE too, so in a consumer the list
+// itself arrives in the consumer layout. Fold BOTH sides of the comparison, or a
+// correct declaration can never match there (field report 2026-11-21: every
+// consumer's doctor failed cycle/plan/ship).
+const PREAPPROVABLE_SOURCE = Object.freeze(ALLOWED_TOOLS_PREAPPROVABLE.map(toSourceLayout));
 
 /**
  * Validate the `allowed-tools` value — anchored and all-or-nothing.
@@ -144,10 +150,10 @@ export function lintAllowedTools(fmLines, parsed, file) {
   }
   const seen = new Set();
   for (const [, inner] of value.matchAll(ALLOWED_TOOLS_TOKEN_RE)) {
-    const command = inner.replace(CONSUMER_LAYOUT_RE, 'node scripts/');
+    const command = toSourceLayout(inner);
     if (seen.has(command)) { bad('allowed-tools-malformed', inner, `repeats \`${inner}\``); continue; }
     seen.add(command);
-    if (!ALLOWED_TOOLS_PREAPPROVABLE.includes(command)) {
+    if (!PREAPPROVABLE_SOURCE.includes(command)) {
       bad('allowed-tools-not-preapprovable', inner,
         `pre-approves \`${inner}\`, which is not an exact read-only command in ALLOWED_TOOLS_PREAPPROVABLE ` +
         '(a wildcard or extra argument could admit `--out <path>`; spend, push, store writes and egress are never pre-approvable)');
