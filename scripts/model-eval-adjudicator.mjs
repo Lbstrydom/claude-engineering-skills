@@ -40,6 +40,8 @@ import { parseThresholdConfig } from './lib/model-eval/config/schema.mjs';
 import { createEvalRun, updateEvalRunTerminal, getActiveEvalRunId, EvalRunAlreadyActiveError } from './lib/store/model-eval.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { resolveRepoForStoreResult } from './lib/store/repo.mjs';
+import { ambientPopulation } from './lib/store/population-ambient.mjs';
+import { renderPopulationLine } from './lib/population.mjs';
 import { writeOutput } from './lib/file-io.mjs';
 import { argOption } from './lib/cli-io.mjs';
 import { RunPreflightError, parseJsonArg } from './lib/model-eval/cli-shared.mjs';
@@ -126,6 +128,9 @@ async function main() {
     }
     const baselineSpec = baselineRaw ? parseJsonArg(baselineRaw, '--baseline') : DEFAULT_BASELINE_CANDIDATE_SPEC;
     const baselineRoute = resolveCandidateRoute({ role: 'adjudicator', candidateSpec: baselineSpec });
+    // The ground-truth read filters to THIS repo's storage row: a repo-scoped read of the store, so no store-mate is claimed.
+    const population = await ambientPopulation({ scope: { repo: 'self' } });
+    const populationLine = renderPopulationLine(population);
 
     let result;
     if (tier === 'promotion') {
@@ -141,7 +146,7 @@ async function main() {
         const summaryLine = promoted.finalized
           ? `[model-eval-adjudicator] tier=promotion FINALIZED verdict=${promoted.verdict} nextAction=${promoted.nextAction}`
           : `[model-eval-adjudicator] tier=promotion collecting: ${promoted.progress.terminal}/${promoted.progress.minLiveShadowRuns} terminal-labeled observations`;
-        writeOutput({ runId: active.runId, tier, ...result }, outFile, summaryLine);
+        writeOutput({ runId: active.runId, tier, population, ...result }, outFile, `${summaryLine}\n${populationLine}`);
         return;
       }
     }
@@ -253,7 +258,7 @@ async function main() {
         } else {
           result = { verdict: 'inconclusive', nextAction: 'eligible_for_shadow', metrics: candidateMetrics, cost: groundTruthCost, evidence: { mode: 'ground-truth', started: null } };
         }
-        writeOutput({ runId, tier, ...result }, outFile, `[model-eval-adjudicator] tier=promotion ground-truth inconclusive — starting live-shadow collection (need ${tierConfig.minSampleSize} terminal observations)`);
+        writeOutput({ runId, tier, population, ...result }, outFile, `[model-eval-adjudicator] tier=promotion ground-truth inconclusive — starting live-shadow collection (need ${tierConfig.minSampleSize} terminal observations)\n${populationLine}`);
         return;
       }
       result = { verdict: v.verdict, nextAction: v.nextAction, metrics: candidateMetrics, cost: groundTruthCost, evidence: { mode: 'ground-truth', baselineMetrics, sampleSize: sampled.length, sampleComposition: draw.composition, degenerateBaselines: baselines, reasons: v.reasons } };
@@ -266,7 +271,7 @@ async function main() {
       });
     }
     const summaryLine = `[model-eval-adjudicator] tier=${tier} verdict=${result.verdict} nextAction=${result.nextAction} runId=${runId}`;
-    writeOutput({ runId, tier, ...result }, outFile, summaryLine);
+    writeOutput({ runId, tier, population, ...result }, outFile, `${summaryLine}\n${populationLine}`);
   } catch (err) {
     if (err instanceof EvalRunAlreadyActiveError) {
       console.error(`[model-eval-adjudicator] ${err.message}`);

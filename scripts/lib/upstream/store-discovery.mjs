@@ -58,6 +58,19 @@ import { DSN_GROUP_KEYS, sharedEnvPath } from '../shared-cloud-config.mjs';
 // pure helper it wanted from the store layer joins them instead of dragging a
 // domain edge behind it. Callers pass `storeFingerprint` from lib/db/client.mjs.
 
+/**
+ * Why a consumer was DELIBERATELY not queried (`policyUnreachable`). Distinct from
+ * `UNRESOLVED` ("we could not look"): these are "we must not look".
+ */
+/** The label this repo carries in a store's `aliases` (it has no registry alias; the registry reserves the word). */
+const SELF_ALIAS = 'self';
+
+export const POLICY_REASON = Object.freeze({
+  DECLARED: 'unreachable-by-policy',
+  UNDETERMINABLE: 'policy-undeterminable',
+  SHARED: 'shared-with-policy-consumer',
+});
+
 /** Why a consumer contributed no store. */
 export const UNRESOLVED = Object.freeze({
   NO_REPO: 'repo-directory-absent',
@@ -140,17 +153,19 @@ export function resolveRepoStore({ repoEnvText, sharedEnvText }) {
  *
  * @param {object} input
  * @param {Array<{name: string, path: string}>} input.repos — consumer registry entries
- * @param {{name: string, url: string|null, sslMode: string|null}} [input.self]
+ * @param {{name: string, url: string|null, sslMode: string|null, path?: string}} [input.self]
  *   this repo's own store, included so the fan-out is a superset of today's read
  * @param {(repoPath: string) => string|null} input.readEnvText
  * @param {(dsn: string) => string|null} input.fingerprintOf — `storeFingerprint`
+ * @param {(repoPath: string) => object} input.readSetupPointer — `readStoreSetupPointer`; REQUIRED
  * @param {string|null} [input.sharedEnvText]
  * @param {(repoPath: string) => boolean} [input.repoExists]
- * @returns {{stores: Array<{fingerprint: string, url: string, sslMode: string|null, repos: string[]}>,
- *            unresolved: Array<{repo: string, reason: string}>}}
+ * @returns {{stores: Array<{fingerprint: string, url: string, sslMode: string|null, repos: string[], aliases: string[]}>,
+ *            unresolved: Array<{repo: string, reason: string}>,
+ *            policyUnreachable: Array<{repo: string, alias: string|null, reason: string}>}}
  */
 export function discoverStores({
-  repos, self = null, readEnvText, fingerprintOf, sharedEnvText = null, repoExists = () => true,
+  repos, self = null, readEnvText, fingerprintOf, readSetupPointer, sharedEnvText = null, repoExists = () => true,
 }) {
   if (typeof fingerprintOf !== 'function') {
     // Refused rather than defaulted: a missing fingerprint function would make
@@ -158,25 +173,44 @@ export function discoverStores({
     // the exact failure this module exists to end, arriving as a clean result.
     throw new TypeError('discoverStores: fingerprintOf is required (pass storeFingerprint from lib/db/client.mjs)');
   }
-  /** @type {Map<string, {fingerprint: string, url: string, sslMode: string|null, repos: string[]}>} */
+  if (typeof readSetupPointer !== 'function') {
+    // Same refusal, for the privacy rule: an omitted injection must not silently
+    // turn "never query a declared-private consumer" off.
+    throw new TypeError('discoverStores: readSetupPointer is required (pass readStoreSetupPointer from lib/doctor/store-reachability.mjs)');
+  }
+  /** @type {Map<string, {fingerprint: string, url: string, sslMode: string|null, repos: string[], aliases: string[]}>} */
   const byFingerprint = new Map();
   const unresolved = [];
+  /** @type {Array<{repo: string, alias: string|null, reason: string}>} */
+  const policyUnreachable = [];
+  /** Fingerprints of stores a policy-private consumer resolves to — computed locally, never queried. */
+  const privateFingerprints = new Set();
+  const aliasByName = new Map();
 
-  const add = (name, url, sslMode) => {
+  const add = (name, url, sslMode, alias = null) => {
     const fingerprint = fingerprintOf(url);
     if (!fingerprint) { unresolved.push({ repo: name, reason: UNRESOLVED.BAD_DSN }); return; }
     const existing = byFingerprint.get(fingerprint);
     if (existing) {
       if (!existing.repos.includes(name)) existing.repos.push(name);
+      if (alias && !existing.aliases.includes(alias)) existing.aliases.push(alias);
       return;
     }
-    byFingerprint.set(fingerprint, { fingerprint, url, sslMode: sslMode ?? null, repos: [name] });
+    byFingerprint.set(fingerprint, { fingerprint, url, sslMode: sslMode ?? null, repos: [name], aliases: alias ? [alias] : [] });
   };
 
   // The source repo first, so its fingerprint owns the group when a consumer
   // shares it — the operator reads "this repo, wine" rather than "wine, this repo".
-  if (self?.url) add(self.name || 'this repo', self.url, self.sslMode);
-  else if (self) unresolved.push({ repo: self.name || 'this repo', reason: UNRESOLVED.NO_DSN });
+  // The source repo has a pointer too (committed in its own tree): a private or undeterminable self is
+  // never queried either. Callers pass `self.path` (the repo root) so it can be read.
+  const selfName = self?.name || 'this repo';
+  const selfPolicy = self?.path ? policyOf(readSetupPointer(self.path)) : null;
+  if (selfPolicy) {
+    const fp = self.url ? fingerprintOf(self.url) : null;
+    if (fp) privateFingerprints.add(fp);
+    policyUnreachable.push({ repo: selfName, alias: null, reason: selfPolicy, ...(fp ? {} : { identityUnknown: true }) });
+  } else if (self?.url) add(selfName, self.url, self.sslMode, SELF_ALIAS);
+  else if (self) unresolved.push({ repo: selfName, reason: UNRESOLVED.NO_DSN });
 
   for (const repo of repos || []) {
     if (!repoExists(repo.path)) {
@@ -185,6 +219,19 @@ export function discoverStores({
     }
     const repoEnvText = readEnvText(repo.path);
     const { url, sslMode } = resolveRepoStore({ repoEnvText, sharedEnvText });
+    const alias = typeof repo.alias === 'string' ? repo.alias : null;
+    aliasByName.set(repo.name, alias);
+    const policy = policyOf(readSetupPointer(repo.path));
+    if (policy) {
+      // Never queried, never returned, never logged — but fingerprinted locally,
+      // so a reachable consumer on the SAME store can be refused below.
+      const fp = url ? fingerprintOf(url) : null;
+      if (fp) privateFingerprints.add(fp);
+      // A private consumer whose DSN resolves in neither layer cannot be fingerprinted, so a shared store
+      // cannot be ruled out; say so. Other stores are NOT refused on that account.
+      policyUnreachable.push({ repo: repo.name, alias, reason: policy, ...(fp ? {} : { identityUnknown: true }) });
+      continue;
+    }
     if (!url) {
       // "No file to read at all" and "read it, and neither layer named a DSN"
       // are different operator problems and get different reasons.
@@ -194,10 +241,64 @@ export function discoverStores({
       });
       continue;
     }
-    add(repo.name, url, sslMode);
+    add(repo.name, url, sslMode, alias);
   }
 
-  return { stores: [...byFingerprint.values()], unresolved };
+  // A private STORE is refused whole: its rows would otherwise be read through a
+  // reachable consumer's query. Listed per repo so the contradiction is visible.
+  const stores = [];
+  for (const store of byFingerprint.values()) {
+    if (!privateFingerprints.has(store.fingerprint)) { stores.push(store); continue; }
+    for (const name of store.repos) {
+      policyUnreachable.push({ repo: name, alias: aliasByName.get(name) ?? null, reason: POLICY_REASON.SHARED });
+    }
+  }
+
+  return { stores, unresolved, policyUnreachable };
+}
+
+/**
+ * Is this consumer declared (or, failing closed, presumed) private? PURE.
+ *
+ * A declaration we cannot read is treated as private: a typo in a privacy
+ * declaration must not turn into a query of the store it protects.
+ *
+ * @param {object} pointer — `readStoreSetupPointer`'s result
+ * @returns {string|null} a POLICY_REASON, or null (not private)
+ */
+function policyOf(pointer) {
+  // `policy` is the reader's own structured answer (absent | reachable | private | undeterminable);
+  // an unknown value fails CLOSED rather than reading as reachable.
+  switch (pointer?.policy) {
+    case 'private': return POLICY_REASON.DECLARED;
+    case 'undeterminable': return POLICY_REASON.UNDETERMINABLE;
+    case 'absent': case 'reachable': return null;
+    default: return pointer?.present === false ? null : POLICY_REASON.UNDETERMINABLE;
+  }
+}
+
+/**
+ * The operator line for one deliberately-unqueried consumer. PURE. Labelled by
+ * registry alias (falling back to the repo name for an alias-less entry), never a
+ * hostname. Printed on every path by both readers; never counted.
+ *
+ * @param {{repo: string, alias: string|null, reason: string, identityUnknown?: boolean}} entry
+ * @returns {string}
+ */
+export function renderPolicyUnreachable(entry) {
+  const base = renderPolicyBase(entry);
+  return entry.identityUnknown ? `${base} — its store identity is unknown, so a shared store cannot be ruled out` : base;
+}
+
+function renderPolicyBase(entry) {
+  const who = entry.alias || entry.repo;
+  if (entry.reason === POLICY_REASON.SHARED) {
+    return `refused ${who} — shares a store with a policy-private consumer; never queried, NOT counted`;
+  }
+  if (entry.reason === POLICY_REASON.UNDETERMINABLE) {
+    return `not queried ${who} — .audit-loop/store-setup.json unreadable or malformed; treated as private`;
+  }
+  return `unreachable-by-policy ${who} — declared private; never queried, NOT counted`;
 }
 
 /**

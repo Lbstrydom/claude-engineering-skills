@@ -50,6 +50,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,9 +63,11 @@ import './lib/load-env.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import {
-  discoverStores, describeStore, readRepoEnvText, readSharedEnvText,
+  discoverStores, describeStore, readRepoEnvText, readSharedEnvText, renderPolicyUnreachable,
 } from './lib/upstream/store-discovery.mjs';
+import { readStoreSetupPointer } from './lib/doctor/store-reachability.mjs';
 import { storeFingerprint } from './lib/db/client.mjs';
+import { populationFromFanout, renderPopulationLine } from './lib/population.mjs';
 import { stdoutNamesUnreachableStore } from './lib/store/backlog-gather.mjs';
 import { scanRegistered } from './lib/telemetry-export/registered.mjs';
 import { renderTelemetryExports } from './lib/telemetry-export/reader.mjs';
@@ -156,10 +159,11 @@ const SEVERITY_ORDER = { BLOCKER: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
  * @param {object} input
  * @param {Array<object>} input.stores
  * @param {Array<{repo: string, reason: string}>} input.unresolved
+ * @param {Array<{repo: string, alias: string|null, reason: string}>} [input.policyUnreachable] — never queried, never counted
  * @param {(store: object) => {ok: boolean, rows: Array<object>, reason: string|null}} input.query
  * @returns {object}
  */
-export function collectQueues({ stores, unresolved, query }) {
+export function collectQueues({ stores, unresolved, query, policyUnreachable = [] }) {
   const queried = [];
   const unqueried = [];
   const items = [];
@@ -167,10 +171,10 @@ export function collectQueues({ stores, unresolved, query }) {
   for (const store of stores) {
     const res = query(store);
     if (!res.ok) {
-      unqueried.push({ store: describeStore(store), reason: res.reason });
+      unqueried.push({ store: describeStore(store), reason: res.reason, fingerprint: store.fingerprint, aliases: store.aliases ?? [] });
       continue;
     }
-    queried.push({ store: describeStore(store), open: res.rows.length });
+    queried.push({ store: describeStore(store), open: res.rows.length, fingerprint: store.fingerprint, aliases: store.aliases ?? [] });
     for (const row of res.rows) {
       items.push({
         id: typeof row.id === 'string' ? row.id.slice(0, 8) : '?',
@@ -193,6 +197,8 @@ export function collectQueues({ stores, unresolved, query }) {
     queried,
     unqueried,
     unresolved,
+    // Deliberately not asked (declared private): never in `unqueried` (that means "we tried") and never counted.
+    policyUnreachable,
     items,
   };
 }
@@ -231,6 +237,8 @@ export function renderQueues(result, max = 5) {
   for (const u of result.unresolved) {
     lines.push(`  ${Y}no store${X} ${u.repo} ${D}(${u.reason}) — this consumer's queue is invisible${X}`);
   }
+  for (const p of result.policyUnreachable ?? []) lines.push(`  ${Y}${renderPolicyUnreachable(p)}${X}`);
+  if (result.population) lines.push(`  ${D}${renderPopulationLine(result.population)}${X}`);
   return lines.join('\n');
 }
 
@@ -246,21 +254,25 @@ async function main() {
   const limitIdx = process.argv.indexOf('--limit');
   const limit = limitIdx >= 0 ? Math.max(1, Number.parseInt(process.argv[limitIdx + 1], 10) || 50) : 50;
 
-  const { stores, unresolved } = discoverStores({
+  const { stores, unresolved, policyUnreachable } = discoverStores({
     repos: CONSUMER_REPOS,
     self: {
       name: 'this repo',
+      path: REPO_ROOT,
       url: process.env.AUDIT_DB_URL || null,
       sslMode: process.env.AUDIT_DB_SSL_MODE || null,
     },
     readEnvText: readRepoEnvText,
     fingerprintOf: storeFingerprint,
+    readSetupPointer: readStoreSetupPointer,
+    repoExists: (p) => fs.existsSync(p),
     sharedEnvText: readSharedEnvText(),
   });
 
-  const result = collectQueues({
-    stores, unresolved, query: (s) => queryStore(s, limit),
+  const collected = collectQueues({
+    stores, unresolved, policyUnreachable, query: (s) => queryStore(s, limit),
   });
+  const result = { ...collected, population: populationFromFanout({ ...collected, registry: CONSUMER_REPOS }) };
 
   // Consumers whose store CES cannot reach push a redacted summary instead (opt-in; null = nobody expected).
   const telemetry = scanRegistered();

@@ -27,6 +27,8 @@ import { argOption } from './lib/cli-io.mjs';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
+import { ambientPopulation, siblingScopeLabels } from './lib/store/population-ambient.mjs';
+import { renderPopulationLine, collectScopeIdentities } from './lib/population.mjs';
 import { getTieredShadowObservations } from './lib/store/tiered-shadow.mjs';
 import {
   WINDOW_MIN, WINDOW_MAX, normalizeDbRow, median, mean, readRecords, summarize, windowProgress,
@@ -67,14 +69,12 @@ async function main() {
     // push-per-input array, which would otherwise overcount a repeated
     // path in the CLI's "across N repo(s)" summary (Gemini gate, round 3).
     const repoLabels = {};
-    for (const p of [process.cwd(), ...reposArg]) {
-      try {
-        const { repoUuid, name } = resolveRepoIdentity(p);
-        repoLabels[repoUuid] = name || p;
-      } catch (err) {
-        process.stderr.write(`  [tiered-shadow-report] WARNING: could not resolve repo identity for "${p}" (skipped): ${err.message}\n`);
-      }
+    // This checkout always holds slot 0 of `identities` (a placeholder if it cannot be resolved), so a sibling never becomes `self`.
+    const { identities, failures } = collectScopeIdentities([process.cwd(), ...reposArg], resolveRepoIdentity);
+    for (const { path: p, error } of failures) {
+      process.stderr.write(`  [tiered-shadow-report] WARNING: could not resolve repo identity for "${p}" (skipped): ${error.message}\n`);
     }
+    for (const { uuid, name, path: p } of identities) if (uuid) repoLabels[uuid] = name || p;
     const repoIds = Object.keys(repoLabels);
     if (repoIds.length > 0) {
       const result = await getTieredShadowObservations({ repoIds });
@@ -85,7 +85,10 @@ async function main() {
       if (result.truncated) {
         process.stderr.write(`  [tiered-shadow-report] WARNING: result hit the query limit — newer rows may be excluded from this summary.\n`);
       }
-      return reportRows(result.rows.map(normalizeDbRow), jsonMode, { repoLabels, source: 'cloud', repoCount: repoIds.length, truncated: result.truncated });
+      // The read filtered to repo ids (this repo plus --repos siblings): repo-scoped, no store-mate claimed.
+      // `self` plus each --repos sibling (as its registry alias, else `sibling-<n>`; never its repo name): every repo this read covered.
+      const population = await ambientPopulation({ scope: { repos: await siblingScopeLabels(identities) } });
+      return reportRows(result.rows.map(normalizeDbRow), jsonMode, { repoLabels, source: 'cloud', repoCount: repoIds.length, truncated: result.truncated, population });
     }
   }
 
@@ -94,24 +97,26 @@ async function main() {
   return reportLocal(SHADOW_LOG_PATH, jsonMode);
 }
 
-function reportLocal(logPath, jsonMode) {
+async function reportLocal(logPath, jsonMode) {
   const records = readRecords(logPath);
-  return reportRows(records, jsonMode, { source: 'local', logPath });
+  // A local log is not a store: nothing was measured from one.
+  const population = await ambientPopulation({ fingerprint: null });
+  return reportRows(records, jsonMode, { source: 'local', logPath, population });
 }
 
-function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount, truncated }) {
+function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount, truncated, population }) {
   if (records.length === 0) {
     const note = source === 'local'
       ? `no shadow runs recorded yet at ${logPath} — set AUDIT_TIERED_SHADOW_ENABLED=true and run /audit-code a few times.`
       : 'no shadow runs recorded yet in the cloud store for the resolved repo(s).';
-    if (jsonMode) console.log(JSON.stringify({ ok: true, totalRuns: 0, source, note }));
-    else console.log(note.charAt(0).toUpperCase() + note.slice(1));
+    if (jsonMode) console.log(JSON.stringify({ ok: true, totalRuns: 0, source, note, population }));
+    else { console.log(note.charAt(0).toUpperCase() + note.slice(1)); console.log(renderPopulationLine(population)); }
     return 0;
   }
 
   const summary = summarize(records);
   if (jsonMode) {
-    console.log(JSON.stringify({ ok: true, source, truncated: Boolean(truncated), ...summary }, null, 2));
+    console.log(JSON.stringify({ ok: true, source, truncated: Boolean(truncated), population, ...summary }, null, 2));
     return 0;
   }
 
@@ -122,6 +127,7 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
     ? `Tiered-pipeline shadow validation — ${summary.totalRuns} run(s) across ${repoCount} repo(s) (cloud)${truncated ? ' [TRUNCATED — newer rows may be missing]' : ''}: ${Object.values(repoLabels).join(', ')}`
     : `Tiered-pipeline shadow validation — ${summary.totalRuns} run(s) recorded (local, ${logPath})`;
   console.log(scopeLine);
+  console.log(`  ${renderPopulationLine(population)}`);
   console.log(`  legacy failures:    ${summary.legacyFailures}`);
   console.log(`  shadow failures:    ${summary.shadowFailures}`);
   console.log(`  compared runs:      ${summary.comparedRuns}   (decision-grade: tiered completed AND at least one side had a non-empty eligible population)`);

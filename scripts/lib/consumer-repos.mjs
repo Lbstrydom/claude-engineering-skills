@@ -327,7 +327,31 @@ function mergeRegistries(base, local) {
     const entry = (b && l.merge === undefined && b.merge !== undefined) ? { ...l, merge: b.merge } : l;
     if (b) { repointed.add(b); merged[merged.indexOf(b)] = entry; } else merged.push(entry);
   });
+  assertAliasesValid(merged);
   return merged;
+}
+
+/**
+ * Aliases are the ONLY consumer label the population line prints (a repo name is what a
+ * private organisation would not want published), so each must be a bounded token and unique.
+ * Thrown, never filtered: a dropped entry is a consumer that vanishes from the fan-out.
+ *
+ * @param {ReadonlyArray<{alias?: unknown}>} entries
+ */
+export function assertAliasesValid(entries) {
+  const seen = new Set();
+  entries.forEach((e, i) => {
+    if (typeof e?.alias !== 'string' || !/^[a-z0-9-]{1,32}$/.test(e.alias)) {
+      throw new Error(`consumer registry entry #${i} has an invalid alias ${JSON.stringify(e?.alias)} — expected [a-z0-9-]{1,32}`);
+    }
+    // `self` and `sibling-<n>` are the population line's own labels for repos with no registry alias; a registry alias
+    // equal to one would let a policy-private consumer be mistaken for (or hide behind) an anonymous label.
+    if (e.alias === 'self' || /^sibling-\d+$/.test(e.alias)) {
+      throw new Error(`consumer registry alias "${e.alias}" is reserved ("self", "sibling-<n>") — pick another`);
+    }
+    if (seen.has(e.alias)) throw new Error(`consumer registry alias "${e.alias}" is used by more than one entry — refusing to guess which consumer is meant`);
+    seen.add(e.alias);
+  });
 }
 
 export const CONSUMER_REPOS = Object.freeze(mergeRegistries(BASE_REPOS, loadLocalRepos()).map((r) => Object.freeze(r)));

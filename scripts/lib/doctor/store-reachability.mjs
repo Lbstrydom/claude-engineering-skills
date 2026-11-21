@@ -68,7 +68,7 @@ function cleanField(name, v, problems) {
  *
  * @param {string} subjectRoot
  * @param {{readFileSync: Function}} [fsImpl]
- * @returns {{present: false} | {present: true, check: string|null, docs: string|null, problems: string[]}}
+ * @returns {{present: false, policy: 'absent'} | {present: true, check: string|null, docs: string|null, upstreamReachable: boolean|null, policy: 'private'|'reachable'|'absent'|'undeterminable', problems: string[]}}
  */
 export function readStoreSetupPointer(subjectRoot, fsImpl = fs) {
   const file = path.join(subjectRoot, STORE_SETUP_POINTER_PATH);
@@ -76,21 +76,113 @@ export function readStoreSetupPointer(subjectRoot, fsImpl = fs) {
   try {
     raw = fsImpl.readFileSync(file, 'utf8');
   } catch (err) {
-    if (err?.code === 'ENOENT') return { present: false };
-    return { present: true, check: null, docs: null, problems: [`${STORE_SETUP_POINTER_PATH} could not be read (${err?.code || 'error'})`] };
+    if (err?.code === 'ENOENT') {
+      return absentOrUnreadable(file, fsImpl);
+    }
+    return { present: true, check: null, docs: null, upstreamReachable: null, policy: 'undeterminable', problems: [`${STORE_SETUP_POINTER_PATH} could not be read (${err?.code || 'error'})`] };
   }
   let doc;
   try { doc = JSON.parse(raw); } catch {
-    return { present: true, check: null, docs: null, problems: [`${STORE_SETUP_POINTER_PATH} is not valid JSON`] };
+    return { present: true, check: null, docs: null, upstreamReachable: null, policy: 'undeterminable', problems: [`${STORE_SETUP_POINTER_PATH} is not valid JSON`] };
   }
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
-    return { present: true, check: null, docs: null, problems: [`${STORE_SETUP_POINTER_PATH} must be a JSON object`] };
+    return { present: true, check: null, docs: null, upstreamReachable: null, policy: 'undeterminable', problems: [`${STORE_SETUP_POINTER_PATH} must be a JSON object`] };
   }
   const problems = [];
   const check = cleanField('check', doc.check, problems);
   const docs = cleanField('docs', doc.docs, problems);
-  if (check === null && docs === null && problems.length === 0) problems.push('has neither "check" nor "docs"');
-  return { present: true, check, docs, problems };
+  // A non-boolean is a problem, never coerced: "no" / 0 / "false" in a privacy
+  // declaration must not be read as either answer.
+  let upstreamReachable = null;
+  if (doc.upstreamReachable !== undefined) {
+    if (typeof doc.upstreamReachable === 'boolean') upstreamReachable = doc.upstreamReachable;
+    else problems.push('"upstreamReachable" must be a boolean');
+  }
+  if (check === null && docs === null && upstreamReachable === null && problems.length === 0) {
+    problems.push('has none of "check", "docs", "upstreamReachable"');
+  }
+  // An unknown key that LOOKS like the policy declaration (a typo such as "upstreamReachble") while the real key is
+  // absent is a declaration we cannot read; any other unknown key is reported and changes nothing.
+  let lookalike = false;
+  for (const key of Object.keys(doc)) {
+    if (key === 'check' || key === 'docs' || key === 'upstreamReachable') continue;
+    const shown = JSON.stringify(key.slice(0, 40));
+    if (doc.upstreamReachable === undefined && /upstream|reach/i.test(key)) {
+      lookalike = true;
+      problems.push(`unknown key ${shown} looks like a policy declaration — did you mean "upstreamReachable"?`);
+    } else {
+      problems.push(`unknown key ${shown} is ignored`);
+    }
+  }
+  // JSON.parse keeps the LAST duplicate, so a second "upstreamReachable" silently overrides the first. Count the DECODED key
+  // names in the raw text (an escaped spelling such as "upstream\\u0052eachable" is the same key); a key that cannot be
+  // decoded is a declaration we cannot read.
+  let duplicated = false;
+  try {
+    duplicated = decodedKeyNames(raw).filter((k) => k === 'upstreamReachable').length > 1;
+    if (duplicated) problems.push('"upstreamReachable" appears more than once');
+  } catch {
+    duplicated = true;
+    problems.push('a key could not be decoded');
+  }
+  // The one structured policy answer: discovery reads this, never a regex over problem strings.
+  const policy = (lookalike || duplicated) ? 'undeterminable' : doc.upstreamReachable === undefined ? 'absent'
+    : upstreamReachable === false ? 'private'
+      : upstreamReachable === true ? 'reachable' : 'undeterminable';
+  return { present: true, check, docs, upstreamReachable, policy, problems };
+}
+
+/**
+ * Every TOP-LEVEL object key in `raw` (valid JSON, root object), decoded: scan the string tokens and keep those followed by
+ * `:` at depth 1. Throws if a key does not decode.
+ *
+ * @param {string} raw
+ * @returns {string[]}
+ */
+function decodedKeyNames(raw) {
+  const names = [];
+  let i = 0;
+  let depth = 0;
+  while (i < raw.length) {
+    if (raw[i] === '{' || raw[i] === '[') { depth += 1; i += 1; continue; }
+    if (raw[i] === '}' || raw[i] === ']') { depth -= 1; i += 1; continue; }
+    if (raw[i] !== '"') { i += 1; continue; }
+    let j = i + 1;
+    while (j < raw.length && raw[j] !== '"') j += raw[j] === '\\' ? 2 : 1;
+    const token = raw.slice(i, j + 1);
+    i = j + 1;
+    let k = i;
+    while (k < raw.length && /\s/.test(raw[k])) k += 1;
+    // TOP-LEVEL keys only (depth 1, directly inside the root object): a nested object may legitimately reuse a name.
+    if (raw[k] === ':') { const name = JSON.parse(token); if (depth === 1) names.push(name); }
+  }
+  return names;
+}
+
+/**
+ * The read said ENOENT: is the pointer ABSENT, or unreadable behind a link? Only "no .audit-loop at all" and "directory
+ * present (a real one, or a link to an EXISTING directory), file truly absent" are absent. A dangling link anywhere, an
+ * existing-but-unreadable file, or ANY other lstat/stat failure is undeterminable. Without `lstatSync` (an injected fs
+ * that only reads) there is nothing to check and the answer is absent.
+ *
+ * @param {string} file
+ * @param {object} fsImpl
+ */
+function absentOrUnreadable(file, fsImpl) {
+  const undeterminable = (why) => ({ present: true, check: null, docs: null, upstreamReachable: null, policy: 'undeterminable', problems: [`${STORE_SETUP_POINTER_PATH} ${why}`] });
+  if (typeof fsImpl.lstatSync !== 'function') return { present: false, policy: 'absent' };
+  const probe = (fn, p) => { try { return { stat: fn.call(fsImpl, p) }; } catch (err) { return { code: err?.code || 'error' }; } };
+  const dir = path.dirname(file);
+  const dirL = probe(fsImpl.lstatSync, dir);
+  if (dirL.code) return dirL.code === 'ENOENT' ? { present: false, policy: 'absent' } : undeterminable(`could not be checked (${dirL.code})`);
+  if (dirL.stat?.isSymbolicLink?.()) {
+    const dirS = typeof fsImpl.statSync === 'function' ? probe(fsImpl.statSync, dir) : { code: 'ENOSTAT' };
+    if (dirS.code) return undeterminable(dirS.code === 'ENOENT' ? 'is behind a dangling link' : `link could not be checked (${dirS.code})`);
+    if (!dirS.stat?.isDirectory?.()) return undeterminable('is behind a link that is not a directory');
+  }
+  const fileL = probe(fsImpl.lstatSync, file);
+  if (fileL.code) return fileL.code === 'ENOENT' ? { present: false, policy: 'absent' } : undeterminable(`could not be checked (${fileL.code})`);
+  return undeterminable('is a dangling link');
 }
 
 /**
@@ -105,8 +197,16 @@ export function readStoreSetupPointer(subjectRoot, fsImpl = fs) {
  */
 export function renderStoreDetail(verdict, pointer, failure = {}) {
   const parts = [`store: ${verdict}`];
+  // The structured policy, never the raw value: a duplicate-key or otherwise unreadable declaration is not "private".
+  if (pointer.present && pointer.policy === 'private') {
+    parts.push(`upstream: unreachable-by-policy (declared in ${STORE_SETUP_POINTER_PATH})`);
+  }
   if (verdict === STORE_VERDICT.UNREACHABLE && failure.cause) parts.push(`cause: ${failure.cause}`);
   if (verdict === STORE_VERDICT.UNCONFIGURED) parts.push('the tooling runs local-only; cross-session history is not recorded');
+  // An undeterminable declaration is a privacy-relevant fault: say so even when the store is reachable.
+  if (verdict === STORE_VERDICT.REACHABLE && pointer.present && pointer.policy === 'undeterminable' && pointer.problems.length > 0) {
+    parts.push(`${STORE_SETUP_POINTER_PATH} ignored in part: ${pointer.problems.join('; ')}`);
+  }
   if (verdict !== STORE_VERDICT.REACHABLE) {
     if (pointer.present && pointer.check) parts.push(`setup check (run it yourself): ${pointer.check}`);
     if (pointer.present && pointer.docs) parts.push(`setup docs: ${pointer.docs}`);

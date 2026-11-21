@@ -49,6 +49,8 @@ import { planLooksRelated } from './lib/bakeoff/relatedness.mjs';
 import { repoId } from './lib/campaign/promote.mjs';
 import { resolveCohort, liveArmRunsForSnapshot, isAttemptExcluded } from './lib/store/campaign.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
+import { ambientPopulation } from './lib/store/population-ambient.mjs';
+import { renderPopulationLine } from './lib/population.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
@@ -460,6 +462,14 @@ export async function resolveStoreState({
   }
 }
 
+/**
+ * The window progress is read from the local bake-off log, not a store, so nothing was
+ * measured from one: the line says so rather than leaving the reader to assume a pooled verdict.
+ */
+async function printPopulation() {
+  process.stdout.write(`${renderPopulationLine(await ambientPopulation({ fingerprint: null }))}\n`);
+}
+
 async function main() {
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'bakeoff-collect' });
   const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : (process.argv[i + 1] ?? null); };
@@ -469,7 +479,7 @@ async function main() {
     return;
   }
   const target = Number(arg('target') || DEFAULT_TARGET);
-  if (process.argv.includes('--progress')) { printProgress(LOG_PATH, target, resolveScopeForProgress(arg('campaign'))); return; }
+  if (process.argv.includes('--progress')) { printProgress(LOG_PATH, target, resolveScopeForProgress(arg('campaign'))); await printPopulation(); return; }
 
   const transcript = arg('transcript');
   const plan = arg('plan');
@@ -562,6 +572,7 @@ async function main() {
     process.stderr.write(`  [bakeoff] snapshot ${id} already collected and complete — skipping (re-runs would double-count)\n`
       + '  Pass --force to re-collect: it SUPERSEDES rather than overwrites, so the prior attempt stays readable and its spend still counts.\n');
     printProgress(LOG_PATH, target, resolveScopeForProgress(existing?.campaignId ?? resolved.config?.id ?? null));
+    await printPopulation();
     return;
   }
 
@@ -764,6 +775,7 @@ async function main() {
     process.stderr.write(`  [bakeoff] INCOMPLETE — this snapshot does NOT count toward N.${missing.length ? ` Arms that did not run: ${missing.join(', ')}.` : ' Every arm ran; the envelope-scope binding or contract epoch is what failed.'}\n`);
   }
   printProgress(LOG_PATH, target, { ok: true, scope: resolved.scope });
+  await printPopulation();
 }
 
 const invokedDirectly = isInvokedAsScript(import.meta.url);

@@ -126,6 +126,22 @@ a symbol count in the drift report and the map header.
 `airGapDbUrl`, relied on by 20 suites, some of which `DROP SCHEMA`. Never "fix" it
 by falling through to `~/.audit-loop.env`; say so loudly instead.
 
+**A verdict names what it was measured FROM — the population line.** A verdict
+computed from N stores reads as one about everyone, so every cross-store verdict
+writer (`STORE_VERDICT_WRITERS` in `scripts/lib/population.mjs`) prints
+`Population: measured from 2 stores — <fp> (<alias>, <alias>), … Not measured: <alias>
+(<reason>). …` and carries the `population/v1` object in its JSON. Labels are
+registry aliases and 8-hex store fingerprints, never repo names or hostnames (the line
+is pasted into public `docs/research/`). A consumer that declares
+`"upstreamReachable": false` in `.audit-loop/store-setup.json` is never queried and is
+listed `unreachable-by-policy`; a figure it reports by hand is a separate
+`Consumer-reported, unverified (not pooled)` entry, never added to a store count. In a
+consumer, where the registry's private half is absent, the line says
+`other consumers: not known here` rather than claiming "all". `tests/population-writers.test.mjs`
+and `tests/research-population-line.test.mjs` enforce it (a census over the filesystem for
+a store-reading CLI no registry names; each `docs/research/*.md` needs a line, a
+`<!-- population: not-store-derived — <reason> -->` marker, or a hash-pinned grandfather entry).
+
 **Triage against the store that owns the row.** `upstream ack|fix|wont-fix` writes
 to the ambient `AUDIT_DB_URL`, which is only one of them — run the transition with
 that consumer's DSN in the environment, and use the FULL uuid (a prefix resolves,
