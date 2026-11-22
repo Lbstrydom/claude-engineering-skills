@@ -97,11 +97,13 @@ import { redactSecrets } from './lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag, finishAndExit } from './lib/cli-io.mjs';
 import { dupHash } from './lib/solo-control/cluster-propose.mjs';
-import { authorizeAll, resumedOut, seedResumedGrades, qualifyBatchCluster, labelCoverage, decisionStatusFor, splitApparatusGaps } from './lib/solo-control/run-guards.mjs';
+import { authorizeAll, resumedOut, seedResumedGrades, qualifyBatchCluster, labelCoverage, decisionStatusFor, blockVerdictUnlessFinal, splitApparatusGaps } from './lib/solo-control/run-guards.mjs';
 import { classifyRecipient } from './lib/solo-control/recipient.mjs';
 import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/policy.mjs';
 import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corpus.mjs';
-import { computeCallId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
+import { computeCallId, computeSpendId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
+import { discoverCommits, partitionDiscoveredRows, fetchExternalFindings } from './lib/solo-control/store-queries.mjs';
+import { fingerprintVerdict, retryBudgetVerdict, budgetStopMiss } from './lib/solo-control/cell-guards.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { clampToSchema, parseJsonLoose, REASONING_TIERS, assertReasoningTier } from './lib/solo-control/cold-pass-support.mjs';
@@ -111,7 +113,7 @@ import { csvLine, parseCsv } from './lib/solo-control/csv.mjs';
 import { chunkDiff, continuationMarker } from './lib/solo-control/chunk-diff.mjs';
 import { runGptJudgeBatch } from './lib/solo-control/judge.mjs';
 import { rowSig, positiveInt, nonNegativeNumber, budgetVerdict, sheetPairingProblems, validateGradings, findingsDigest, assertResumableProvenance, coldPassOutcome, judgeGradeVerdict, LEGACY_JUDGE_IDENTITY, decisionArms, protectedOutputProblem, realPath, budgetStopLine } from './lib/solo-control/hardening-guards.mjs';
-import { assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
+import { baselineReviewCompleted, assertResumableBackend, commitsCompleteForAllArms, coveredCommits, gateCellState, resumeArmFile, runMeasuredReview, reviewCommitState, unmeasuredCommits } from './lib/solo-control/completion.mjs';
 import { resolveDeepseekCreds } from './lib/model-resolver.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
@@ -231,7 +233,7 @@ function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, r
   const callId = computeCallId({ commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel });
   const priced = usage ? costFromUsage(usage, resolvedModel) : null;
   return appendLedgerRow(CALL_LEDGER_PATH, {
-    callId, arm, sharedBy, commit, repeat: repeatIndex, chunk: chunkIndex, pass, purpose,
+    callId, spendId: computeSpendId(callId), arm, sharedBy, commit, repeat: repeatIndex, chunk: chunkIndex, pass, purpose,
     resolvedModel, recipient,
     usage: usage ? { input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0, output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0 } : null,
     costUsd: priced?.priced && !priced.unmeterable ? priced.totalUsd : null,
@@ -245,60 +247,8 @@ function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, r
 // this file's copy was byte-identical (flagged by `arch:duplicates`).
 
 // ── target-commit discovery ──────────────────────────────────────────────────
-
-/**
- * The audit-code units that already have a B/C shadow assignment — the paired
- * set the control must cover for an apples-to-apples comparison.
- *
- * `commit_sha` is HEAD at audit-capture time — the PARENT of a dirty-tree audit,
- * not the diff the arms actually read (see AGENTS.md's Postgres-Parity-Store
- * section). `audited_sha`/`audited_tree` (added 20260719120000) are the real
- * target identity. A row needs BOTH to be a usable audit unit, but a `WHERE ...
- * IS NOT NULL` filter and an in-process count of what it excluded are mutually
- * exclusive from one query (caught by the Gemini gate on this plan) — so this
- * relaxes to `OR`, dedups by `ar.id` (never by the identity columns, which a
- * partial-null row doesn't have yet), and partitions in JS.
- *
- * @returns {Promise<{resolved: {commitSha:string, auditedSha:string, auditedTree:string}[], unresolvedIncompleteIdentityCount: number}>}
- */
-/**
- * Partition raw `{commit_sha, audited_sha, audited_tree}` rows into usable
- * audit units vs. incomplete-identity rows, and dedup units by the COMPOSITE
- * `(audited_sha, audited_tree)` pair — never `audited_tree` alone, which would
- * collapse two genuinely different diffs that happen to land on the same
- * resulting tree from different starting HEADs (e.g. one run changing file
- * `f`, another changing `g`, both ending at tree `T`). Pure — no DB, no git —
- * so it is unit-testable without either.
- *
- * @param {{commit_sha:string, audited_sha:string|null, audited_tree:string|null}[]} rows
- * @returns {{resolved: {commitSha:string, auditedSha:string, auditedTree:string}[], unresolvedIncompleteIdentityCount: number}}
- */
-function partitionDiscoveredRows(rows) {
-  let unresolvedIncompleteIdentityCount = 0;
-  const seen = new Set();
-  const resolved = [];
-  for (const row of rows) {
-    if (!row.audited_sha || !row.audited_tree) { unresolvedIncompleteIdentityCount++; continue; }
-    const key = `${row.audited_sha}:${row.audited_tree}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    resolved.push({ commitSha: row.commit_sha, auditedSha: row.audited_sha, auditedTree: row.audited_tree });
-  }
-  return { resolved, unresolvedIncompleteIdentityCount };
-}
-
-async function discoverCommits() {
-  const { query } = await import('./lib/db/query.mjs');
-  const r = await query(
-    `SELECT DISTINCT ON (ar.id) ar.id, ar.commit_sha, ar.audited_sha, ar.audited_tree
-       FROM audit_findings f JOIN audit_runs ar ON ar.id = f.run_id
-      WHERE f.arm IN ('B','C') AND ar.stage_type = $1
-        AND (ar.audited_sha IS NOT NULL OR ar.audited_tree IS NOT NULL)
-      ORDER BY ar.id`,
-    [STAGE_TYPE],
-  );
-  return partitionDiscoveredRows(r.rows);
-}
+// The discovery SQL, the identity partition and the external-findings read live in lib/solo-control/store-queries.mjs.
+// `commit_sha` is HEAD at capture time (the PARENT of a dirty-tree audit); `(audited_sha, audited_tree)` is the real unit.
 
 /** Find which local repo root contains `sha` (as a real commit). */
 function locateCommit(sha) {
@@ -500,7 +450,7 @@ const JSON_RETRY_SUFFIX = '\n\nYour previous reply was not valid JSON. Reply wit
  * prompt shape. `reasoningEffort` null ⇒ omit `output_config` entirely (the
  * API default, `high`) so the pre-exp-5 solo-control:catchup request body
  * stays byte-identical. */
-async function runPass(client, model, passName, diff, { reasoningEffort = null } = {}) {
+async function runPass(client, model, passName, diff, { reasoningEffort = null, beforeRetry = null } = {}) {
   const { system, user } = buildColdPassPrompt(passName, diff);
   const maxTokens = reasoningEffort ? REASONING_TIERS.anthropic[reasoningEffort] : 8000;
   let lastErr = null;
@@ -508,6 +458,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null }
   let usageMissing = false; // a reply that reported no usage: the summed usage would be PARTIAL — null (unmeasured) beats a low price
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage)) return budgetStopMiss(usageMissing ? null : usage); // the retry is a SECOND paid call: re-check the budget with the first attempt's cost
     let resp;
     try {
       const params = {
@@ -567,7 +518,7 @@ function coldPassMiss(passName, lastErr, gotReply, usage, extra) {
  * guard is what verifies the repeats actually differed.
  * @param {import('openai').OpenAI} client - createOpenAIClient({oss:{baseURL,apiKey}}) pointed at DeepSeek
  */
-async function runDeepseekPass(client, model, passName, diff, { reasoningEffort = null } = {}) {
+async function runDeepseekPass(client, model, passName, diff, { reasoningEffort = null, beforeRetry = null } = {}) {
   const { system, user } = buildColdPassPrompt(passName, diff);
   // Thinking is on by default at `high`; a null tier leaves the provider default
   // in place but still sets the documented 64K ceiling (max_tokens spans
@@ -579,6 +530,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
   let usageMissing = false;
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage)) return budgetStopMiss(usageMissing ? null : usage, { systemFingerprint: lastFingerprint });
     let resp;
     const messages = [
       { role: 'system', content: system },
@@ -723,13 +675,13 @@ async function cmdRun() {
       const shadow = resolveShadowArmsWithToggle();
       if (!shadow.enabled) { log('arm-eval/shadow toggle is OFF — solo control no-op (use --force, --commits, or --corpus to run anyway).'); process.exit(0); }
     }
-    const discovered = await discoverCommits();
+    const discovered = await discoverCommits(STAGE_TYPE);
     unresolvedIncompleteIdentityCount = discovered.unresolvedIncompleteIdentityCount;
     units = discovered.resolved.map((u) => ({ mode: 'discovered', resumeKey: `${u.auditedSha}:${u.auditedTree}`, ...u }));
   }
   if (units.length === 0) { log('No target commits found (no B/C audit-code shadow units yet, or no corpus entries eligible for this recipient).'); process.exit(0); }
   if (unresolvedIncompleteIdentityCount > 0) {
-    log(`⚠ ${unresolvedIncompleteIdentityCount} B/C shadow row(s) have only one of audited_sha/audited_tree captured — excluded (unresolved-incomplete-identity), not audited.`);
+    log(`⚠ ${unresolvedIncompleteIdentityCount} B/C shadow row(s) lack audited_sha and/or audited_tree — excluded (unresolved-incomplete-identity), not audited.`);
   }
 
   // The -xN suffix disambiguates AUTO-DERIVED labels (S-sonnet vs S-sonnet-x3).
@@ -863,9 +815,10 @@ async function cmdRun() {
             recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep, resolvedModel: model, recipient, usage: null, state: 'provider-error' });
             break cells;
           }
+          const beforeRetry = (u) => retryBudgetVerdict(readLedger(CALL_LEDGER_PATH), budgetUsd, u, model, costFromUsage);
           const r = recipient === 'anthropic'
-            ? await runPass(anthropicClient, model, passName, chunk, { reasoningEffort })
-            : await runDeepseekPass(deepseekClient, model, passName, chunk, { reasoningEffort });
+            ? await runPass(anthropicClient, model, passName, chunk, { reasoningEffort, beforeRetry })
+            : await runDeepseekPass(deepseekClient, model, passName, chunk, { reasoningEffort, beforeRetry });
           if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
           if (r.rawText != null) rawTexts.push(r.rawText);
           // A provider error (no reply on any attempt) is an UNMEASURED cell, not a conformance miss: it must not
@@ -873,25 +826,21 @@ async function cmdRun() {
           if (r.providerError) providerErrorCells++;
           else { const cc = (commitConformance[passName] ||= { attempts: 0, misses: 0 }); cc.attempts++; if (r.conformanceMiss) cc.misses++; }
 
-          // DeepSeek fingerprint pin (plan §2/§8): `deepseek-flash` is an
-          // unversioned alias — the FIRST successful call this run seeds the
-          // manifest's pin (doubling as the "one preflight call"); every
-          // subsequent call is checked against it. A drift refuses just this
-          // cell (provider-error, findings discarded), never crashes the run
-          // or silently mixes two snapshots into one arm.
+          // DeepSeek fingerprint pin (plan §2/§8) — see fingerprintVerdict: the first fingerprint seeds the pin, a drifted OR
+          // missing one refuses just this cell (provider-error, findings discarded), never crashes the run or mixes snapshots.
           let cellState = r.providerError ? 'provider-error' : r.conformanceMiss ? 'conformance-miss' : 'ok';
-          if (recipient === 'deepseek' && r.systemFingerprint) {
-            if (!out.manifest.systemFingerprint) out.manifest.systemFingerprint = r.systemFingerprint;
-            else if (r.systemFingerprint !== out.manifest.systemFingerprint) {
-              log(`      ⚠ FINGERPRINT DRIFT on ${passName} chunk ${chunkIndex} rep ${rep}: manifest pinned "${out.manifest.systemFingerprint}", got "${r.systemFingerprint}" — refusing this cell, not mixing snapshots.`);
-              cellState = 'provider-error';
-              fingerprintDrift = true;
-            }
+          const fp = r.providerError ? { pin: out.manifest.systemFingerprint, refuse: null } : fingerprintVerdict({ recipient, pinned: out.manifest.systemFingerprint, got: r.systemFingerprint });
+          out.manifest.systemFingerprint = fp.pin;
+          if (fp.refuse) {
+            log(`      ⚠ FINGERPRINT ${fp.refuse === 'missing' ? 'MISSING' : 'DRIFT'} on ${passName} chunk ${chunkIndex} rep ${rep}: manifest pinned "${out.manifest.systemFingerprint}", got "${r.systemFingerprint ?? ''}" — refusing this cell, not mixing snapshots.`);
+            cellState = 'provider-error';
+            fingerprintDrift = true;
           }
           recordCall({
             arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep,
             resolvedModel: model, recipient, usage: r.usage, state: cellState,
           });
+          if (r.budgetStop) { budgetHit = budgetBreached(budgetUsd) || { spentUsd: 0, reason: 'unmeasured', unmeasured: 1, complete: false }; break cells; }
           if (cellState !== 'provider-error') findings.push(...r.findings);
         }
         if (repeats > 1) {
@@ -904,7 +853,7 @@ async function cmdRun() {
           if (seen.has(h)) continue;
           seen.add(h);
           out.findings.push({
-            commit: sha, repo: path.basename(root), model, pass: passName,
+            commit: sha, unitKey: unit.resumeKey, repo: path.basename(root), model, pass: passName,
             severity: f.severity, category: f.category, section: file,
             detail: f.detail, risk: f.risk, recommendation: f.recommendation,
             is_quick_fix: !!f.is_quick_fix, importance: f.importance ?? null, pre_existing: f.pre_existing ?? null, newly_reachable: f.newly_reachable ?? null, _dup: h,
@@ -1526,6 +1475,8 @@ async function cmdSonnetGeminiRetro() {
   for (const sha of commits) {
     const short = sha.slice(0, 8);
     const sonnetFindings = sonnetByCommit.get(sha) || [];
+    const base = baselineReviewCompleted(sonnetData, sha); // findings are not completion: a partial baseline holds findings too
+    if (!base.completed) { log(`  ${short}: S-sonnet review did not complete (latest state: ${base.state ?? 'none on record'}) — skipped, gemini net-new over a partial baseline is not a review`); out.perCommit.push({ sha, state: 'sonnet-baseline-incomplete', error: `S-sonnet latest state: ${base.state ?? 'none'}` }); continue; }
     if (sonnetFindings.length === 0) { log(`  ${short}: no S-sonnet baseline on record — skipped`); out.perCommit.push({ sha, state: 'no-sonnet-baseline' }); continue; }
     const root = locateCommit(sha);
     if (!root) { log(`  ${short}: NOT FOUND in any repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
@@ -1830,21 +1781,6 @@ async function cmdJudgeGpt() {
  * for the detail text (the view has no snapshot), deduped by (arm, canonical_id)
  * so re-audits of the same commit don't inflate an arm's count.
  */
-async function fetchExternalFindings(commits) {
-  const { query } = await import('./lib/db/query.mjs');
-  const r = await query(
-    `SELECT DISTINCT ON (v.commit_sha, v.arm, v.canonical_id)
-            v.commit_sha, v.arm, v.severity, v.outcome, v.canonical_id, v.finding_fingerprint,
-            af.category, af.primary_file, af.detail_snapshot AS detail
-       FROM model_ab_finding_scores v
-       LEFT JOIN audit_findings af
-              ON af.run_id = v.run_id AND af.finding_fingerprint = v.finding_fingerprint
-      WHERE v.stage_type = $1 AND v.commit_sha = ANY($2::text[]) AND v.arm IN ('A','B','C')
-      ORDER BY v.commit_sha, v.arm, v.canonical_id`,
-    [STAGE_TYPE, commits],
-  );
-  return r.rows;
-}
 
 async function cmdMerge() {
   // Re-running merge REPLACES the canonical sheet: hours of human labels, proofs and cluster edits vanish. Refuse before any (paid) clustering.
@@ -1908,7 +1844,7 @@ async function cmdMerge() {
   // Uniform blind rows. `detail` is truncated to ONE length for every arm so
   // verbosity/style can't leak arm identity (brainstorm: finding-style mismatch).
   const DETAIL_CAP = 220;
-  const ext = await fetchExternalFindings(commits);
+  const ext = await fetchExternalFindings(commits, STAGE_TYPE);
   const extACommits = new Set(ext.filter((e) => e.arm === 'A').map((e) => e.commit_sha));
 
   // Coverage preflight (§12.4 / R2-H1): a covered commit with NO apparatus (arm A)
@@ -2191,6 +2127,7 @@ async function cmdScore() {
   // for ANY arm from EVERY arm before scoring, so arms are compared on identical
   // commits (plan §3 "Execution contract"), and (2) hand decide() $/diff per arm
   // from the ledger, null-honest when any contributing row is unpriced.
+  const decisionStatus = decisionStatusFor({ coverage, invalid, highNeedingProof });
   let decision = null;
   if (hasFlag('decide')) {
     const rows = readLedger(CALL_LEDGER_PATH);
@@ -2220,14 +2157,14 @@ async function cmdScore() {
       ...verdict, ledger,
       cohort: { commitsScored: commits.length, kept: kept.length, dropped },
       partialFraction,
-      verdictBlocked: worstPartial > 0.10 ? `INCOMPLETE — ${(worstPartial * 100).toFixed(0)}% partial in at least one arm exceeds the 10% rule; the default may not change on this run` : null,
+      verdictBlocked: blockVerdictUnlessFinal(worstPartial > 0.10 ? `INCOMPLETE — ${(worstPartial * 100).toFixed(0)}% partial in at least one arm exceeds the 10% rule; the default may not change on this run` : null, decisionStatus),
     };
   }
 
   const report = {
     commitsCovered: commits.length,
     labelCoverage: +coverage.toFixed(2),
-    decisionStatus: decisionStatusFor({ coverage, invalid, highNeedingProof }),
+    decisionStatus,
     ...result,
     mediumSample: mediumSampleMeta ? { ...mediumSampleMeta, labeled: sampleRows.length, estimate: mediumEstimate } : null,
     lowVolumeByArm,

@@ -51,6 +51,12 @@ export const qualifyBatchCluster = (g, shortSha, batchIndex) => ({ ...g, cluster
 
 /** Label coverage: an INVALID label is not a label. */
 export const labelCoverage = ({ dataRows, unlabeled, invalid }) => (dataRows > 0 ? (dataRows - unlabeled - invalid) / dataRows : 0);
+/** A decision computed over an incomplete label set is a directional reading, not a verdict: fold a non-`final` status into
+ * `verdictBlocked` so a consumer reading `decision.verdictBlocked` cannot take the verdict while `decisionStatus` beside it says
+ * otherwise. Never clears an existing block. */
+export const blockVerdictUnlessFinal = (verdictBlocked, decisionStatus) => (decisionStatus === 'final'
+  ? verdictBlocked
+  : [verdictBlocked, `NOT FINAL — labels are incomplete or invalid, or a HIGH accepted finding lacks proof (decisionStatus=${decisionStatus}); this is a directional reading and the default may not change on it`].filter(Boolean).join('; '));
 export const decisionStatusFor = ({ coverage, invalid, highNeedingProof }) => (coverage >= 0.9 && invalid === 0 && highNeedingProof.length === 0 ? 'final' : 'directional-only');
 
 /** merge: split commits into covered / apparatus-gap. With the allow flag the

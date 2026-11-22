@@ -302,10 +302,18 @@ describe('CLI: every command that sends a diff consults the recipient policy (H1
   }));
   test('sonnet-gemini-retro', () => inTemp((dir) => {
     const out = path.join(dir, '.audit-loop/solo-control'); fs.mkdirSync(out, { recursive: true });
-    fs.writeFileSync(path.join(out, 'S-findings-S-sonnet.json'), JSON.stringify({ findings: [{ commit: HEAD, severity: 'HIGH', category: 'c', section: 's', detail: 'd' }] }));
+    fs.writeFileSync(path.join(out, 'S-findings-S-sonnet.json'), JSON.stringify({ perCommit: [{ sha: HEAD, state: 'ran' }], findings: [{ commit: HEAD, severity: 'HIGH', category: 'c', section: 's', detail: 'd' }] }));
     const r = cli(dir, ['sonnet-gemini-retro', '--commits', HEAD], refusingPolicy(dir));
     assert.match(r.out, /POLICY REFUSED/, r.out);
     assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'S-findings-SG-gemini-only.json'), 'utf8')).perCommit[0].state, 'policy-refused');
+  }));
+  test('sonnet-gemini-retro: a PARTIAL Sonnet baseline (findings, but its review did not complete) is not a baseline — skipped before any policy/spend (M10)', () => inTemp((dir) => {
+    const out = path.join(dir, '.audit-loop/solo-control'); fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'S-findings-S-sonnet.json'), JSON.stringify({ perCommit: [{ sha: HEAD, state: 'provider-error' }], findings: [{ commit: HEAD, severity: 'HIGH', category: 'c', section: 's', detail: 'd' }] }));
+    const r = cli(dir, ['sonnet-gemini-retro', '--commits', HEAD], refusingPolicy(dir));
+    assert.doesNotMatch(r.out, /POLICY REFUSED/, 'it never reached the policy check, let alone Gemini');
+    assert.match(r.out, /S-sonnet review did not complete/, r.out);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'S-findings-SG-gemini-only.json'), 'utf8')).perCommit[0].state, 'sonnet-baseline-incomplete');
   }));
   for (const engine of ['gpt', 'gemini']) {
     test(`solo-pass-retro --engine ${engine}`, () => inTemp((dir) => {

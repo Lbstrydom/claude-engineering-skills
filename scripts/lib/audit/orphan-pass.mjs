@@ -64,8 +64,11 @@ function orphanToStandardFinding(raw, idx) {
  *
  * **`headRef` must stay `'HEAD'` on a clean tree — this is not symmetry.**
  * `resolveDiffScope`'s working-tree branch builds changed files from
- * `git diff --name-status HEAD` ∪ untracked, against literal `HEAD`, **ignoring
- * `baseRef`** (diff-scope-resolver.mjs). On a clean tree that set is EMPTY, so
+ * `git diff --name-status <baseRef>` ∪ untracked (it used to diff literal `HEAD`
+ * and drop every commit between an older base and HEAD; fixed with
+ * tests/diff-scope-working-tree-base.test.mjs). On a clean tree, with base HEAD,
+ * that set is EMPTY. (With the fix an older base no longer empties it, but `'HEAD'`
+ * stays: the committed range is the unambiguous one and the tests pin it.) So
  * "audit my last commit" (`/cycle`: base `HEAD~1`, clean tree) would analyse
  * nothing and report a healthy zero. Always-`null` is therefore a regression
  * that reads as a pass; `tests/orphan-scope-refs.test.mjs` pins that direction

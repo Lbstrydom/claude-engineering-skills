@@ -191,3 +191,18 @@ export function resumeArmFile(prior, { force, rerun, fresh }) {
   const again = new Set(rerun);
   return { ...prior, findings: prior.findings.filter((f) => !again.has(f.commit)), perCommit: [...prior.perCommit] };
 }
+
+/**
+ * Did the review that produced `sha`'s findings in this run COMPLETE? The LATEST perCommit entry for the sha must be `ran`
+ * (resume appends, so a later success supersedes an earlier failure). Having findings is not completion: a run that billed
+ * three of five passes and then hit a provider error holds findings AND a non-`ran` state, and a baseline built on it is a
+ * partial one. No entry at all reads as not-completed — absence of a record is not a completed review.
+ * @param {{perCommit?: Array<{sha: string, state: string}>}|null} run
+ * @param {string} sha
+ * @returns {{completed: boolean, state: string|null}}
+ */
+export function baselineReviewCompleted(run, sha) {
+  let latest = null;
+  for (const c of run?.perCommit || []) if (c.sha === sha) latest = c;
+  return { completed: latest?.state === 'ran', state: latest?.state ?? null };
+}

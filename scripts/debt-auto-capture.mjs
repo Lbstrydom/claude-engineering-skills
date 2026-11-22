@@ -68,6 +68,7 @@ import { generateRepoProfile } from './lib/context.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
 import { compactRunKey } from './lib/run-key.mjs';
 import { finalReviewToLedgerEntries } from './lib/final-review/round-gate.mjs';
+import { manualToLedgerEntries } from './lib/debt-manual-entry.mjs';
 // Side-effecting import — populates the process-local writer registry
 // (`debt.entries` among others) the same way the orchestrator does. Without
 // it this CLI, run standalone, would find zero handlers and every write
@@ -80,6 +81,8 @@ function parseArgs(argv) {
   const args = {
     ledger: null,
     finalReview: null,          // gemini-review --out result JSON (alternative to --ledger)
+    add: false,                 // --add: ONE hand-authored entry (alternative to --ledger/--final-review)
+    manual: {},                 // --severity/--category/--file/--line/--detail/--rationale/--principle for --add
     reason: 'out-of-scope',     // default deferredReason
     blockedBy: undefined,
     followupPr: undefined,
@@ -99,6 +102,9 @@ function parseArgs(argv) {
     switch (argv[i]) {
       case '--ledger':          args.ledger         = argv[++i]; break;
       case '--final-review':    args.finalReview    = argv[++i]; break;
+      case '--add':             args.add            = true;      break;
+      case '--severity': case '--category': case '--file': case '--line': case '--detail': case '--rationale': case '--principle':
+        args.manual[argv[i].slice(2)] = argv[++i]; break;
       case '--reason':          args.reason         = argv[++i]; break;
       case '--blocked-by':      args.blockedBy      = argv[++i]; break;
       case '--followup-pr':     args.followupPr     = argv[++i]; break;
@@ -122,6 +128,7 @@ function usage() {
   console.log(`
 Usage: node scripts/debt-auto-capture.mjs --ledger <path> [options]
        node scripts/debt-auto-capture.mjs --final-review <gemini-result.json> [options]
+       node scripts/debt-auto-capture.mjs --add --severity HIGH|MEDIUM|LOW --category <c> --file <path> --detail <text> --rationale <text> [--line N] [--principle <p>] [options]
 
 Reads an adjudication ledger and captures all ruling=defer entries to
 .audit/tech-debt.json. Run after Step 3.5 and before Step 4.
@@ -131,6 +138,10 @@ Options:
   --final-review <path>  A gemini-review --out result: capture every NON-release-
                          blocking new_finding as debt (approved-with-debt close).
                          Release-blocking findings are listed, never captured.
+  --add                  File ONE hand-authored debt entry (no ledger needed). Same
+                         redaction, schema validation, local write and cloud sync as
+                         a ledger capture; --severity --category --file --detail
+                         --rationale are all required, nothing is defaulted or padded.
   --reason <r>           deferredReason for all entries (default: out-of-scope)
                          Choices: out-of-scope | blocked-by | deferred-followup
                                   accepted-permanent | policy-exception
@@ -651,14 +662,15 @@ async function main() {
 
   if (args.help) { usage(); return; }
 
-  if (!args.ledger === !args.finalReview) {
-    console.error('Error: exactly one of --ledger <path> or --final-review <path> is required');
+  if ([args.ledger, args.finalReview, args.add].filter(Boolean).length !== 1) {
+    console.error('Error: exactly one of --ledger <path>, --final-review <path> or --add is required');
     usage();
     process.exit(1);
   }
 
-  const ledgerPath = path.resolve(args.ledger ?? args.finalReview);
-  if (!fs.existsSync(ledgerPath)) {
+  // --add has no input file; the trail check only needs the directory the debt ledger lives in.
+  const ledgerPath = args.add ? path.resolve(path.dirname(DEFAULT_DEBT_LEDGER_PATH), 'manual-add') : path.resolve(args.ledger ?? args.finalReview);
+  if (!args.add && !fs.existsSync(ledgerPath)) {
     console.error(`Error: ${args.finalReview ? 'final-review result' : 'ledger'} not found: ${ledgerPath}`);
     process.exit(1);
   }
@@ -675,11 +687,17 @@ async function main() {
   }
 
   let adjLedger;
-  try {
-    adjLedger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-  } catch (err) {
-    console.error(`Error: failed to parse ledger: ${err.message}`);
-    process.exit(1);
+  if (args.add) {
+    const manual = manualToLedgerEntries(args.manual);
+    if (!manual.ok) { console.error(`Error: ${manual.error}`); process.exit(1); }
+    adjLedger = { entries: manual.entries };
+  } else {
+    try {
+      adjLedger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    } catch (err) {
+      console.error(`Error: failed to parse ledger: ${err.message}`);
+      process.exit(1);
+    }
   }
 
   if (args.finalReview) adjLedger = projectFinalReview(adjLedger);

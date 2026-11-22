@@ -13,7 +13,7 @@
  * @module scripts/lib/solo-control/ledger
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
@@ -32,8 +32,21 @@ export function computeCallId({ commit, purpose, pass, chunkIndex, repeatIndex, 
   return createHash('sha256').update([commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel].join('|')).digest('hex');
 }
 
+/** One id per PAID call (callId + a fresh nonce). callId is the cell's identity and is shared by design (a re-run or a
+ * shared-pass credit is "the same cell"), which is exactly why it cannot be the unit the BUDGET counts: a `--force` rerun or a
+ * resume that re-pays a cell is a second spend under the same callId. A row copied verbatim by a sharer keeps the payer's
+ * spendId, so a shared call is still ONE spend event. */
+export function computeSpendId(callId, nonce = randomUUID()) {
+  return createHash('sha256').update(`${callId}|${nonce}`).digest('hex');
+}
+
+/** What the budget counts a row as. A row with no spendId predates the field: it dedupes by callId as it always did (the
+ * stated limit in budgetVerdict), never as a distinct spend. */
+export const budgetKey = (r) => r.spendId ?? r.callId;
+
 export const LedgerRowSchema = z.object({
   callId: z.string(),
+  spendId: z.string().nullable().default(null),
   arm: z.string(),
   sharedBy: z.array(z.string()).nullable().default(null),
   commit: z.string(),
@@ -142,9 +155,9 @@ export function sharedPassCreditRows(rows, { commit, baseArm, label }) {
  *   spend, and callers must not compare it to the budget ceiling as if exact.
  */
 export function aggregateBudgetSpent(rows) {
-  const byCallId = new Map();
-  for (const r of rows) if (!byCallId.has(r.callId)) byCallId.set(r.callId, r);
-  const unique = [...byCallId.values()];
+  const bySpend = new Map();
+  for (const r of rows) if (!bySpend.has(budgetKey(r))) bySpend.set(budgetKey(r), r);
+  const unique = [...bySpend.values()];
   const complete = unique.every((r) => r.costUsd != null);
   const spentUsd = +unique.reduce((a, r) => a + (r.costUsd ?? 0), 0).toFixed(4);
   return { spentUsd, complete };
