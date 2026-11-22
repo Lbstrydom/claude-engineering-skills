@@ -1,6 +1,6 @@
 # Plan: AGENTS.md kernel shrink, staged (tripwire / pointer / dossier inventory)
 - **Date**: 2026-11-22
-- **Status**: In Progress
+- **Status**: In Progress — stages 1-4 done (the staged shrink pauses here); stage 5 NOT SCHEDULED, pending Louis
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; docs-only: `AGENTS.md` and one new reference doc; no code)
 - **Builds on**: `docs/research/checklist-pilot-2026-11.md` §Kernel size and §Decision item 4 (the 217-unit inventory it asked for)
@@ -365,6 +365,36 @@ worth doing is a decision for after stage 4, on measured numbers.
 - **Measured** (`fs.readFileSync('AGENTS.md','utf8').length`, LF): AGENTS.md **63893 → 63147 chars, −746 (−1.2%)** this stage;
   against pre-stage-1 main (73660) −10513 (−14.3%). The 35 units were 15173 chars (§7); 13 were shortened, a ~5% cut of the stage:
   most are tripwires whose clauses all stay. Expect stage 4 at the same order; the end state is nearer ~62K than 45-50K.
+
+### Stage 4 — 2026-11-22
+- **Pre check**: `relocation-check.mjs pre ... --stage 4` → 12 units, 0 problems (live AGENTS.md = main `5471ae5e`, no rebase).
+- **Frozen, untouched**: every gate-quoted unit (2, 3, 4, 6, 13-15, ...), every heading, the `ANCHORS` hosts (all 13 still resolve).
+- **Resident spec (every clause kept unless listed non-resident)**: Category A (derived or volatile provenance → gitignored; the example
+  list is shortened to four); Design right-sizing (both cliffs, the forcing question, a `defer` only as true scope boundary/debt);
+  scope by impact (the dependence test, the yellow flag, the independence naming incl. the same column/constraint/transaction instance,
+  `/plan` + `/audit-code` + `/audit-plan` Step 3); the unmeasured-round callout (INCOMPLETE ≠ clean, exit 3, `countFindings` one
+  predicate, 429 budgeted apart, `42P10` = schema drift); the four imperatives and the Dependencies table rows for zod, `@google/genai`
+  and dotenv verbatim (every row is a version tripwire). Non-resident (dossier): the `.audit-loop/cache/` and `scripts/.sync-manifest.json`
+  examples, the openai row's two PR numbers, the "bootstrap note" aside, the Architecture shortened prose.
+- **Edit**: 6 of 12 units shortened (5, 7, 16, 39, 43, 44), 6 kept verbatim (17, 35, 37, 38, 40, 41); the 12 units copied by script from `b52a77f1`
+  into the dossier (new `## Preamble` and `## Dependencies`, appended to `## Skill Chain`, `## Architecture` and the Mermaid section for unit 35's `---`).
+- **Gates and tests**: `post --stage 1/2/3/4` → 40/42/35/12 units, 0 problems; negative controls on scratch copies: a line of unit 43 deleted → `found 0x`,
+  exit 1; unit 44 pasted twice → `found 2x`, exit 1; a second `## Preamble` → `appears twice`, exit 1. `context:check`, `gates:check`,
+  `docs:refs:gate`, `skills:check`, `checklist:gen:check`, `skills:size:gate` exit 0. Every test file that names AGENTS.md (list built from the
+  filesystem, plus `check-docs-refs.test.mjs`): **3502 tests, 3494 pass, 8 skipped, 0 fail**.
+- **Measured** (`fs.readFileSync('AGENTS.md','utf8').length`, LF): AGENTS.md **63147 → 62545 chars, −602 (−1.0%)** this stage; against pre-stage-1 main
+  (73660) **−11115 (−15.1%)**. The 12 units were 5229 chars (§7); 6 were shortened. Cap untouched (79000).
+- **Code audit R1**: PASS H0 M0 L0, coverage complete (4 files); final gate (Gemini) round 1 **APPROVE**, gate `approve` (blocking 0, debt 0), Code: FULL. `guards:preflight` PASS (38 steps).
+
+### Closing note — what remains resident, and why (tripwire density)
+Four stages cut 15.1% (73660 → 62545), with the return shrinking each time (−7.1K, −2.1K, −0.7K, −0.6K): the first stage had dossier-class prose,
+the rest is nearly all **tripwires**, lines an agent that never opens the linked doc would otherwise get wrong, so almost every clause is
+load-bearing and survives shortening. What stays resident: (1) the 15 gate-quoted units (17.3K, frozen: `gates:check` quotes them
+word for word); (2) the Dependencies version rows and the store/backend/Azure invariants (empty-DSN air-gap, disposable-host allowlist,
+`42P10` schema-error rule, exit 3); (3) the consumer-sync rules (upstream-owned, never patch a synced copy); (4) the scope/design tests and the
+verification rules. The 10-15K target in §10 is **not reachable without stage 5 (gate re-pointing) AND a second pass that deletes tripwires**,
+which is a policy decision (is a rarely-needed tripwire worth its per-turn cost?) and Louis's call. Stage 5 is not scheduled. A separate PR
+may propose lowering the 79000 cap to the new size plus headroom (§6); that is also Louis's.
 
 ## 13. Relocation check source
 

@@ -6,6 +6,40 @@ Text moved out of [AGENTS.md](../../AGENTS.md) to cut the context every session 
 each section enforces still sits in AGENTS.md as a shortened tripwire: this file is the detail, not the rule. Where a topic
 doc exists, AGENTS.md links it; prefer it for anything newer than the stage that moved the text.
 
+## Preamble
+
+<!-- moved in stage 4, 2026-11-22 -->
+
+> - **A — derived from external/mutable state OR carrying volatile provenance
+>   (timestamps, HEAD shas) → gitignored.** Not source, and not a pure function of
+>   committed source: `.audit-loop/domain-deps-observed.json`, `.audit-loop/cache/`,
+>   `dashboard/*.html`, `scripts/.sync-manifest.json`, `docs/architecture-map.md`
+>   (regenerate with `npm run arch:render`), `skills.manifest.json`.
+
+> **Design right-sizing — the simplest structurally-honest solution.** At any
+> non-trivial fork, reject BOTH cliffs: the **band-aid** (patch the symptom or
+> defer the real fix *because it's harder*) and the **over-engineering** (an
+> abstraction / config / artifact no *current* requirement needs). Forcing
+> question: *"what's the band-aid, what's the over-built version, and why is mine
+> the smallest thing that's a true function of the problem?"* `/plan` and
+> `/audit-code` carry the full check; a `defer` is honest only as a true scope
+> boundary or documented debt, **never because the correct fix is larger**.
+>
+> **Scope is decided by impact, not authorship (load-bearing test).** The
+> companion failure mode: dismissing a finding as "out-of-scope / pre-existing /
+> not introduced by this change" when the change being shipped actually *depends*
+> on the cited path. Authorship and plan-ownership are the wrong test; **impact**
+> is the right one — *does the correctness or stability of what I'm shipping ride
+> on this path?* If yes it is in-scope **for the fix/defer decision** even when
+> pre-existing, and a silent defer is the band-aid. A pre-existing finding in a
+> *changed* file is a yellow flag, and passing tests don't clear it — a green
+> suite only covers exercised paths. Legitimate `defer` requires naming the
+> **independence** (the new code does not call/depend on the cited path), not the
+> authorship; for a same-file finding, that the cited code does not share the SAME
+> column/constraint or the SAME transaction instance the new code depends on —
+> sharing a table or a broader boundary is not sufficient. `/audit-code` (Step 3)
+> and `/audit-plan` (Step 3) enforce this.
+
 ## Browser Tool Setup (persona-test)
 
 <!-- moved in stage 1, 2026-11-22; rebased to 4ba6c280 (#450 rewrote this unit before stage 1 merged) -->
@@ -17,6 +51,10 @@ doc exists, AGENTS.md links it; prefer it for anything newer than the stage that
 <!-- moved in stage 1, 2026-11-22 -->
 
 **Interactive**: call **`mcp__mermaid__generate_mermaid_diagram`** with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with line/column, no API key. **Pre-push**: `npm run plans:lint` (in `check`) scans `docs/plans/*.md` for what the parser accepts but stricter renderers reject — **ERROR `subgraph-as-edge-endpoint`** (anchor the edge to a node *inside* the subgraph) blocks; **WARN `unquoted-special-chars-in-label`** (write `ID["..."]` when a label has `<br/>` or non-ASCII) is advisory. Registration and rule-coverage rationale: [mcp-tooling.md](../../docs/runbooks/mcp-tooling.md).
+
+<!-- moved in stage 4, 2026-11-22 -->
+
+---
 
 ## Model Resolution
 
@@ -566,6 +604,29 @@ Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants) a
 the naming convention: [`skill-roster.md`](../../docs/reference/skill-roster.md) — read
 it before renaming a skill or "simplifying" a wave.
 
+<!-- moved in stage 4, 2026-11-22 -->
+
+> **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A round that lost
+> every pass to Azure 429s printed `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 —
+> one word from a clean audit, and the convergence test reads only those three
+> numbers, so `/cycle` converges and ships. Pinned: `formatAuditSummaryLine`
+> refuses the counts-first shape for INCOMPLETE; `openai-audit.mjs` sets **exit 3**
+> (1 already means "the CLI errored"); `countFindings` folds INCOMPLETE into its
+> `failed` flag, so ONE predicate answers "is this round evidence". 429 is budgeted
+> apart from a generic transient (`retryAttemptsFor`/`nextRetryDelayMs`), and
+> `describeLostWrites` flags a `42P10`-shaped error as **store schema drift**.
+> [Detail](../../docs/reference/audit-internals.md)
+
+**Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
+wave must be declared in `MECHANICAL_WAVES` ([audit-shadow.mjs](../../scripts/lib/audit-shadow.mjs)),
+or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid**
+comparison. **(2)** `classifySelector` ([selector-policy.mjs](../../scripts/lib/ux-lock/selector-policy.mjs))
+is ux-lock's **single** policy oracle — never add a second classifier.
+**(3)** persona-consistency's `expectedContradictions.max` is loosenable — treat
+raising it like deleting a test. **(4)** visual-audit's scope firewall: *include a
+check only if you can assert it on a computed style without knowing what the page
+is FOR* — signifiers in, affordance judgments out (those are persona-test's).
+
 ## Consumer-repo layout (isolation)
 
 <!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
@@ -750,6 +811,22 @@ empty/failed capture degrades to `unverified`, never "verified / 0 findings".
 return green without having checked anything?"*
 → [`pre-ship-empirical-verify.md`](../../docs/runbooks/pre-ship-empirical-verify.md).
 
+<!-- moved in stage 4, 2026-11-22 -->
+
+**Do not hand-maintain a module tree here** — [`docs/architecture-map.md`](../../docs/architecture-map.md)
+is the live, generated per-symbol index (bootstrap note at the top of this file);
+an inline tree goes stale silently, the one removed 2026-07-13 listing 2 test
+files against 100+ real. Layout in one line: `scripts/*.mjs` are CLI entry points,
+`scripts/lib/**` focused modules (split from the former `shared.mjs` monolith,
+still a backwards-compatible barrel), `tests/` the Node test-runner suite, and
+`.claude/skills/**` is generated from `skills/**`.
+
+Per-module prose (openai-audit, gemini-review, the learning-store barrel) and the
+named patterns (adaptive sizing, semantic dedup, atomic persistence, the closed
+Gemini loop, …) live in
+[`audit-internals.md`](../../docs/reference/audit-internals.md) — condensed out
+2026-07-20 having already rotted, exactly what the rule above prevents.
+
 ## Sensitive paths + VCS contract (canonical locations)
 
 <!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
@@ -817,3 +894,14 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 - **Verify what the consumer receives, not what the producer sent.** `/ship`
   Step 6.8; `unverified` must name a concrete blocked prerequisite, never a bare
   "not applicable".
+
+## Dependencies (CRITICAL — check versions before flagging issues)
+
+<!-- moved in stage 4, 2026-11-22 -->
+
+| Package | Version | Notes |
+|---------|---------|-------|
+| `zod` | **4.6.7** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
+| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged, live-verified on the 7.8.0 + zod 4.5.2 bump (2026-09-03); zod 4.6.5 (#115) and 4.6.7 (#294) are CI-verified only |
+| `@google/genai` | ^2.19.0 | `responseMimeType: 'application/json'` + `responseSchema` for structured output |
+| `dotenv` | 17.4.2 | Load via `lib/load-env.mjs`, never `dotenv/config` (cwd-only) |
