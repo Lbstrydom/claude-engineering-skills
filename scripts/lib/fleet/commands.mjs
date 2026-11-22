@@ -19,7 +19,7 @@ import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
 import { missingToolingWarning } from './bundle-stamp.mjs';
 import {
-  runGit, headOf, listWorktrees, tipSubject, repoToplevel,
+  runGit, headOf, listWorktrees, tipSubject, repoToplevel, changedFiles,
 } from './git-facts.mjs';
 import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
 import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts.mjs';
@@ -27,6 +27,7 @@ import {
   broadClaimPatterns, claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
 import { eolFlipLines, eolFlips, eolJson } from './eol-flips.mjs';
+import { sharedSurfaceLine, sharedSurfaceTouched, testsLoadingAt } from './shared-surface.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
 import {
@@ -652,12 +653,21 @@ export function cmdReady(ctx, flags) {
   // Checks opted into `runIn: ["ready"]` run BEFORE the mark, outside the lock (slow, consumer-owned).
   const gate = readyChecks({ cwd: ctx.cwd, config: ctx.config, session: peek, oid, baseOid: readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null });
   const gateLines = gate.findings.map((f) => `  ${f.level}: ${f.message}`);
-  // Advisory (never blocks): files whose CRLF/LF endings flipped bury the real change (fleet feedback #7).
-  const eol = eolFlips(ctx.cwd, readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null, oid);
   if (gate.blocks) {
     const reason = `${gate.blocks} — ${id} was NOT marked ready`;
     return refused(reason, { checks: gate.results, text: [`REFUSED: ${reason}`, ...gateLines].join('\n') });
   }
+  // Advisory (never blocks): files whose CRLF/LF endings flipped bury the real change (fleet feedback #7).
+  const eol = eolFlips(ctx.cwd, readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null, oid);
+  // Advice only (`ready` carries no test evidence): a branch that changes shared test files should run the fast tier first.
+  const baseForShared = readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null;
+  const sharedDiff = baseForShared ? changedFiles(ctx.cwd, baseForShared, oid) : { queried: false, files: [] };
+  const shared = sharedDiff.queried ? sharedSurfaceTouched(sharedDiff.files, ctx.config.sharedSurfaces) : [];
+  const sharedReach = shared.length ? testsLoadingAt(ctx.cwd, oid, shared) : null;
+  const sharedChecked = sharedDiff.queried;
+  // An unmeasured diff is SAID: an empty `touched` must never read as "checked, nothing shared".
+  const sharedLine = sharedChecked ? sharedSurfaceLine(shared, ctx.config.sharedSurfaces, ctx.cmd, sharedReach)
+    : (ctx.config.sharedSurfaces?.globs?.length === 0 ? null : `note: shared test files were not checked (${baseForShared ? sharedDiff.reason ?? 'the changed files could not be read' : 'base not measured'})`);
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id);
     if (!cur || isTerminalState(cur.state)) return { gone: true };
@@ -680,7 +690,7 @@ export function cmdReady(ctx, flags) {
   const deferred = fullSuiteOf(ctx) === 'train';
   const suiteLine = deferred ? [`full suite: deferred to the train (.fleet.json fullSuite: "train") — \`${ctx.cmd} land\` is its one full-suite run; your plan's test log says "${FULL_SUITE_LOG_LINE}"`] : [];
   const landingLine = landingOf(ctx) === 'rollup' ? [landingRollupLine(ctx.cmd)] : [];
-  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), eol: eolJson(eol), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...eolFlipLines(eol), ...pushLine, ...suiteLine, ...landingLine].join('\n') });
+  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), eol: eolJson(eol), sharedSurface: { checked: sharedChecked, touched: shared, run: ctx.config.sharedSurfaces?.run ?? null, ...(sharedReach ? { tests: sharedReach.ok ? sharedReach.tests : null, unread: sharedReach.ok ? sharedReach.unread : null, testsUnavailable: sharedReach.ok ? null : sharedReach.reason } : {}) }, text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...eolFlipLines(eol), ...(sharedLine ? [sharedLine] : []), ...pushLine, ...suiteLine, ...landingLine].join('\n') });
 }
 
 /**

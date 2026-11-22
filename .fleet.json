@@ -22,5 +22,19 @@
     "dashboard/**",
     "test-results/**",
     "scripts/.sync-manifest.json"
-  ]
+  ],
+  "sharedSurfaces": {
+    "globs": [
+      "tests/helpers/**",
+      "tests/fixtures/**",
+      "scripts/gate-contracts/**",
+      ".test-tiers.json",
+      "scripts/lib/fleet/contracts.mjs"
+    ],
+    "run": [
+      "npm",
+      "run",
+      "guards:preflight"
+    ]
+  }
 }
