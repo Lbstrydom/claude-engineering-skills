@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileOverlap } from './overlap.mjs';
-import { parseImports, resolveSpecifier } from '../module-graph.mjs';
+import { RESOLVABLE_EXTENSIONS, parseImports, resolveSpecifier } from '../module-graph.mjs';
 import { runGit } from './git-facts.mjs';
 import { printable } from './eol-flips.mjs';
 import { renderCommand } from './shell-quote.mjs';
@@ -63,8 +63,9 @@ export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null) {
 
 /** At most this many test files are named in the recommendation; the count is exact. */
 export const REACH_NAME_CAP = 10;
-const TEST_FILE = /\.test\.(mjs|js|cjs)$/;
-const isScript = (f) => /\.(mjs|js|cjs)$/.test(f);
+// What the import parser understands, from the graph module's own list (never a second spelling): every resolvable extension but JSON.
+const isScript = (f) => RESOLVABLE_EXTENSIONS.some((e) => e !== '.json' && f.endsWith(e));
+const isTestFile = (f) => isScript(f) && /\.test\.[^./]+$/.test(f);
 /** Skipped wholesale: vendored or generated trees that are never part of a test's reach. */
 const NOT_SOURCE = /^(node_modules|\.git|\.claude|\.audit|dashboard)\//;
 
@@ -106,7 +107,7 @@ export function testsLoading(touched, { repoFiles, readFile }) {
     const t = queue.shift();
     for (const imp of importersOf.get(t) ?? []) { reached.add(imp); seed(imp); }
   }
-  return { tests: [...reached].filter((f) => TEST_FILE.test(f)).sort(), unread };
+  return { tests: [...reached].filter(isTestFile).sort(), unread };
 }
 
 /** The same, from a checkout: `git ls-files` for the file list and the working tree for the text. */
