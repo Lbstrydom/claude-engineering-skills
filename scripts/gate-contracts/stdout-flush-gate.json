@@ -6,7 +6,7 @@
     {
       "id": "stdout-flush-gate-detects-a-new-undrained-exit",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#exit-after-stdout-must-drain",
+      "statedIn": "AGENTS.md",
       "stated": "An exit that stdout can reach must drain first",
       "implementation": "scripts/check-stdout-flush.mjs",
       "tests": [

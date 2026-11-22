@@ -6,7 +6,7 @@
     {
       "id": "own-model-coverage-gate-rejects-a-config-with-no-scan-boundary",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#own-model-capture-column-coverage",
+      "statedIn": "AGENTS.md",
       "stated": "A capture column with no coverage entry is a column nobody will notice stops filling.",
       "implementation": "scripts/own-model-coverage.mjs",
       "tests": [

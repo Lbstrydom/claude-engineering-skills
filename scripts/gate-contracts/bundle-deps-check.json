@@ -6,7 +6,7 @@
     {
       "id": "bundle-deps-check-compares-the-derived-set",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#generated-artifact-bundle-deps",
+      "statedIn": "AGENTS.md",
       "stated": "`npm run bundle:deps` / `bundle:deps:check`",
       "implementation": "scripts/generate-bundle-deps.mjs",
       "tests": ["tests/upstream-triage-2026-09-07.test.mjs", "tests/gate-poison-pills.test.mjs"],

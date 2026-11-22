@@ -6,7 +6,7 @@
     {
       "id": "plans-index-check-compares-rendered-content",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#generated-artifact-plans-index",
+      "statedIn": "AGENTS.md",
       "stated": "status-bucketed plans index (`plans:index` / `plans:index:check`)",
       "implementation": "scripts/generate-plans-index.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

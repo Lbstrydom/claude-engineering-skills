@@ -6,7 +6,7 @@
     {
       "id": "upstream-coverage-gate-detects-an-unresolvable-probe-disposition",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#upstream-report-disposition-resolves",
+      "statedIn": "AGENTS.md",
       "stated": "npm run upstream:coverage:gate",
       "implementation": "scripts/check-upstream-probe-coverage.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

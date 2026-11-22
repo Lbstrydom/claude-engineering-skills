@@ -6,7 +6,7 @@
     {
       "id": "parity-coupling-rejects-new-schema-qualification",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#migrations-schema-portable",
+      "statedIn": "AGENTS.md",
       "stated": "`parity:check-coupling` fails on any `<schema>.`",
       "implementation": "scripts/postgres-parity/check-non-core-references.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

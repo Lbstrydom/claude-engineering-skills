@@ -6,7 +6,7 @@
     {
       "id": "help-readonly-gate-rejects-a-cli-that-runs-on-help",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#cli-help-is-a-pure-read",
+      "statedIn": "AGENTS.md",
       "stated": "npm run help:readonly:gate",
       "implementation": "scripts/check-help-readonly.mjs",
       "tests": [

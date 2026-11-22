@@ -6,7 +6,7 @@
     {
       "id": "windowed-views-gate-rejects-an-undeclared-windowed-view",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#windowed-view-declares-its-window",
+      "statedIn": "AGENTS.md",
       "stated": "A figure compared over time is a trend only if the population is stable.",
       "implementation": "scripts/check-windowed-views.mjs",
       "tests": [

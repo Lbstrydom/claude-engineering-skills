@@ -6,7 +6,7 @@
     {
       "id": "skills-size-ratchet-rejects-growth-past-the-baseline",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#skill-markdown-size-ratchet",
+      "statedIn": "AGENTS.md",
       "stated": "Skill markdown may not grow",
       "implementation": "scripts/skill-size-ratchet.mjs",
       "tests": [

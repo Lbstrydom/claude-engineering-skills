@@ -57,7 +57,15 @@ Per-entry evidence (the `pass` rows a Cluster F test would require): `docs/resea
 
 Contested calls: the size-ratchet gate (kernel), and three selectable calls with caveats (help-readonly breadth, context-check, bundle-deps blind spot) are annotated in the rows above.
 
-**Other consumers of the 27 sentences, and their state after the migration** (all checked):
+**Contracts are NOT repointed during the pilot (2026-11-22, coordinator, on review of the PR).** Moving a contract's
+`statedIn` to the checklist while AGENTS.md still carries the sentence would leave that AGENTS.md sentence unprotected: anyone
+could edit it with no gate noticing, which the gate rule counts as a loosening. So all 26 contracts keep `statedIn: AGENTS.md`;
+each checklist entry carries the sentence verbatim and its `gateContract` backlink, and `tests/checklist-controls.test.mjs`
+pins that (entry and contract agree, the contract still cites AGENTS.md, the sentence is still in AGENTS.md). A contract
+repoints to `.audit-loop/checklist.json#<id>` only in the commit that removes its sentence from AGENTS.md (the future shrink
+plan). The schema support for that spelling stays, unused, with its tests.
+
+**Other consumers of the 27 sentences** (all checked; the bullets below describe the schema support, which the pilot does not use):
 
 - `npm run gates:check` (`scripts/check-gate-contracts.mjs`): green. The shared per-gate validator in `scripts/lib/gate-honesty/schema.mjs` now admits `.audit-loop/checklist.json#<id>`, requires the entry to exist, to name the gate back and carry the same `stated`, and reads `stated` from the entry's `check` text. `loader.mjs` and `check-gate-contracts.mjs` needed no edit (both call the shared validator).
 - `npm run skills:check`: green (it runs `gates:check`). `npm run gates:poison`: unaffected (the pills run the gate implementations, not the prose).

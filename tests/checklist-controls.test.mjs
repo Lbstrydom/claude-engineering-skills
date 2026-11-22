@@ -66,39 +66,26 @@ test('the instrument is seen to fail: a broken control and a match-everything tr
   assert.equal(negativeStaysSilent(greedy), false, 'a trigger that matches everything must fail its negative');
 });
 
-describe('the gate-contract migration is bound in both directions', () => {
-  const contractFiles = [
-    ...fs.readdirSync(path.join(REPO, 'scripts', 'gate-contracts')).filter((f) => f.endsWith('.json') && !f.startsWith('_')).map((f) => `scripts/gate-contracts/${f}`),
-    ...fs.readdirSync(path.join(REPO, 'skills')).map((d) => `skills/${d}/gate-contract.json`).filter((f) => fs.existsSync(path.join(REPO, f))),
-  ];
-  const citing = []; // [{file, gate}]
-  for (const file of contractFiles) {
-    for (const gate of JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')).gates ?? []) {
-      if (checklistRefId(gate.statedIn ?? '') !== null) citing.push({ file, gate });
-    }
-  }
+describe('pilot: each gate-backed entry mirrors its contract, and the contract still protects the sentence in AGENTS.md', () => {
+  // While the pilot runs, the sentence lives in BOTH places. Its gate contract keeps statedIn AGENTS.md (moving it would
+  // un-protect a sentence AGENTS.md still carries: a loosening). The contract repoints to the checklist only when the
+  // sentence leaves AGENTS.md, in the same commit (docs/research/checklist-pilot-2026-11.md, Decision).
+  const agents = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8');
+  const backed = loaded.entries.filter((x) => x.gateContract);
 
-  test('some contracts have migrated (the pilot moved the selectable sentences)', () => {
-    assert.ok(citing.length > 0);
+  test('the pilot carries gate-backed entries (vacuous-pass guard)', () => {
+    assert.ok(backed.length > 0);
   });
 
-  test('every contract citing the checklist has an entry that names it back, carrying the same `stated` in its check', () => {
-    for (const { file, gate } of citing) {
-      const id = checklistRefId(gate.statedIn);
-      const entry = loaded.entries.find((e) => e.id === id);
-      assert.ok(entry, `${file}#${gate.id} cites checklist entry ${id}, which does not exist`);
-      assert.equal(entry.gateContract, `${file}#${gate.id}`);
-      assert.equal(entry.stated, gate.stated);
-      assert.ok(entry.check.includes(gate.stated));
-    }
-  });
-
-  test('every entry that claims a gate contract is cited by exactly that gate', () => {
-    for (const e of loaded.entries.filter((x) => x.gateContract)) {
+  test('every gate-backed entry names a real gate whose stated sentence it carries verbatim, and the gate still cites AGENTS.md', () => {
+    for (const e of backed) {
       const [file, gateId] = e.gateContract.split('#');
       const gate = (JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')).gates ?? []).find((g) => g.id === gateId);
       assert.ok(gate, `${e.id}: ${e.gateContract} names no such gate`);
-      assert.equal(gate.statedIn, `.audit-loop/checklist.json#${e.id}`, `${e.id}: the contract still cites ${gate.statedIn}`);
+      assert.equal(e.stated, gate.stated, `${e.id}: stated drifted from its contract`);
+      assert.ok(e.check.includes(gate.stated), `${e.id}: check does not carry the stated sentence`);
+      assert.equal(gate.statedIn, 'AGENTS.md', `${e.id}: the contract must keep protecting the AGENTS.md sentence during the pilot`);
+      assert.ok(agents.includes(gate.stated), `${e.id}: the sentence is no longer in AGENTS.md`);
     }
   });
 });

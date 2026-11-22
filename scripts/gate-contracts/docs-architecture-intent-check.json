@@ -6,7 +6,7 @@
     {
       "id": "architecture-intent-check-detects-an-undocumented-domain",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#architecture-intent-domain-roster",
+      "statedIn": "AGENTS.md",
       "stated": "This doc + `.audit-loop/domain-map.json` together enforce",
       "implementation": "scripts/check-architecture-intent-drift.mjs",
       "tests": [

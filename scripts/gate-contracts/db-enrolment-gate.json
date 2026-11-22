@@ -6,7 +6,7 @@
     {
       "id": "db-enrolment-gate-detects-a-suite-no-runner-names",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#db-suite-two-edit-enrolment",
+      "statedIn": "AGENTS.md",
       "stated": "npm run db:enrolment:gate",
       "implementation": "scripts/check-db-suite-enrolment.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

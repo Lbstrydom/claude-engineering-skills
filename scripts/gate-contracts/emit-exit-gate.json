@@ -6,7 +6,7 @@
     {
       "id": "emit-exit-gate-detects-a-new-declared-opt-out",
       "kind": "executable",
-      "statedIn": ".audit-loop/checklist.json#emit-softfail-opt-out",
+      "statedIn": "AGENTS.md",
       "stated": "npm run emit:exit:gate",
       "implementation": "scripts/check-emit-exit-agreement.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],
