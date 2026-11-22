@@ -73,8 +73,27 @@ describe('pilot: each gate-backed entry mirrors its contract, and the contract s
   const agents = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8');
   const backed = loaded.entries.filter((x) => x.gateContract);
 
-  test('the pilot carries gate-backed entries (vacuous-pass guard)', () => {
-    assert.ok(backed.length > 0);
+  test('EVERY AGENTS.md-stated gate except the one kernel gate has exactly one entry naming it back (no silent drop)', () => {
+    const KERNEL = new Set([
+      'size-ratchet-rejects-growth-past-the-baseline', // inventory: kernel - its trigger is a file attribute
+      'checklist-gen-check-detects-a-hand-edit',      // the checklist's OWN freshness gate (added with it), not an inventoried tripwire
+    ]);
+    const files = [
+      ...fs.readdirSync(path.join(REPO, 'scripts', 'gate-contracts')).filter((f) => f.endsWith('.json') && !f.startsWith('_')).map((f) => `scripts/gate-contracts/${f}`),
+      ...fs.readdirSync(path.join(REPO, 'skills')).map((d) => `skills/${d}/gate-contract.json`).filter((f) => fs.existsSync(path.join(REPO, f))),
+    ];
+    const expected = [];
+    for (const file of files) {
+      for (const g of JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')).gates ?? []) {
+        if (g.statedIn === 'AGENTS.md' && !KERNEL.has(g.id)) expected.push(`${file}#${g.id}`);
+      }
+    }
+    assert.ok(expected.length >= 26, `census found only ${expected.length} AGENTS.md-stated gates`);
+    for (const ref of expected) {
+      const n = backed.filter((e) => e.gateContract === ref).length;
+      assert.equal(n, 1, `${ref}: ${n} checklist entries name this gate (expected exactly 1)`);
+    }
+    assert.equal(backed.length, expected.length, 'an entry names a gate outside the census');
   });
 
   test('every gate-backed entry names a real gate whose stated sentence it carries verbatim, and the gate still cites AGENTS.md', () => {
