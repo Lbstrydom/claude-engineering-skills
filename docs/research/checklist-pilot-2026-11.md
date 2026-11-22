@@ -167,10 +167,10 @@ The instrument is frozen at this commit. Anything that decides a figure is pinne
 | Part | File | sha256 |
 |---|---|---|
 | Checklist | `.audit-loop/checklist.json` | `8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d` |
-| Matcher | `scripts/lib/checklist/match.mjs` | `1cb66a51aa50c5eaffe26807a855090beda4ca2ffab852fa192db078c2770b28` |
-| Scoring code | `scripts/lib/checklist/pilot.mjs` | `42880cd8725c485ab8c050a9cdf6de751046367c4c552f8923b9076286cbbb35` |
+| Matcher | `scripts/lib/checklist/match.mjs` | `6528b057e49c7279224bd9e14e15ad61bfac58c1618659c05775ccb1e0a6ccfb` |
+| Scoring code | `scripts/lib/checklist/pilot.mjs` | `b79b4d7d4d84f1f82a22c508be8b4d23da2baedcbeb1ab460fef1479fd3346f4` |
 
-**Instrument change recorded before the re-test (round-2 audit fixes, same day):** the matcher (`match.mjs`) and the scoring code (`pilot.mjs`) changed after the first freeze; the checklist did not. Matcher: rename paths decoded like headers, code-point-safe path decoding, a hunk that disagrees with its `@@` counts is refused, containment by path segment. Scoring: relative `outDir` resolved against the repo, `--confirmation` verifies the checklist it was given. Frozen hashes before and after: checklist unchanged (`8a6555dd12b0`), matcher `7b58d81d5507` to `1cb66a51aa50`, scoring `4f3b957b1e60` to `42880cd8725c`. No confirmation window had been run, so nothing was invalidated.
+**Instrument change recorded before the re-test (round-2 audit fixes, same day):** the matcher (`match.mjs`) and the scoring code (`pilot.mjs`) changed after the first freeze; the checklist did not. Matcher: rename paths decoded like headers, code-point-safe path decoding, a hunk that disagrees with its `@@` counts is refused, containment by path segment. Scoring: relative `outDir` resolved against the repo, `--confirmation` verifies the checklist it was given. Frozen hashes before and after: checklist unchanged (`8a6555dd12b0`), matcher `7b58d81d5507` to `1cb66a51aa50`, scoring `4f3b957b1e60` to `42880cd8725c`. **Round 3 (same day, before any confirmation run):** the matcher pins its own `git diff` to `a/` `b/` headers and refuses any other prefix in a supplied diff, refuses a malformed hunk header, and reports a binary record or a NUL-bearing untracked file as INCOMPLETE; the scoring code pins the same prefixes in its replay diffs and records an INCOMPLETE PR on its row instead of aborting. Hashes after round 3: checklist unchanged (`8a6555dd12b0`), matcher `6528b057e49c`, scoring `b79b4d7d4d84`. No confirmation window had been run, so nothing was invalidated.
 
 **Confirmation (a later task, not run here):** replay the PRs merged AFTER the freeze lands on main, with `--confirmation`, and judge median <= 5 and max <= 12 on both entries fired and checks per PR. Editing any of the three ends the freeze: update the constants and this table together and start a new confirmation window after the new freeze.
 
@@ -185,6 +185,7 @@ Round-1 audit findings about trigger COVERAGE. They are deferred on purpose: cha
 - M8: `provider-route-not-env-var` matches the negated key check but not a positive `ANTHROPIC_API_KEY` read.
 - M18: `generated-skills-copy-never-hand-edited` covers `.claude/skills/**` but not `scripts/.claude-skills/**`.
 - M19: the generator embeds trigger symbols, patterns and control examples in `gen.mjs`, so editing it fires many unrelated entries.
+- M2 (round 3): the narrowed frontmatter trigger matches `^(name|description):`, so an edit to a continuation line under an existing `description: |` block does not fire it.
 - M20: `generated-artifact-bundle-deps` names the artifact, generator and entry lists, not a new import elsewhere in the bundle.
 
 Dismissed: H1 (`round-signals.mjs` belongs to Cluster D, not yet on main) and M21-M26 (adjacency-enumeration notices).

@@ -95,7 +95,10 @@ function parseGitHeader(rest) {
     }
     if (a === undefined) { const m = /^(a\/.+) (b\/.+)$/.exec(rest); [a, b] = m ? [m[1], m[2]] : [rest, rest]; }
   }
-  return [norm(a.replace(/^a\//, '')), norm(b.replace(/^b\//, ''))];
+  // Only the `a/` `b/` prefixes are understood. A diff written with `diff.noprefix` or `diff.mnemonicPrefix` (`c/` `w/` ...) would
+  // otherwise be mis-parsed silently, so it is refused.
+  if (!a.startsWith('a/') || !b.startsWith('b/')) throw new DiffParseError(`unsupported diff path prefixes in header: ${JSON.stringify(rest.slice(0, 60))} (only a/ and b/ are understood)`);
+  return [norm(a.slice(2)), norm(b.slice(2))];
 }
 
 /** A patch whose hunk bodies do not match their `@@` counts (truncated, or mangled): refused, never read as fewer lines. */
@@ -144,11 +147,12 @@ export function parseUnifiedDiff(text) {
     else if (cur && line.startsWith('deleted file mode')) cur.status = 'deleted';
     else if (cur && line.startsWith('rename from ')) { cur.oldPath = plainOrQuoted(line.slice('rename from '.length)); cur.status = 'renamed'; } else if (cur && line.startsWith('rename to ')) cur.path = plainOrQuoted(line.slice('rename to '.length));
     else if (cur && /^[+ -]/.test(line)) throw new DiffParseError(`diff body line outside any hunk (extra lines past the @@ counts?): ${JSON.stringify(line.slice(0, 40))}`);
-    else if (cur && line.startsWith('@@')) {
+    else if (line.startsWith('@@')) {
       const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
-      remOld = m ? Number(m[1] ?? 1) : 0;
-      remNew = m ? Number(m[2] ?? 1) : 0;
-    }
+      if (!m || !cur) throw new DiffParseError(`malformed hunk header: ${JSON.stringify(line.slice(0, 60))}`); // counts are never defaulted
+      remOld = Number(m[1] ?? 1);
+      remNew = Number(m[2] ?? 1);
+    } else if (cur && (line.startsWith('Binary files ') || line === 'GIT binary patch')) cur.binary = true;
   }
   if (remOld > 0 || remNew > 0) throw new DiffParseError('truncated patch: a hunk ends before its @@ counts are met');
   for (const f of files) { delete f.fromGit; delete f.sawHeaders; }
@@ -202,7 +206,8 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
   if (!range.ok) return { ok: false, code: 'UNRESOLVABLE_BASE', message: range.message };
   let text;
   try {
-    text = execFileSync('git', ['-c', 'core.quotepath=false', 'diff', '--find-renames', '--no-ext-diff', '--no-textconv', '--unified=0', range.base], {
+    // Pinned so a developer's ~/.gitconfig (diff.noprefix, diff.mnemonicPrefix) cannot change the header shape the parser reads.
+    text = execFileSync('git', ['-c', 'core.quotepath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', 'diff', '--find-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0', range.base], {
       cwd, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], env: sanitizeGitEnv(cwd),
     });
   } catch (e) {
@@ -226,8 +231,11 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
     const got = readContained(cwd, rel);
     if (got.skip === 'outside-repo') excluded.push({ path: norm(rel), reason: got.skip });
     else if (got.skip) incomplete.push({ path: norm(rel), reason: got.skip });
-    files.push({ path: norm(rel), oldPath: null, status: 'added', added: got.body !== undefined && !got.body.includes('\0') ? got.body.split('\n') : [], removed: [] });
+    const binary = got.body !== undefined && got.body.includes('\0');
+    if (binary) incomplete.push({ path: norm(rel), reason: 'binary' }); // patterns cannot see a NUL-bearing file's lines
+    files.push({ path: norm(rel), oldPath: null, status: 'added', added: got.body !== undefined && !binary ? got.body.split('\n') : [], removed: [] });
   }
+  for (const f of files.filter((x) => x.binary)) incomplete.push({ path: f.path, reason: 'binary' });
   return { ok: true, files, base: range.base, incomplete, excluded };
 }
 
@@ -343,6 +351,7 @@ export function matchChecklist({ entries, files, diffPath, base, purpose, cwd = 
         throw e;
       }
       if (text.trim() && diffFiles.length === 0) return { ok: false, code: 'DIFF_UNPARSEABLE', message: `--diff ${diffPath} parsed to zero file records: not a unified diff` };
+      for (const f of diffFiles.filter((x) => x.binary)) incomplete.push({ path: f.path, reason: 'binary' });
     } else {
       const got = collectGitDiff({ base, cwd });
       if (!got.ok) return got;

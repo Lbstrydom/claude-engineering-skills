@@ -69,18 +69,19 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
   // Only "no parent" is a root; any other git failure throws (it must not read as a root and diff against the empty tree).
   const parentOf = (sha) => { const [, parent] = git('rev-list', '--parents', '-n', '1', sha).trim().split(/\s+/); return parent ?? '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; };
   const replay = (sha) => {
-    const diff = git('-c', 'core.quotepath=false', 'diff', '--find-renames', '--no-ext-diff', '--no-textconv', '--unified=0', parentOf(sha), sha);
+    const diff = git('-c', 'core.quotepath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', 'diff', '--find-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0', parentOf(sha), sha);
     const patch = path.join(outDir, `${sha.slice(0, 10)}.patch`);
     fs.writeFileSync(patch, diff);
     const r = matchChecklist({ entries, diffPath: patch, purpose: 'replay', cwd: repoRoot, logPath, runId: `replay-${sha.slice(0, 10)}` });
-    if (!r.ok) throw new Error(`${sha}: ${r.message}`);
-    return { fired: r.fired, files: parseUnifiedDiff(diff).length };
+    // An INCOMPLETE evaluation (a binary file) is a measurement the PR could not get, said on its row; any other failure aborts the replay.
+    if (!r.ok && r.code !== 'INCOMPLETE') throw new Error(`${sha}: ${r.message}`);
+    return { fired: r.fired, files: parseUnifiedDiff(diff).length, incomplete: r.incomplete ?? [] };
   };
 
   const checksOf = new Map(entries.map((e) => [e.id, e.checks ?? 1]));
   const perPr = prs.map((w) => {
     const r = replay(w.sha);
-    return { ...w, files: r.files, firedCount: r.fired.length, checkCount: r.fired.reduce((n, f) => n + checksOf.get(f.id), 0), fired: r.fired.map((f) => ({ id: f.id, via: f.via })) };
+    return { ...w, files: r.files, incomplete: r.incomplete, firedCount: r.fired.length, checkCount: r.fired.reduce((n, f) => n + checksOf.get(f.id), 0), fired: r.fired.map((f) => ({ id: f.id, via: f.via })) };
   });
   const counts = perPr.map((p) => p.firedCount);
   const checkCounts = perPr.map((p) => p.checkCount);
@@ -99,6 +100,7 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
     // "Individual checks a reviewer must perform" per PR: an entry counts `checks` (default 1), so merging entries cannot lower it.
     checks: { median: median(checkCounts), max: Math.max(...checkCounts), min: Math.min(...checkCounts), distribution: [...checkCounts].sort((a, b) => a - b), thresholds: { median: 5, max: 12 } },
     perPr, entryRows,
+    incompletePrs: perPr.filter((p) => p.incomplete.length).map((p) => p.pr),
     neverFired: entryRows.filter((e) => e.firedOnCount === 0).map((e) => e.id),
     _replay: replay, _git: git,
   };

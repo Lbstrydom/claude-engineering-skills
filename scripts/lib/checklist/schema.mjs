@@ -82,6 +82,25 @@ export const ChecklistFileSchema = z.object({
 });
 
 /**
+ * Walk `file` component by component from `repoRoot`. `absent` only when some component simply does not exist and no symlink on
+ * the way is broken; a dangling symlink ANYWHERE on the path (an ancestor included) is `dangling`, never an empty checklist.
+ *
+ * @returns {'exists'|'absent'|'dangling'|'error'}
+ */
+function pathState(repoRoot, file) {
+  let cur = path.resolve(repoRoot);
+  for (const comp of path.relative(cur, path.resolve(repoRoot, file)).split(path.sep).filter(Boolean)) {
+    cur = path.join(cur, comp);
+    let st;
+    try { st = fs.lstatSync(cur); } catch (e) { return e.code === 'ENOENT' ? 'absent' : 'error'; }
+    if (st.isSymbolicLink()) {
+      try { fs.realpathSync(cur); } catch (e) { return e.code === 'ENOENT' ? 'dangling' : 'error'; }
+    }
+  }
+  return 'exists';
+}
+
+/**
  * Read and validate a checklist. Absent file is the supported empty state; a present-but-broken file is an error the caller
  * must surface, never an empty result (an unasked question must not render as "nothing matched").
  *
@@ -92,9 +111,10 @@ export function loadChecklist({ repoRoot = process.cwd(), file = CHECKLIST_PATH,
   const abs = path.resolve(repoRoot, file);
   // ENOENT means an empty checklist ONLY for the default path with nothing there at all (lstat: a dangling symlink IS something).
   // A missing explicit path, or a link that points nowhere, is an error, never an empty result.
-  let linkExists = true;
-  try { fs.lstatSync(abs); } catch (e) { if (e.code === 'ENOENT') linkExists = false; }
-  if (!linkExists) {
+  const state = pathState(repoRoot, file);
+  if (state === 'dangling') return { ok: false, error: `${file} is, or sits under, a symlink that points nowhere` };
+  if (state === 'error') return { ok: false, error: `${file} could not be inspected` };
+  if (state === 'absent') {
     return explicit ? { ok: false, error: `${file} does not exist (explicit --checklist path)` } : { ok: true, entries: [], absent: true };
   }
   let raw;
