@@ -365,7 +365,7 @@ of 44390039181 (`'<path>'` vs `'<msgfile>'`, 11-18) is a different symptom, not 
   The audit pipeline calls `matchChecklist({files, diffPath})` in-process with the same `--files` / `--diff` it
   already receives, so the audit and the CLI share one matcher and one input.
 - **Gate contracts move with their sentence — but not all of them (R1 H6).** The phase's first artefact is an
-  **inventory** (`docs/research/checklist-pilot-2026-11.md` (planned) §Inventory): each of the 26 `statedIn: AGENTS.md`
+  **inventory** (`docs/research/checklist-pilot-2026-11.md` §Inventory): each of the 26 `statedIn: AGENTS.md`
   sentences is classed `selectable` (a path/symbol trigger exists and the rule only matters when it fires) or `kernel`
   (applies to every change). `kernel` sentences stay in AGENTS.md with their contract untouched. Each `selectable` one
   moves into a checklist entry's `check` text **in the same PR**, its contract's `statedIn` becomes
@@ -457,7 +457,7 @@ Production files the root cause lands in are added to this list when §2.1a is w
 **Phase 5 — Checklist pilot** (item 5, first half): Files: `.audit-loop/checklist.json` (create), `scripts/checklist.mjs` (create),
 `scripts/lib/checklist/match.mjs` (create), `scripts/lib/checklist/schema.mjs` (create),
 `tests/checklist-controls.test.mjs` (create), `tests/checklist-match.test.mjs` (create), `scripts/check-gate-contracts.mjs`
-(modify), `scripts/lib/gate-honesty/schema.mjs` (modify — `statedIn` closed policy admits `.audit-loop/checklist.json#<id>` and verifies the id exists; final gate G2), `scripts/lib/gate-honesty/loader.mjs` (modify), `docs/reference/gate-honesty.md` (modify), `scripts/gate-contracts/*.json` (modify), `skills/audit-code/SKILL.md` (modify), `docs/research/checklist-pilot-2026-11.md` (planned) (create).
+(modify), `scripts/lib/gate-honesty/schema.mjs` (modify — `statedIn` closed policy admits `.audit-loop/checklist.json#<id>` and verifies the id exists; final gate G2), `scripts/lib/gate-honesty/loader.mjs` (modify), `docs/reference/gate-honesty.md` (modify), `scripts/gate-contracts/*.json` (modify), `skills/audit-code/SKILL.md` (modify), `docs/research/checklist-pilot-2026-11.md` (create).
 
 **Phase 6 — Shrink AGENTS.md to the kernel** (item 5, second half): Files: `AGENTS.md` (modify), `scripts/check-context-drift.mjs` (modify —
 the cap LOWERS to the kernel's size + headroom; lowering is a tightening).

@@ -1,0 +1,3491 @@
+{
+  "plan": "docs/plans/verification-lessons.md section 2.5 / 7b Phase 5",
+  "tip": "9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6",
+  "inventory": [
+    {
+      "n": 1,
+      "gate": "anthropic-pin-gate-detects-an-unpinned-system-call",
+      "contract": "scripts/gate-contracts/anthropic-pin-gate.json",
+      "class": "selectable",
+      "entry": "anthropic-pin-unserviceable-param"
+    },
+    {
+      "n": 2,
+      "gate": "bundle-deps-check-compares-the-derived-set",
+      "contract": "scripts/gate-contracts/bundle-deps-check.json",
+      "class": "selectable",
+      "entry": "generated-artifact-bundle-deps"
+    },
+    {
+      "n": 3,
+      "gate": "context-check-rejects-missing-agents-import",
+      "contract": "scripts/gate-contracts/context-check.json",
+      "class": "selectable",
+      "entry": "context-check-agents-md-size"
+    },
+    {
+      "n": 4,
+      "gate": "db-enrolment-gate-detects-a-suite-no-runner-names",
+      "contract": "scripts/gate-contracts/db-enrolment-gate.json",
+      "class": "selectable",
+      "entry": "db-suite-two-edit-enrolment"
+    },
+    {
+      "n": 5,
+      "gate": "architecture-intent-check-detects-an-undocumented-domain",
+      "contract": "scripts/gate-contracts/docs-architecture-intent-check.json",
+      "class": "selectable",
+      "entry": "architecture-intent-domain-roster"
+    },
+    {
+      "n": 6,
+      "gate": "docs-synced-links-gate-rejects-a-relative-link-that-leaves-the-closure",
+      "contract": "scripts/gate-contracts/docs-synced-links-gate.json",
+      "class": "selectable",
+      "entry": "synced-markdown-relative-links"
+    },
+    {
+      "n": 7,
+      "gate": "emit-exit-gate-detects-a-new-declared-opt-out",
+      "contract": "scripts/gate-contracts/emit-exit-gate.json",
+      "class": "selectable",
+      "entry": "emit-softfail-opt-out"
+    },
+    {
+      "n": 8,
+      "gate": "gitignore-policy-rejects-undeclared-rules",
+      "contract": "scripts/gate-contracts/gitignore-policy-gate.json",
+      "class": "selectable",
+      "entry": "gitignore-rule-declares-why"
+    },
+    {
+      "n": 9,
+      "gate": "help-readonly-gate-rejects-a-cli-that-runs-on-help",
+      "contract": "scripts/gate-contracts/help-readonly-gate.json",
+      "class": "selectable",
+      "entry": "cli-help-is-a-pure-read"
+    },
+    {
+      "n": 10,
+      "gate": "mcp-parity-rejects-missing-dash-y",
+      "contract": "scripts/gate-contracts/mcp-parity-gate.json",
+      "class": "selectable",
+      "entry": "mcp-config-mirrored"
+    },
+    {
+      "n": 11,
+      "gate": "own-model-coverage-gate-rejects-a-config-with-no-scan-boundary",
+      "contract": "scripts/gate-contracts/own-model-coverage-gate.json",
+      "class": "selectable",
+      "entry": "own-model-capture-column-coverage"
+    },
+    {
+      "n": 12,
+      "gate": "parity-coupling-rejects-new-schema-qualification",
+      "contract": "scripts/gate-contracts/parity-check-coupling.json",
+      "class": "selectable",
+      "entry": "migrations-schema-portable"
+    },
+    {
+      "n": 13,
+      "gate": "plans-index-check-compares-rendered-content",
+      "contract": "scripts/gate-contracts/plans-index-check.json",
+      "class": "selectable",
+      "entry": "generated-artifact-plans-index"
+    },
+    {
+      "n": 14,
+      "gate": "requirements-map-check-compares-rendered-content",
+      "contract": "scripts/gate-contracts/requirements-map-check.json",
+      "class": "selectable",
+      "entry": "generated-artifact-requirements-map"
+    },
+    {
+      "n": 15,
+      "gate": "size-ratchet-rejects-growth-past-the-baseline",
+      "contract": "scripts/gate-contracts/size-ratchet-gate.json",
+      "class": "kernel",
+      "entry": null
+    },
+    {
+      "n": 16,
+      "gate": "skills-check-detects-hand-edited-generated-copy",
+      "contract": "scripts/gate-contracts/skills-check.json",
+      "class": "selectable",
+      "entry": "generated-skills-copy-never-hand-edited"
+    },
+    {
+      "n": 17,
+      "gate": "skills-check-detects-shared-reference-drift",
+      "contract": "scripts/gate-contracts/skills-check.json",
+      "class": "selectable",
+      "entry": "skill-reference-summary-byte-match"
+    },
+    {
+      "n": 18,
+      "gate": "skills-check-detects-over-budget-description",
+      "contract": "scripts/gate-contracts/skills-check.json",
+      "class": "selectable",
+      "entry": "skill-frontmatter-description-budget"
+    },
+    {
+      "n": 19,
+      "gate": "skills-check-detects-indented-frontmatter-key",
+      "contract": "scripts/gate-contracts/skills-check.json",
+      "class": "selectable",
+      "entry": "skill-frontmatter-indented-key-inert"
+    },
+    {
+      "n": 20,
+      "gate": "skills-consumer-refs-gate-rejects-an-undeclared-unreachable-pointer",
+      "contract": "scripts/gate-contracts/skills-consumer-refs-gate.json",
+      "class": "selectable",
+      "entry": "synced-skill-content-reachable-refs"
+    },
+    {
+      "n": 21,
+      "gate": "skills-size-ratchet-rejects-growth-past-the-baseline",
+      "contract": "scripts/gate-contracts/skills-size-gate.json",
+      "class": "selectable",
+      "entry": "skill-markdown-size-ratchet"
+    },
+    {
+      "n": 22,
+      "gate": "stdout-flush-gate-detects-a-new-undrained-exit",
+      "contract": "scripts/gate-contracts/stdout-flush-gate.json",
+      "class": "selectable",
+      "entry": "exit-after-stdout-must-drain"
+    },
+    {
+      "n": 23,
+      "gate": "upstream-coverage-gate-detects-an-unresolvable-probe-disposition",
+      "contract": "scripts/gate-contracts/upstream-coverage-gate.json",
+      "class": "selectable",
+      "entry": "upstream-report-disposition-resolves"
+    },
+    {
+      "n": 24,
+      "gate": "visual-contract-doc-drift-detected",
+      "contract": "scripts/gate-contracts/visual-contract-doc-gate.json",
+      "class": "selectable",
+      "entry": "visual-contract-doc-example-drift"
+    },
+    {
+      "n": 25,
+      "gate": "windowed-views-gate-rejects-an-undeclared-windowed-view",
+      "contract": "scripts/gate-contracts/windowed-views-gate.json",
+      "class": "selectable",
+      "entry": "windowed-view-declares-its-window"
+    },
+    {
+      "n": 26,
+      "gate": "worktree-preflight-rejects-skill-without-marker",
+      "contract": "scripts/gate-contracts/worktree-preflight-gate.json",
+      "class": "selectable",
+      "entry": "worktree-documented-command-reachable"
+    },
+    {
+      "n": 27,
+      "gate": "tiered-shadow-window-honesty",
+      "contract": "skills/audit-code/gate-contract.json",
+      "class": "selectable",
+      "entry": "tiered-shadow-window-epoch-gated"
+    }
+  ],
+  "counts": {
+    "gates": 27,
+    "selectable": 26,
+    "kernel": 1,
+    "planSaid": 26
+  },
+  "thresholds": {
+    "median": 5,
+    "max": 12
+  },
+  "noise": {
+    "v1PilotWindow": {
+      "median": 3,
+      "max": 13,
+      "distribution": [
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        4,
+        5,
+        5,
+        7,
+        7,
+        7,
+        8,
+        8,
+        9,
+        11,
+        11,
+        11,
+        12,
+        13
+      ]
+    },
+    "v2PilotWindowTunedOnIt": {
+      "median": 2.5,
+      "max": 10,
+      "distribution": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        4,
+        4,
+        5,
+        6,
+        6,
+        7,
+        7,
+        7,
+        9,
+        9,
+        10,
+        10
+      ]
+    },
+    "v1HeldOut": {
+      "median": 3,
+      "max": 15,
+      "distribution": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        3,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        4,
+        5,
+        5,
+        6,
+        7,
+        9,
+        12,
+        12,
+        13,
+        15
+      ]
+    },
+    "v2HeldOutConfirmation": {
+      "median": 2,
+      "max": 14,
+      "distribution": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        3,
+        4,
+        4,
+        5,
+        7,
+        9,
+        10,
+        10,
+        11,
+        14
+      ]
+    }
+  },
+  "windows": {
+    "pilot": {
+      "newest": {
+        "pr": 442,
+        "date": "2026-11-22"
+      },
+      "oldest": {
+        "pr": 410,
+        "date": "2026-11-20"
+      }
+    },
+    "heldOut": {
+      "newest": {
+        "pr": 409,
+        "date": "2026-11-20"
+      },
+      "oldest": {
+        "pr": 380,
+        "date": "2026-11-17"
+      }
+    }
+  },
+  "incidentReplay": [
+    {
+      "entry": "cli-entry-guard-is-isinvokedasscript",
+      "sha": "82b63557",
+      "subject": "refactor(cli): route every entry guard through isInvokedAsScript (#236)",
+      "fired": true,
+      "via": [
+        "path",
+        "pattern"
+      ],
+      "firedCount": 16
+    },
+    {
+      "entry": "disposable-db-allowlist",
+      "sha": "0e7c63be",
+      "subject": "fix(db): close AUDIT_DB_TEST_URL safety gap after a production wipe incident",
+      "fired": true,
+      "via": [
+        "path",
+        "symbol"
+      ],
+      "firedCount": 3
+    },
+    {
+      "entry": "canonicalize-eol-before-hashing",
+      "sha": "97988499",
+      "subject": "fix(skills): the sync check hashed raw bytes, so git and the gate disagreed on \"same file\"",
+      "fired": true,
+      "via": [
+        "path",
+        "symbol",
+        "pattern"
+      ],
+      "firedCount": 4
+    },
+    {
+      "entry": "anthropic-pin-unserviceable-param",
+      "sha": "3dabb3f3",
+      "subject": "fix(anthropic): throw and pin — a backend must not accept a call it cannot honour (#360)",
+      "fired": true,
+      "via": [
+        "path",
+        "symbol"
+      ],
+      "firedCount": 6
+    },
+    {
+      "entry": "provider-route-not-env-var",
+      "sha": "3dabb3f3",
+      "subject": "fix(anthropic): throw and pin — a backend must not accept a call it cannot honour (#360)",
+      "fired": true,
+      "via": [
+        "symbol",
+        "pattern"
+      ],
+      "firedCount": 6
+    },
+    {
+      "entry": "jsonb-write-seam",
+      "sha": "48611728",
+      "subject": "fix(db): jsonb-safe write seam + persistence code-audit pass",
+      "fired": true,
+      "via": [
+        "path",
+        "symbol"
+      ],
+      "firedCount": 4
+    },
+    {
+      "entry": "durable-write-registration",
+      "sha": "72e0a0ef",
+      "subject": "feat(durable-write): the writer registry, and the constraint it could not run without",
+      "fired": true,
+      "via": [
+        "path",
+        "symbol"
+      ],
+      "firedCount": 2
+    },
+    {
+      "entry": "durable-write-registration",
+      "sha": "1019d519",
+      "subject": "feat(durable-write): Cluster B — the four writes stop being fire-and-forget",
+      "fired": true,
+      "via": [
+        "path",
+        "symbol"
+      ],
+      "firedCount": 3
+    },
+    {
+      "entry": "exit-after-stdout-must-drain",
+      "sha": "9c104381",
+      "subject": "fix(azure): make azure:routes terminate, and share the primitive that does it",
+      "fired": true,
+      "via": [
+        "path",
+        "pattern"
+      ],
+      "firedCount": 3
+    },
+    {
+      "entry": "prompt-seed-and-mechanical-wave",
+      "sha": "6dedaca0",
+      "subject": "exp5: fix four pre-spend blockers + a fifth found underneath, set reasoning effort",
+      "fired": true,
+      "via": [
+        "symbol"
+      ],
+      "firedCount": 4
+    },
+    {
+      "entry": "tiered-shadow-window-epoch-gated",
+      "sha": "a584540c",
+      "subject": "fix(audit): epoch-gate shadow windows; make the final-review A/B actually record",
+      "fired": true,
+      "via": [
+        "symbol"
+      ],
+      "firedCount": 6
+    },
+    {
+      "entry": "domain-retag-both-directions",
+      "sha": "d5e66d35",
+      "subject": "refactor(arch): shared-lib no longer depends UP on four feature domains",
+      "fired": true,
+      "via": [
+        "path"
+      ],
+      "firedCount": 2
+    },
+    {
+      "entry": "domain-retag-both-directions",
+      "sha": "a146bb7b",
+      "subject": "chore(arch): close out the command-registry migration — cross-skill-bridge domain",
+      "fired": true,
+      "via": [
+        "path"
+      ],
+      "firedCount": 2
+    }
+  ],
+  "kernel": {
+    "agentsMdChars": 73364,
+    "units": 217,
+    "entries": 39,
+    "unitsHostingAMovedSentence": 27,
+    "unanchored": [],
+    "removalUpperBoundChars": 23991,
+    "removalLowerBoundChars": 12253,
+    "kernelRemainingMin": 49373,
+    "kernelRemainingMax": 61111,
+    "target": [
+      10000,
+      15000
+    ]
+  },
+  "perPrV2Pilot": [
+    {
+      "sha": "9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6",
+      "date": "2026-11-22",
+      "subject": "feat(fleet): release ends the turn, broad-claim warning + verified narrow directive, stale ready-mark pruning (fleet feedback #1, #2, #9) (#442)",
+      "pr": 442,
+      "files": 20,
+      "firedCount": 6,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "88cd976c762786094ab7ee51596805e3505106e4",
+      "date": "2026-11-21",
+      "subject": "feat(audit): Important/Nit/Pre-existing finding tags and per-stage recall (verification-lessons Phase 3) (#441)",
+      "pr": 441,
+      "files": 34,
+      "firedCount": 10,
+      "fired": [
+        {
+          "id": "generated-artifact-bundle-deps",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "prompt-seed-and-mechanical-wave",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "529b1209e0105b94694f636fa96fcea99a7245b7",
+      "date": "2026-11-21",
+      "subject": "feat(upstream): upstream report --export renders a sanitized Markdown block for hand-carrying (field report 3, phase 5) (#440)",
+      "pr": 440,
+      "files": 7,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "upstream-report-disposition-resolves",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "d0e9c13935dad302ceeb9c2b5d4cbcb320b4683f",
+      "date": "2026-11-21",
+      "subject": "feat(telemetry): run the analysis at the consumer — synced own-model coverage, telemetry-export --report (field report 3, phases 3-4) (#439)",
+      "pr": 439,
+      "files": 21,
+      "firedCount": 7,
+      "fired": [
+        {
+          "id": "generated-artifact-bundle-deps",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "own-model-capture-column-coverage",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "tiered-shadow-window-epoch-gated",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path",
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "47148350ea66d1ba1d916ece744eec0bb59e2e8f",
+      "date": "2026-11-21",
+      "subject": "feat(gate-provenance): judge gates from the base in observe mode (verification-lessons Phase 2) (#438)",
+      "pr": 438,
+      "files": 18,
+      "firedCount": 4,
+      "fired": [
+        {
+          "id": "architecture-intent-domain-roster",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "canonicalize-eol-before-hashing",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "domain-retag-both-directions",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "74464405c83020089c352f9aea8da75cf380447e",
+      "date": "2026-11-21",
+      "subject": "feat(stores): policy-private consumers show as unreachable-by-policy; every store verdict states its population (field report 3, phases 1-2) (#434)",
+      "pr": 434,
+      "files": 28,
+      "firedCount": 7,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "own-model-capture-column-coverage",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "upstream-report-disposition-resolves",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "tiered-shadow-window-epoch-gated",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "canonicalize-eol-before-hashing",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "f0e9c56498edd937e301178155fadef7925695c1",
+      "date": "2026-11-21",
+      "subject": "fix(fleet): train ids never collide; a second build in the same second redraws instead of refusing (#437)",
+      "pr": 437,
+      "files": 6,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "26b1890f89d2ef912b822400cb6728921f602259",
+      "date": "2026-11-21",
+      "subject": "fix(ci): a rerun diagnoses, never clears; root-cause three CI-only flakes (#433)",
+      "pr": 433,
+      "files": 24,
+      "firedCount": 7,
+      "fired": [
+        {
+          "id": "context-check-agents-md-size",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "19e21e74b5b6f8accf4ea5e18f987fe864b63bf3",
+      "date": "2026-11-21",
+      "subject": "fix(cli): --help is read-only on every CLI; consumer skills:hydrate works from a fresh worktree (fleet feedback #3, #8) (#436)",
+      "pr": 436,
+      "files": 77,
+      "firedCount": 9,
+      "fired": [
+        {
+          "id": "context-check-agents-md-size",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "architecture-intent-domain-roster",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "migrations-schema-portable",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        },
+        {
+          "id": "upstream-report-disposition-resolves",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "domain-retag-both-directions",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "c525061ed58a094fecce3831036169e9c7a87f04",
+      "date": "2026-11-21",
+      "subject": "fix(audit): an explicit --base beside --files is recorded as _diffBase (#435)",
+      "pr": 435,
+      "files": 3,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "abdea8ea3dc9c35e5ef7376c16cb833e8cf0976a",
+      "date": "2026-11-21",
+      "subject": "fix(skills): allowed-tools check folds both sides to the source layout, so consumers stop failing cycle/plan/ship (#432)",
+      "pr": 432,
+      "files": 2,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "6680c81952fe7f5ae07c9fe4bc7e55d2987e4b4f",
+      "date": "2026-11-21",
+      "subject": "fix(arch-memory): one verified reader for both paths, post-open recheck narrows the admission-to-read race (#431)",
+      "pr": 431,
+      "files": 8,
+      "firedCount": 3,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sensitive-paths-single-oracle",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "18fb4383304420594f246340bbc47633e769ac28",
+      "date": "2026-11-21",
+      "subject": "fix(solo-control): re-audit of #421 — judge identity in-row, decide cohort, --out containment, merge label safety (#429)",
+      "pr": 429,
+      "files": 9,
+      "firedCount": 3,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "f5d74cbecc6e588836f7c650190a45216d735157",
+      "date": "2026-11-21",
+      "subject": "feat(telemetry): export triggers, guarded --push, doctor overdue probe (plan Phase 3) (#430)",
+      "pr": 430,
+      "files": 10,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "upstream-report-disposition-resolves",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "37cae3c8eb7fda0c73fc2df726b13437b67b8398",
+      "date": "2026-11-21",
+      "subject": "feat(telemetry): CES-side reader with four-state rendering (plan Phase 2) (#427)",
+      "pr": 427,
+      "files": 12,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "c15d4899de69db4fc83b9340890b1403cbf2f156",
+      "date": "2026-11-21",
+      "subject": "feat(model-eval): adjudicated expect_clean scoring (falseClaims/realDefects/nits) and re-curated corpus marks (#426)",
+      "pr": 426,
+      "files": 9,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "1b76fb5cad4793945bde68754008486349459d4a",
+      "date": "2026-11-21",
+      "subject": "feat(telemetry): redacted telemetry-export/v1 written to a drop directory (plan Phase 1) (#422)",
+      "pr": 422,
+      "files": 15,
+      "firedCount": 6,
+      "fired": [
+        {
+          "id": "generated-artifact-bundle-deps",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "architecture-intent-domain-roster",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "domain-retag-both-directions",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "86eb5cb25ce5100c0f59d11b8606e37d98f9e309",
+      "date": "2026-11-21",
+      "subject": "fix(arch): a failed coverage read is not 'not measured' (#425)",
+      "pr": 425,
+      "files": 6,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "schema-error-is-not-empty-result",
+          "via": [
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "09e34aa9202d51382fbb4bb5fdfc52bed03f5297",
+      "date": "2026-11-21",
+      "subject": "fix(solo-control): pre-existing defects found by #413's audit (policy on every egress path, unpriced budget, provider errors, CSV, pairing, resume identity) (#421)",
+      "pr": 421,
+      "files": 15,
+      "firedCount": 5,
+      "fired": [
+        {
+          "id": "anthropic-pin-unserviceable-param",
+          "via": [
+            "symbol",
+            "pattern"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        },
+        {
+          "id": "prompt-seed-and-mechanical-wave",
+          "via": [
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "9356566d8b29b3c0280a22da01f9cac8051a038e",
+      "date": "2026-11-20",
+      "subject": "feat(arch-memory): index Python — ast helper behind the same egress gate, honest coverage when no interpreter (#419)",
+      "pr": 419,
+      "files": 38,
+      "firedCount": 9,
+      "fired": [
+        {
+          "id": "architecture-intent-domain-roster",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sensitive-paths-single-oracle",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path",
+            "symbol"
+          ]
+        },
+        {
+          "id": "domain-retag-both-directions",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "fc164dd554012f52381739a557e958fe3aae3c19",
+      "date": "2026-11-20",
+      "subject": "fix(stores): report a down store as store-unreachable, not spawn-failed; a rows-less envelope is malformed, not empty (#420)",
+      "pr": 420,
+      "files": 7,
+      "firedCount": 3,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        },
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "7a196a3ae75d325a8aefc5c5c155f76af27c8060",
+      "date": "2026-11-20",
+      "subject": "docs(plan): private-store telemetry path (Draft; decisions for Louis) (#418)",
+      "pr": 418,
+      "files": 2,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "141f81fd29d5af8f6d82029840fecd3c82c1d8d6",
+      "date": "2026-11-20",
+      "subject": "docs(store): moving-the-audit-store runbook; document the owner + runtime two-role split as supported (#417)",
+      "pr": 417,
+      "files": 4,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "context-check-agents-md-size",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "0edceac02d5ebba3def65752103fea5041b9ed59",
+      "date": "2026-11-20",
+      "subject": "fix(arch): get-neighbourhood carries coverage so an unindexable repo never reads as 'no similar code'; git timeout is not 'no default branch' (#412)",
+      "pr": 412,
+      "files": 13,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "f49bf5079baf7b7f57ba2bd3591f9e4ace8ff7ed",
+      "date": "2026-11-20",
+      "subject": "docs(model-eval): expect_clean adjudication v2 with each case audited at its own commit (record only) (#416)",
+      "pr": 416,
+      "files": 2,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "f0bfb99ee701981042f046239bb5b5fb96330f92",
+      "date": "2026-11-20",
+      "subject": "fix(model-eval): case-tree verifies the checkout against the commit's blobs; safe non-Error rejections (#415)",
+      "pr": 415,
+      "files": 4,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "b844c75beddff078e56febeb1b56de3ecd20e98b",
+      "date": "2026-11-20",
+      "subject": "feat(doctor): store-reachability verdict plus an org-provided setup pointer (#414)",
+      "pr": 414,
+      "files": 4,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "upstream-report-disposition-resolves",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "e220dedfa4840ed7b1de4270a41f89678b15b899",
+      "date": "2026-11-20",
+      "subject": "fix: 16 real bugs the expect_clean adjudication found still on main (campaign redo, solo-control guards, tokens, debt --out, fleet, durable-write) (#413)",
+      "pr": 413,
+      "files": 17,
+      "firedCount": 4,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        },
+        {
+          "id": "visual-contract-doc-example-drift",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path",
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "cd6ff8ddac1356a0c9b923eafa7f3e998e69c9aa",
+      "date": "2026-11-20",
+      "subject": "fix(store): cloud:true for an unregistered repo, TLS servername/CA through a tunnel, print the configured host (#411)",
+      "pr": 411,
+      "files": 17,
+      "firedCount": 10,
+      "fired": [
+        {
+          "id": "context-check-agents-md-size",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path",
+            "pattern"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "disposable-db-allowlist",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "451d58587bbc679aeef086ed56cb5fd795f85204",
+      "date": "2026-11-20",
+      "subject": "fix(model-eval): audit each corpus case at its own commit's tree (detect and expect_clean) (#410)",
+      "pr": 410,
+      "files": 8,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    }
+  ],
+  "perPrV2HeldOut": [
+    {
+      "sha": "0ce1f50e734f0882c676e9ceb43c1a125c8ca890",
+      "date": "2026-11-20",
+      "subject": "docs(model-eval): adjudicate the 91 expect_clean findings (record only) (#409)",
+      "pr": 409,
+      "files": 2,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "1b814de223b97a4e4acbdea21ca6997b57e6cd73",
+      "date": "2026-11-20",
+      "subject": "fix(model-eval): expect_clean report retains the findings behind each false_positive (#408)",
+      "pr": 408,
+      "files": 4,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "b947886ce544a02ff422a5bdb6addf9233bc7e52",
+      "date": "2026-11-20",
+      "subject": "docs(model-eval): invalidate KD-033 (egress gate refused its diff at preflight) (#407)",
+      "pr": 407,
+      "files": 2,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "b6991ad90fd9a92ea77630c139d4cc703080dccd",
+      "date": "2026-11-20",
+      "subject": "fix(pricing): price gpt-6.2-sol and gpt-6.2-astra; test a live-catalog pick is priced (#406)",
+      "pr": 406,
+      "files": 2,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "6162b9fa774758e01eb8b5a978143ccd97a9cd69",
+      "date": "2026-11-20",
+      "subject": "docs(model-eval): record 12 approved expect_clean entries KD-030..041 (#405)",
+      "pr": 405,
+      "files": 3,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "1786cca307301c21659c8ea20afa0ec8065c7150",
+      "date": "2026-11-19",
+      "subject": "docs(status): record catch-up for PRs #402-#403 (#404)",
+      "pr": 404,
+      "files": 4,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "e83fb0d70c11dbede6ca6d5bc01c78f4812df4c2",
+      "date": "2026-11-19",
+      "subject": "feat(model-eval): --suite expect_clean report path with a hard spend cap (sashiko PR D, G1) (#403)",
+      "pr": 403,
+      "files": 5,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "07f01ac2106d96a51e315c6ed0b9e10c40e6b802",
+      "date": "2026-11-19",
+      "subject": "feat(audit): defect corpus — miner drop report, suites, subsets; stamp check across arms (sashiko PR C) (#402)",
+      "pr": 402,
+      "files": 16,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "3a89a6c90ecdadbeee03337d0aa6951ee19f9e3b",
+      "date": "2026-11-19",
+      "subject": "docs(status): record catch-up for PRs #398-#400 (#401)",
+      "pr": 401,
+      "files": 6,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "544bbc145b04146af0e397f6f752fe70fac6faf4",
+      "date": "2026-11-19",
+      "subject": "feat(audit): contested-finding verification, check-only v1 (sashiko PR B) (#400)",
+      "pr": 400,
+      "files": 27,
+      "firedCount": 14,
+      "fired": [
+        {
+          "id": "generated-artifact-bundle-deps",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sensitive-paths-single-oracle",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "provider-route-not-env-var",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "179bc160982eac5354f0d9c6686616224ab43e78",
+      "date": "2026-11-19",
+      "subject": "feat(fleet): hygiene — detached worktrees in prune, ASK threshold, ghAccount PR probe (#399)",
+      "pr": 399,
+      "files": 22,
+      "firedCount": 5,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "729ee42e7b864e4f39a48f9fe59c80331739a54f",
+      "date": "2026-11-19",
+      "subject": "feat(audit): --resume replays finished passes after an INCOMPLETE round (sashiko PR A) (#398)",
+      "pr": 398,
+      "files": 16,
+      "firedCount": 10,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "78f16d307188c3a07fb859c4feee4e55d5918cd9",
+      "date": "2026-11-19",
+      "subject": "docs(status): record catch-up for PRs #394-#396 (#397)",
+      "pr": 397,
+      "files": 7,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "1df6fbfb3e94fc5c2df86832717657922133fd9f",
+      "date": "2026-11-19",
+      "subject": "feat(fleet): CI-evidence oracle — one fail-closed admission for every fleet merge (#396)",
+      "pr": 396,
+      "files": 41,
+      "firedCount": 9,
+      "fired": [
+        {
+          "id": "generated-artifact-bundle-deps",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "5de17cfa448973c98cd8c43c4df8a69e360ef65a",
+      "date": "2026-11-19",
+      "subject": "feat(fleet): per-member outcomes for ship-batch, and fleet land --rollup (PR B) (#395)",
+      "pr": 395,
+      "files": 47,
+      "firedCount": 11,
+      "fired": [
+        {
+          "id": "generated-artifact-bundle-deps",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "d53272aa1484c1b707a3882204fbcb56318bf8d0",
+      "date": "2026-11-18",
+      "subject": "feat(ship): --check-shipped-head, the read-only half of the coordinator aggregate ship (PR A) (#394)",
+      "pr": 394,
+      "files": 18,
+      "firedCount": 10,
+      "fired": [
+        {
+          "id": "architecture-intent-domain-roster",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "durable-write-registration",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "symbol"
+          ]
+        },
+        {
+          "id": "domain-retag-both-directions",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "cf9d57cd7504d8749aafa87600b76e7b9b2efe70",
+      "date": "2026-11-18",
+      "subject": "docs(status): record catch-up for PRs #390-#392 (#393)",
+      "pr": 393,
+      "files": 6,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "fe5711e3ab1fbef8e7fdb81d067320da93dc1f1d",
+      "date": "2026-11-18",
+      "subject": "docs(fleet,ship): merged-head rule for squash-landed branches; read jobs before a run status (#391)",
+      "pr": 391,
+      "files": 4,
+      "firedCount": 4,
+      "fired": [
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "9e3d58edec9a7ec1d3eda9c2a5bc91119c1f0e3b",
+      "date": "2026-11-18",
+      "subject": "fix(sync): prior-upstream recognition for rewritten destinations (b759) (#392)",
+      "pr": 392,
+      "files": 7,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "e93ccd78cfa65e3202edad04ea932e673c1e3814",
+      "date": "2026-11-18",
+      "subject": "fix(sync): base-lag restore touches only files the fast-forward changes (storyline false divergence) (#390)",
+      "pr": 390,
+      "files": 5,
+      "firedCount": 1,
+      "fired": [
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "ceea43d28cc0188574af8446caaf162458d820fc",
+      "date": "2026-11-18",
+      "subject": "docs(status): record catch-up for PRs #382-#388 (#389)",
+      "pr": 389,
+      "files": 8,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "f2e332e57eae716ad8950ec4b402791a2c1761d9",
+      "date": "2026-11-18",
+      "subject": "fix(sync): one outbound renderer, evidence-based ownership, held EOL repair, written-hash base, gc divergence (D of sync-to-repos debt cluster) (#388)",
+      "pr": 388,
+      "files": 18,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path",
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "80c2e1dbe33272ba0854a8bdbf903dab80ef0c56",
+      "date": "2026-11-18",
+      "subject": "fix(sync): contained consumer IO, per-consumer lock, receipt commit, settling prompt (C of sync-to-repos debt cluster) (#387)",
+      "pr": 387,
+      "files": 16,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "593a6f35c6e80f417cd338ff1a9abfd00bd83fed",
+      "date": "2026-11-18",
+      "subject": "fix(sync): one owner for the bundle inventory; unreadable source aborts resolution (B of sync-to-repos debt cluster) (#386)",
+      "pr": 386,
+      "files": 12,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "sync-inventory-single-owner",
+          "via": [
+            "path",
+            "symbol"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "31e72bbce0e2e6e63b15dab1ddfe5ba840205206",
+      "date": "2026-11-17",
+      "subject": "fix(audit-code): SKILL.md debt - branching catalogue recipe, round-parameterised R2+, route-neutral final-gate wording (#385)",
+      "pr": 385,
+      "files": 19,
+      "firedCount": 7,
+      "fired": [
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-description-budget",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-frontmatter-indented-key-inert",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "worktree-documented-command-reachable",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "31516b64d21ba76f9d0af953d1891289dad97a25",
+      "date": "2026-11-17",
+      "subject": "fix(sync): one argv parser — a --target with no usable value never means every consumer (A of sync-to-repos debt cluster) (#384)",
+      "pr": 384,
+      "files": 12,
+      "firedCount": 3,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "generated-artifact-plans-index",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "8ce88fc27e0484f8421f9a77e8e158b4e989bedb",
+      "date": "2026-11-17",
+      "subject": "fix(debt-resolve): resolve entries that live only in the store (#383)",
+      "pr": 383,
+      "files": 3,
+      "firedCount": 2,
+      "fired": [
+        {
+          "id": "cli-help-is-a-pure-read",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "exit-after-stdout-must-drain",
+          "via": [
+            "pattern"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "b6f0fca7ce15e53586d5bacbad98ad608f31407b",
+      "date": "2026-11-17",
+      "subject": "docs(fleet): a coordinator directive inside launch authority needs no re-ask (#382)",
+      "pr": 382,
+      "files": 5,
+      "firedCount": 4,
+      "fired": [
+        {
+          "id": "generated-skills-copy-never-hand-edited",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-reference-summary-byte-match",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "synced-skill-content-reachable-refs",
+          "via": [
+            "path"
+          ]
+        },
+        {
+          "id": "skill-markdown-size-ratchet",
+          "via": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "sha": "6585338dfd6582685d387751b13ca0e1f543dfeb",
+      "date": "2026-11-17",
+      "subject": "docs(status): record catch-up for #330, #333-#342, #376-#380 (#381)",
+      "pr": 381,
+      "files": 17,
+      "firedCount": 0,
+      "fired": []
+    },
+    {
+      "sha": "f3b37321d6f3b5815fb3c820d93f92e9f39dad25",
+      "date": "2026-11-17",
+      "subject": "fix(ship-record): a floor lists back to the oracle's recheck window (#380)",
+      "pr": 380,
+      "files": 2,
+      "firedCount": 0,
+      "fired": []
+    }
+  ],
+  "entries": [
+    {
+      "id": "anthropic-pin-unserviceable-param",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        421
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "3dabb3f3",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "generated-artifact-bundle-deps",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        441,
+        439,
+        422
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        396,
+        395
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "context-check-agents-md-size",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        433,
+        436,
+        417,
+        411
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "db-suite-two-edit-enrolment",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "architecture-intent-domain-roster",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        438,
+        436,
+        422,
+        419
+      ],
+      "firedOnHeldOutPrs": [
+        394
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "synced-markdown-relative-links",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "emit-softfail-opt-out",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "gitignore-rule-declares-why",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "cli-help-is-a-pure-read",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        442,
+        441,
+        440,
+        439,
+        438,
+        434,
+        436,
+        435,
+        429,
+        430,
+        427,
+        426,
+        422,
+        421,
+        420,
+        413,
+        411,
+        410
+      ],
+      "firedOnHeldOutPrs": [
+        403,
+        402,
+        400,
+        398,
+        395,
+        394,
+        392,
+        388,
+        387,
+        386,
+        384,
+        383
+      ],
+      "windowIncidents": [
+        {
+          "sha": "19e21e74",
+          "pr": 436,
+          "inWindow": true,
+          "fired": true
+        }
+      ],
+      "incidentReplay": []
+    },
+    {
+      "id": "mcp-config-mirrored",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "own-model-capture-column-coverage",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        439,
+        434
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "migrations-schema-portable",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        436
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "generated-artifact-plans-index",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        442,
+        439,
+        434,
+        437,
+        433,
+        436,
+        431,
+        429,
+        422,
+        421,
+        419,
+        418
+      ],
+      "firedOnHeldOutPrs": [
+        404,
+        403,
+        402,
+        401,
+        400,
+        399,
+        398,
+        397,
+        396,
+        395,
+        394,
+        393,
+        392,
+        390,
+        384
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "generated-artifact-requirements-map",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "generated-skills-copy-never-hand-edited",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        442,
+        441,
+        433,
+        419,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        399,
+        398,
+        396,
+        395,
+        394,
+        391,
+        385,
+        382
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "skill-reference-summary-byte-match",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        442,
+        441,
+        433,
+        419
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        399,
+        398,
+        396,
+        395,
+        394,
+        391,
+        385,
+        382
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "skill-frontmatter-description-budget",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        441,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        398,
+        396,
+        395,
+        385
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "skill-frontmatter-indented-key-inert",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        441,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        398,
+        396,
+        395,
+        385
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "synced-skill-content-reachable-refs",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        442,
+        441,
+        433,
+        419,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        399,
+        398,
+        396,
+        395,
+        394,
+        391,
+        385,
+        382
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "skill-markdown-size-ratchet",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        442,
+        441,
+        433,
+        419,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        399,
+        398,
+        396,
+        395,
+        394,
+        391,
+        385,
+        382
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "exit-after-stdout-must-drain",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        436,
+        429,
+        427,
+        421,
+        420,
+        413
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        398,
+        384,
+        383
+      ],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "9c104381",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "upstream-report-disposition-resolves",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        440,
+        434,
+        436,
+        430,
+        414
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "visual-contract-doc-example-drift",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        413
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "windowed-view-declares-its-window",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "worktree-documented-command-reachable",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        441,
+        436,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        398,
+        396,
+        395,
+        385
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "tiered-shadow-window-epoch-gated",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        439,
+        434
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "a584540c",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "cli-entry-guard-is-isinvokedasscript",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "82b63557",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "disposable-db-allowlist",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        411
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "0e7c63be",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "canonicalize-eol-before-hashing",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        438,
+        434
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "97988499",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "jsonb-write-seam",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "48611728",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "durable-write-registration",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        439,
+        434,
+        425,
+        420,
+        413,
+        411
+      ],
+      "firedOnHeldOutPrs": [
+        394
+      ],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "72e0a0ef",
+          "fired": true
+        },
+        {
+          "sha": "1019d519",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "sensitive-paths-single-oracle",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        431,
+        419
+      ],
+      "firedOnHeldOutPrs": [
+        400
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "provider-route-not-env-var",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [
+        400
+      ],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "3dabb3f3",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "npm-run-flag-swallowed",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "prompt-seed-and-mechanical-wave",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        441,
+        421
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "6dedaca0",
+          "fired": true
+        }
+      ]
+    },
+    {
+      "id": "sync-inventory-single-owner",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        439,
+        433,
+        431,
+        422,
+        419
+      ],
+      "firedOnHeldOutPrs": [
+        400,
+        395,
+        394,
+        388,
+        387,
+        386
+      ],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "learning-repo-name-is-owner-slash-repo",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "schema-error-is-not-empty-result",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        425
+      ],
+      "firedOnHeldOutPrs": [],
+      "windowIncidents": [],
+      "incidentReplay": []
+    },
+    {
+      "id": "domain-retag-both-directions",
+      "verdict": "pass",
+      "controlFires": true,
+      "negativeSilent": true,
+      "firedOnPilotWindowPrs": [
+        438,
+        436,
+        422,
+        419
+      ],
+      "firedOnHeldOutPrs": [
+        394
+      ],
+      "windowIncidents": [],
+      "incidentReplay": [
+        {
+          "sha": "d5e66d35",
+          "fired": true
+        },
+        {
+          "sha": "a146bb7b",
+          "fired": true
+        }
+      ]
+    }
+  ],
+  "overall": "FAIL",
+  "failures": [
+    "noise max on held-out window (14 > 12)",
+    "kernel size above 15K target"
+  ],
+  "redesignV3": {
+    "label": "seen data, NOT a confirmation; no threshold claim",
+    "entries": 39,
+    "merged": 0,
+    "narrowed": [
+      "skill-frontmatter-description-budget",
+      "skill-frontmatter-indented-key-inert",
+      "synced-skill-content-reachable-refs",
+      "worktree-documented-command-reachable",
+      "skill-reference-summary-byte-match"
+    ],
+    "checklistSha256": "8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d",
+    "pilotWindow": {
+      "entries": {
+        "median": 2.5,
+        "max": 9,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          3,
+          4,
+          4,
+          4,
+          5,
+          5,
+          5,
+          6,
+          7,
+          7,
+          7,
+          7,
+          9
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      },
+      "checks": {
+        "median": 2.5,
+        "max": 9,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          3,
+          4,
+          4,
+          4,
+          5,
+          5,
+          5,
+          6,
+          7,
+          7,
+          7,
+          7,
+          9
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      }
+    },
+    "heldOutWindow": {
+      "entries": {
+        "median": 2,
+        "max": 10,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          4,
+          4,
+          6,
+          7,
+          8,
+          10
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      },
+      "checks": {
+        "median": 2,
+        "max": 10,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          4,
+          4,
+          6,
+          7,
+          8,
+          10
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      }
+    },
+    "frozen": {
+      "ok": true,
+      "frozenOn": "2026-11-22",
+      "mismatches": []
+    },
+    "controls": [
+      {
+        "id": "anthropic-pin-unserviceable-param",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-artifact-bundle-deps",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "context-check-agents-md-size",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "db-suite-two-edit-enrolment",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "architecture-intent-domain-roster",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "synced-markdown-relative-links",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "emit-softfail-opt-out",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "gitignore-rule-declares-why",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "cli-help-is-a-pure-read",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "mcp-config-mirrored",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "own-model-capture-column-coverage",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "migrations-schema-portable",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-artifact-plans-index",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-artifact-requirements-map",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-skills-copy-never-hand-edited",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-reference-summary-byte-match",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-frontmatter-description-budget",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-frontmatter-indented-key-inert",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "synced-skill-content-reachable-refs",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-markdown-size-ratchet",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "exit-after-stdout-must-drain",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "upstream-report-disposition-resolves",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "visual-contract-doc-example-drift",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "windowed-view-declares-its-window",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "worktree-documented-command-reachable",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "tiered-shadow-window-epoch-gated",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "cli-entry-guard-is-isinvokedasscript",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "disposable-db-allowlist",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "canonicalize-eol-before-hashing",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "jsonb-write-seam",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "durable-write-registration",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "sensitive-paths-single-oracle",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "provider-route-not-env-var",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "npm-run-flag-swallowed",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "prompt-seed-and-mechanical-wave",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "sync-inventory-single-owner",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "learning-repo-name-is-owner-slash-repo",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "schema-error-is-not-empty-result",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "domain-retag-both-directions",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      }
+    ]
+  },
+  "decision": "2026-11-22: no shrink; noise rule unchanged; observe-only to 2026-12-06 or 150 merged PRs; kernel target stays 10-15K, shrink becomes a separate plan"
+}

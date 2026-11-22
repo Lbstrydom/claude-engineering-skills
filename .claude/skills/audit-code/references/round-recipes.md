@@ -68,3 +68,11 @@ unaffected. A stale ledger (in-scope files changed since extraction) or
 uncovered target files surface as a `[requirements]` stderr line; if you
 see `[stale]`, run `node scripts/requirements.mjs extract --files <…>`
 then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
+
+## Checklist (automatic)
+
+When `.audit-loop/checklist.json` exists the audit evaluates it with the SAME matcher as `node scripts/checklist.mjs` (the audit's own
+`--files` / `--diff`; patterns only from `--diff`) and records the fires, but appends the `<checklist>` block to the rubric ONLY under
+`AUDIT_CHECKLIST_INJECT=1` (observe-only by default: unset, the prompt is byte-identical). `[checklist] UNMEASURED` on stderr, and
+`_checklist: "unmeasured"` on the round, mean the checklist could not be evaluated (invalid file, unreadable diff or file); the audit
+continues without it. Each injected entry names its incident: check the diff does not repeat it. The file is consumer-owned.
