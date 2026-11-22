@@ -112,8 +112,16 @@ describe('pilot: each gate-backed entry mirrors its contract, and the contract s
 test('every commit an incident cites exists (skipped on a shallow clone)', (t) => {
   const git = (...a) => execFileSync('git', a, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   let shallow;
-  try { shallow = git('rev-parse', '--is-shallow-repository') === 'true'; } catch { t.skip('not a git checkout'); return; }
-  if (shallow) { t.skip('shallow clone: history is not available'); return; }
+  // Sandbox honesty (AGENTS.md): a skip passes having read nothing, so under CI a missing history FAILS; locally it may skip.
+  const strict = Boolean(process.env.CI);
+  try { shallow = git('rev-parse', '--is-shallow-repository') === 'true'; } catch {
+    if (strict) assert.fail('CI: not a git checkout, so the incident citations cannot be verified');
+    t.skip('not a git checkout'); return;
+  }
+  if (shallow) {
+    if (strict) assert.fail('CI: shallow clone, so the incident citations cannot be verified (fetch-depth 0 is required)');
+    t.skip('shallow clone: history is not available'); return;
+  }
   for (const e of loaded.entries) {
     // `debt 3627c83a` is a ledger id, not a commit.
     const text = e.incident.replace(/debt [0-9a-f]{8}/g, '');
