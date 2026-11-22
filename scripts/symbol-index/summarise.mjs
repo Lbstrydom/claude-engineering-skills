@@ -167,9 +167,6 @@ async function summariseBatch(batch) {
     // this as complete is how the availability-gate defect stayed invisible.
     return { summaries, health: assessBatchCompleteness(summaries, undefined), error: 'no Claude provider' };
   }
-  const client = azureConfig.active
-    ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
-    : await createAnthropicClient();
   const model = azureConfig.active ? azureConfig.summaryDeployment : MODEL;
   const lines = batch.map((s, i) =>
     `${i + 1}. ${s.kind} \`${s.symbolName}\` in \`${s.filePath}\` (lines ${s.startLine}-${s.endLine}):\n` +
@@ -180,6 +177,11 @@ async function summariseBatch(batch) {
     `If a symbol's body is empty or unparseable, write "<no body>".\n\n` +
     lines.join('\n\n');
   try {
+    // Inside the try: a client-construction failure is a provider failure with
+    // a verdict, so the first attempt is counted like any other.
+    const client = azureConfig.active
+      ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
+      : await createAnthropicClient();
     const res = await azureThrottle(() => client.messages.create({
       model,
       // At the configured default batch of 50 this is 4096, so production is
