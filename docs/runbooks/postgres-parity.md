@@ -197,6 +197,15 @@ node scripts/setup-postgres.mjs --migrate
 | Privilege preflight only (no DDL) | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --preflight-only` |
 | Compat-bootstrap only (no migrations) | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --bootstrap-only` |
 
+**`--migrate` and `--adopt` refuse a migration file git does not track** (`scripts/lib/migration-ownership.mjs`; asked of
+`git ls-files`, so a file hidden by `.git/info/exclude` is still named). Incident 2026-11-20: three untracked
+`reconcile_local_schema_drift` files on a mirror replaced three unique keys with `model` variants and bandit / false-positive
+writes failed silently for two weeks. The refusal names the files; delete them or `git add` them. git unable to answer
+(no work tree, git missing) fails closed the same way. The human-typed override is `--allow-untracked-migrations`.
+`--check-drift` reports such files as `untracked migration file present` (exit 1), never as clean. Only the git-owned
+`supabase/migrations/` layout is checked: a consumer's synced `.audit-loop/migrations/` is untracked by design. Migration
+`20261123130000_restore_original_unique_keys_after_local_reconcile` repairs a store already hit (no-op on a healthy one).
+
 `--adopt` mode diffs the live schema against
 [`tests/fixtures/expected-schema.json`](../../tests/fixtures/expected-schema.json) across
 10 catalog categories (tables / functions / views / policies / constraints / indexes

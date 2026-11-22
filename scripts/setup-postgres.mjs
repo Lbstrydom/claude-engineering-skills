@@ -42,6 +42,8 @@ import { captureLiveSchema, SHARED_CATALOG_QUERIES } from './lib/db/live-catalog
 import { checkLiveConstraints, renderConstraintDrift } from './lib/db/constraint-drift.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
+import { ALLOW_UNTRACKED_FLAG, assessMigrationOwnership, guardMigrationOwnership, summariseOwnership } from './lib/migration-ownership.mjs';
+import { renderHumanDriftReport } from './lib/drift-report.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -94,6 +96,7 @@ function parseArgs(argv) {
     format: 'human',  // 'human' | 'json' — used by --check-drift
     live: false,      // --check-drift --live: also compare live constraints/indexes
     adoptOnly: null,  // string[] | null — scopes --adopt (item 7, sast-sandbox-backlog-hardening.md)
+    allowUntracked: false, // --allow-untracked-migrations (human-typed override)
   };
   // Indexed loop so flags-with-value (`--format json`) can advance the
   // iterator via `++i` (plan migration-drift-detector R3-audit + Gemini-R2-H1).
@@ -120,6 +123,7 @@ function parseArgs(argv) {
       case '--bootstrap-only':  args.bootstrapOnly = true; break;
       case '--dry-run':         args.dryRun = true; break;
       case '--live':            args.live = true; break;
+      case ALLOW_UNTRACKED_FLAG: args.allowUntracked = true; break;
       case '--format':          args.format = argv[++i]; break;
       case '--adopt-only': {
         // round-2 audit M1: blindly consuming argv[++i] let a following flag
@@ -153,7 +157,7 @@ function parseArgs(argv) {
   }
   if (!args.mode && !args.preflightOnly && !args.bootstrapOnly) {
     process.stderr.write(
-      `usage: setup-postgres.mjs --migrate | --adopt [--adopt-only <file[,file...]>] | --ensure-local | --check-drift [--live] | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
+      `usage: setup-postgres.mjs --migrate | --adopt [--adopt-only <file[,file...]>] | --ensure-local | --check-drift [--live] | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only] [--allow-untracked-migrations]\n`
     );
     process.exit(2);
   }
@@ -165,6 +169,8 @@ function parseArgs(argv) {
     process.stderr.write(`${R}error${X}: --live only makes sense with --check-drift\n`);
     process.exit(2);
   }
+  if (args.allowUntracked && !['migrate', 'adopt', 'ensure-local'].includes(args.mode)) { process.stderr.write(`${R}error${X}: ${ALLOW_UNTRACKED_FLAG} needs --migrate or --adopt
+`); process.exit(2); }
   if (args.adoptOnly && args.mode !== 'adopt') {
     process.stderr.write(`${R}error${X}: --adopt-only only makes sense with --adopt (got mode: ${args.mode || '(none)'})\n`);
     process.exit(2);
@@ -665,7 +671,8 @@ export async function pendingMigrationsNeedSurface(pendingFiles) {
   return false;
 }
 
-async function runMigrate(pool, { dryRun }) {
+async function runMigrate(pool, { dryRun, allowUntracked = false, ownership } = {}) {
+  guardMigrationOwnership({ repoRoot: REPO_ROOT, migrationsDir: MIGRATIONS_DIR, allowUntracked, ownership });
   const supabaseManaged = await isSupabaseManaged(pool);
   // Ask whether the bootstrap has anything LEFT TO DO before running it
   // (2026-08-30). `findMissingSurface` is the oracle the precondition below
@@ -957,7 +964,8 @@ export function checkMigrationsSchemaPairing(migrationsIsPrivate, schemaIsPrivat
     : { ok: false, migrationsIsPrivate, schemaIsPrivate };
 }
 
-async function runAdopt(pool, { adoptOnly = null } = {}) {
+async function runAdopt(pool, { adoptOnly = null, allowUntracked = false, ownership } = {}) {
+  guardMigrationOwnership({ repoRoot: REPO_ROOT, migrationsDir: MIGRATIONS_DIR, allowUntracked, ownership });
   process.stderr.write(`\n${G}── Adopt mode ──${X}\n`);
   // Adopt seeds the ledger WITHOUT replaying, so a missing surface here is worse
   // than in --migrate, not better: the ledger would claim 74 files applied
@@ -1098,6 +1106,8 @@ export async function runCheckDrift(pool, {
   live          = false,
   expectedSchemaPath = EXPECTED_SCHEMA_PATH,
   capture       = captureLiveSchema,
+  repoRoot      = REPO_ROOT,
+  ownership     = null,
 } = {}) {
   // R1-audit M1: TRULY read-only. If the table doesn't exist, exit 3
   // with an actionable bootstrap hint — never create it.
@@ -1143,13 +1153,15 @@ export async function runCheckDrift(pool, {
   }
   const orphanLedger = [...ledger.keys()].filter((f) => !sourceHashes.has(f));
 
-  const ledgerDrift = unapplied.length + eolLegacy.length + shaMismatch.length + orphanLedger.length > 0;
+  // Untracked / unverifiable migration files are drift too (never read as clean).
+  const own = summariseOwnership(ownership ? ownership() : assessMigrationOwnership({ repoRoot, migrationsDir }));
+  const ledgerDrift = unapplied.length + eolLegacy.length + shaMismatch.length + orphanLedger.length + own.count > 0;
   const liveConstraints = live
     ? await checkLiveConstraints({ pool, expectedSchemaPath, capture, fs })
     : undefined;
   const hasDrift = ledgerDrift || !!liveConstraints?.hasDrift;
   const result = {
-    drift: { unapplied, eolLegacy, shaMismatch, orphanLedger },
+    drift: { unapplied, eolLegacy, shaMismatch, orphanLedger, untrackedMigrations: own.untracked, ownershipUnverified: own.unverified },
     applied: ledger.size,
     sourceTotal: files.length,
     hasDrift,
@@ -1165,35 +1177,6 @@ export async function runCheckDrift(pool, {
     if (liveConstraints) stderr.write(renderConstraintDrift(liveConstraints).join('\n') + '\n');
   }
   return result;
-}
-
-function renderHumanDriftReport({ drift, applied, sourceTotal, hasDrift }, stderr = process.stderr) {
-  stderr.write(`\n${G}── Migration drift check ──${X}\n`);
-  stderr.write(`  ledger: ${applied} applied / ${sourceTotal} source files\n`);
-  if (!hasDrift) {
-    stderr.write(`  ${G}✓${X} no drift\n`);
-    return;
-  }
-  if (drift.unapplied.length) {
-    stderr.write(`\n  ${Y}unapplied${X} (${drift.unapplied.length}) — run \`node scripts/setup-postgres.mjs --migrate\`:\n`);
-    for (const f of drift.unapplied) stderr.write(`    + ${f}\n`);
-  }
-  if (drift.eolLegacy?.length) {
-    stderr.write(`\n  ${Y}eol-legacy${X} (${drift.eolLegacy.length}) — same content, pre-canonicalization CRLF hash; repair with \`node scripts/setup-postgres.mjs --repair-eol\`:\n`);
-    for (const m of drift.eolLegacy) {
-      stderr.write(`    ~ ${m.filename}\n      ledger: ${m.ledgerSha.slice(0, 12)}… (CRLF)  canonical: ${m.sourceSha.slice(0, 12)}…\n`);
-    }
-  }
-  if (drift.shaMismatch.length) {
-    stderr.write(`\n  ${R}sha-mismatch${X} (${drift.shaMismatch.length}) — committed migration edited after apply:\n`);
-    for (const m of drift.shaMismatch) {
-      stderr.write(`    ! ${m.filename}\n      ledger: ${m.ledgerSha.slice(0, 12)}…  source: ${m.sourceSha.slice(0, 12)}…\n`);
-    }
-  }
-  if (drift.orphanLedger.length) {
-    stderr.write(`\n  ${Y}orphan-ledger${X} (${drift.orphanLedger.length}) — applied but no source file (deleted?):\n`);
-    for (const f of drift.orphanLedger) stderr.write(`    ? ${f}\n`);
-  }
 }
 
 // ── Entry ──────────────────────────────────────────────────────────────────
@@ -1335,9 +1318,9 @@ async function main() {
     if (args.mode === 'migrate') {
       // Serialize against a concurrent --repair-eol (shared advisory lock).
       await withMigrationContext(() =>
-        withMigrationLock(pool, () => runMigrate(pool, { dryRun: args.dryRun })));
+        withMigrationLock(pool, () => runMigrate(pool, { dryRun: args.dryRun, allowUntracked: args.allowUntracked })));
     } else if (args.mode === 'adopt') {
-      await withMigrationContext(() => runAdopt(pool, { adoptOnly: args.adoptOnly }));
+      await withMigrationContext(() => runAdopt(pool, { adoptOnly: args.adoptOnly, allowUntracked: args.allowUntracked }));
     }
   } catch (err) {
     process.stderr.write(`\n${R}setup failed${X}: ${err.message}\n`);
@@ -1372,6 +1355,8 @@ export const _internals = Object.freeze({
   denseRankColumnPositions,
   canonicalise,
   runCheckDrift,
+  runMigrate,
+  runAdopt,
   renderHumanDriftReport,
   SHARED_CATALOG_QUERIES,
   captureLiveSchema,

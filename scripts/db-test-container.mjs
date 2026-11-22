@@ -114,6 +114,9 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // tree columns through the real writer, the outcome CHECK, the weekly canary and its negative control, and every
   // completeness query on the real schema are Postgres-only. Two edits, always: this list AND postgres-parity.yml.
   'tests/own-model-capture-p0-db.test.mjs',
+  // Enrolled 2026-11-22 with migration 20261123130000 (restore original unique keys): the drift repair, its no-op on a
+  // healthy store and its duplicate refusal need real constraints. Two edits, always — this list AND postgres-parity.yml.
+  'tests/restore-unique-keys-db.test.mjs',
   'tests/audit-capture-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
   // CONFLICT re-drain, the outcome CHECK and every derived metric are Postgres-only.
