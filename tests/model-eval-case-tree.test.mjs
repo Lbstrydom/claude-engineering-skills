@@ -67,6 +67,22 @@ describe('withCaseTree', () => {
     }
   });
 
+  test('a git-local variable OUTSIDE any hand-kept selector list (env-injected config) is dropped too', async () => {
+    // GIT_CONFIG_COUNT/KEY/VALUE inject config into every git child. `core.filemode=notabool` makes `worktree add` refuse
+    // ("bad boolean config value"), so a leak is observable as a throw. The old hand-kept 8-name list did not name it.
+    const { r, sha } = repo();
+    const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    Object.assign(process.env, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.filemode', GIT_CONFIG_VALUE_0: 'notabool' });
+    try {
+      const out = await withCaseTree({ repoRoot: r, sha }, async (d) => fs.readFileSync(path.join(d, 'a.js'), 'utf8'));
+      assert.equal(out, 'one\n');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rm(r);
+    }
+  });
+
   test('an unsafe revision is refused before anything is created', async () => {
     await assert.rejects(() => withCaseTree({ repoRoot: os.tmpdir(), sha: '--upload-pack=x y' }, async () => 1), /not a safe git revision/);
   });
