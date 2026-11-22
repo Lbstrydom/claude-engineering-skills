@@ -83,6 +83,7 @@ on:
       - 'tests/own-model-telemetry-db.test.mjs'
       - 'tests/own-model-ledger-db.test.mjs'
       - 'tests/own-model-pr3-db.test.mjs'
+      - 'tests/own-model-capture-p0-db.test.mjs'
       - 'tests/restore-unique-keys-db.test.mjs'
       - 'tests/audit-capture-db.test.mjs'
       # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
@@ -154,6 +155,7 @@ on:
       - 'tests/own-model-telemetry-db.test.mjs'
       - 'tests/own-model-ledger-db.test.mjs'
       - 'tests/own-model-pr3-db.test.mjs'
+      - 'tests/own-model-capture-p0-db.test.mjs'
       - 'tests/restore-unique-keys-db.test.mjs'
       - 'tests/audit-capture-db.test.mjs'
       # ship-trains Phase 2: the binding query's real-Postgres suite; its name matches
@@ -323,6 +325,7 @@ jobs:
             tests/own-model-telemetry-db.test.mjs \
             tests/own-model-ledger-db.test.mjs \
             tests/own-model-pr3-db.test.mjs \
+            tests/own-model-capture-p0-db.test.mjs \
             tests/restore-unique-keys-db.test.mjs \
             tests/audit-capture-db.test.mjs \
             tests/db-schema-realization-live.test.mjs \

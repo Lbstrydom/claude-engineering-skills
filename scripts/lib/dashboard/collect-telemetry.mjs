@@ -852,6 +852,33 @@ export function outcomesFromSummary(o) {
   return { measured: true, openP0: n.openP0, openP1: n.openP1, pendingVerification: n.pendingVerificationP0 + n.pendingVerificationP1 };
 }
 
+/**
+ * Own-model capture completeness (docs/plans/own-model-full-capture.md P0). Reuses the CLI's report builder.
+ * Never throws: an unreachable store is `missing-optional`, a failing read is an `unexpected-error` warning,
+ * and neither is ever rendered as a clean measurement.
+ */
+async function collectCaptureCompleteness() {
+  const empty = { cloud: false, windowDays: 7, exitCode: 3, cost: 'unmeasured', captureSchemaVersion: 0, groups: [] };
+  try {
+    if (process.env.LEARNING_DISABLE === '1' || !await isCloudEnabled()) {
+      return { data: empty, status: { status: 'missing-optional', detail: 'capture completeness needs the cloud store' } };
+    }
+    const { buildReport } = await import('../capture/report.mjs');
+    const r = await buildReport({ days: 7 });
+    const groups = [
+      ...r.auditDispatch.map((g) => ({ section: 'audit-dispatch', repo: String(g.repo ?? ''), status: g.status, detail: `starts ${g.starts}, attempts ${g.attempts}/${g.expected_attempts} expected` })),
+      ...r.chipLaunch.map((g) => ({ section: 'chip-launch', repo: String(g.repo ?? ''), status: g.status, detail: `starts ${g.starts}, completed ${g.completed}, open ${g.open}, gaps ${g.gaps}, uncorrelated ${g.uncorrelated}` })),
+      ...r.fleetLand.map((g) => ({ section: 'fleet-land', repo: String(g.repo ?? ''), status: g.status, detail: `starts ${g.starts}` })),
+    ];
+    return {
+      data: { cloud: true, windowDays: r.windowDays, exitCode: r.exitCode, cost: r.cost.status, captureSchemaVersion: r.capture_schema_version, groups },
+      status: { status: 'ok', detail: '' },
+    };
+  } catch (err) {
+    return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`capture-completeness collect failed: ${err.message}`) } };
+  }
+}
+
 export async function collectTelemetry(opts = {}) {
   const root = process.cwd();
   const git = opts.git || { baseSha: 'unknown' };
@@ -860,7 +887,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests, skillCensus, convergence] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests, skillCensus, convergence, captureCompleteness] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -874,6 +901,7 @@ export async function collectTelemetry(opts = {}) {
     collectPersonaTests(root),
     collectSkillCensus(root),
     collectConvergence(),
+    collectCaptureCompleteness(),
   ]);
   const requirements = collectRequirements(root);
 
@@ -899,6 +927,7 @@ export async function collectTelemetry(opts = {}) {
       personaTests: personaTests.status,
       skillCensus: skillCensus.status,
       convergence: convergence.status,
+      captureCompleteness: captureCompleteness.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -914,6 +943,7 @@ export async function collectTelemetry(opts = {}) {
     personaTests: personaTests.data,
     skillCensus: skillCensus.data,
     convergence: convergence.data,
+    captureCompleteness: captureCompleteness.data,
   };
 }
 

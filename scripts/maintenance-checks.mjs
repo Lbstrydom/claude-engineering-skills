@@ -215,6 +215,10 @@ export const CHECKS = [
     // consumers means adding the CLI to the sync lists in the same change as migrating their stores.
     sourceRepoOnly: true,
     steps: [
+      // The decision ledger's events are spooled locally and delivered ONLY by `ledger flush`, which nothing ran:
+      // 14 events sat spooled since 2026-10-27 with 0 rows in own_model_ledger (diagnosed 2026-11-23). A flush
+      // failure fails the check (WRITE_FAILED, exit 1), so an undeliverable spool is loud, never an empty table.
+      { script: 'capture-completeness.mjs', args: ['flush-ledger'] },
       { script: 'capture-completeness.mjs', args: ['canary'] },
       { script: 'capture-completeness.mjs', args: ['report', '--days', '7'] },
     ],

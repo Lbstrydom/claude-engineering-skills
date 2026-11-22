@@ -41,6 +41,7 @@ import sectionAuditRunDetail from './sections/audit-run-detail.mjs';
 import sectionAuthorTier from './sections/author-tier.mjs';
 import sectionModelAb from './sections/model-ab.mjs';
 import sectionTieredShadow from './sections/tiered-shadow.mjs';
+import sectionCaptureCompleteness from './sections/capture-completeness.mjs';
 import sectionStartHere from './sections/start-here.mjs';
 import sectionHome from './sections/home.mjs';
 import sectionPersonaTests from './sections/persona-tests.mjs';
@@ -77,6 +78,7 @@ const SLICERS = {
   modelAb:      (d) => ({ src: d.sources.modelAb || { status: 'missing-optional', detail: '' }, modelAb: d.modelAb || { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: 12, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
+  captureCompleteness: (d) => ({ src: d.sources.captureCompleteness || { status: 'missing-optional', detail: '' }, captureCompleteness: d.captureCompleteness || null }),
   tieredShadow: (d) => ({ src: d.sources.tieredShadow || { status: 'missing-optional', detail: '' }, tieredShadow: d.tieredShadow || null }),
   // Home: the measured landing summary (docs/plans/dashboard-home-summary.md). `home` is
   // null when the collector threw or the snapshot predates Home; the section says so.
@@ -136,6 +138,8 @@ const REGISTRY = {
       desc: 'The concluded auditor-model experiment (A/B/C arms) — kept for its labelled-outcome record.' },
     { id: 'tieredShadow', title: 'Tiered Shadow',  group: 'Audit pipeline', build: sectionTieredShadow, slice: SLICERS.tieredShadow,
       desc: 'A cheaper audit pipeline is being trialled silently next to the current one — progress toward the go/no-go decision.' },
+    { id: 'captureCompleteness', title: 'Capture Completeness', group: 'Audit pipeline', build: sectionCaptureCompleteness, slice: SLICERS.captureCompleteness,
+      desc: 'Is the own-model training data capture silently losing calls? Starts reconciled against completions, 7 days; unmeasured is never a pass.' },
     { id: 'learning',     title: 'Learning',       group: 'Learning & invariants', build: sectionLearning,     slice: SLICERS.learning,
       desc: 'What the audit system is learning from your triage decisions — and what’s waiting for a human label.' },
     { id: 'requirements', title: 'Requirements',   group: 'Learning & invariants', build: sectionRequirements, slice: SLICERS.requirements,
@@ -214,7 +218,7 @@ export function renderDocument(data, kind, assets) {
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely. (modelAb + tieredShadow added
     // 2026-07-13 — both had been omitted, the exact bug this comment warns of.)
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests', 'skillCensus', 'convergence']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests', 'skillCensus', 'convergence', 'captureCompleteness']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

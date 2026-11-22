@@ -47,6 +47,7 @@ export function callIdFor({ runId, producer, nonce, seq }) {
   return uuidV5(`${runId}|${producer}|${nonce}|${seq}`);
 }
 
+const GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const int = (v) => (Number.isFinite(v) ? Math.max(0, Math.round(v)) : null);
 const num = (v) => (Number.isFinite(v) ? v : null);
 const str = (v, n = 120) => (typeof v === 'string' && v ? v.slice(0, n) : null);
@@ -67,14 +68,19 @@ function fresh() {
 }
 
 /** Bind this process's log to a run. Re-binding to a different run starts a new log. */
-export function bindRun({ runId, repoId = null, workItemId = null, producer = 'audit' } = {}) {
+export function bindRun({ runId, repoId = null, workItemId = null, producer = 'audit', auditedTree = null, diffBaseSha = null } = {}) {
   try {
     // LEARNING_DISABLE=1 turns every capture off: an unbound log makes record() a counted no-op.
     if (process.env.LEARNING_DISABLE === '1') return false;
     if (!runId || !PRODUCERS.includes(producer)) return false;
     if (state?.bound?.runId === runId && state.bound.producer === producer) return true;
     state = fresh();
-    state.bound = { runId, repoId, workItemId: isWorkItemId(workItemId) ? workItemId : null, producer };
+    // Tree and base identity are stamped on EVERY call row; an outside value that is not a git object id is null, never a guess.
+    state.bound = {
+      runId, repoId, workItemId: isWorkItemId(workItemId) ? workItemId : null, producer,
+      auditedTree: GIT_OID.test(auditedTree ?? '') ? auditedTree : null,
+      diffBaseSha: GIT_OID.test(diffBaseSha ?? '') ? diffBaseSha : null,
+    };
     return true;
   } catch { return false; }
 }
@@ -115,6 +121,8 @@ export function record(c) {
       capture_schema_version: CAPTURE_SCHEMA_VERSION,
       repo_id: state.bound.repoId,
       work_item_id: state.bound.workItemId,
+      audited_tree: state.bound.auditedTree,
+      diff_base_sha: state.bound.diffBaseSha,
       producer: state.bound.producer,
       purpose: str(c?.purpose, 60),
       model_resolved: str(c?.model),

@@ -4843,6 +4843,24 @@
           "is_identity": "NO",
           "identity_generation": null,
           "ordinal_position": 27
+        },
+        {
+          "column_name": "audited_tree",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 28
+        },
+        {
+          "column_name": "diff_base_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 29
         }
       ]
     },

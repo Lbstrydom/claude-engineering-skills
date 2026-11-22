@@ -110,10 +110,13 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Enrolled 2026-10-28 with migration 20261028120000 (own-model telemetry PR 3): decision provenance columns, per-call
   // provenance idempotency, consent history and the coverage SQL are Postgres-only. Two edits, always.
   'tests/own-model-pr3-db.test.mjs',
+  // Enrolled 2026-11-23 with migrations 20261123120000 and 20261123140000 (own-model capture P0): the attempt-identity and per-call
+  // tree columns through the real writer, the outcome CHECK, the weekly canary and its negative control, and every
+  // completeness query on the real schema are Postgres-only. Two edits, always: this list AND postgres-parity.yml.
+  'tests/own-model-capture-p0-db.test.mjs',
   // Enrolled 2026-11-22 with migration 20261123130000 (restore original unique keys): the drift repair, its no-op on a
   // healthy store and its duplicate refusal need real constraints. Two edits, always — this list AND postgres-parity.yml.
   'tests/restore-unique-keys-db.test.mjs',
-  'tests/audit-capture-db.test.mjs',
   'tests/audit-capture-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
   // CONFLICT re-drain, the outcome CHECK and every derived metric are Postgres-only.

@@ -39,7 +39,7 @@ import { withFileLockSync } from './lib/file-lock.mjs';
 import { UnresolvedScopeError, ScopeMismatchError } from './lib/bakeoff/scope.mjs';
 import { durableWrite } from './lib/durable-write.mjs';
 import './lib/audit-store-writers.mjs'; // registers every audit-store writer
-import { captureTargetIdentity } from './lib/audit/target-identity.mjs';
+import { readSnapshotIdentity } from './lib/bakeoff/snapshot-identity.mjs';
 import { LOG_PATH, CONTRACT_EPOCH, snapshotId, planContentHash, readLog } from './lib/bakeoff/log.mjs';
 import { resolveArms, scopeForEntry, armDidRun } from './lib/bakeoff/arms.mjs';
 import { isComplete, armCostUsd, distinctFindingCount, cohortDigest } from './lib/bakeoff/summary.mjs';
@@ -344,7 +344,7 @@ async function cloudIsOn() {
  * pre-epoch snapshots did. Refusing to collect because the store is down would
  * make the campaign hostage to it.
  */
-async function mintArmRun(arm, { plan, mode, id }) {
+async function mintArmRun(arm, { plan, mode, id, transcript }) {
   try {
     const store = await import('./learning-store.mjs');
     if (!await store.isCloudEnabled()) return null;
@@ -370,10 +370,13 @@ async function mintArmRun(arm, { plan, mode, id }) {
       // whole registration and with it the findings.
       ...(head.ok ? { commitSha: head.sha } : {}),
     });
-    // The arm reviews the tree at this revision: record the audited identity so arm runs stop dragging the
-    // `code_run` audited_sha floor down. Evidence, not a gate -- a failure leaves the run registered.
+    // The arm reviews the SNAPSHOT's tree, not whatever this checkout is now: the identity comes from the
+    // transcript's own rounds (`_auditedTree`/`_auditedSha`). A snapshot without one records NULL (a
+    // wrong-but-plausible cwd tree would read as verified). Evidence, not a gate -- a failure leaves the run registered.
     if (armRunId) {
-      const { auditedSha, auditedTree } = captureTargetIdentity(process.cwd());
+      const { auditedSha, auditedTree, source, error } = readSnapshotIdentity(transcript);
+      if (source !== 'snapshot') process.stderr.write(`  [bakeoff] arm ${arm.id}: snapshot identity ${source}${error ? ` (${error})` : ''}; recording none (not the working tree)
+`);
       if (auditedSha || auditedTree) {
         // durableWrite never rejects for a store failure: it RETURNS `{outcome}`, so the outcome is what to inspect.
         const w = await durableWrite('audit.convergenceState', { runId: armRunId, run_id: armRunId, state: { audited_sha: auditedSha, audited_tree: auditedTree } });
@@ -631,7 +634,7 @@ async function main() {
       a,
       { transcript, plan, mode: arg('mode'), outDir, id, envelopeScope, campaignDigest },
       {
-        beforeAttempt: () => mintArmRun(a, { plan, mode: arg('mode'), id }),
+        beforeAttempt: () => mintArmRun(a, { plan, mode: arg('mode'), id, transcript }),
         readOutcome: (spawned) => {
           try { return readArmResult(spawned.outPath); } catch (err) { return { error: `unreadable result: ${err.message}` }; }
         },

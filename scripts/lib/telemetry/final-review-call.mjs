@@ -15,6 +15,8 @@
 import { bindRun, record, drain } from './llm-call-log.mjs';
 import { routeFor } from './llm-call-log.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
+import { resolveWorkItemId } from '../ledger/work-item.mjs';
+import { execFileSync } from 'node:child_process';
 
 /**
  * USD for one final-review call, priced the way the GPT path prices its aggregate
@@ -38,10 +40,25 @@ export function finalReviewCostUsd(usage, model) {
  * @param {{runId: string|null, repoId?: string|null, model: string, provider: string, usage?: object, latencyMs?: number}} a
  * @returns {Promise<'recorded'|'skipped'|'failed'>}
  */
-export async function recordFinalReviewCall({ runId, repoId = null, model, provider, usage, latencyMs }) {
+export function reviewedTreeFromTranscript(transcriptContent) {
+  try {
+    const t = typeof transcriptContent === 'string' ? JSON.parse(transcriptContent) : transcriptContent;
+    const last = Array.isArray(t?.rounds) ? t.rounds[t.rounds.length - 1] : null;
+    return typeof last?._auditedTree === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(last._auditedTree) ? last._auditedTree : null;
+  } catch { return null; }
+}
+
+export async function recordFinalReviewCall({ runId, repoId = null, model, provider, usage, latencyMs, auditedTree = undefined }) {
   try {
     if (!runId) return 'skipped';
-    if (!bindRun({ runId, repoId, workItemId: process.env.OWN_MODEL_WORK_ITEM_ID, producer: 'final-review' })) return 'skipped';
+    // Same per-call identity as the audit producer. The reviewer is its own process, so the tree is read
+    // from the working tree it reviewed; no diff base is known here, so it stays null rather than guessed.
+    // The tree is the one the REVIEW INPUT carries (the transcript's own `_auditedTree`), passed by the caller: never the
+    // working tree at record time, which can have moved since the transcript was built. None given is null.
+    const tree = auditedTree ?? null;
+    let branch = null;
+    try { branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).toString().trim(); } catch { /* detached or no git: no branch segment, no guess */ }
+    if (!bindRun({ runId, repoId, workItemId: resolveWorkItemId({ branch }), producer: 'final-review', auditedTree: tree })) return 'skipped';
     record({
       purpose: 'final-review',
       model,
