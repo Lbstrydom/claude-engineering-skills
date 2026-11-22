@@ -123,7 +123,7 @@ function main() {
   // measurement's own `measuredAt`, never on the file's mtime (a copy resets mtime and keeps the stale content).
   const age = assessMeasurementAge({ measuredAt: envelope.coverage?.measuredAt });
   const ageLabel = age.state === 'unmeasured'
-    ? 'measuredAt is missing or not a usable past date'
+    ? 'measuredAt is future-dated (an undated or unparseable stamp is refused earlier, by the envelope schema, with exit 1)'
     : `measured ${age.measuredAt} (${age.ageDays.toFixed(1)} days old, bound ${age.maxAgeDays})`;
   if (age.state !== 'fresh' && config.enforce) {
     log(`arch:coverage-gate: FAILED — the coverage measurement is ${age.state === 'stale' ? 'STALE' : 'UNMEASURED'}: ${ageLabel}.`);
