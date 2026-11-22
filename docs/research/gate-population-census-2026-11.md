@@ -49,25 +49,30 @@ All 31 gate-shaped scripts outside the chain were read. **None is an orphan in t
 
 IDs are stable for the coordinator's approval list. **L = loosening (needs Louis, own PR, one by one). T = tightening (may ship small, follow-up).**
 
-### F1 — `efficacy:check` is a pure no-op in this repo (stated-not-held) — T or L (Louis chooses)
+### F1 — `efficacy:check` is a pure no-op in this repo (stated-not-held) — T, **DONE (F1a)**
+
+> **Landed in this PR (coordinator-approved).** `scripts/efficacy-lints-check.mjs` now writes `efficacy-lints: NOT RUN (...) - nothing was checked` to stderr when unconfigured and keeps exit 0. The coordinator asked for a non-zero exit; that was **not** done because the script is synced to every consumer (`scripts/lib/sync-entry-lists.mjs`), none has a config, and exit 1 would block every consumer push, which is a loosening-in-reverse the owner did not approve. Tests: `tests/efficacy-lints-check-cli.test.mjs` (red→green seen by renaming the message). The derived requirement `REQ-behavioural-4da0a21d` ("without output") is about stdout, which stays empty. Removal (L-1) is untouched.
+
 
 - Evidence: `package.json` `check:static` includes `npm run efficacy:check` → `scripts/efficacy-lints-check.mjs:20-21` `if (!config.enabled) process.exit(0); // silent no-op until a repo opts in`. The committed config is absent: `git ls-files | rg efficacy.*config` returns only `defaults/efficacy-lints.config.example.json`; `node scripts/efficacy-lints-check.mjs` run at `b52a77f1` prints nothing and exits 0 (reproduced). Default `enabled:false, gate:false` (`scripts/lib/efficacy-lints.mjs:54`). It is `_exemptions.json`-exempt on the grounds that it "degrades to skip", the **very property that makes it green without checking**.
 - Why it matters: it occupies a line in `check` and the guards-preflight chain while never evaluating anything here; it reads as "efficacy lints pass".
 - Proposal (choose one, Louis): **(a) T** make the unconfigured case print an explicit `efficacy-lints: NOT RUN (no efficacy-lints.config.json)` line on stderr (the "unmeasured is not clean" shape the repo already uses); **(b) L-1** remove it from `check:static` and keep it as an opt-in consumer diagnostic. (a) is the repo-consistent default.
 
-### F2 — `arch:coverage-gate` has been report-only since 2026-07-18 (stated-not-held) — T
+### F2 — `arch:coverage-gate` has been report-only since 2026-07-18 (stated-not-held) — T, **measured, flip NOT landed**
 
-- Evidence: `.audit-loop/domain-map.json:946` `"enforce": false`, with `_comment_coverage` (line 940) "enforce:false ships first … for one cycle of real data". Four months on it is still false. With `enforce:false` the gate exits 0 on DEGRADED/UNVERIFIED (`scripts/arch-coverage-gate.mjs` — `exitCode === 0 && !config.enforce && (DEGRADED || UNVERIFIED)` branch). The sandbox correctly sets `ARCH_COVERAGE_REQUIRE_ENVELOPE=1` (`scripts/prepush-check.mjs:595`), so absence fails, but a degraded graph passes. AGENTS.md describes it as owning the exit code.
-- Proposal: **T** decide the enforcement flip on data: run `arch:render` and read the verdict history; if the repo has been VERIFIED for the whole window, set `enforce:true` (a tightening, one JSON key, its own small PR). If not, record the reason in the file. Needs Louis only if the verdict is DEGRADED today.
+> **Measured, then held back (audit M4).** In this worktree (head = origin/main `b52a77f1`) `npm run arch:render` reported `coverage VERIFIED` (1699/1719 files cruised, 98.8%; 2888/2888 attributable edges); with `enforce:true` and `ARCH_COVERAGE_REQUIRE_ENVELOPE=1` the gate printed `VERIFIED` and exited 0. **But the verdict is not a measurement of this head:** the envelope's coverage block carries `measuredAt` 2026-09-28 (`arch:render` reuses it; only `arch:refresh` re-extracts, and that writes the shared audit store, so it was not run here), and the pre-push sandbox copies the main checkout's envelope, dated 2026-09-20. Flipping `enforce` on a verdict that can be two months stale would make the gate judge the wrong graph. The flip stays a proposal, **prerequisite:** a fresh `npm run arch:refresh && npm run arch:render` in the main checkout showing VERIFIED, and a freshness bound in the gate (reject a `measuredAt` older than the push base), then `.audit-loop/domain-map.json` `coverage.enforce: true` (one key, its own small PR).
 
-### F3 — Pill-exempt gates with no dedicated failing-case test (stated-not-held) — T
+### F3 — Pill-exempt gates with no dedicated failing-case test (stated-not-held) — T, **DONE for `docs:check` and the `efficacy:check` CLI**
+
+> **Landed:** `tests/check-docs-placement.test.mjs` (control green on an allowlisted root, red on a stray hand-written file, exit 2 on a missing `docs/`) and `tests/efficacy-lints-check-cli.test.mjs` (see F1). `arch:coverage-gate` remains thinly tested; unchanged.
+
 
 `_exemptions.json` lists 19 check-chain commands without a poison pill. For most, the declared reason is sound (re-derived each run) and a dedicated test exists. Two have **no test that can make the gate fail**:
 
 - `docs:check` (`scripts/check-docs-placement.mjs`): `git grep -l check-docs-placement -- tests` returns only `tests/fixtures/poison/stdout-flush-baseline-understated.json` (an unrelated fixture that lists every CLI). No test file exercises a root-placement violation. Exemption reason is that "there is no stale-artifact false-green to construct" — true of freshness, but the gate can still be vacuous (e.g. an allowlist that grew to admit everything).
 - `efficacy:check`: only `tests/efficacy-lints.test.mjs` covers the library; the CLI wiring `if (!config.enabled) exit 0` is untested (see F1).
 - Also thin: `arch:coverage-gate` (tests reach it only through `graph-coverage-lineage` and `prepush-sandbox-honesty`; the repo's own exemption cites "tests/gate-honesty.test.mjs (D6)").
-- Proposal: **T** one small test per gate: `docs:check` over a throwaway tree with a stray `docs/foo.md` (red) vs a clean tree (green). Same shape as `tests/knip-gate.test.mjs`. Do not add pills; a test is cheaper and the exemption stays honest.
+- Proposal: **T** one small test per gate: `docs:check` over a throwaway tree with a stray hand-written file at the docs root (red) vs a clean tree (green). Same shape as `tests/knip-gate.test.mjs`. Do not add pills; a test is cheaper and the exemption stays honest.
 
 ### F4 — Redundant double run of `check-stale-skill-surface` (overlap) — L (tiny)
 
@@ -87,12 +92,18 @@ IDs are stable for the coordinator's approval list. **L = loosening (needs Louis
 
 `size:ratchet:gate` (scripts only) and `skills:size:gate` (skills markdown only) are disjoint populations with the same shape; `stdout:flush`, `knip`, `windowed-views` are drift-only in the same family. Consistent by design and documented (`docs/reference/ratchet-gates.md`). Mentioned because the question "do two ratchets overlap?" is answered **no**.
 
-### F8 — Static gates never run in CI (coverage hole) — T/L (Louis, structural)
+### F8 — Static gates never run in CI (coverage hole) — T/L (Louis, structural) — **costed, NOT added**
+
+> **Costing against `tests/workflow-runner-labels.test.mjs`.** The budget guard asks only for: every `runs-on` a standard runner (free for this public repo), no artifacts, no cache, a cancelling concurrency group on `full-suite.yml`, and **exactly one job in `full-suite.yml`** (the check name `full-suite` is pinned by the ruleset and the verdict reader). So minutes are not the obstacle: a new workflow with a standard-runner job fits without raising anything, and `full-suite.yml` must not be given a second job. **The obstacle is correctness, not budget:** which of the 39 gates pass on a fresh clone is unmeasured (`gate-cost.md` §6 says they "need inputs a fresh clone lacks"), and a job that runs a guessed subset can go green having read nothing, which is the exact sandbox-honesty trap. Adding it needs a per-gate clone-safe declaration plus one real CI run to prove each gate red-then-green, so it is left as a proposal. Estimated shape when approved: `npm ci --ignore-scripts` + the declared subset, ≈2–3 min on `ubuntu-latest` (derived: ~3 s per gate + install).
+
 
 - Evidence: `gate-cost.md:268` "The static gates are NOT in CI (they need inputs a fresh clone lacks)". CI's `full-suite.yml` runs `npm test` only. So a `--no-verify` push, a push from a machine without the hook (hook = `core.hooksPath` per main checkout, memory `feedback_hooks_path_is_main_checkout`) or a coordinator-landed PR carries no static-gate evidence at all, and the "CI-green head" the coordinator pins to says nothing about the 39 gates.
 - Proposal: a **T** (additive, small): a CI job running only those static gates that work on a fresh clone (the pill-contracted Category-B freshness gates — `plans:index:check`, `requirements:map:check`, `bundle:deps:check`, `checklist:gen:check`, `skills:check`, `docs:*`); declare per gate in `.gate-files.json` which are clone-safe, with a sandbox-honesty test that a clone-unsafe gate cannot join. This increases Actions minutes (budgeted by `tests/workflow-runner-labels.test.mjs`), so it is Louis's call, not an auto-PR.
 
-### F9 — Cost outliers (top 5 by time per push)
+### F9 — Cost outliers (top 5 by time per push) — per-gate timing line **DONE**
+
+> **Landed:** the pre-push sandbox now runs the static gates one at a time (same order, same stop-on-first-failure as the `&&` chain) and prints `gate-time/v1 <gate> <s>s` per gate plus a closing `gate-time/v1 static total=… slowest: …` line (`scripts/lib/prepush-tier.mjs` `runTimedStaticGates`; falls back to `npm run check:static` unchanged when `package.json` is not a plain `npm run` chain). Observation only; tests in `tests/prepush-tier.test.mjs`. The next census can quote measured per-gate cost from push output.
+
 
 Per push, all runners, **both tiers pay the static chain; full tier adds the whole suite**:
 
@@ -118,17 +129,17 @@ Per push, all runners, **both tiers pay the static chain; full tier adds the who
 
 | # | Type | Action | Needs Louis | PR |
 |---|---|---|---|---|
-| F1 | T (a) / L-1 (b) | `efficacy:check` prints `NOT RUN` when unconfigured, or is removed from `check` | choice only | own |
-| F2 | T | decide `arch:coverage-gate` `enforce` from verdict history | if currently degraded | own |
-| F3 | T | add failing-case tests for `docs:check` and the `efficacy:check` CLI wiring | no | one small PR |
+| F1 | T (a) DONE / L-1 (b) open | `efficacy:check` prints `NOT RUN` when unconfigured (done); removal from `check` is L-1 | L-1 only | this PR |
+| F2 | T, measured, held | `enforce:true` only after a fresh `arch:refresh` plus a staleness bound in the gate | no | own |
+| F3 | T DONE | failing-case tests for `docs:check` and the `efficacy:check` CLI | no | this PR |
 | F4 | — | none (different predicates) | no | — |
 | F5 | **L-2** | path-condition `db:suites:gate` like its CI twin | **yes** | own |
 | F6, F7 | — | none | no | — |
-| F8 | T | CI job for clone-safe static gates | yes (Actions budget) | own |
-| F9 | T | per-step timing line in `check:static` | no | one small PR |
+| F8 | T, not built | CI job for clone-safe static gates; fits the budget guard, blocked on a per-gate clone-safe proof | yes | own |
+| F9 | T DONE | per-gate `gate-time/v1` line in the pre-push output | no | this PR |
 | F10 | **L-3** | path-condition `gates:poison` | **yes** | own |
 
-**Loosenings, to list one by one for approval: L-1 (only if F1(b) is chosen), L-2 (F5), L-3 (F10).** None is implemented here. Tightenings F1(a), F3 and F9 are small and prepared as a follow-up on this branch only if the coordinator wants them; none is implemented in this commit.
+**Loosenings, to list one by one for approval: L-1 (only if F1(b) is chosen), L-2 (F5), L-3 (F10).** None is implemented here. Tightenings F1(a), F3 and F9 are implemented in this PR (coordinator-approved); F2 was measured but its flip is held (stale evidence), and F8 is costed and left as a proposal.
 
 ## 4. Orphans and "is the population coherent?"
 

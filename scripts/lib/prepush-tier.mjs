@@ -31,6 +31,53 @@ export function sandboxTierSupport({ readText, exists }) {
 }
 
 /**
+ * The sandbox's `check:static` as its ordered gate names, or null when it is not a plain `npm run <name> && ...` chain
+ * (then the caller runs `npm run check:static` unchanged, so an unusual or older package.json loses nothing).
+ * @param {(p: string) => string|null} readText
+ * @returns {string[]|null}
+ */
+export function staticGateNames(readText) {
+  let scripts;
+  try { scripts = JSON.parse(readText('package.json') ?? 'null')?.scripts; } catch { return null; }
+  const chain = scripts?.['check:static'];
+  if (typeof chain !== 'string') return null;
+  // `npm run check:static` would run npm's pre/post lifecycle scripts around the chain; per-gate runs would not (audit H1/M5).
+  if ('precheck:static' in scripts || 'postcheck:static' in scripts) return null;
+  const names = [];
+  for (const step of chain.split('&&').map((s) => s.trim())) {
+    const m = /^npm run ([\w:.-]+)$/.exec(step);
+    if (!m) return null;
+    names.push(m[1]);
+  }
+  return names.length ? names : null;
+}
+
+/**
+ * Run the static gates ONE AT A TIME, in the order and with the stop-on-first-failure of the `&&` chain they replace, and
+ * print each gate's wall time (`gate-time/v1 <gate> <s>s`) plus a closing line naming the slowest. Observation only: the
+ * returned status is exactly the first failing gate's, and the timing is never an input to a verdict (census F9,
+ * docs/research/gate-population-census-2026-11.md: only 2 of 39 gates had a recorded cost).
+ * @returns {{status: number|null, error?: Error}}
+ */
+export function runTimedStaticGates({ names, run, log, clock = Date.now }) {
+  const timings = [];
+  const finish = (r) => {
+    const total = timings.reduce((s, t) => s + t.ms, 0);
+    const top = [...timings].sort((a, b) => b.ms - a.ms).slice(0, 3).map((t) => `${t.name} ${Math.round(t.ms / 1000)}s`).join(', ');
+    log(`  gate-time/v1 static total=${Math.round(total / 1000)}s gates=${timings.length}/${names.length} slowest: ${top || 'none'}`);
+    return r;
+  };
+  for (const name of names) {
+    const t0 = clock();
+    const r = run('npm', ['run', name]);
+    timings.push({ name, ms: clock() - t0 });
+    log(`  gate-time/v1 ${name} ${Math.round(timings[timings.length - 1].ms / 1000)}s`);
+    if (r.error || toShellExitCode(r.status) !== 0) return finish(r);
+  }
+  return finish({ status: 0 });
+}
+
+/**
  * Run the checks for one push.
  *
  * @param {object} a
@@ -54,7 +101,8 @@ export function runTieredChecks({ head, tier, pushesDefault, support, run, readT
     return finish(toShellExitCode(r.status), 'full', 0, null, 'head-predates-tier');
   }
 
-  const st = run('npm', ['run', 'check:static']);
+  const gateNames = staticGateNames(readText);
+  const st = gateNames ? runTimedStaticGates({ names: gateNames, run, log }) : run('npm', ['run', 'check:static']);
   if (st.error) throw new Error(`could not run checks: ${st.error.message}`);
   if (toShellExitCode(st.status) !== 0) return { status: toShellExitCode(st.status), summary: null };
 
