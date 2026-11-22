@@ -49,6 +49,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
       'accepted-debt',
       'arch-maintenance',
       'cache-hitrate',
+      'capture-canary',
       'concern-report',
       'context-staleness',
       'debt-capture-trail',

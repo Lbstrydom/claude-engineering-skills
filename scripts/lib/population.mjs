@@ -79,6 +79,7 @@ export const EXEMPT_STORE_CLIS = Object.freeze([
   { file: 'scripts/meta-assess.mjs', reason: 'per-repo meta-assessment of audit runs in one store; no cross-store claim (deferred, plan section 8)' },
   { file: 'scripts/remediation-reconcile.mjs', reason: 'out-of-band writer that reconciles remediation state; its "verdict" is a finding verdict, not a population statement' },
   { file: 'scripts/semantic-suppress.mjs', reason: 'retrospective reconciler that writes suppression rows for this repo; reports a coverage window of its own run, not a population' },
+  { file: 'scripts/capture-completeness.mjs', reason: 'capture completeness over this store (the ambient one) for one window; reconciles lifecycle starts against completions and reports no cross-store claim' },
   { file: 'scripts/ship-commit.mjs', reason: 'commit provenance gate; "verdict" is the gate outcome for one commit, store used only for schema realization' },
   { file: 'scripts/ship-train.mjs', reason: 'ship-train base-pinning verdict for a set of PRs; no store population is measured' },
   { file: 'scripts/slice-recurrence-check.mjs', reason: 'one-shot recurrence check over this repo rows for one file; no cross-store claim' },
