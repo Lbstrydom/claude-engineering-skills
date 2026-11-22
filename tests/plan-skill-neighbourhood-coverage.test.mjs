@@ -8,11 +8,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const skill = fs.readFileSync(new URL('../skills/plan/SKILL.md', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const render = fs.readFileSync(new URL('../scripts/lib/arch-render.mjs', import.meta.url), 'utf8');
+import { renderNeighbourhoodCallout } from '../scripts/lib/arch-render.mjs';
 
-test('the code still treats non-verified coverage as absence of evidence (subject probe)', () => {
-  assert.match(render, /coverage\?\.status !== 'verified'/);
-  assert.match(render, /absence of evidence, not evidence of absence/);
+const empty = (coverage) => renderNeighbourhoodCallout({
+  records: [], targetPaths: ['scripts/lib/x.mjs'], totalCandidatesConsidered: 0, cloudStatus: 'ok', coverage,
+}).markdown;
+
+test('the renderer says greenfield ONLY for verified coverage, and absence-of-evidence otherwise (subject probe)', () => {
+  assert.match(empty({ status: 'verified' }), /No near-duplicates found/);
+  for (const c of [undefined, { status: 'unverified', reason: 'x' }, { status: 'unknown' }]) {
+    const md = empty(c);
+    assert.match(md, /absence of evidence, not evidence of absence/);
+    assert.doesNotMatch(md, /No near-duplicates found/);
+  }
 });
 
 test('/plan only says "No near-duplicates found — proceed" for VERIFIED coverage', () => {
