@@ -13,7 +13,7 @@
  * `--skip 30` is the held-out window (the 30 PRs before the pilot window). Writes patches and a throwaway fires log under
  * `--out-dir` (default a temp dir), never the repo's `.audit/` log. Source-repo-only; read-only on the repo.
  *
- * Exit codes: 0 ok | 2 usage error or unusable input
+ * Exit codes: 0 ok | 1 --verify-frozen found a mismatch | 2 usage error, unusable input, or a refused --confirmation
  *
  * @module scripts/checklist-pilot
  */
@@ -40,6 +40,7 @@ async function main() {
   const argv = process.argv;
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); await finishAndExit(0); return; }
   let out;
+  let exitCode = 0;
   try {
     assertKnownFlags(argv, FLAGS, { cli: 'checklist-pilot' });
     const modes = ['--replay', '--incidents', '--kernel', '--controls', '--verify-frozen'].filter((m) => argv.includes(m));
@@ -48,12 +49,14 @@ async function main() {
     const checklistFile = value(argv, '--checklist') ?? undefined;
     const outDir = path.resolve(value(argv, '--out-dir') ?? fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-pilot-')));
     if (argv.includes('--confirmation')) {
-      // A confirmation run is only a confirmation if the instrument is the frozen one.
-      const v = verifyFrozen(repoRoot);
+      if (modes[0] !== '--replay') throw new ArgvError('checklist-pilot: --confirmation only applies to --replay');
+      // A confirmation run is only a confirmation if the instrument is the frozen one, INCLUDING the checklist actually passed in.
+      const v = verifyFrozen(repoRoot, { checklistFile });
       if (!v.ok) throw new Error(`--confirmation refused: the instrument is not the frozen one (${v.mismatches.map((m) => m.name).join(', ')} differ; run --verify-frozen)`);
     }
     if (modes[0] === '--verify-frozen') {
-      out = verifyFrozen(repoRoot);
+      out = verifyFrozen(repoRoot, { checklistFile });
+      exitCode = out.ok ? 0 : 1;
     } else if (modes[0] === '--replay') {
       const tip = value(argv, '--tip');
       if (!tip) throw new ArgvError('checklist-pilot: --replay needs --tip <sha> (the window is defined from a pinned commit)');
@@ -73,7 +76,7 @@ async function main() {
     return;
   }
   process.stdout.write(`${JSON.stringify(out, null, argv.includes('--json') ? 0 : 2)}\n`);
-  await finishAndExit(0);
+  await finishAndExit(exitCode);
 }
 
 if (isInvokedAsScript(import.meta.url)) {

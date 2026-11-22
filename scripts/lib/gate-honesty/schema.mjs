@@ -379,10 +379,13 @@ function checkStatedInChecklist({ owner, gate, checklistId, repoRoot, file: cont
   if (!entry) return [`${tag} statedIn ${gate.statedIn}: no checklist entry with id "${checklistId}"`];
   const errors = [];
   // A suffix match would accept another contract's gate that happens to share an id, so the caller's contract file is part of the key.
-  const wantLink = contractFile ? `${contractFile}#${gate.id}` : null;
-  const linkOk = wantLink ? entry.gateContract === wantLink : typeof entry.gateContract === 'string' && entry.gateContract.endsWith(`#${gate.id}`);
-  if (!linkOk) {
-    errors.push(`${tag} checklist entry "${checklistId}" is not bound back to this gate (its gateContract must be ${wantLink ? `"${wantLink}"` : `"<contract file>#${gate.id}"`})`);
+  // There is NO suffix fallback: a caller that cannot name the contract's file cannot verify the backlink, so it is refused.
+  if (!contractFile) {
+    return [`${tag} checklist-backed statedIn needs the contract's file (pass { file } to the validator): the backlink cannot be verified without it`];
+  }
+  const wantLink = `${contractFile}#${gate.id}`;
+  if (entry.gateContract !== wantLink) {
+    errors.push(`${tag} checklist entry "${checklistId}" is not bound back to this gate (its gateContract must be "${wantLink}")`);
   }
   if (entry.stated !== gate.stated) {
     errors.push(`${tag} checklist entry "${checklistId}" declares a different \`stated\` than the contract`);

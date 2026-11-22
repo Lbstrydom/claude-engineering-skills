@@ -17,19 +17,21 @@ export const FROZEN = Object.freeze({
   frozenOn: '2026-11-22',
   files: Object.freeze({
     checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d' }),
-    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: '7b58d81d55072c39da3ac1cd3c5a9f7c089ff48ad21855cbf9c0db27c554b350' }),
-    scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: '4f3b957b1e60b46adea076b80841ee44fa427e687b252c97a7a45f53262d1af1' }),
+    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: '1cb66a51aa50c5eaffe26807a855090beda4ca2ffab852fa192db078c2770b28' }),
+    scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: '42880cd8725c485ab8c050a9cdf6de751046367c4c552f8923b9076286cbbb35' }),
   }),
 });
 
 const sha = (abs) => createHash('sha256').update(fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
 
 /** @returns {{ok: boolean, frozenOn: string, mismatches: Array<{name: string, path: string, expected: string, actual: string|null}>}} */
-export function verifyFrozen(repoRoot) {
+export function verifyFrozen(repoRoot, { checklistFile } = {}) {
   const mismatches = [];
   for (const [name, { path: rel, sha256 }] of Object.entries(FROZEN.files)) {
     let actual = null;
-    try { actual = sha(path.resolve(repoRoot, rel)); } catch { /* absent: a mismatch */ }
+    // The checklist a run is actually GIVEN (`--checklist`) is the one that must be frozen, not merely the committed file.
+    const readPath = name === 'checklist' && checklistFile ? checklistFile : rel;
+    try { actual = sha(path.resolve(repoRoot, readPath)); } catch { /* absent: a mismatch */ }
     if (actual !== sha256) mismatches.push({ name, path: rel, expected: sha256, actual });
   }
   return { ok: mismatches.length === 0, frozenOn: FROZEN.frozenOn, mismatches };

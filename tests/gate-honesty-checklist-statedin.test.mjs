@@ -16,6 +16,8 @@ function mkTmp(prefix) { const d = fs.mkdtempSync(prefix); TMP_DIRS.push(d); ret
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 
+// The contract file every fixture entry names in its gateContract: the validator now REQUIRES the file (no suffix fallback).
+const FILE = 'scripts/gate-contracts/demo-gate.json';
 const STATED = 'An exit that stdout can reach must drain first';
 
 function fixture({ entries, statedIn = '.audit-loop/checklist.json#drain-first', stated = STATED, writeChecklist = true }) {
@@ -54,14 +56,14 @@ test('the policy admits exactly one new spelling: a well-formed checklist refere
 
 test('a bound entry carrying the sentence verbatim in its check is accepted (CLI gate and skill contracts alike)', () => {
   const { root, contract } = fixture({ entries: [goodEntry()] });
-  assert.deepEqual(validateCliGateContract(contract, root), { ok: true, contract: validateCliGateContract(contract, root).contract });
+  assert.deepEqual(validateCliGateContract(contract, root, { file: FILE }), { ok: true, contract: validateCliGateContract(contract, root, { file: FILE }).contract });
   const skill = { version: 1, skill: 'demo', gates: contract.gates };
-  assert.equal(validateGateContract(skill, root).ok, true);
+  assert.equal(validateGateContract(skill, root, { file: FILE }).ok, true);
 });
 
 test('the sentence missing from the entry\'s check is drift, and says so', () => {
   const { root, contract } = fixture({ entries: [goodEntry({ check: 'Exit through finishAndExit.' })] });
-  const r = validateCliGateContract(contract, root);
+  const r = validateCliGateContract(contract, root, { file: FILE });
   assert.equal(r.ok, false);
   // The entry's own strict schema refuses a `stated` its `check` does not carry, before the per-gate comparison is even reached.
   assert.match(r.errors.join(' '), /must occur verbatim in `check`|not found verbatim in the entry's check text/);
@@ -69,28 +71,28 @@ test('the sentence missing from the entry\'s check is drift, and says so', () =>
 
 test('an id that does not exist, a missing file, and a malformed file are each their own error', () => {
   const noId = fixture({ entries: [goodEntry({ id: 'other', gateContract: 'a.json#drain-gate-demo' })] });
-  assert.match(validateCliGateContract(noId.contract, noId.root).errors.join(' '), /no checklist entry with id "drain-first"/);
+  assert.match(validateCliGateContract(noId.contract, noId.root, { file: FILE }).errors.join(' '), /no checklist entry with id "drain-first"/);
   const noFile = fixture({ entries: [], writeChecklist: false });
-  assert.match(validateCliGateContract(noFile.contract, noFile.root).errors.join(' '), /does not exist/);
+  assert.match(validateCliGateContract(noFile.contract, noFile.root, { file: FILE }).errors.join(' '), /does not exist/);
   const broken = fixture({ entries: [] });
   fs.writeFileSync(path.join(broken.root, '.audit-loop', 'checklist.json'), '{ nope');
-  assert.match(validateCliGateContract(broken.contract, broken.root).errors.join(' '), /not readable JSON/);
+  assert.match(validateCliGateContract(broken.contract, broken.root, { file: FILE }).errors.join(' '), /not readable JSON/);
 });
 
 test('an entry that is not bound back to THIS gate, or declares a different stated, is refused', () => {
   const unbound = fixture({ entries: [goodEntry({ gateContract: 'scripts/gate-contracts/demo-gate.json#some-other-gate' })] });
-  assert.match(validateCliGateContract(unbound.contract, unbound.root).errors.join(' '), /not bound back to this gate/);
+  assert.match(validateCliGateContract(unbound.contract, unbound.root, { file: FILE }).errors.join(' '), /not bound back to this gate/);
   const other = fixture({ entries: [goodEntry({ stated: 'a different sentence', check: `${STATED}. a different sentence` })] });
-  assert.match(validateCliGateContract(other.contract, other.root).errors.join(' '), /declares a different `stated`/);
+  assert.match(validateCliGateContract(other.contract, other.root, { file: FILE }).errors.join(' '), /declares a different `stated`/);
 });
 
 test('a CRLF checklist does not read as drift (same canonicalisation as every other stated source)', () => {
   const { root, contract } = fixture({ entries: [goodEntry({ check: `line one\r\n${STATED}.` })] });
-  assert.equal(validateCliGateContract(contract, root).ok, true);
+  assert.equal(validateCliGateContract(contract, root, { file: FILE }).ok, true);
 });
 
 test('AGENTS.md remains legal, and the old unrelated sources remain illegal', () => {
   const { root, contract } = fixture({ entries: [goodEntry()], statedIn: 'docs/plans/x.md' });
-  assert.equal(validateCliGateContract(contract, root).ok, false);
+  assert.equal(validateCliGateContract(contract, root, { file: FILE }).ok, false);
   assert.equal(isApprovedStatedInSource('AGENTS.md', 'ship'), true);
 });

@@ -57,6 +57,7 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
   const loaded = loadChecklist({ repoRoot, file: checklistFile });
   if (!loaded.ok) throw new Error(loaded.error);
   const entries = loaded.entries;
+  outDir = path.resolve(repoRoot, outDir); // against the repo being replayed, never the caller's cwd
   fs.mkdirSync(outDir, { recursive: true });
   const logPath = path.join(outDir, 'fires.jsonl');
   const tipSha = git('rev-parse', `${tip}^{commit}`).trim();

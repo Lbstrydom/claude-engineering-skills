@@ -39,19 +39,27 @@ const C_ESCAPES = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"':
  * thing decoded as UTF-8. Input includes the surrounding quotes.
  */
 export function unquoteGitPath(token) {
-  const inner = token.slice(1, -1);
+  // By CODE POINT, never by UTF-16 unit: a supplementary character (an emoji) is two units, and encoding each lone surrogate
+  // separately would corrupt it.
+  const cps = Array.from(token.slice(1, -1));
   const bytes = [];
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i];
+  for (let i = 0; i < cps.length; i++) {
+    const ch = cps[i];
     if (ch !== '\\') { bytes.push(...Buffer.from(ch, 'utf8')); continue; }
-    const next = inner[i + 1];
+    const next = cps[i + 1];
     if (/[0-7]/.test(next ?? '')) {
-      const oct = /^[0-7]{1,3}/.exec(inner.slice(i + 1))[0];
+      const oct = /^[0-7]{1,3}/.exec(cps.slice(i + 1, i + 4).join(''))[0];
       bytes.push(parseInt(oct, 8) & 0xff);
       i += oct.length;
     } else if (next in C_ESCAPES) { bytes.push(C_ESCAPES[next]); i += 1; } else { bytes.push(92); }
   }
   return Buffer.from(bytes).toString('utf8');
+}
+
+/** A `rename from` / `rename to` value: quoted exactly like a header path, so it is decoded exactly like one. */
+function plainOrQuoted(raw) {
+  const t = raw.trimEnd();
+  return norm(t.startsWith('"') ? unquoteGitPath(t) : t);
 }
 
 /** Read one possibly-quoted token off the front of `s`: `[decoded, rest]`. */
@@ -90,6 +98,9 @@ function parseGitHeader(rest) {
   return [norm(a.replace(/^a\//, '')), norm(b.replace(/^b\//, ''))];
 }
 
+/** A patch whose hunk bodies do not match their `@@` counts (truncated, or mangled): refused, never read as fewer lines. */
+export class DiffParseError extends Error {}
+
 /**
  * Parse a unified diff into per-file records. Both `git diff` output and a plain `---`/`+++` unified diff are accepted.
  * Hunk bodies are read by the line counts in each `@@` header, so a content line that looks like a header is never taken
@@ -101,13 +112,17 @@ function parseGitHeader(rest) {
 export function parseUnifiedDiff(text) {
   const files = [];
   const lines = String(text).split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+  if (lines.at(-1) === '') lines.pop(); // the split artefact of a final newline is not a context line
   let cur = null;
   let remOld = 0;
   let remNew = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (remOld > 0 || remNew > 0) {
-      if (line.startsWith('+')) { cur.added.push(line.slice(1)); remNew--; } else if (line.startsWith('-')) { cur.removed.push(line.slice(1)); remOld--; } else if (line.startsWith(' ') || line === '') { remOld--; remNew--; }
+      if (line.startsWith('+')) { cur.added.push(line.slice(1)); remNew--; } else if (line.startsWith('-')) { cur.removed.push(line.slice(1)); remOld--; } else if (line.startsWith(' ') || line === '') { remOld--; remNew--; } else if (!line.startsWith('\\')) {
+        throw new DiffParseError(`hunk body does not match its @@ counts near ${JSON.stringify(line.slice(0, 40))}`);
+      }
+      if (remOld < 0 || remNew < 0) throw new DiffParseError('hunk body has more lines than its @@ counts');
       continue;
     }
     if (line.startsWith('diff --git ')) {
@@ -127,13 +142,15 @@ export function parseUnifiedDiff(text) {
       i += 1;
     } else if (cur && line.startsWith('new file mode')) cur.status = 'added';
     else if (cur && line.startsWith('deleted file mode')) cur.status = 'deleted';
-    else if (cur && line.startsWith('rename from ')) { cur.oldPath = norm(line.slice('rename from '.length).replace(/^"|"$/g, '')); cur.status = 'renamed'; } else if (cur && line.startsWith('rename to ')) cur.path = norm(line.slice('rename to '.length).replace(/^"|"$/g, ''));
+    else if (cur && line.startsWith('rename from ')) { cur.oldPath = plainOrQuoted(line.slice('rename from '.length)); cur.status = 'renamed'; } else if (cur && line.startsWith('rename to ')) cur.path = plainOrQuoted(line.slice('rename to '.length));
+    else if (cur && /^[+ -]/.test(line)) throw new DiffParseError(`diff body line outside any hunk (extra lines past the @@ counts?): ${JSON.stringify(line.slice(0, 40))}`);
     else if (cur && line.startsWith('@@')) {
       const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
       remOld = m ? Number(m[1] ?? 1) : 0;
       remNew = m ? Number(m[2] ?? 1) : 0;
     }
   }
+  if (remOld > 0 || remNew > 0) throw new DiffParseError('truncated patch: a hunk ends before its @@ counts are met');
   for (const f of files) { delete f.fromGit; delete f.sawHeaders; }
   return files;
 }
@@ -162,7 +179,8 @@ export function readContained(cwd, rel) {
   try {
     const real = fs.realpathSync(abs);
     const back = path.relative(fs.realpathSync(cwd), real);
-    if (back.startsWith('..') || path.isAbsolute(back)) return { skip: 'outside-repo' };
+    // `..` as a WHOLE path segment only: a file named `..config.mjs` is inside the repo.
+    if (back === '..' || back.startsWith(`..${path.sep}`) || path.isAbsolute(back)) return { skip: 'outside-repo' };
     const st = fs.statSync(real);
     if (!st.isFile()) return { skip: 'unreadable' };
     if (st.size > MAX_READ_BYTES) return { skip: 'oversize' };
@@ -190,7 +208,11 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
   } catch (e) {
     return { ok: false, code: 'DIFF_FAILED', message: `git diff ${range.base} failed: ${String(e.message).split('\n')[0]}` };
   }
-  const files = parseUnifiedDiff(text);
+  let files;
+  try { files = parseUnifiedDiff(text); } catch (e) {
+    if (e instanceof DiffParseError) return { ok: false, code: 'DIFF_UNPARSEABLE', message: `git diff output is not well-formed: ${e.message}` };
+    throw e;
+  }
   if (text.trim() && files.length === 0) return { ok: false, code: 'DIFF_UNPARSEABLE', message: 'git diff produced output that parsed to zero file records' };
   const incomplete = [];
   const excluded = [];
@@ -316,7 +338,10 @@ export function matchChecklist({ entries, files, diffPath, base, purpose, cwd = 
       try { text = fs.readFileSync(path.resolve(cwd, diffPath), 'utf-8'); } catch (e) {
         return { ok: false, code: 'DIFF_UNREADABLE', message: `--diff ${diffPath} is not a readable file (${e.code ?? e.message})` };
       }
-      diffFiles = parseUnifiedDiff(text);
+      try { diffFiles = parseUnifiedDiff(text); } catch (e) {
+        if (e instanceof DiffParseError) return { ok: false, code: 'DIFF_UNPARSEABLE', message: `--diff ${diffPath} is not a well-formed unified diff: ${e.message}` };
+        throw e;
+      }
       if (text.trim() && diffFiles.length === 0) return { ok: false, code: 'DIFF_UNPARSEABLE', message: `--diff ${diffPath} parsed to zero file records: not a unified diff` };
     } else {
       const got = collectGitDiff({ base, cwd });
