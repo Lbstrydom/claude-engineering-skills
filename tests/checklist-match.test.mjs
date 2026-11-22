@@ -61,7 +61,7 @@ describe('parseUnifiedDiff', () => {
       'new file mode 100644',
       '--- /dev/null',
       '+++ b/fresh.mjs',
-      '@@ -0,0 +2 @@',
+      '@@ -0,0 +1,2 @@',
       '+++ not a header, this is content',
       '+second',
     ].join('\n');

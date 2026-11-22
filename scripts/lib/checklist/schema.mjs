@@ -85,14 +85,20 @@ export const ChecklistFileSchema = z.object({
  * @param {{repoRoot?: string, file?: string}} [opts]
  * @returns {{ok: true, entries: object[], absent: boolean} | {ok: false, error: string}}
  */
-export function loadChecklist({ repoRoot = process.cwd(), file = CHECKLIST_PATH } = {}) {
+export function loadChecklist({ repoRoot = process.cwd(), file = CHECKLIST_PATH, explicit = false } = {}) {
   const abs = path.resolve(repoRoot, file);
+  // ENOENT means an empty checklist ONLY for the default path with nothing there at all (lstat: a dangling symlink IS something).
+  // A missing explicit path, or a link that points nowhere, is an error, never an empty result.
+  let linkExists = true;
+  try { fs.lstatSync(abs); } catch (e) { if (e.code === 'ENOENT') linkExists = false; }
+  if (!linkExists) {
+    return explicit ? { ok: false, error: `${file} does not exist (explicit --checklist path)` } : { ok: true, entries: [], absent: true };
+  }
   let raw;
   try {
     raw = fs.readFileSync(abs, 'utf-8');
   } catch (e) {
-    if (e.code === 'ENOENT') return { ok: true, entries: [], absent: true };
-    return { ok: false, error: `${file} unreadable: ${e.message}` };
+    return { ok: false, error: `${file} unreadable: ${e.code === 'ENOENT' ? 'dangling symlink' : e.message}` };
   }
   let json;
   try { json = JSON.parse(raw); } catch (e) { return { ok: false, error: `${file} is not valid JSON: ${e.message}` }; }

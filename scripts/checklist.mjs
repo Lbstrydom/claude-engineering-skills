@@ -31,10 +31,14 @@ function value(argv, name) {
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === name) {
       const v = argv[i + 1];
-      if (v === undefined || v.startsWith('--')) throw new ArgvError(`checklist: ${name} requires a value`);
+      if (v === undefined || v === '' || v.startsWith('--')) throw new ArgvError(`checklist: ${name} requires a value`);
       return v;
     }
-    if (argv[i].startsWith(`${name}=`)) return argv[i].slice(name.length + 1);
+    if (argv[i].startsWith(`${name}=`)) {
+      const v = argv[i].slice(name.length + 1);
+      if (v === '') throw new ArgvError(`checklist: ${name}= requires a value`);
+      return v;
+    }
   }
   return null;
 }
@@ -70,6 +74,7 @@ async function main() {
       diffPath: diffFile ?? undefined,
       purpose,
       checklist: value(argv, '--checklist') ?? CHECKLIST_PATH,
+      checklistExplicit: value(argv, '--checklist') !== null,
       logPath: value(argv, '--log') ?? undefined,
       record: !argv.includes('--no-record'),
       json: argv.includes('--json'),
@@ -80,7 +85,7 @@ async function main() {
   }
 
   const cwd = process.cwd();
-  const loaded = loadChecklist({ repoRoot: cwd, file: opts.checklist });
+  const loaded = loadChecklist({ repoRoot: cwd, file: opts.checklist, explicit: opts.checklistExplicit });
   if (!loaded.ok) { process.stderr.write(`checklist: ${loaded.error}\n`); await finishAndExit(2); return; }
 
   const result = matchChecklist({

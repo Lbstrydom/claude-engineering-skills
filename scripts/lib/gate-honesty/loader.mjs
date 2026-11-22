@@ -46,7 +46,7 @@ export function loadGateContracts({ skillsRoot, repoRoot }) {
       divergences.push(`[${name}][gate-contract.json] invalid JSON: ${e.message}`);
       continue;
     }
-    const result = validateGateContract(raw, repoRoot);
+    const result = validateGateContract(raw, repoRoot, { file: `skills/${name}/gate-contract.json` });
     if (!result.ok) {
       divergences.push(...result.errors.map((e) => (e.startsWith('[') ? e : `[${name}] ${e}`)));
       continue;
@@ -107,7 +107,7 @@ export function loadCliGateContracts({ contractsRoot, repoRoot }) {
       }
       continue;
     }
-    const result = validateCliGateContract(raw, repoRoot);
+    const result = validateCliGateContract(raw, repoRoot, { file: `scripts/gate-contracts/${entry}` });
     if (!result.ok) {
       divergences.push(...result.errors.map((e) => (e.startsWith('[') ? e : `[${entry}] ${e}`)));
       continue;

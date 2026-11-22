@@ -32,48 +32,109 @@ const MAX_EVIDENCE = 3;
 
 const norm = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '');
 
+const C_ESCAPES = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34 };
+
 /**
- * Parse a unified diff into per-file records. Headers are only read before the first hunk: inside a hunk a content line
- * may itself begin `+++ ` or `diff --git`-looking text.
+ * Decode one git C-quoted path (`"a\tb"`, `"caf\303\251"`): C-style escapes, with octal escapes read as BYTES and the whole
+ * thing decoded as UTF-8. Input includes the surrounding quotes.
+ */
+export function unquoteGitPath(token) {
+  const inner = token.slice(1, -1);
+  const bytes = [];
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch !== '\\') { bytes.push(...Buffer.from(ch, 'utf8')); continue; }
+    const next = inner[i + 1];
+    if (/[0-7]/.test(next ?? '')) {
+      const oct = /^[0-7]{1,3}/.exec(inner.slice(i + 1))[0];
+      bytes.push(parseInt(oct, 8) & 0xff);
+      i += oct.length;
+    } else if (next in C_ESCAPES) { bytes.push(C_ESCAPES[next]); i += 1; } else { bytes.push(92); }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/** Read one possibly-quoted token off the front of `s`: `[decoded, rest]`. */
+function readPathToken(s) {
+  if (s[0] !== '"') return [s, ''];
+  let i = 1;
+  while (i < s.length && s[i] !== '"') i += s[i] === '\\' ? 2 : 1;
+  return [unquoteGitPath(s.slice(0, i + 1)), s.slice(i + 1).trimStart()];
+}
+
+/** A header path: quoted or plain, minus git's `a/` / `b/` prefix, `/dev/null` and a trailing timestamp tab. */
+function headerPath(raw) {
+  const t = raw.trimEnd();
+  if (t === '/dev/null') return null;
+  const [p] = t.startsWith('"') ? readPathToken(t) : [t.split('\t')[0]];
+  return norm(p.replace(/^[ab]\//, ''));
+}
+
+function parseGitHeader(rest) {
+  let a;
+  let b;
+  if (rest.startsWith('"')) {
+    let after;
+    [a, after] = readPathToken(rest);
+    [b] = readPathToken(after);
+  } else if (rest.includes(' "b/')) {
+    const i = rest.indexOf(' "b/');
+    a = rest.slice(0, i);
+    [b] = readPathToken(rest.slice(i + 1));
+  } else {
+    for (let i = rest.indexOf(' b/'); i !== -1; i = rest.indexOf(' b/', i + 1)) {
+      if (rest.slice(2, i) === rest.slice(i + 3)) { a = rest.slice(0, i); b = rest.slice(i + 1); break; }
+    }
+    if (a === undefined) { const m = /^(a\/.+) (b\/.+)$/.exec(rest); [a, b] = m ? [m[1], m[2]] : [rest, rest]; }
+  }
+  return [norm(a.replace(/^a\//, '')), norm(b.replace(/^b\//, ''))];
+}
+
+/**
+ * Parse a unified diff into per-file records. Both `git diff` output and a plain `---`/`+++` unified diff are accepted.
+ * Hunk bodies are read by the line counts in each `@@` header, so a content line that looks like a header is never taken
+ * for one. Git-quoted paths are decoded.
  *
  * @param {string} text
  * @returns {Array<{path: string, oldPath: string|null, status: 'added'|'deleted'|'renamed'|'modified', added: string[], removed: string[]}>}
  */
 export function parseUnifiedDiff(text) {
   const files = [];
+  const lines = String(text).split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
   let cur = null;
-  let inHunk = false;
-  for (const raw of String(text).split('\n')) {
-    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+  let remOld = 0;
+  let remNew = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (remOld > 0 || remNew > 0) {
+      if (line.startsWith('+')) { cur.added.push(line.slice(1)); remNew--; } else if (line.startsWith('-')) { cur.removed.push(line.slice(1)); remOld--; } else if (line.startsWith(' ') || line === '') { remOld--; remNew--; }
+      continue;
+    }
     if (line.startsWith('diff --git ')) {
-      const rest = line.slice('diff --git '.length);
-      let a = null;
-      let b = null;
-      for (let i = rest.indexOf(' b/'); i !== -1; i = rest.indexOf(' b/', i + 1)) {
-        if (rest.slice(2, i) === rest.slice(i + 3)) { a = rest.slice(2, i); b = a; break; }
-      }
-      if (a === null) {
-        const m = /^a\/(.+) b\/(.+)$/.exec(rest);
-        if (m) { a = m[1]; b = m[2]; }
-      }
-      cur = { path: norm(b ?? rest), oldPath: a !== null && a !== b ? norm(a) : null, status: 'modified', added: [], removed: [] };
+      const [a, b] = parseGitHeader(line.slice('diff --git '.length));
+      cur = { path: b, oldPath: a !== b ? a : null, status: 'modified', added: [], removed: [], fromGit: true, sawHeaders: false };
       files.push(cur);
-      inHunk = false;
-      continue;
+    } else if (line.startsWith('--- ') && lines[i + 1]?.startsWith('+++ ')) {
+      const oldP = headerPath(line.slice(4));
+      const newP = headerPath(lines[i + 1].slice(4));
+      if (cur?.fromGit && !cur.sawHeaders) {
+        cur.sawHeaders = true; // git's own headers: the `diff --git` line already named the paths
+        if (oldP === null) cur.status = 'added'; else if (newP === null) { cur.status = 'deleted'; cur.path = oldP; }
+      } else {
+        cur = { path: newP ?? oldP, oldPath: oldP && newP && oldP !== newP ? oldP : null, status: oldP === null ? 'added' : newP === null ? 'deleted' : 'modified', added: [], removed: [], fromGit: false, sawHeaders: true };
+        files.push(cur);
+      }
+      i += 1;
+    } else if (cur && line.startsWith('new file mode')) cur.status = 'added';
+    else if (cur && line.startsWith('deleted file mode')) cur.status = 'deleted';
+    else if (cur && line.startsWith('rename from ')) { cur.oldPath = norm(line.slice('rename from '.length).replace(/^"|"$/g, '')); cur.status = 'renamed'; } else if (cur && line.startsWith('rename to ')) cur.path = norm(line.slice('rename to '.length).replace(/^"|"$/g, ''));
+    else if (cur && line.startsWith('@@')) {
+      const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+      remOld = m ? Number(m[1] ?? 1) : 0;
+      remNew = m ? Number(m[2] ?? 1) : 0;
     }
-    if (!cur) continue;
-    if (!inHunk) {
-      if (line.startsWith('new file mode')) cur.status = 'added';
-      else if (line.startsWith('deleted file mode')) cur.status = 'deleted';
-      else if (line.startsWith('rename from ')) { cur.oldPath = norm(line.slice('rename from '.length)); cur.status = 'renamed'; }
-      else if (line.startsWith('rename to ')) cur.path = norm(line.slice('rename to '.length));
-      else if (line.startsWith('@@')) inHunk = true;
-      continue;
-    }
-    if (line.startsWith('@@')) continue;
-    if (line.startsWith('+')) cur.added.push(line.slice(1));
-    else if (line.startsWith('-')) cur.removed.push(line.slice(1));
   }
+  for (const f of files) { delete f.fromGit; delete f.sawHeaders; }
   return files;
 }
 
@@ -85,22 +146,38 @@ function gitRunner(cwd) {
   };
 }
 
-function readContained(cwd, rel) {
+/**
+ * Read a repo file for matching. Containment is checked on the REALPATH: a symlink that resolves outside the repo is
+ * excluded and never read. `{skip:'absent'}` is the only skip that is not a problem (the file does not exist yet).
+ *
+ * @returns {{body: string} | {skip: 'absent'|'outside-repo'|'oversize'|'unreadable'}}
+ */
+export function readContained(cwd, rel) {
+  const abs = path.resolve(cwd, rel);
   try {
-    const abs = path.resolve(cwd, rel);
-    const relBack = path.relative(cwd, abs);
-    if (relBack.startsWith('..') || path.isAbsolute(relBack)) return null;
-    const st = fs.statSync(abs);
-    if (!st.isFile() || st.size > MAX_READ_BYTES) return null;
-    return fs.readFileSync(abs, 'utf-8');
-  } catch { return null; }
+    fs.lstatSync(abs);
+  } catch (e) {
+    return { skip: e.code === 'ENOENT' ? 'absent' : 'unreadable' };
+  }
+  try {
+    const real = fs.realpathSync(abs);
+    const back = path.relative(fs.realpathSync(cwd), real);
+    if (back.startsWith('..') || path.isAbsolute(back)) return { skip: 'outside-repo' };
+    const st = fs.statSync(real);
+    if (!st.isFile()) return { skip: 'unreadable' };
+    if (st.size > MAX_READ_BYTES) return { skip: 'oversize' };
+    return { body: fs.readFileSync(real, 'utf-8') };
+  } catch { return { skip: 'unreadable' }; }
 }
 
 /**
  * The working-tree change against `base`: `git diff <base>` (staged + unstaged, renames detected) plus every untracked,
  * non-ignored file read whole as an all-added file.
  *
- * @returns {{ok: true, files: object[], base: string} | {ok: false, code: 'UNRESOLVABLE_BASE'|'DIFF_FAILED', message: string}}
+ * An untracked file this module cannot read whole (oversize, unreadable) is listed in `incomplete`; one that resolves outside the
+ * repo is listed in `excluded` and never read. Changed files are judged by git's own diff text, which is not size-limited.
+ *
+ * @returns {{ok: true, files: object[], base: string, incomplete: object[], excluded: object[]} | {ok: false, code: 'UNRESOLVABLE_BASE'|'DIFF_FAILED'|'DIFF_UNPARSEABLE', message: string}}
  */
 export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd) } = {}) {
   const range = resolvePushRange({ env: { AUDIT_PUSH_RANGE_BASE: String(base ?? ''), AUDIT_PUSH_RANGE_HEAD: 'HEAD' }, requireExplicit: true, run });
@@ -114,6 +191,9 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
     return { ok: false, code: 'DIFF_FAILED', message: `git diff ${range.base} failed: ${String(e.message).split('\n')[0]}` };
   }
   const files = parseUnifiedDiff(text);
+  if (text.trim() && files.length === 0) return { ok: false, code: 'DIFF_UNPARSEABLE', message: 'git diff produced output that parsed to zero file records' };
+  const incomplete = [];
+  const excluded = [];
   let untracked = '';
   try {
     untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd, encoding: 'utf-8', env: sanitizeGitEnv(cwd), stdio: ['ignore', 'pipe', 'ignore'] });
@@ -121,10 +201,12 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
     return { ok: false, code: 'DIFF_FAILED', message: `git ls-files --others failed: ${String(e.message).split('\n')[0]}` };
   }
   for (const rel of untracked.split('\0').filter(Boolean)) {
-    const body = readContained(cwd, rel);
-    files.push({ path: norm(rel), oldPath: null, status: 'added', added: body !== null && !body.includes('\0') ? body.split('\n') : [], removed: [] });
+    const got = readContained(cwd, rel);
+    if (got.skip === 'outside-repo') excluded.push({ path: norm(rel), reason: got.skip });
+    else if (got.skip) incomplete.push({ path: norm(rel), reason: got.skip });
+    files.push({ path: norm(rel), oldPath: null, status: 'added', added: got.body !== undefined && !got.body.includes('\0') ? got.body.split('\n') : [], removed: [] });
   }
-  return { ok: true, files, base: range.base };
+  return { ok: true, files, base: range.base, incomplete, excluded };
 }
 
 /** A symbol is only a USE in code: a markdown or JSON file that merely names `createAnthropicClient` is a mention, and would fire every entry on every doc edit. */
@@ -166,7 +248,7 @@ export function matchEntries({ entries, mode, files = [], diffFiles = [], readFi
           if (res.some((re) => re.test(body))) note('symbol', f);
         }
       } else {
-        for (const f of diffFiles.filter((d) => CODE_FILE.test(d.path))) {
+        for (const f of diffFiles.filter((d) => CODE_FILE.test(d.path) || (d.oldPath && CODE_FILE.test(d.oldPath)))) {
           if ([...f.added, ...f.removed].some((l) => res.some((re) => re.test(l)))) note('symbol', f.path);
         }
       }
@@ -191,11 +273,11 @@ export function matchEntries({ entries, mode, files = [], diffFiles = [], readFi
  *
  * @returns {{recorded: boolean, error?: string}}
  */
-export function recordFires({ logPath, runId, sha = null, purpose, entriesEvaluated, fired, mode = null, now = () => new Date() }) {
+export function recordFires({ logPath, runId, sha = null, purpose, entriesEvaluated, fired, mode = null, incomplete = 0, now = () => new Date() }) {
   if (!FIRE_PURPOSES.includes(purpose)) return { recorded: false, error: `purpose must be one of ${FIRE_PURPOSES.join('|')}, got ${JSON.stringify(purpose)}` };
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    const row = { runId, sha, purpose, entriesEvaluated, fired: fired.map((f) => f.id ?? f), mode, at: now().toISOString() };
+    const row = { runId, sha, purpose, entriesEvaluated, fired: fired.map((f) => f.id ?? f), mode, incomplete, at: now().toISOString() };
     fs.appendFileSync(logPath, `${JSON.stringify(row)}\n`);
     return { recorded: true };
   } catch (e) {
@@ -224,6 +306,8 @@ export function matchChecklist({ entries, files, diffPath, base, purpose, cwd = 
   let mode;
   let fired;
   let inputFiles;
+  const incomplete = [];
+  const excluded = [];
   if (diffPath || base) {
     mode = 'diff';
     let diffFiles;
@@ -233,28 +317,46 @@ export function matchChecklist({ entries, files, diffPath, base, purpose, cwd = 
         return { ok: false, code: 'DIFF_UNREADABLE', message: `--diff ${diffPath} is not a readable file (${e.code ?? e.message})` };
       }
       diffFiles = parseUnifiedDiff(text);
+      if (text.trim() && diffFiles.length === 0) return { ok: false, code: 'DIFF_UNPARSEABLE', message: `--diff ${diffPath} parsed to zero file records: not a unified diff` };
     } else {
       const got = collectGitDiff({ base, cwd });
       if (!got.ok) return got;
       diffFiles = got.files;
+      incomplete.push(...got.incomplete);
+      excluded.push(...got.excluded);
     }
     inputFiles = diffFiles.length;
     fired = matchEntries({ entries, mode, diffFiles });
   } else {
     mode = 'files';
-    const list = (files ?? []).filter(Boolean);
+    const list = (files ?? []).filter(Boolean).map(norm);
     inputFiles = list.length;
-    fired = matchEntries({ entries, mode, files: list, readFile: (rel) => readContained(cwd, rel) });
+    const contents = new Map();
+    if (entries.some((e) => e.trigger.symbols?.length)) {
+      for (const rel of list.filter((p) => CODE_FILE.test(p))) {
+        const got = readContained(cwd, rel);
+        if (got.body !== undefined) contents.set(rel, got.body);
+        else if (got.skip === 'outside-repo') excluded.push({ path: rel, reason: got.skip });
+        else if (got.skip !== 'absent') incomplete.push({ path: rel, reason: got.skip });
+      }
+    }
+    fired = matchEntries({ entries, mode, files: list, readFile: (rel) => contents.get(rel) ?? null });
   }
   let recorded = false;
   if (record) {
     const run = gitRunner(cwd);
     const sha = run(['rev-parse', '--verify', '--quiet', 'HEAD']);
-    const rec = recordFires({ logPath: logPath ?? path.join(cwd, FIRES_LOG), runId, sha, purpose, entriesEvaluated: entries.length, fired, mode });
+    const rec = recordFires({ logPath: logPath ?? path.join(cwd, FIRES_LOG), runId, sha, purpose, entriesEvaluated: entries.length, fired, mode, incomplete: incomplete.length });
     recorded = rec.recorded;
     if (!rec.recorded) process.stderr.write(`  [checklist] fires log not written (non-blocking): ${rec.error}\n`);
   }
-  return { ok: true, mode, fired, evaluated: entries.length, inputFiles, recorded, runId, patternsSkipped: mode === 'files' };
+  if (incomplete.length) {
+    return {
+      ok: false, code: 'INCOMPLETE', incomplete, excluded, fired, mode, recorded,
+      message: `evaluation incomplete: could not read ${incomplete.map((i) => `${i.path} (${i.reason})`).join(', ')}`,
+    };
+  }
+  return { ok: true, mode, fired, evaluated: entries.length, inputFiles, recorded, runId, patternsSkipped: mode === 'files', excluded };
 }
 
 /** The `<checklist>` block `/audit-code` injects (mirrors `<requirements_rubric>`); '' when nothing fired. */
