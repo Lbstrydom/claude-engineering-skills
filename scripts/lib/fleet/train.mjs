@@ -380,6 +380,33 @@ function closeProbe({ cwd, dir, done, deps }) {
   return { ...done, probe: true, train, approvability: { ok: false, reason: `probe: ${what} — build a full train (\`land\` without --tier) to approve` } };
 }
 
+const STDERR_SLICE = 500;
+const RETRY_DELAY_MS = 750;
+
+/**
+ * One bounded retry of a git step that may not have run to completion (field report 4: a transient Windows
+ * `spawnSync git ENOENT`). A spawn failure (`status:null`, "failed to run") means git NEVER started, so repeating it
+ * cannot double-apply. A timeout or an index lock may have done part of the work: retry only when HEAD still equals
+ * `before` (and, for a merge, the tree is clean). Anything else is returned as it came; the second failure wins.
+ */
+function retryTransient({ run, wgit, before, sleep, requireClean = false }) {
+  const r = run();
+  if (r.ok) return r;
+  const spawnFailed = r.status === null && /failed to run/.test(r.reason ?? '');
+  const transient = spawnFailed || r.status === null || /index\.lock|EBUSY|EPERM/.test(`${r.stderr ?? ''} ${r.reason ?? ''}`);
+  if (!transient) return r;
+  if (!spawnFailed) {
+    const head = wgit(['rev-parse', 'HEAD']);
+    if (!head.ok || head.stdout.trim() !== before) return r;
+    if (requireClean) {
+      const st = wgit(['status', '--porcelain']);
+      if (!st.ok || st.stdout.trim()) return r;
+    }
+  }
+  sleep(RETRY_DELAY_MS);
+  return run();
+}
+
 /**
  * Apply sources in order. A conflict confined to `appendOnlyGlobs` is resolved
  * keeping both sides in the DIRECT modes (fleet pushes this very tree); in `pr`
@@ -387,7 +414,7 @@ function closeProbe({ cwd, dir, done, deps }) {
  * restack the later branch once the earlier one lands.
  * @returns {{conflict: object|null, unioned: Array<{sourceId: string, files: string[]}>}}
  */
-function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlobs = [], rollup = false }) {
+export function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlobs = [], rollup = false, sleep = sleepSync }) {
   const unioned = [];
   // A rollup member is squashed with a message that names it and carries NO AI-* trailer: `-C` would copy the member's AI-Gate onto a
   // commit whose combined tree no audit read (docs/plans/ship-batch-member-outcomes.md section 2.9.3).
@@ -399,17 +426,23 @@ function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlob
   };
   for (const s of sources) {
     const before = wgit(['rev-parse', 'HEAD']).stdout.trim();
+    const retry = (run, opts) => retryTransient({ run, wgit, before, sleep, ...opts });
     let r;
-    if (mergeMethod === 'direct-merge') r = wgit(['merge', '--no-ff', '--no-verify', '-m', `Merge ${s.id} (fleet ${trainId})`, s.oid]);
+    if (mergeMethod === 'direct-merge') r = retry(() => wgit(['merge', '--no-ff', '--no-verify', '-m', `Merge ${s.id} (fleet ${trainId})`, s.oid]), { requireClean: true });
     else {
       // `pr` uses squash for the test tree, as GitHub will. -C keeps the source tip's author and message.
-      r = wgit(['merge', '--squash', s.oid]);
-      if (r.ok) r = squashCommit(s);
+      r = retry(() => wgit(['merge', '--squash', s.oid]), { requireClean: true });
+      if (r.ok) r = retry(() => squashCommit(s));
     }
     if (!r.ok) {
       const list = wgit(['diff', '--name-only', '--diff-filter=U']);
       const files = list.ok ? list.stdout.split('\n').filter(Boolean) : [];
-      const conflict = { sourceId: s.id, oid: s.oid, reason: 'merge conflict', files };
+      // "merge conflict" is a claim about the TREE: only a listed unmerged file makes it. An empty list (git never ran,
+      // timed out, a lock) is a different failure and an unreadable list is an unanswered question, never `files: []`.
+      const why = files.length ? 'merge conflict'
+        : !list.ok ? `conflict list unavailable: ${list.reason} (merge: ${r.reason})`
+          : `merge failed (not a conflict): ${r.reason}`;
+      const conflict = { sourceId: s.id, oid: s.oid, reason: why, files, ...(files.length ? {} : { status: r.status ?? null, stderr: String(r.stderr ?? '').trim().slice(0, STDERR_SLICE) }) };
       if (!appendOnlyGlobs.length || !files.length) return { conflict, unioned };
       if (mergeMethod === 'pr') {
         const allAppendOnly = files.every((f) => isMatch(f, appendOnlyGlobs, { dot: true }));
