@@ -121,7 +121,11 @@ function main() {
   // A verdict is a statement about the graph that was MEASURED, and `arch:render` reuses an envelope it did not
   // re-extract: the pre-push sandbox read one dated 63 days earlier and printed VERIFIED. Age is judged on the
   // measurement's own `measuredAt`, never on the file's mtime (a copy resets mtime and keeps the stale content).
-  const age = assessMeasurementAge({ measuredAt: envelope.coverage?.measuredAt });
+  // Only a PRESENT coverage block carries a measurement to age. A legacy envelope has none: that is `unknown`
+  // (handled by the verdict path and by ARCH_COVERAGE_REQUIRE_ENVELOPE above), never a staleness failure.
+  const age = envelope.coverage
+    ? assessMeasurementAge({ measuredAt: envelope.coverage.measuredAt })
+    : { state: 'fresh', ageDays: 0, measuredAt: null, maxAgeDays: 0 };
   const ageLabel = age.state === 'unmeasured'
     ? 'measuredAt is future-dated (an undated or unparseable stamp is refused earlier, by the envelope schema, with exit 1)'
     : `measured ${age.measuredAt} (${age.ageDays.toFixed(1)} days old, bound ${age.maxAgeDays})`;

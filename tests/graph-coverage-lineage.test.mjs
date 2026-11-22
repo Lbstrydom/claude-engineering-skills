@@ -60,7 +60,8 @@ function fixtureRepo({ coverage, enforce }) {
 const coverageBlock = (over = {}) => ({
   schemaVersion: 1,
   verdict: { status: 'verified', reason: null },
-  measuredAt: '2026-07-18T12:00:00.000Z',
+  // Relative to the gate's own clock: the gate bounds a measurement's AGE, so a fixed date would test the calendar, not the verdict.
+  measuredAt: new Date().toISOString(),
   refreshId: REFRESH_ID,
   stale: false,
   extraction: {
