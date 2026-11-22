@@ -381,7 +381,7 @@ Snippet + current set: [consumer-repo-layout.md](docs/reference/consumer-repo-la
 
 ## Browser Tool Setup (persona-test)
 
-`/persona-test` drives a real browser via Playwright MCP. **First-time setup: `npx playwright install chromium`**, or the server crashes silently and no tools appear. Windows override, BrightData: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
+`/persona-test` drives a real browser through a declared driver contract shared with `/click-test`: the host's built-in browser pane (`mcp__Claude_Browser__*`) is what most sessions use, and **Playwright MCP is the pinned, free, credential-less fallback**. Its first-time setup is `npx playwright install chromium`, or the server crashes silently and no tools appear. Windows override, BrightData: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ## Mermaid validation (for plan diagrams)
 

@@ -115,6 +115,12 @@ read its failures; after that, targeted runs are fine. **Exception:** where `.fl
 branch runs its targeted and affected-file tests plus the required gates, and `fleet land` is its full-suite run
 (participant rule 4a) — so build a fast-tier probe early (`references/landing.md`) to catch what targeted runs miss.
 
+## 6a. Wait with ONE background command, never poll turns
+
+Waiting on CI or another session is ONE background command that exits when the condition holds (it wakes the session),
+never repeated poll turns. Each model turn re-reads the whole context: measured about 720 cached-input tokens per
+output token across 110 sessions, so a poll loop spends the context N times to learn one fact.
+
 ## 7a. Land the chips that shipped themselves, in one action
 
 Under the user's standing grant (their own `~/.claude/CLAUDE.md`, never a message) chips ship themselves and you land the batch

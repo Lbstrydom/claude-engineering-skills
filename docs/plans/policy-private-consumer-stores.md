@@ -1,6 +1,6 @@
 # Plan: consumers whose store is private by policy — honest populations, analysis shipped to the data, reports carried by hand
 - **Date**: 2026-11-21
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + pure libraries + one sync-closure change; no UI). Stack `js-ts`.
 - **Target domain(s)**: `scripts`, `shared-lib`, `stores`, `sync`

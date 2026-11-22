@@ -253,7 +253,12 @@
   "chars": 403,
   "sha256_16": "c1733c0220017c17",
   "disposition": "pointer",
-  "stage": "1"
+  "stage": "1",
+  "rebased": {
+   "base": "4ba6c280",
+   "unit": 32,
+   "sha256_16": "444ef3248fa3cf80"
+  }
  },
  {
   "unit": 33,

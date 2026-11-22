@@ -259,6 +259,13 @@ worth doing is a decision for after stage 4, on measured numbers.
   (H 0, M <= 2) met in R2-R5; GPT rounds stopped at 5 because every round since R2 found one or two dropped sub-clauses,
   each fixed, none a design issue.
   Final gate: Gemini (`latest-pro`) round 1 **APPROVE**, gate `approve` (blocking 0, debt 0), Code: FULL, run `e216f984`.
+- **Merge of origin/main (8bcc6a05)**, before stage 1 merged: #450 (`4ba6c280`) rewrote unit 32 (Browser Tool Setup:
+  the built-in pane is what sessions mostly use, Playwright the pinned fallback). The first live use of the rebase
+  protocol: the conflict was resolved by carrying the new content into the stub; manifest row 32 gained
+  `rebased: {base: 4ba6c280, unit: 32}`; the dossier copy of unit 32 was replaced by the 4ba6c280 text. No other unit
+  differs between `b52a77f1` and main. `post --stage 1` → 40 units, 0 problems; the pre-merge dossier against the
+  rebased manifest → `unit 32 ... found 0x`, exit 1 (the control); `pre` for stages 2-4 → 0 problems. Measured after
+  the merge: AGENTS.md **65944** chars (main's own AGENTS.md is 73660, so −7716 against main).
   **Lesson for stages 2-4**: the resident spec must list every clause of each tripwire, not its headline, before editing.
 - **Measured** (`node -e` over `fs.readFileSync('AGENTS.md','utf8').length`, the count `context:check` uses; the file is LF):
   AGENTS.md **73364 → 65743 chars, −7621 (−10.4%)**; with CLAUDE.md (2169, unchanged) the resident pair is 75533 → 67912.
