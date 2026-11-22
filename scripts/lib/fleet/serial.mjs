@@ -40,6 +40,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { retrySync } from '../retry-transient-fs.mjs';
+import { lsRemote } from './remote-read.mjs';
 import { withFileLockSync } from '../file-lock.mjs';
 import { OID_RE } from './contracts.mjs';
 import { TRAIN_ID_RE, assertManaged, fleetDir, readTrain } from './registry.mjs';
@@ -176,7 +177,7 @@ const short = (o) => String(o ?? '?').slice(0, 12);
 
 /** The base branch's tip on the remote right now, for `messageFor`; `null` when it cannot be read. */
 function baseTip({ deps, cwd, run }) {
-  const r = deps.git(['ls-remote', run.remote, `refs/heads/${run.base}`], cwd, { timeoutMs: 60_000 });
+  const r = lsRemote(deps.git, [run.remote, `refs/heads/${run.base}`], cwd, { timeoutMs: 60_000 }, { sleep: deps.sleep });
   const oid = r.ok ? r.stdout.trim().split(/\s+/)[0] : '';
   return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(oid) ? oid : null;
 }

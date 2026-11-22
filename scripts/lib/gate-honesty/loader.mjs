@@ -22,6 +22,11 @@ import { validateGateContract, validateCliGateContract } from './schema.mjs';
  *   divergences: string[],     // human-readable "[skill][gate] ..." lines
  * }}
  */
+/** A contract's repo-relative, forward-slashed path, DERIVED from the roots the caller supplied (never a hard-coded layout). */
+function toRepoRel(repoRoot, abs) {
+  return path.relative(repoRoot, abs).split(path.sep).join('/');
+}
+
 export function loadGateContracts({ skillsRoot, repoRoot }) {
   const skillNames = listSkillNames(skillsRoot);
   const contracted = [];
@@ -46,7 +51,7 @@ export function loadGateContracts({ skillsRoot, repoRoot }) {
       divergences.push(`[${name}][gate-contract.json] invalid JSON: ${e.message}`);
       continue;
     }
-    const result = validateGateContract(raw, repoRoot);
+    const result = validateGateContract(raw, repoRoot, { file: toRepoRel(repoRoot, contractPath) });
     if (!result.ok) {
       divergences.push(...result.errors.map((e) => (e.startsWith('[') ? e : `[${name}] ${e}`)));
       continue;
@@ -107,7 +112,7 @@ export function loadCliGateContracts({ contractsRoot, repoRoot }) {
       }
       continue;
     }
-    const result = validateCliGateContract(raw, repoRoot);
+    const result = validateCliGateContract(raw, repoRoot, { file: toRepoRel(repoRoot, abs) });
     if (!result.ok) {
       divergences.push(...result.errors.map((e) => (e.startsWith('[') ? e : `[${entry}] ${e}`)));
       continue;

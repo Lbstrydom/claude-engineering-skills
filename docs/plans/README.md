@@ -26,6 +26,8 @@ This is the list to read when asking "what is in flight?".
 | [Fable 5.2 vs Opus 5.5 on coordinator-grade decisions](./fable-vs-opus-decision-eval.md) | `Approved` |  |
 | [fleet field feedback, cluster 1 — hydrate circularity and `--help` read-only (consumer feedback 2026-11-21)](./fleet-feedback-cluster1-bugs.md) | `In Progress` | implemented on branch claude/fleet-field-feedback-54e8b7, awaiting audit |
 | [fleet feedback cluster 2 — a turn outlives its work, broad claims, stale ready marks](./fleet-feedback-cluster2-claims-turns.md) | `In Progress` | plan audited (3 GPT rounds, Gemini APPROVE), implementing on branch claude/fleet-cluster2-claims-turns |
+| [fleet feedback cluster 3 — remote-only `add`, flaky remote reads, abandon cleanup, EOL flips, ignored `--dry-run`](./fleet-feedback-cluster3-land-add-eol.md) | `In Progress` | plan audited (2 GPT rounds + Gemini), implemented on claude/fleet-cluster3-land-add-eol |
+| [fleet feedback cluster 4 — a ready mark on a test subset, then a red train (#5)](./fleet-feedback-cluster4-shared-surface.md) | `In Progress` | plan audited (2 GPT rounds + Gemini), implemented on claude/fleet-cluster4-shared-surface |
 | [fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe](./fleet-hygiene.md) | `In Progress` |  |
 | [fleet train id collision within one second (CI flake, run 44940239208)](./fleet-train-id-collision.md) | `In Progress` | implemented on branch claude/fleet-trainid-collision-9f2c, awaiting audit |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |
@@ -33,7 +35,6 @@ This is the list to read when asking "what is in flight?".
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
 | [Own-model full capture — every audit call, every finding, every chip trajectory, from day one](./own-model-full-capture.md) | `Draft` |  |
-| [consumers whose store is private by policy — honest populations, analysis shipped to the data, reports carried by hand](./policy-private-consumer-stores.md) | `Approved` |  |
 | [a telemetry path from a consumer whose store CES cannot reach](./private-store-telemetry-path.md) | `Approved` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
 | [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) | `Approved` | plan audit closed 2026-11-19; implementation waits for the coordinator's go |
@@ -42,6 +43,7 @@ This is the list to read when asking "what is in flight?".
 | [Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority](./ship-record-catchup.md) | `In Progress` |  |
 | [Ship trains — batched, impact-based `/ship --train`](./ship-trains.md) | `Approved` |  |
 | [Solo-control hardening — pre-existing defects PR #413's audit found but did not touch](./solo-control-hardening.md) | `In Progress` | fixes implemented; audit and merge pending |
+| [Solo-control / model-eval leads — triage and fixes (2026-11-22)](./solo-control-leads-2026-11-22.md) | `In Progress` | fixes implemented; audit and merge pending |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
@@ -282,6 +284,7 @@ source comments that no docs linter sees — stays valid.
 | [Plan-audit learning parity + AGENTS.md sprawl cap](./plan-audit-parity-and-agents-md-cap.md) | `Complete` |  |
 | [plan_verification_items run_id uuid/text — multi-row owned insert + verify exit honesty](./plan-verification-items-run-id.md) | `Complete` | shipped in #179 (32c83bc4, merged 2026-10-10) |
 | [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
+| [consumers whose store is private by policy — honest populations, analysis shipped to the data, reports carried by hand](./policy-private-consumer-stores.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not built; see §12 "Follow-up retired". No open work… |
 | [Predictive Audit Strategy — Data Loop Completion & Intelligence](./predictive-audit-strategy.md) | `Complete` | shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs`… |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `Complete` | shipped in #208 (status reconciled against merged PRs 2026-10-25) |

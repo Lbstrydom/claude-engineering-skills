@@ -70,6 +70,7 @@ import { getRepoContext } from '../repo-context.mjs';
 import { evaluateConvergence, evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
 import { getRequirementsContext } from '../requirements/context.mjs';
+import { withChecklistBlock } from '../checklist/context.mjs';
 import { computeAuditVerdict, normalizeArchCategory } from './findings-pipeline.mjs';
 import { PlanFpTracker } from '../plan-fp-tracker.mjs';
 import {
@@ -796,13 +797,11 @@ async function runLegacyProductionAuditImpl(ctx) {
     process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);
   }
 
-  // Requirements rubric (Plan-Phase B — requirements-layer): surface the
-  // de-facto-requirements ledger as an audit rubric so a pass can flag a
-  // diff that violates a repo invariant. Static across rounds → lives in
-  // the cacheable msg #1. Non-blocking: ledger absent / unreadable → ''.
+  // Requirements rubric (Plan-Phase B — requirements-layer): the de-facto-requirements ledger as an audit rubric, so a pass can
+  // flag a diff that violates a repo invariant. Static across rounds → cacheable msg #1. Non-blocking: absent / unreadable → ''.
   let requirementsRubric = '';
+  const reqTargets = (changedFiles && changedFiles.length) ? changedFiles : found;
   try {
-    const reqTargets = (changedFiles && changedFiles.length) ? changedFiles : found;
     const rq = getRequirementsContext({ targetPaths: reqTargets, baseDir: process.cwd() });
     if (rq.block) {
       requirementsRubric = rq.block;
@@ -811,6 +810,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   } catch (err) {
     process.stderr.write(`  [requirements] skipped (non-blocking) — ${err.message}\n`);
   }
+  requirementsRubric = withChecklistBlock(requirementsRubric, { targetPaths: reqTargets, diffFile, baseDir: process.cwd() }, ctx); // verification-lessons Phase 5: same matcher as scripts/checklist.mjs
   // Wrapper: thread the requirements rubric into every pass prompt, and (AUDIT_CANARY=1 only) plant the known-answer canary.
   const roundCanary = createRoundCanary(process.env, { seed: `${round || 1}:${Date.now()}` });
   const passPrompt = (opts) => roundCanary.plant(buildCachePrompt({ ...opts, requirementsRubric }), opts);

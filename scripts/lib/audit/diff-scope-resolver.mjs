@@ -676,7 +676,10 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, 
     parsePartial = parsed.partial;
   } else {
     // Working-tree mode (Gemini-R3/H3): union tracked-modifications + untracked.
-    const trackedBuf = gitBuf(repoPath, ['diff', '--name-status', '-z', 'HEAD'], env);
+    // Against `resolvedBase`, NOT literal HEAD: with an older base (an explicit --base, an audit of N commits plus a dirty
+    // tree) the commits between base and HEAD are part of the change, and the preimages/baseline manifest below are already
+    // taken at `resolvedBase`. When the base is HEAD this is the same command as before.
+    const trackedBuf = gitBuf(repoPath, ['diff', '--name-status', '-z', resolvedBase], env);
     const trackedParsed = parseNameStatusZ(trackedBuf);
     parsePartial = trackedParsed.partial;
     const untrackedBuf = gitBuf(repoPath, ['ls-files', '--others', '--exclude-standard', '-z'], env);

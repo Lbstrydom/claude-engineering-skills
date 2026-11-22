@@ -91,6 +91,10 @@ export const CORE_ENTRY = [
   'scripts/fleet.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',
+  // Diff-triggered checklist CLI (verification-lessons plan, section 2.5). Ships the TOOL only: the rules live in the
+  // consumer-owned `.audit-loop/checklist.json`, which no sync list names, so this repo's own entries never reach a consumer
+  // (an absent file is an empty checklist). The matcher is also imported by the audit pipeline; the walker pulls lib/checklist/.
+  'scripts/checklist.mjs',
   // One-shot fit-check diagnostic — labels each skill FITS/PARTIAL/MISMATCH
   // for the consumer's repo shape. Auto-fires once after first sync (see
   // post-sync hook); re-runnable any time as `npm run skills:fit-check`.

@@ -34,6 +34,7 @@ import {
   runGit, headOf, remoteRefOid, resolveRemoteUrls, gitCommonDir, repoToplevel, parseWorktreePorcelain,
 } from './git-facts.mjs';
 import { materializePrRef } from './gh-facts.mjs';
+import { sleepSync } from './remote-read.mjs';
 import { runChecks, buildCheckPayload } from './checks.mjs';
 import { resolveAppendOnly } from './union-merge.mjs';
 import { superviseTier } from './tier-supervisor.mjs';
@@ -221,7 +222,9 @@ export function removeTrainWorktree(cwd, train, deps, { platform = process.platf
   }
   const before = registered();
   if (!before.ok || !before.listed) return { removed: false, reason: `refusing to remove ${wt}: not a registered worktree${before.ok ? '' : ` (${before.reason})`}` };
-  const r = deps.removeWorktree({ dir: wt, cwd });
+  // A transient lock (an editor, an indexer, antivirus on Windows) often clears in a moment: three bounded attempts before giving up.
+  let r = deps.removeWorktree({ dir: wt, cwd });
+  for (let i = 0; i < 2 && !r.ok; i += 1) { (deps.sleep ?? sleepSync)(500 * (i + 1)); r = deps.removeWorktree({ dir: wt, cwd }); }
   return r.ok ? { removed: true } : { removed: false, reason: `worktree not fully removed: ${(r.steps ?? []).slice(-1)[0] ?? ''}` };
 }
 
@@ -566,6 +569,21 @@ export function resumeTrain({ cwd, trainId, getChecks, checkPayload, deps = defa
 }
 
 /**
+ * What a failed worktree removal STILL leaves, with the two facts that decide the recovery kept separate (the directory on disk,
+ * and git's registration of it): a locked worktree needs `--force` twice, a directory git no longer lists is only a directory,
+ * and a registration with no directory is cleared by `worktree prune`. Empty when neither remains (nothing to tell the user).
+ */
+function leftoverOf(cwd, t, rm, deps) {
+  if (!t.worktree) return [];
+  const dirExists = fs.existsSync(t.worktree);
+  const l = deps.git(['worktree', 'list', '--porcelain', '-z'], cwd);
+  const registered = l.ok ? parseWorktreePorcelain(l.stdout).some((w) => pathsEqual(w.path, t.worktree, process.platform)) : null;
+  // An UNANSWERED registration query is not proof of absence: with the directory gone, `registered: null` is still reported.
+  if (!dirExists && registered === false) return [];
+  return [{ kind: 'worktree', path: t.worktree, dirExists, registered, reason: l.ok ? rm.reason : `${rm.reason}; git worktree list failed (${l.reason})` }];
+}
+
+/**
  * `land --abandon`, per the transition table: legal before approval and from
  * `diverged`; REFUSED in `push-pending` and `awaiting-merge` (an outward action
  * may have happened) and in `landed`/`abandoned`. Sessions are never touched.
@@ -584,6 +602,8 @@ export function abandonTrain({ cwd, trainId, deps = defaultDeps() }) {
     if (why) return { ok: false, code: 'refused', reason: `cannot abandon a ${t.phase} train: ${why}` };
     const rm = removeTrainWorktree(cwd, t, deps);
     const next = patchTrain(dir, trainId, { phase: 'abandoned', notes: [...(t.notes ?? []), `abandoned from ${t.phase}${rm.removed ? '' : ` (worktree: ${rm.reason})`}`] }, deps);
-    return { ok: true, code: 'ok', train: next, worktreeRemoved: rm.removed, worktreeNote: rm.reason };
+    // What is STILL on disk, said plainly: a worktree that could not be removed is the user's to clean, with the exact command.
+    const leftBehind = rm.removed ? [] : leftoverOf(cwd, t, rm, deps);
+    return { ok: true, code: 'ok', train: next, worktreeRemoved: rm.removed, worktreeNote: rm.reason, leftBehind };
   });
 }

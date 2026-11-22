@@ -10,6 +10,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { budgetKey } from './ledger.mjs';
 
 /** A numeric CLI option that must be a positive integer. `parseInt('0')`, `('abc')` and `('-5')` used to flow straight
  * into a loop increment (`--batch-size 0` re-sent the same PAID judge batch forever) or a slice width (`--max-chars 0`
@@ -34,19 +35,20 @@ export function nonNegativeNumber(raw, flag) {
  * the running total a FLOOR, and `floor < ceiling` proves nothing. The old check summed those rows as $0 and let
  * every later call through. Not counted as unmeasured: a `provider-error`/`excluded` row with NO usage — nothing
  * came back, so there is no evidence anything was billed, and counting it would wedge the experiment on its own
- * failures. Cells dedupe by callId, LAST row wins (the rule completion.mjs and aggregateCostForArm apply), so a
- * priced re-run supersedes its unpriced first attempt.
+ * failures.
  *
- * Stated limit: callId is the cell's identity, so a re-run of the SAME cell is one row — spend on re-runs under
- * `--force` is not additive here (docs/plans/solo-control-hardening.md, Deferred: call identity).
+ * Cells dedupe by `budgetKey` (NOT by callId alone, as completion.mjs and aggregateCostForArm still do for SCORING): the per-PAID-call `spendId` when the row has one, so a `--force` rerun or a resumed cell that
+ * re-paid under the same callId is ADDITIVE here. An unpriced first attempt that really was billed therefore stays unmeasured
+ * after a priced rerun — the first bill is unknown, and "unpriced means unmeasured, never zero". Stated limit that remains: a
+ * row written before spendId existed has none, and still dedupes by callId.
  *
  * @returns {null | {spentUsd:number, complete:boolean, unmeasured:number, reason:'ceiling'|'unmeasured'}}
  */
 export function budgetVerdict(rows, budgetUsd) {
-  const byCallId = new Map();
-  for (const r of rows) byCallId.set(r.callId, r);
+  const bySpend = new Map();
+  for (const r of rows) bySpend.set(budgetKey(r), r);
   let spentUsd = 0; let unmeasured = 0;
-  for (const r of byCallId.values()) {
+  for (const r of bySpend.values()) {
     if (r.costUsd != null) { spentUsd += r.costUsd; continue; }
     const nothingCameBack = (r.state === 'provider-error' || r.state === 'excluded') && !r.usage;
     if (!nothingCameBack) unmeasured++;

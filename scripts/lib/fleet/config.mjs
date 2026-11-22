@@ -16,6 +16,8 @@
  *                   no commit for this many days (default 14; `--all` shows it)
  *  - `staleWorktreeDays` unregistered work idle longer than this many days is
  *                   "possibly abandoned" in `status` and the footer (default 3)
+ *  - `sharedSurfaces` `{globs?, run?}`: files whose change a targeted test run cannot vouch for (default `tests/helpers/**`,
+ *                   `tests/fixtures/**`; `globs: []` is off); `ready` and `next` recommend `run` (an argv) first. Advice only.
  *  - `fullSuite`    `session` (default) | `train`: with `train`, sessions defer the
  *                   full suite and `fleet land` is the one full-suite run
  *
@@ -36,6 +38,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { runGit, gitCommonDir, repoToplevel } from './git-facts.mjs';
+import { DEFAULT_SHARED_GLOBS } from './shared-surface.mjs';
 import { DEFAULT_IDLE_DAYS, DEFAULT_STALE_WORKTREE_DAYS, validateClaimPattern } from './overlap.mjs';
 import { MAX_TIMER_MS, MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
 
@@ -127,6 +130,10 @@ const FleetFileSchema = z.strictObject({
   // full-suite run (consumer report 2026-11-15, item 1). `session` (default): each session runs it, as before.
   fullSuite: z.enum(FULL_SUITE_MODES).optional(),
   landing: z.enum(LANDING_MODES).optional(),
+  sharedSurfaces: z.strictObject({
+    globs: z.array(z.string(), { error: 'must be an array of path patterns' }).max(MAX_HOT_FILES).optional(),
+    run: argvSchema().optional(),
+  }).optional(),
 });
 
 const issuePath = (i) => i.path.length ? i.path.join('.') : '(root)';
@@ -207,6 +214,10 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       if (!r.ok) errors.push(`${key}.${i}: ${r.reason}`);
     });
   }
+  (cfg.sharedSurfaces?.globs ?? []).forEach((p, i) => {
+    const r = validateClaimPattern(p);
+    if (!r.ok) errors.push(`sharedSurfaces.globs.${i}: ${r.reason}`);
+  });
   const cnames = checks.map((c) => c.name);
   const cdup = cnames.find((n, i) => cnames.indexOf(n) !== i);
   if (cdup) errors.push(`checks: duplicate check name "${cdup}"`);
@@ -224,6 +235,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
       ghAccount: cfg.ghAccount ?? null,
       pruneAlert: cfg.pruneAlert === false ? null : { ...DEFAULT_PRUNE_ALERT, ...(cfg.pruneAlert ?? {}) }, fullSuite: cfg.fullSuite ?? 'session', landing: cfg.landing ?? 'pr',
+      sharedSurfaces: { globs: cfg.sharedSurfaces?.globs ?? [...DEFAULT_SHARED_GLOBS], run: cfg.sharedSurfaces?.run ?? null },
     },
   };
 }
@@ -315,7 +327,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
-    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, pruneAlert: v.pruneAlert, fullSuite: v.fullSuite, landing: v.landing,
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, pruneAlert: v.pruneAlert, fullSuite: v.fullSuite, landing: v.landing, sharedSurfaces: v.sharedSurfaces,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',

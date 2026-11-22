@@ -19,13 +19,16 @@ import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
 import { missingToolingWarning } from './bundle-stamp.mjs';
 import {
-  runGit, headOf, listWorktrees, tipSubject, repoToplevel,
+  runGit, headOf, listWorktrees, tipSubject, repoToplevel, changedFiles,
 } from './git-facts.mjs';
 import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
 import { listPullRequests, materializePrRef, prSourceIdentity } from './gh-facts.mjs';
 import {
   broadClaimPatterns, claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
+import { eolFlipLines, eolFlips, eolJson } from './eol-flips.mjs';
+import { sharedSurfaceLine, sharedSurfaceTouched, testsLoadingAt } from './shared-surface.mjs';
+import { renderCommand } from './shell-quote.mjs';
 import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
 import {
   UNREGISTERED_BUDGET, cacheRecord, coveredBy, groupUnregistered, liveSessionsOf, scanArchiveTags, unregisteredCacheDir, unregisteredWork,
@@ -466,8 +469,94 @@ warning: startOid not recorded — ${start.reason}` : '')
 
 // ── add (adoption) ──────────────────────────────────────────────────────────
 
-/** `fleet add <branch|#PR|--all>` — adopt work that already exists. Advisory only; never blocks. */
+/**
+ * A branch that exists only as a remote-tracking ref (`refs/remotes/<remote>/<name>`), made local so it can be adopted
+ * (fleet feedback #4: `fleet add <branch>` refused a branch a teammate had pushed). Creates `<name>` from the remote ref with
+ * NO tracking configuration (so rolling it back is just the ref) and NO checkout. Never overwrites: a local branch of that name is the caller's to use. Ambiguity (the name on two
+ * remotes) is refused, naming both — a guess would adopt the wrong tip.
+ * @returns {{ok: true, created: string}|{ok: false, reason: string}|null} null when there is nothing to create (no remote ref)
+ */
+export function materializeRemoteBranch(cwd, name) {
+  if (!runGit(['check-ref-format', '--branch', name], cwd).ok) return null;
+  // Candidates come from the CONFIGURED remote names - a remote name may itself contain slashes (`team/origin`), so the ref is never
+  // split on its first segment. (A branch literally named `HEAD` cannot exist - check-ref-format refuses it - so a nested
+  // `feature/HEAD` is an ordinary branch.)
+  const remotes = runGit(['remote'], cwd);
+  if (!remotes.ok) return { ok: false, reason: `could not list remotes (${remotes.stderr?.trim() || remotes.reason || 'git failed'})` };
+  const exact = remotes.stdout.split('\n').map((r) => r.trim()).filter(Boolean)
+    .map((r) => `refs/remotes/${r}/${name}`)
+    .filter((ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd).ok);
+  if (!exact.length) return null;
+  // Overlapping remote names (`team` and `team/origin`) share a ref namespace: `refs/remotes/team/origin/x` could be remote `team`'s branch
+  // `origin/x` or remote `team/origin`'s branch `x`. Ownership cannot be established from the ref alone, so refuse rather than guess.
+  const names = remotes.stdout.split('\n').map((r) => r.trim()).filter(Boolean);
+  const overlap = names.find((a) => names.some((b) => b !== a && b.startsWith(`${a}/`)));
+  if (overlap) return { ok: false, reason: `the remotes ${names.filter((n) => n === overlap || n.startsWith(`${overlap}/`)).join(', ')} overlap in one ref namespace, so which of them owns ${exact[0]} cannot be told from the ref — create the local branch you mean yourself` };
+  if (exact.length > 1) return { ok: false, reason: `branch ${name} exists on several remotes (${exact.map((r) => r.slice('refs/remotes/'.length)).join(', ')}) — create the local branch you mean first, with exactly one of: ${exact.map((r) => `git branch ${renderCommand([name, r.slice('refs/remotes/'.length)])}`).join(' | ')}` };
+  // Read the FULLY QUALIFIED remote ref's commit FIRST (a local branch named `origin/x` must not be able to shadow it), then create
+  // the local ref at exactly that oid, only if it does not exist (an all-zero old value): ONE atomic step that both creates it
+  // and fixes the oid rollback will compare against, with no window for another process to move it in between.
+  const full = exact[0];
+  const tip = runGit(['rev-parse', '--verify', `${full}^{commit}`], cwd);
+  if (!tip.ok) return { ok: false, reason: `could not read ${full} (${tip.reason})` };
+  const oid = tip.stdout.trim();
+  // --no-deref: create THE ref, never whatever a dangling symbolic ref at that name points to (an existing symref is refused).
+  const made = runGit(['update-ref', '--no-deref', '-m', `fleet add: created from ${full.slice('refs/remotes/'.length)}`, `refs/heads/${name}`, oid, '0'.repeat(oid.length)], cwd);
+  return made.ok ? { ok: true, created: full.slice('refs/remotes/'.length), oid } : { ok: false, reason: `could not create ${name} from ${full} (${made.reason ?? made.stderr?.trim() ?? 'unknown'})` };
+}
+
+/**
+ * `fleet add <branch|#PR|--all>` — adopt work that already exists. Advisory only; never blocks.
+ *
+ * A branch only a remote has is made local BEFORE the facts are read, so adoption sees it like any other. Order and recovery:
+ * the ref is created first (an atomic `git branch`: a concurrent creator makes it fail, never overwrite), adoption persists the
+ * session, and if NOTHING was adopted (refused, failed, already tracked, or a throw) the ref this call created is removed with a
+ * compare-and-swap on the oid it created - a branch someone moved or made since is never deleted.
+ */
 export function cmdAdd(ctx, flags, positionals) {
+  const name = !flags['--all'] && positionals.length === 1 ? positionals[0] : null;
+  let materialized = null;
+  if (name && !name.startsWith('#') && !runGit(['rev-parse', '--verify', '--quiet', `refs/heads/${name}^{commit}`], ctx.cwd).ok) {
+    materialized = materializeRemoteBranch(ctx.cwd, name);
+    if (materialized && !materialized.ok) return refused(materialized.reason);
+  }
+  /**
+   * Remove the ref THIS call created - under the registry lock adoption uses, so a concurrent `fleet add` that adopted the
+   * branch in the meantime (a non-terminal session bound to it) keeps it - and with a compare-and-swap on the oid it created,
+   * so a branch someone moved is never deleted. Reports what actually happened; never claims a removal it did not make.
+   * @returns {string} one sentence
+   */
+  const undo = () => {
+    const where = `the local branch ${name} this call created from ${materialized.created}`;
+    const manual = `git branch -d ${renderCommand([name])}`;
+    const tx = transact(ctx.dir, (t) => {
+      if (t.sessions.some((x) => !isTerminalState(x.state) && x.source?.branch === name)) return 'kept';
+      // A worktree that checked the new branch out meanwhile keeps it (update-ref would not protect it, `git branch -d` does).
+      const wts = listWorktrees(ctx.cwd);
+      if (!wts.queried) return { ok: false, reason: `worktrees not listed: ${wts.reason}` };
+      if (wts.worktrees.some((w) => w.branch === name)) return 'checked-out';
+      // --no-deref: the exact ref this call created, never a symbolic ref someone put in its place.
+      return runGit(['update-ref', '--no-deref', '-d', `refs/heads/${name}`, materialized.oid], ctx.cwd);
+    });
+    if (!tx.ok) return `(${where} could NOT be removed: the registry lock was busy — remove it yourself if unwanted: ${manual})`;
+    if (tx.value === 'kept') return `(${where} was KEPT: another session adopted it meanwhile)`;
+    if (tx.value === 'checked-out') return `(${where} was KEPT: a worktree has it checked out meanwhile)`;
+    return tx.value.ok ? `(${where} was removed again: nothing was adopted)`
+      : `(${where} was NOT removed (${tx.value.reason}) — it moved or is locked; inspect it, then remove it yourself if unwanted: ${manual})`;
+  };
+  let res;
+  try { res = adoptOnce(ctx, flags, positionals); } catch (e) {
+    if (materialized?.ok) process.stderr.write(`${undo()}\n`);
+    throw e;
+  }
+  if (!materialized?.ok) return res;
+  if (res.ok && res.added?.length) {
+    return { ...res, createdFrom: materialized.created, text: [`created local branch ${name} from ${materialized.created} (nothing checked out)`, res.text].join('\n') };
+  }
+  return { ...res, text: [res.text, undo()].join('\n') };
+}
+
+function adoptOnce(ctx, flags, positionals) {
   if (flags['--all'] && positionals.length) throw new ArgvError('fleet add: pass a branch/#PR OR --all, not both');
   if (!flags['--all'] && !positionals.length) throw new ArgvError('fleet add: pass a branch, #<PR> or --all');
   if (flags['--all'] && flags['--id']) throw new ArgvError('fleet add: --id cannot be combined with --all');
@@ -568,6 +657,17 @@ export function cmdReady(ctx, flags) {
     const reason = `${gate.blocks} — ${id} was NOT marked ready`;
     return refused(reason, { checks: gate.results, text: [`REFUSED: ${reason}`, ...gateLines].join('\n') });
   }
+  // Advisory (never blocks): files whose CRLF/LF endings flipped bury the real change (fleet feedback #7).
+  const eol = eolFlips(ctx.cwd, readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null, oid);
+  // Advice only (`ready` carries no test evidence): a branch that changes shared test files should run the fast tier first.
+  const baseForShared = readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null;
+  const sharedDiff = baseForShared ? changedFiles(ctx.cwd, baseForShared, oid) : { queried: false, files: [] };
+  const shared = sharedDiff.queried ? sharedSurfaceTouched(sharedDiff.files, ctx.config.sharedSurfaces) : [];
+  const sharedReach = shared.length ? testsLoadingAt(ctx.cwd, oid, shared) : null;
+  const sharedChecked = sharedDiff.queried;
+  // An unmeasured diff is SAID: an empty `touched` must never read as "checked, nothing shared".
+  const sharedLine = sharedChecked ? sharedSurfaceLine(shared, ctx.config.sharedSurfaces, ctx.cmd, sharedReach)
+    : (ctx.config.sharedSurfaces?.globs?.length === 0 ? null : `note: shared test files were not checked (${baseForShared ? sharedDiff.reason ?? 'the changed files could not be read' : 'base not measured'})`);
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id);
     if (!cur || isTerminalState(cur.state)) return { gone: true };
@@ -590,7 +690,7 @@ export function cmdReady(ctx, flags) {
   const deferred = fullSuiteOf(ctx) === 'train';
   const suiteLine = deferred ? [`full suite: deferred to the train (.fleet.json fullSuite: "train") — \`${ctx.cmd} land\` is its one full-suite run; your plan's test log says "${FULL_SUITE_LOG_LINE}"`] : [];
   const landingLine = landingOf(ctx) === 'rollup' ? [landingRollupLine(ctx.cmd)] : [];
-  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...pushLine, ...suiteLine, ...landingLine].join('\n') });
+  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), eol: eolJson(eol), sharedSurface: { checked: sharedChecked, touched: shared, run: ctx.config.sharedSurfaces?.run ?? null, ...(sharedReach ? { tests: sharedReach.ok ? sharedReach.tests : null, unread: sharedReach.ok ? sharedReach.unread : null, testsUnavailable: sharedReach.ok ? null : sharedReach.reason } : {}) }, text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...eolFlipLines(eol), ...(sharedLine ? [sharedLine] : []), ...pushLine, ...suiteLine, ...landingLine].join('\n') });
 }
 
 /**

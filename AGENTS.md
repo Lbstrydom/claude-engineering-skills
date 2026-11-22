@@ -379,7 +379,7 @@ Snippet + current set: [consumer-repo-layout.md](docs/reference/consumer-repo-la
 
 ## Browser Tool Setup (persona-test)
 
-`/persona-test` drives a real browser; **Playwright MCP is the preferred tool** (free, no credentials, registered in `.mcp.json`). **First-time setup: `npx playwright install chromium`** — without it the server crashes silently and no tools appear. Windows may need an MCP override: [CLAUDE.md](./CLAUDE.md#claude-code-only-notes). BrightData alternative: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
+`/persona-test` drives a real browser through a declared driver contract (`references/browser-tool-detection.md`, shared with `/click-test`): any driver meeting the capability set works, and the host's built-in browser pane (`mcp__Claude_Browser__*`) is what most sessions actually use (63 of 110 measured; Playwright snapshots 16). **Playwright MCP is the pinned, free, credential-less fallback** (registered in `.mcp.json`). **First-time setup: `npx playwright install chromium`** — without it the server crashes silently and no tools appear. Windows may need an MCP override: [CLAUDE.md](./CLAUDE.md#claude-code-only-notes). BrightData alternative: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ## Mermaid validation (for plan diagrams)
 

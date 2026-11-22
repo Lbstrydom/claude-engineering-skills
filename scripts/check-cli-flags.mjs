@@ -210,7 +210,9 @@ export const BASELINE = new Set([
   'scripts/refine-prompts.mjs',
   'scripts/security-triage.mjs',
   'scripts/spikes/observed-graph-discovery-spike.mjs',
-  'scripts/sync-refresh.mjs',
+  // 'scripts/sync-refresh.mjs' — FIXED 2026-11-21, baseline paid down. `--dry-run` was ignored, so a "dry run" pulled
+  // this clone and synced into the consumer for real. Removed on a negative control: `sync-refresh.mjs --dry-runn`
+  // now exits 2, and `--dry-run` skips the pull and passes `--dry-run` to sync-to-repos.
 
   // Added 2026-08-23 — NOT accepted debt like the rest of this list, but the
   // deliberate false positive this gate's own docstring anticipates (see

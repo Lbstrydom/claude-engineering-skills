@@ -267,6 +267,11 @@
       "note": "gate evaluator named as the implementation of a gate contract"
     },
     {
+      "path": "scripts/checklist-gen.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
       "path": "scripts/generate-plans-index.mjs",
       "kind": "opaque",
       "note": "gate evaluator named as the implementation of a gate contract"

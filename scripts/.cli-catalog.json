@@ -765,6 +765,10 @@
       "description": "What each expected exporter has sent CES (received / stale / rejected / never received / drop unreadable). An absent export is unmeasured, never zero. Advisory.",
       "category": "sync"
     },
+    "step-back:replay": {
+      "description": "Step-back replay harness over a frozen dataset: `freeze` lists each PR's SID, ledger, result paths and audited shas; `run` replays R3/R6 checkpoints per arm (none|same|different) through an injected provider, meters spend, hard-stops at --max-usd and scores with the pre-registered rule. --dry-run prints the plan and cost and makes no call; a paid run needs --max-usd and --confirm-spend.",
+      "category": "audit"
+    },
     "stores:drift": {
       "description": "Migration drift across EVERY consumer store, not just the ambient one (advisory; never blocks).",
       "category": "sync"
@@ -833,6 +837,22 @@
       "description": "cadence:doctor, machine-readable (one envelope on stdout).",
       "category": "diagnostic"
     },
+    "checklist": {
+      "description": "Diff-triggered checklist: print the repo tripwires a change fires. --files <csv> before editing (paths + symbols), --diff <base> before calling it done (adds patterns). Reads the consumer-owned .audit-loop/checklist.json (absent = empty); records every evaluation to .audit/checklist-fires.jsonl.",
+      "category": "diagnostic"
+    },
+    "checklist:gen": {
+      "description": "Regenerate this repo's own .audit-loop/checklist.json from lib/checklist/gen.mjs + the gate contracts (Category B generated artifact; never hand-edit).",
+      "category": "diagnostic"
+    },
+    "checklist:gen:check": {
+      "description": "Fail when the committed .audit-loop/checklist.json differs from its regeneration (part of check:static).",
+      "category": "diagnostic"
+    },
+    "checklist:pilot": {
+      "description": "Reproduce the checklist pilot figures from a pinned tip: --replay (N PR diffs through the matcher, --skip 30 = held-out window), --incidents, --kernel.",
+      "category": "diagnostic"
+    },
     "gate:provenance": {
       "description": "Judge a PR by the gates of its BASE: classify how it changed every registered gate-defining file (.gate-files.json) as tightening, loosening or unknown, run each registered ratchet gate from a snapshot whose protected set is the base version, and check the gate-loosening label plus an approving review. Observe mode (CI) reports and exits 0; unmeasured states are printed, never clean. Usage: npm run gate:provenance -- --base <sha> [--json].",
       "category": "diagnostic"
@@ -880,7 +900,7 @@
       "category": "plans"
     },
     "scripts/debt-auto-capture.mjs": {
-      "description": "Capture deferred audit findings into the tech-debt ledger.",
+      "description": "Capture deferred audit findings into the tech-debt ledger (from a round ledger, a final-review result, or one hand-authored --add entry).",
       "category": "audit"
     },
     "scripts/debt-ledger-migrate.mjs": {

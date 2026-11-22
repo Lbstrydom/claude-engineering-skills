@@ -17,6 +17,7 @@
  */
 import { advanceTouching } from './merged-facts.mjs';
 import { isOpenFor } from './directives.mjs';
+import { sharedSurfaceLine, sharedSurfaceTouched } from './shared-surface.mjs';
 import { broadClaimPatterns, isTerminalState, mergedWhat } from './overlap.mjs';
 import { renderCommand } from './shell-quote.mjs';
 
@@ -37,7 +38,7 @@ export const KIND_ACTION = Object.freeze({
  * Safety priority among obligations of the same act: a hold must survive footer
  * truncation, then work the session would otherwise lose, then hygiene.
  */
-const PRIORITY = Object.freeze({ hold: 0, directive: 1, merged: 2, 'partially-merged': 3, 'base-advanced': 4, 'ready-stale': 5, lease: 6, 'broad-claim': 7 });
+const PRIORITY = Object.freeze({ hold: 0, directive: 1, merged: 2, 'partially-merged': 3, 'base-advanced': 4, 'ready-stale': 5, lease: 6, 'broad-claim': 7, 'shared-surface': 8 });
 
 const prOf = (ref) => (typeof ref === 'string' && /^#\d+$/.test(ref) ? Number(ref.slice(1)) : null);
 
@@ -101,7 +102,7 @@ export function verifyDirective(d, { obligations = [], hold = null, advance = nu
  * @param {Date} a.now
  * @returns {{obligations: object[], directives: object[], notes: string[]}}
  */
-export function deriveObligations({ item, session = null, advance = null, myFiles = [], filesUnknown = [], hold = null, directives = null, now }) {
+export function deriveObligations({ item, session = null, advance = null, myFiles = [], filesUnknown = [], hold = null, directives = null, sharedSurfaces = undefined, sharedReach = null, cmd = 'fleet', now }) {
   const ob = [];
   // `command` is an argv (first token 'fleet'), rendered shell-safe by `renderObligations` — never a string built from a branch name.
   const add = (kind, act, text, evidence = {}, command = null) => ob.push({ kind, act, text, evidence, ...(command ? { command } : {}) });
@@ -144,6 +145,11 @@ export function deriveObligations({ item, session = null, advance = null, myFile
   if (broad.length && blocked.length) {
     add('broad-claim', 'info', `your claim ${broad.join(', ')} is broad and overlaps ${blocked.map((o) => o.with).join(', ')}: claim the files you actually edit`, { patterns: broad, with: blocked.map((o) => o.with) });
   }
+  // Advice (info, never DO): a branch that changes shared test files should run the fast tier; fleet cannot see whether it did.
+  const shared = sharedSurfaceTouched(myFiles, sharedSurfaces);
+  if (shared.length && !isTerminalState(item?.state ?? session?.state)) add('shared-surface', 'info', sharedSurfaceLine(shared, sharedSurfaces, cmd, sharedReach, 'the `next --json` obligation evidence (evidence.reach.tests)'), { files: shared, reach: sharedReach ? { ok: sharedReach.ok, tests: sharedReach.ok ? sharedReach.tests : null, unread: sharedReach.ok ? sharedReach.unread : null, uncommitted: sharedReach.ok ? sharedReach.uncommitted ?? 0 : null, reason: sharedReach.ok ? null : sharedReach.reason } : null });
+  // Files that could not be read mean the check above may have missed a shared file: said, never read as "none".
+  if (filesUnknown.length && sharedSurfaces?.globs?.length !== 0 && !isTerminalState(item?.state ?? session?.state)) add('shared-surface-unmeasured', 'info', `shared test files were not checked (${filesUnknown.join('; ')})`);
   const notes = [];
   const views = [];
   if (directives) {

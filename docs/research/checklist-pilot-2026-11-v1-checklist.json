@@ -1,0 +1,780 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "anthropic-pin-unserviceable-param",
+      "trigger": {
+        "paths": [
+          "scripts/lib/anthropic-client.mjs",
+          "scripts/lib/anthropic-cli-faithfulness.mjs",
+          ".anthropic-pin-census.json"
+        ],
+        "symbols": [
+          "createAnthropicClient",
+          "unserviceableCliParams"
+        ],
+        "patterns": [
+          "\\btool_choice\\s*:"
+        ]
+      },
+      "check": "A call passing system, tools or tool_choice needs an explicit {backend:'sdk'} pin, or the cli backend throws where CI (the sdk default) never does. AGENTS.md: \"The fix is a declared `{backend:'sdk'}` pin gated on **`isClaudeAvailableFor('sdk')`**, and since the throw cannot fire in CI (which runs the `sdk` default) npm run anthropic:pin:gate is the guard.\"",
+      "incident": "2026-07-14: forced tool_choice on the cli backend returned a plain text block with no error, so the tiered-recall discovery generator fell back to legacy in 20 of 20 runs, a whole shadow window; fixed by #360 (3dabb3f3). Control line is a real call-site line from scripts/campaign.mjs.",
+      "control": {
+        "path": "scripts/campaign.mjs",
+        "text": "        tool_choice: { type: 'auto' },",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/anthropic-pin-gate.json#anthropic-pin-gate-detects-an-unpinned-system-call",
+      "stated": "npm run anthropic:pin:gate"
+    },
+    {
+      "id": "generated-artifact-bundle-deps",
+      "trigger": {
+        "paths": [
+          "scripts/lib/bundle-deps.json",
+          "scripts/generate-bundle-deps.mjs",
+          "scripts/lib/sync-entry-lists.mjs"
+        ]
+      },
+      "check": "scripts/lib/bundle-deps.json is a Category B generated file: regenerate it, never hand-edit it. AGENTS.md (Generated-artifact policy): \"Regeneration must be byte-identical ... `scripts/lib/bundle-deps.json` (`npm run bundle:deps` / `bundle:deps:check`).\" Run it after changing the sync entry lists or any import the synced bundle reaches.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the bundle:deps:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": "scripts/lib/bundle-deps.json",
+        "text": "    \"left-pad\": \"1.3.0\"",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/bundle-deps-check.json#bundle-deps-check-compares-the-derived-set",
+      "stated": "`npm run bundle:deps` / `bundle:deps:check`"
+    },
+    {
+      "id": "context-check-agents-md-size",
+      "trigger": {
+        "paths": [
+          "AGENTS.md",
+          "CLAUDE.md",
+          ".claude-context-allowlist.json",
+          "scripts/check-context-drift.mjs"
+        ]
+      },
+      "check": "AGENTS.md is loaded every session, so its size is a cost: condense, do not raise the cap. AGENTS.md (preamble): \"**Enforced since 2026-07-13**: `npm run context:check` (run by the pre-push hook and `/ship` Step 4) fails on `ctx/oversized-agents-md` above **79000 characters** ... condense a dossier section to a stub + `docs/<topic>.md` rather than raising the cap.\" Also: 26 sentences in AGENTS.md are quoted by gate contracts, so list them (gate-honesty.md) before rewording one.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the context:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": "AGENTS.md",
+        "text": "> A new paragraph that adds to the always-loaded context.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/context-check.json#context-check-rejects-missing-agents-import",
+      "stated": "`npm run context:check` (run by"
+    },
+    {
+      "id": "db-suite-two-edit-enrolment",
+      "trigger": {
+        "paths": [
+          "scripts/lib/db-test-container.mjs",
+          ".github/workflows/postgres-parity.yml",
+          "scripts/check-db-suite-enrolment.mjs"
+        ],
+        "patterns": [
+          "AUDIT_DB_TEST_URL"
+        ]
+      },
+      "check": "A DB-gated test suite no runner names has never run: node reports a never-run suite as a clean pass. AGENTS.md: \"**Adding a DB-gated suite is two edits, never one**; npm run db:enrolment:gate iterates the FILESYSTEM, the only side that can see a file no list mentions.\" Enrol it in db-test-container.mjs's *_SUITE_FILES AND postgres-parity.yml.",
+      "incident": "2026-08-11 census: 15 DB-gated suites were enrolled nowhere and had never run.",
+      "control": {
+        "path": "tests/new-store-feature.test.mjs",
+        "text": "const URL = process.env.AUDIT_DB_TEST_URL; // skips itself when unset",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/db-enrolment-gate.json#db-enrolment-gate-detects-a-suite-no-runner-names",
+      "stated": "npm run db:enrolment:gate"
+    },
+    {
+      "id": "architecture-intent-domain-roster",
+      "trigger": {
+        "paths": [
+          ".audit-loop/domain-map.json",
+          "docs/architecture-intent.md"
+        ]
+      },
+      "check": "Every domain declared in the domain map needs a heading in docs/architecture-intent.md. AGENTS.md: \"[`docs/architecture-intent.md`] documents each domain as a `### <domain>` heading; **This doc + `.audit-loop/domain-map.json` together enforce** that the two agree.\" `npm run docs:architecture-intent:check` fails when the map declares a domain the doc never documents.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the docs:architecture-intent:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": ".audit-loop/domain-map.json",
+        "text": "      \"domain\": \"checklist-new-domain\"",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/docs-architecture-intent-check.json#architecture-intent-check-detects-an-undocumented-domain",
+      "stated": "This doc + `.audit-loop/domain-map.json` together enforce"
+    },
+    {
+      "id": "synced-markdown-relative-links",
+      "trigger": {
+        "paths": [
+          "scripts/check-synced-doc-links.mjs"
+        ],
+        "patterns": [
+          "\\]\\(\\.\\.?/[^)\\s]+\\.md"
+        ]
+      },
+      "check": "A relative link in synced markdown resolves where the file LANDS in a consumer, not where you wrote it. AGENTS.md (seven shapes): \"a **relative link** in synced markdown, whose href resolves where the file LANDS (npm run docs:synced-links:gate)\". Name synced tooling by path; link docs only by a path the sync also ships.",
+      "incident": "Consumer-reported shape (6) of the seven: a relative href in synced markdown resolved to a path the consumer never received.",
+      "control": {
+        "path": "skills/ship/references/example.md",
+        "text": "See [the runbook](../../docs/runbooks/gate-cost.md) for the cost.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/docs-synced-links-gate.json#docs-synced-links-gate-rejects-a-relative-link-that-leaves-the-closure",
+      "stated": "npm run docs:synced-links:gate"
+    },
+    {
+      "id": "emit-softfail-opt-out",
+      "trigger": {
+        "paths": [
+          "scripts/lib/cli-io.mjs",
+          "scripts/check-emit-exit-agreement.mjs"
+        ],
+        "symbols": [
+          "softFail"
+        ],
+        "patterns": [
+          "\\bsoftFail\\s*:"
+        ]
+      },
+      "check": "emit({ok:false}) sets a non-zero exit; opting out needs a stated reason and a re-baseline. AGENTS.md: \"Opt out only with `emit(env, {softFail:true, reason})` — the reason is **required** — and `npm run emit:exit:gate` ratchets the opt-out population, failing on growth AND on an unrecorded reduction.\"",
+      "incident": "Without the coupling a CLI reports a failure in its envelope and exits 0, which every caller checking $? reads as success (cross-skill-command-registry plan, 2b F4).",
+      "control": {
+        "path": "scripts/some-cli.mjs",
+        "text": "emit(env, { softFail: true, reason: 'advisory' });",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/emit-exit-gate.json#emit-exit-gate-detects-a-new-declared-opt-out",
+      "stated": "npm run emit:exit:gate"
+    },
+    {
+      "id": "gitignore-rule-declares-why",
+      "trigger": {
+        "paths": [
+          ".gitignore",
+          ".gitignore-policy-baseline.json"
+        ]
+      },
+      "check": "A new .gitignore rule must sit under a comment block declaring its Category (A, B or P). AGENTS.md: \"**An ignored path declares WHY it is ignored, and a private one declares where it durably lives.**\" Category P (private and load-bearing) owes a `Durable home:`.",
+      "incident": "Skipping the durable-home question left 37 tech-debt entries on exactly one disk (AGENTS.md, gitignore policy).",
+      "control": {
+        "path": ".gitignore",
+        "text": ".audit-loop/new-private-state.json",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/gitignore-policy-gate.json#gitignore-policy-rejects-undeclared-rules",
+      "stated": "An ignored path declares WHY it is ignored"
+    },
+    {
+      "id": "cli-help-is-a-pure-read",
+      "trigger": {
+        "paths": [
+          "scripts/*.mjs",
+          "scripts/lib/help-guard-run.mjs",
+          "scripts/check-help-readonly.mjs"
+        ]
+      },
+      "check": "A CLI that ignores --help simply RUNS. Make `import './lib/help-guard-run.mjs'` the first import and keep a --help / unknown-flag contract. AGENTS.md: \"**`--help` is a pure read on every CLI.** npm run help:readonly:gate runs each one with `--help` under a preload that blocks writes, network and mutating spawns (a CLI that ignores the flag simply RUNS: `prepush-check --help` created a worktree).\"",
+      "incident": "`prepush-check --help` created a worktree (AGENTS.md).",
+      "control": {
+        "path": "scripts/brand-new-cli.mjs",
+        "text": "const target = process.argv[2];",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/help-readonly-gate.json#help-readonly-gate-rejects-a-cli-that-runs-on-help",
+      "stated": "npm run help:readonly:gate"
+    },
+    {
+      "id": "mcp-config-mirrored",
+      "trigger": {
+        "paths": [
+          ".mcp.json",
+          ".vscode/mcp.json",
+          "scripts/check-mcp-parity.mjs"
+        ]
+      },
+      "check": "Adding or changing an MCP server means editing BOTH config files. AGENTS.md: \"VS Code reads `.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.\" Claude Code reads .mcp.json; VS Code reads .vscode/mcp.json; the parity gate checks both shapes (a Windows `npx` server needs its `-y`).",
+      "incident": "The two files had to stay mirrored and nothing enforced it until the parity gate (tests/mcp-parity.test.mjs header).",
+      "control": {
+        "path": ".mcp.json",
+        "text": "    \"new-server\": { \"command\": \"npx\", \"args\": [\"new-server\"] }",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/mcp-parity-gate.json#mcp-parity-rejects-missing-dash-y",
+      "stated": "`.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers."
+    },
+    {
+      "id": "own-model-capture-column-coverage",
+      "trigger": {
+        "paths": [
+          ".own-model-coverage.json",
+          "scripts/own-model-coverage.mjs",
+          "tests/fixtures/expected-schema.json"
+        ],
+        "patterns": [
+          "ADD COLUMN|add column"
+        ]
+      },
+      "check": "A new nullable own-model telemetry column needs a coverage entry (or a reasoned exemption) in .own-model-coverage.json. AGENTS.md: \"**A capture column with no coverage entry is a column nobody will notice stops filling.**\" `.own-model-coverage.json` tracks the own-model telemetry columns with hand-set floors; `npm run own-model:coverage:gate` fails when an entry names a column the schema fixture lacks, or a nullable column a covered migration added has no entry.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the own-model:coverage:gate gate, which fails the push on the mistake.",
+      "control": {
+        "path": "supabase/migrations/20261122000000_example.sql",
+        "text": "ALTER TABLE audit_runs ADD COLUMN example_capture_ms integer;",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/own-model-coverage-gate.json#own-model-coverage-gate-rejects-a-config-with-no-scan-boundary",
+      "stated": "A capture column with no coverage entry is a column nobody will notice stops filling."
+    },
+    {
+      "id": "migrations-schema-portable",
+      "trigger": {
+        "paths": [
+          "supabase/migrations/**",
+          "scripts/postgres-parity/check-non-core-references.mjs"
+        ]
+      },
+      "check": "Migrations stay schema-portable: no schema qualification, no non-core reference. AGENTS.md: \"**Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.` qualification or non-core reference outside the recorded baseline.\" Read the LIVE migration definition (migrations are cumulative) and never use the Supabase dashboard as the migration path.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the parity:check-coupling gate, which fails the push on the mistake.",
+      "control": {
+        "path": "supabase/migrations/20261122000000_example.sql",
+        "text": "CREATE TABLE public.example (id uuid);",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/parity-check-coupling.json#parity-coupling-rejects-new-schema-qualification",
+      "stated": "`parity:check-coupling` fails on any `<schema>.`"
+    },
+    {
+      "id": "generated-artifact-plans-index",
+      "trigger": {
+        "paths": [
+          "docs/plans/README.md",
+          "docs/plans/*.md",
+          "scripts/generate-plans-index.mjs"
+        ]
+      },
+      "check": "docs/plans/README.md is the generated plans index (Category B): a plan's status change needs `npm run plans:index`. AGENTS.md (Generated-artifact policy): \"Regeneration must be byte-identical ... `docs/plans/README.md`, the status-bucketed plans index (`plans:index` / `plans:index:check`), ...\" The index reads TRACKED plans only.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the plans:index:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": "docs/plans/verification-lessons.md",
+        "text": "**Status**: shipped",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/plans-index-check.json#plans-index-check-compares-rendered-content",
+      "stated": "status-bucketed plans index (`plans:index` / `plans:index:check`)"
+    },
+    {
+      "id": "generated-artifact-requirements-map",
+      "trigger": {
+        "paths": [
+          "docs/requirements-map.md",
+          ".requirements/ledger.json",
+          "scripts/requirements.mjs"
+        ]
+      },
+      "check": "docs/requirements-map.md is generated from .requirements/ledger.json (Category B): regenerate it after a ledger change. AGENTS.md (Generated-artifact policy): \"... `docs/requirements-map.md` (`docs/requirements-map.md` (`requirements:map` / `requirements:map:check`)) ...\" Hand-editing it fails requirements:map:check.",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the requirements:map:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": ".requirements/ledger.json",
+        "text": "      \"status\": \"active\",",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/requirements-map-check.json#requirements-map-check-compares-rendered-content",
+      "stated": "`docs/requirements-map.md` (`requirements:map` / `requirements:map:check`)"
+    },
+    {
+      "id": "generated-skills-copy-never-hand-edited",
+      "trigger": {
+        "paths": [
+          ".claude/skills/**",
+          "scripts/regenerate-skill-copies.mjs"
+        ]
+      },
+      "check": ".claude/skills/ is generated from skills/: edit skills/<name>/, then regenerate. AGENTS.md: \"`.claude/skills/<name>/` is the generated copy — run `npm run skills:regenerate` and **never hand-edit it**.\"",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the skills:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": ".claude/skills/ship/SKILL.md",
+        "text": "Hand-edited line in the generated copy.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-check.json#skills-check-detects-hand-edited-generated-copy",
+      "stated": "generated copy — run `npm run skills:regenerate`"
+    },
+    {
+      "id": "skill-reference-summary-byte-match",
+      "trigger": {
+        "paths": [
+          "skills/*/references/**",
+          "docs/audit/shared-references/**",
+          "scripts/sync-shared-audit-refs.mjs"
+        ]
+      },
+      "check": "A reference file's `summary:` frontmatter must byte-match its parent SKILL.md reference-index row; edit the canonical shared reference, never a synced copy. AGENTS.md: \"Every reference file has `summary:` YAML frontmatter that must byte-match the parent SKILL.md's reference-index row, enforced by `npm run skills:check`\".",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the skills:check gate, which fails the push on the mistake.",
+      "control": {
+        "path": "skills/audit-code/references/round-recipes.md",
+        "text": "summary: a reworded summary that no longer matches the index row",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-check.json#skills-check-detects-shared-reference-drift",
+      "stated": "Every reference file has `summary:` YAML frontmatter that must byte-match"
+    },
+    {
+      "id": "skill-frontmatter-description-budget",
+      "trigger": {
+        "paths": [
+          "skills/*/SKILL.md",
+          "scripts/check-skill-descriptions.mjs"
+        ]
+      },
+      "check": "A skill's description is required and capped; a bad `name` is a silent skip. AGENTS.md: \"**(3) Frontmatter is a contract** (enforced by `skills:check`), and its sharpest trap is silence: a bad `name` is a **silent skip**; `description` is required, **max 1024 chars**; every optional key sits at **column 0**\".",
+      "incident": "A bad `name` is a silent skip: the skill vanishes from discovery with no error (AGENTS.md, skill surfaces invariant 3).",
+      "control": {
+        "path": "skills/ship/SKILL.md",
+        "text": "description: a description edited without re-measuring its length",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-check.json#skills-check-detects-over-budget-description",
+      "stated": "`description` is required, **max 1024 chars**"
+    },
+    {
+      "id": "skill-frontmatter-indented-key-inert",
+      "trigger": {
+        "paths": [
+          "skills/*/SKILL.md",
+          "scripts/check-skill-frontmatter.mjs"
+        ]
+      },
+      "check": "An optional frontmatter key indented under `description: |` is description text, not a key. AGENTS.md: \"every optional key sits at **column 0** — indented under `description: |` it is description TEXT, parsed, valid and **inert**.\"",
+      "incident": "An indented key parsed, validated and did nothing: description TEXT, inert (AGENTS.md, skill surfaces invariant 3).",
+      "control": {
+        "path": "skills/ship/SKILL.md",
+        "text": "  argument-hint: <indented under description, so inert>",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-check.json#skills-check-detects-indented-frontmatter-key",
+      "stated": "indented under `description: |` it is description TEXT, parsed,"
+    },
+    {
+      "id": "synced-skill-content-reachable-refs",
+      "trigger": {
+        "paths": [
+          "skills/*/SKILL.md",
+          "skills/*/references/**",
+          ".skill-consumer-refs-baseline.json"
+        ],
+        "patterns": [
+          "npm run [a-z][\\w:.-]*"
+        ]
+      },
+      "check": "Synced skill content must name tooling BY PATH and may not name an `npm run` alias or an out-of-closure docs/ file a consumer cannot reach. AGENTS.md (seven shapes): \"*(5)* synced content naming an `npm run` alias or an out-of-closure `docs/` file — **name synced tooling BY PATH** and the sync rewrites it (npm run skills:consumer-refs:gate)\".",
+      "incident": "Consumer-reported shape (5): synced skill text named an npm alias or docs/ file that did not exist in the consumer.",
+      "control": {
+        "path": "skills/ship/SKILL.md",
+        "text": "Run `npm run some:repo-only:alias` first.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-consumer-refs-gate.json#skills-consumer-refs-gate-rejects-an-undeclared-unreachable-pointer",
+      "stated": "npm run skills:consumer-refs:gate"
+    },
+    {
+      "id": "skill-markdown-size-ratchet",
+      "trigger": {
+        "paths": [
+          "skills/**/*.md",
+          "docs/audit/shared-references/*.md",
+          ".skill-size-baseline.json"
+        ]
+      },
+      "check": "Skill markdown over 12,000 chars may not grow; move detail to references/. AGENTS.md: \"**Skill markdown may not grow.** `npm run skills:size:gate` ratchets every `skills/**/*.md` (and the canonical shared references, never the generated copies) in characters against `.skill-size-baseline.json`.\"",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the skills:size:gate gate, which fails the push on the mistake.",
+      "control": {
+        "path": "skills/ship/SKILL.md",
+        "text": "An added paragraph in an oversized SKILL.md.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-size-gate.json#skills-size-ratchet-rejects-growth-past-the-baseline",
+      "stated": "Skill markdown may not grow"
+    },
+    {
+      "id": "exit-after-stdout-must-drain",
+      "trigger": {
+        "paths": [
+          "scripts/lib/cli-io.mjs",
+          "scripts/check-stdout-flush.mjs"
+        ],
+        "symbols": [
+          "finishAndExit"
+        ],
+        "patterns": [
+          "\\bprocess\\.exit\\("
+        ]
+      },
+      "check": "After writing to stdout, exit through `await finishAndExit(code)`, never `process.exit()`. AGENTS.md: \"**An exit that stdout can reach must drain first.** On Windows a piped `process.stdout` is asynchronous — `npm run x`, `x | tee` and every CI capture are pipes — so `process.exit()` **discards whatever has not flushed**, and a truncated JSON envelope reads to its caller as a parse error blamed on the wrong thing.\"",
+      "incident": "2026-08-13: azure:routes hung and truncated output because its only exit was a process.exit() (9c104381).",
+      "control": {
+        "path": "scripts/some-cli.mjs",
+        "text": "  process.exit(1);",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/stdout-flush-gate.json#stdout-flush-gate-detects-a-new-undrained-exit",
+      "stated": "An exit that stdout can reach must drain first"
+    },
+    {
+      "id": "upstream-report-disposition-resolves",
+      "trigger": {
+        "paths": [
+          "scripts/upstream-dispositions.json",
+          "scripts/lib/doctor/registry.mjs",
+          "scripts/lib/doctor/probes.mjs",
+          "scripts/lib/upstream/**"
+        ]
+      },
+      "check": "Every TERMINAL upstream report needs a disposition that resolves: a doctor probe id, a tracked regression test, or a written exemption. AGENTS.md: \"**Adopting these skills in a new consumer repo** — the migration recipe and `doctor` (one command over every adoption-friction class, ratcheted by `npm run upstream:coverage:gate`): consumer-adoption.md §Diagnostics.\"",
+      "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the upstream:coverage:gate gate, which fails the push on the mistake.",
+      "control": {
+        "path": "scripts/upstream-dispositions.json",
+        "text": "    \"deadbeef\": { \"disposition\": \"probe\", \"probe\": \"no-such-probe\" },",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/upstream-coverage-gate.json#upstream-coverage-gate-detects-an-unresolvable-probe-disposition",
+      "stated": "npm run upstream:coverage:gate"
+    },
+    {
+      "id": "visual-contract-doc-example-drift",
+      "trigger": {
+        "paths": [
+          "skills/visual-audit/references/contract-and-bootstrap.md",
+          "scripts/check-visual-contract-doc-drift.mjs",
+          "scripts/lib/visual/**"
+        ]
+      },
+      "check": "The annotated JSONC example in contract-and-bootstrap.md must match the real VisualContractSchema key set, in both directions. AGENTS.md: \"**A hand-written annotated example in a reference doc is the same seam, one hop over** — `contract-and-bootstrap.md`'s JSONC example drifted from `VisualContractSchema` silently until `npm run visual-contract-doc:gate` compared both sides' `z.toJSONSchema(...)` key sets\".",
+      "incident": "The example drifted from VisualContractSchema silently until the doc gate compared both sides' emitted key sets (AGENTS.md, prose-code seam).",
+      "control": {
+        "path": "skills/visual-audit/references/contract-and-bootstrap.md",
+        "text": "  \"newKey\": \"documented but not in the schema\",",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/visual-contract-doc-gate.json#visual-contract-doc-drift-detected",
+      "stated": "silently until `npm run visual-contract-doc:gate` compared"
+    },
+    {
+      "id": "windowed-view-declares-its-window",
+      "trigger": {
+        "paths": [
+          ".windowed-views.json",
+          "scripts/check-windowed-views.mjs"
+        ],
+        "patterns": [
+          "CREATE (OR REPLACE )?VIEW|create (or replace )?view"
+        ]
+      },
+      "check": "A store view whose result depends on now() must declare its window in .windowed-views.json. AGENTS.md: \"**A figure compared over time is a trend only if the population is stable.** `unremediated_acceptances` is a 7-30 day window on `audit_runs.created_at`, so its 116 -> 47 fall over five weeks was rows **aging out**\"; every such view declares its window, gated drift-only by `npm run windowed-views:gate`.",
+      "incident": "unremediated_acceptances fell 116 to 47 over five weeks purely because rows aged out of a 7-30 day window; the two windows shared 0 rows and 110 of the 116 were still open.",
+      "control": {
+        "path": "supabase/migrations/20261122000001_view.sql",
+        "text": "CREATE OR REPLACE VIEW recent_runs AS SELECT * FROM audit_runs WHERE created_at > now() - interval '7 days';",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/windowed-views-gate.json#windowed-views-gate-rejects-an-undeclared-windowed-view",
+      "stated": "A figure compared over time is a trend only if the population is stable."
+    },
+    {
+      "id": "worktree-documented-command-reachable",
+      "trigger": {
+        "paths": [
+          "skills/*/SKILL.md",
+          "scripts/check-worktree-preflight.mjs"
+        ]
+      },
+      "check": "A skill documenting a command into scripts/.claude-skills/ must warn that the tree is absent in a linked git worktree. AGENTS.md (seven shapes): \"*(4)* a documented command whose tooling cannot reach a linked worktree (Gate: `npm run worktree:preflight:gate`)\".",
+      "incident": "Consumer-reported shape (4): a documented command whose tooling is gitignored and so absent in every linked worktree.",
+      "control": {
+        "path": "skills/ship/SKILL.md",
+        "text": "Run `node scripts/.claude-skills/cross-skill.mjs report` from the repo root.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/worktree-preflight-gate.json#worktree-preflight-rejects-skill-without-marker",
+      "stated": "Gate: `npm run worktree:preflight:gate`"
+    },
+    {
+      "id": "tiered-shadow-window-epoch-gated",
+      "trigger": {
+        "symbols": [
+          "TIERED_SHADOW_CONTRACT_EPOCH",
+          "comparedRuns"
+        ],
+        "paths": [
+          "scripts/lib/tiered-shadow*.mjs",
+          "scripts/lib/tiered-recall/**"
+        ]
+      },
+      "check": "\"Window met\" counts only rows stamped with the CURRENT contract epoch; bump the epoch on a meaning-changing fix and re-collect, never backfill. AGENTS.md: \"- **\"Window met\" is epoch-gated, not eyeballed** (2026-07-26, after the 5th false\n  green): `comparedRuns` counts only rows the collector stamped with the\n  current `TIERED_SHADOW_CONTRACT_EPOCH`; pre-stamp rows are ineligible and the\n  window restarts — re-collect, never backfill.\"",
+      "incident": "2026-07-26: the 5th false \"window met\" read, after which the collector stamps contractEpoch and unstamped rows are ineligible (a584540c).",
+      "control": {
+        "path": "scripts/lib/tiered-shadow-collector.mjs",
+        "text": "const eligible = rows.filter((r) => r.comparedRuns > 0);",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "skills/audit-code/gate-contract.json#tiered-shadow-window-honesty",
+      "stated": "`comparedRuns` counts only rows the collector stamped with the\n  current `TIERED_SHADOW_CONTRACT_EPOCH`"
+    },
+    {
+      "id": "cli-entry-guard-is-isinvokedasscript",
+      "trigger": {
+        "symbols": [
+          "isInvokedAsScript"
+        ],
+        "paths": [
+          "scripts/lib/cli-entry.mjs",
+          "tests/cli-entry-guards.test.mjs"
+        ],
+        "patterns": [
+          "import\\.meta\\.url\\s*===\\s*pathToFileURL\\(\\s*process\\.argv",
+          "process\\.argv\\[1\\]\\s*(===|==|!==)"
+        ]
+      },
+      "check": "The CLI entry guard is `if (isInvokedAsScript(import.meta.url))` — never a hand comparison of process.argv[1] with import.meta.url. Node realpaths one side and not the other, so through a symlink or junction the hand guard is false and the CLI exits 0 having run nothing.",
+      "incident": "2026-10-13: 16 of 26 CLIs exited 0 through a symlink having run nothing (#236, 82b63557). Control line is the real pre-fix guard from scripts/check-gate-contracts.mjs.",
+      "control": {
+        "path": "scripts/check-gate-contracts.mjs",
+        "text": "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "disposable-db-allowlist",
+      "trigger": {
+        "symbols": [
+          "assertDisposableDbUrl",
+          "isDisposableDbHost"
+        ],
+        "paths": [
+          "scripts/lib/db/client.mjs",
+          "scripts/lib/db-test-container.mjs"
+        ],
+        "patterns": [
+          "DROP SCHEMA public CASCADE"
+        ]
+      },
+      "check": "\"Disposable\" is an ALLOWLIST of loopback hosts and fails CLOSED (isDisposableDbHost / assertDisposableDbUrl). Never re-express it as \"not $VENDOR\", never point a test DSN at a shared database, and regenerate the schema fixture only from a fresh replay.",
+      "incident": "2026-07-14: an integration suite swapped AUDIT_DB_URL to AUDIT_DB_TEST_URL and ran DROP SCHEMA public CASCADE against production (0e7c63be). Control line is the destructive statement from that incident.",
+      "control": {
+        "path": "tests/new-db-integration.test.mjs",
+        "text": "await pool.query('DROP SCHEMA public CASCADE');",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "canonicalize-eol-before-hashing",
+      "trigger": {
+        "symbols": [
+          "canonicalizeEol"
+        ],
+        "paths": [
+          "scripts/lib/file-io.mjs",
+          "scripts/regenerate-skill-copies.mjs"
+        ],
+        "patterns": [
+          "\\bsha\\(\\w*[bB]uf\\w*\\)\\s*===",
+          "createHash\\("
+        ]
+      },
+      "check": "Hashing working-tree bytes is not hashing committed source: a generator hashing files for a COMMITTED artifact must canonicalise CRLF to LF with canonicalizeEol (lib/file-io.mjs). The tell: git says clean and your tool says changed; git is right.",
+      "incident": "2026-08-09: the skills sync check hashed raw bytes, so git and the gate disagreed on \"same file\" on Windows (97988499). Control line is the real pre-fix comparison from scripts/regenerate-skill-copies.mjs.",
+      "control": {
+        "path": "scripts/regenerate-skill-copies.mjs",
+        "text": "  if (dstBuf && sha(srcBuf) === sha(dstBuf)) return 'unchanged';",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "jsonb-write-seam",
+      "trigger": {
+        "symbols": [
+          "serializeWriteParam",
+          "pgArray"
+        ],
+        "paths": [
+          "scripts/lib/db/query.mjs"
+        ]
+      },
+      "check": "Do NOT hand-JSON.stringify a jsonb column: serializeWriteParam auto-serializes a plain array bound to ANY column on the write path. Pass jsonb values raw; a real text[]/int[] column opts OUT with pgArray(value).",
+      "incident": "2026-06-27: node-postgres bound a plain array as an ARRAY literal that jsonb rejected with 22P02 or silently stored as {} (48611728). Control line is from that fix.",
+      "control": {
+        "path": "scripts/lib/db/query.mjs",
+        "text": "  const params = entries.map(([, v]) => serializeWriteParam(v));",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "durable-write-registration",
+      "trigger": {
+        "symbols": [
+          "durableWrite"
+        ],
+        "paths": [
+          "scripts/lib/durable-write.mjs",
+          "scripts/lib/audit-store-writers.mjs",
+          "scripts/lib/store/**"
+        ]
+      },
+      "check": "Every audit-store write in legacy-production-audit.mjs's cloud block goes through durableWrite and is registered in audit-store-writers.mjs; a new write-shaped export under scripts/lib/store/** must be registered or exempted with a reason. Outcomes written/spilled/lost/skipped are not interchangeable.",
+      "incident": "2026-08-12: four audit-store writes were fire-and-forget and failed silently (72e0a0ef, 1019d519).",
+      "control": {
+        "path": "scripts/lib/store/new-writer.mjs",
+        "text": "export async function writeNewThing(row) { return db.insert(row); }",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "sensitive-paths-single-oracle",
+      "trigger": {
+        "symbols": [
+          "resolveAndClassify",
+          "formatSkipLog"
+        ],
+        "paths": [
+          "scripts/lib/sensitive-paths.mjs"
+        ]
+      },
+      "check": "scripts/lib/sensitive-paths.mjs is the single source of truth for sensitive-path classification: never add a fifth implementation, log skips through formatSkipLog (never basenames), and fail closed on a resolution error or a repo-escaping symlink.",
+      "incident": "INC-001 in docs/security-strategy.md: a payload the redactor could not process must come back as [REDACTED:redaction-failed], never leak.",
+      "control": {
+        "path": "scripts/lib/sensitive-paths.mjs",
+        "text": "export function isSensitivePath(p) { return /\\.env$/.test(p); }",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "provider-route-not-env-var",
+      "trigger": {
+        "symbols": [
+          "isClaudeAvailable",
+          "createOpenAIClient"
+        ],
+        "paths": [
+          "scripts/lib/provider-availability.mjs"
+        ],
+        "patterns": [
+          "!\\s*process\\.env\\.(ANTHROPIC|OPENAI)_API_KEY"
+        ]
+      },
+      "check": "An availability gate must ask whether a ROUTE exists, not whether a public env var is set: use isClaudeAvailable() / isClaudeAvailableFor('sdk') (lib/provider-availability.mjs), never ANTHROPIC_API_KEY or OPENAI_API_KEY. A raw env check is dead code on Azure and keyless-cli installs.",
+      "incident": "2026-11-14: scripts/symbol-index/summarise.mjs tested !ANTHROPIC_API_KEY and, under CLAUDE_BACKEND=cli, emitted null summaries for the whole symbol corpus (3dabb3f3). Control line is the real removed test.",
+      "control": {
+        "path": "scripts/symbol-index/summarise.mjs",
+        "text": "  if (!azureConfig.active && !process.env.ANTHROPIC_API_KEY) {",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "npm-run-flag-swallowed",
+      "trigger": {
+        "patterns": [
+          "npm run [a-z][\\w:.-]* --[a-z]"
+        ]
+      },
+      "check": "`npm run x --flag` is swallowed by npm: the flag never reaches the script. Write `npm run x -- --flag`. The `--` is load-bearing for `npm run sync -- --target <name>`: without it the sync writes into EVERY consumer.",
+      "incident": "2026-07-20: `npm run sync --target` without the `--` was verified to write into every consumer instead of the named one.",
+      "control": {
+        "path": "docs/runbooks/gate-cost.md",
+        "text": "Run `npm run sync --target wine` to update wine.",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "prompt-seed-and-mechanical-wave",
+      "trigger": {
+        "symbols": [
+          "PASS_PROMPTS",
+          "MECHANICAL_WAVES"
+        ],
+        "paths": [
+          "scripts/lib/prompt-seeds.mjs",
+          "scripts/lib/audit-shadow.mjs"
+        ]
+      },
+      "check": "PASS_PROMPTS seed edits roll out GLOBALLY to every consumer. A new mechanical wave must be declared in MECHANICAL_WAVES (audit-shadow.mjs), or PASS_PROMPTS silently enrols it in the model-A/B/C shadow's PAID comparison.",
+      "incident": "AGENTS.md \"Four imperatives\" (1); exp5 fixed four pre-spend blockers before a paid run (6dedaca0).",
+      "control": {
+        "path": "scripts/lib/prompt-seeds.mjs",
+        "text": "  newwave: 'Review the diff for new-wave issues.',",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "sync-inventory-single-owner",
+      "trigger": {
+        "symbols": [
+          "sourceRelToDestRel",
+          "getSyncClosure"
+        ],
+        "paths": [
+          "scripts/lib/sync-path-map.mjs",
+          "scripts/lib/sync-inventory.mjs",
+          "scripts/lib/sync-entry-lists.mjs"
+        ]
+      },
+      "check": "The sync layout's single source of truth is sync-path-map.mjs, and the bundle inventory has ONE owner (sync-inventory.mjs + sync-entry-lists.mjs): never hand-compute a destination path or keep a second copy of an entry list.",
+      "incident": "debt 3627c83a: the bundle inventory existed twice, kept in lock-step by a comment and a parity test, until it was unified in sync-inventory.mjs.",
+      "control": {
+        "path": "scripts/lib/sync-entry-lists.mjs",
+        "text": "  'scripts/new-shipped-cli.mjs',",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "learning-repo-name-is-owner-slash-repo",
+      "trigger": {
+        "patterns": [
+          "LEARNING_REPO_NAME\\s*[=:]\\s*['\"]?[^/\\s'\"]+['\"]?\\s*,?$"
+        ]
+      },
+      "check": "LEARNING_REPO_NAME must be the `owner/repo` slug (it matches audit_repos.name). A bare repo name silently misses the lookup. install.mjs and setup.mjs derive it; do not hand-type it.",
+      "incident": "A bare repo name left weekly-review broken for weeks in every consumer.",
+      "control": {
+        "path": ".env.example",
+        "text": "LEARNING_REPO_NAME=claude-engineering-skills",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "schema-error-is-not-empty-result",
+      "trigger": {
+        "symbols": [
+          "isSchemaFaultSqlstate",
+          "describeSchemaFault"
+        ],
+        "paths": [
+          "scripts/lib/db/errors.mjs"
+        ]
+      },
+      "check": "A SCHEMA ERROR IS NOT AN EMPTY RESULT: a bare `catch { return null }` around a query renders a broken query and an absent row as the same value. Use isSchemaFaultSqlstate / describeSchemaFault (db/errors.mjs) to degrade loudly, and put one assertion on a real Postgres, not only on the pure decision.",
+      "incident": "2026-09-05: the pure tests passed throughout the whole period a freshness cache was dead.",
+      "control": {
+        "path": "scripts/lib/db/errors.mjs",
+        "text": "export function isSchemaFaultSqlstate(code) { return code === '42P01'; }",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    },
+    {
+      "id": "domain-retag-both-directions",
+      "trigger": {
+        "paths": [
+          ".audit-loop/domain-map.json"
+        ]
+      },
+      "check": "RETAGGING A MODULE CHANGES EVERY EDGE *INTO* IT: re-baseline BOTH directions. Moving a file to another domain changes the from-domain of everything it imports and the to-domain of everything that imports it. Do not verify by grep; tests/arm-vocabulary-layering.test.mjs re-derives the whole violation set.",
+      "incident": "Three retags in four days forgot the inbound half (d5e66d35, a146bb7b). Control line is a real domain-map edit (47148350).",
+      "control": {
+        "path": ".audit-loop/domain-map.json",
+        "text": "      \"pattern\": \"scripts/lib/gate-provenance/**\",",
+        "negativePath": "scripts/lib/vcs.mjs"
+      }
+    }
+  ]
+}

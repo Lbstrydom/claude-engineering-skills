@@ -30,6 +30,7 @@ import { readUpstreamCache, renderUpstreamLine, upstreamQuiet, upstreamScript } 
 import { readRecordCache, renderRecordLine, recordQuiet } from './record-count.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused, selfId } from './commands.mjs';
 import { leaseForNext, leaseStuckFooter } from './lease-cmd.mjs';
+import { sharedSurfaceTouched, testsLoadingAt } from './shared-surface.mjs';
 import { fullSuiteDeferredLine, fullSuiteOf, landingOf, landingRollupLine } from './config.mjs';
 import { decisionsForSession, renderSessionDecision } from './decisions.mjs';
 
@@ -60,8 +61,12 @@ export function obligationsFor(ctx, id) {
     ...(u && !u.queried ? [`uncommitted files: ${u.reason ?? 'not read'}`] : []),
   ];
   const myFiles = [...new Set([...(c?.queried ? c.files : []), ...(u?.queried ? u.files : [])])];
+  const sharedNow = sharedSurfaceTouched(myFiles, ctx.config.sharedSurfaces);
+  const sharedReach0 = sharedNow.length && tip ? testsLoadingAt(ctx.cwd, tip, sharedNow) : null;
+  // `next` sees uncommitted files too, but the reach is read from the commit: say so rather than let a missing test read as "none".
+  const sharedReach = sharedReach0?.ok && u?.queried && u.files.length ? { ...sharedReach0, uncommitted: u.files.length } : sharedReach0;
   const result = deriveObligations({
-    item, session, advance, myFiles, filesUnknown, hold: facts.hold, directives: readDirectives(ctx.dir), now: ctx.now,
+    item, session, advance, myFiles, filesUnknown, hold: facts.hold, directives: readDirectives(ctx.dir), sharedSurfaces: ctx.config.sharedSurfaces, sharedReach, cmd: ctx.cmd, now: ctx.now,
   });
   return { ok: true, result, item };
 }

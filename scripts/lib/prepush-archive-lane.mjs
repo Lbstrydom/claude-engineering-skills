@@ -76,6 +76,7 @@ export const ARCHIVE_LANE_CHECK_CLASSIFICATION = Object.freeze({
   'plans:index:check': S('generated plans index byte-freshness'),
   'requirements:map:check': S('generated requirements map byte-freshness'),
   'bundle:deps:check': S('generated bundle deps byte-freshness'),
+  'checklist:gen:check': S('generated .audit-loop/checklist.json byte-freshness'),
   'skills:check': S('.claude/skills regeneration freshness'),
   'skills:consumer-refs:gate': S('pointers inside synced skills'),
   'plans:lint': S('Mermaid renderer-compat lint'),

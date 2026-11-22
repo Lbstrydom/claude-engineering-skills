@@ -9,6 +9,11 @@
  *
  *   node scripts/audit-structural-card.mjs --sid audit-plan-1792-99 --mode plan --round 4 --plan "$PLAN_FILE"
  *
+ * At code checkpoints 3 and 6 it also prints the round signals (reopen rate, severity drift, retired); `--step-back`
+ * then runs the fresh-context reviewer (`--step-back-arm same|different`, default same = latest-gpt) through the
+ * egress-gated context pack — it is a paid call, made only when a signal fired. After round 6 it prints the default:
+ * stop-to-debt or a human; rounds 7-8 need --past-cap.
+ *
  * Read-only apart from the card file it writes next to the round results and one
  * observation-only `round_cap_reached` learning decision (both skipped by --no-write). It
  * creates no debt and no proposal; the verdict is a hint and the call is the
@@ -23,8 +28,10 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { AUDIT_ROUND_CAPS, cardFileName, parseRoundFlag, readFlagValue } from './lib/audit/round-cap.mjs';
 import { buildStructuralCard, writeCardFile } from './lib/audit/structural-card.mjs';
 import { recordCapStop } from './lib/audit/cap-productivity.mjs';
+import { buildCheckpointSection } from './lib/audit/step-back-card.mjs';
+import { createStepBackProvider } from './lib/audit/step-back-provider.mjs';
 
-const KNOWN_FLAGS = ['--sid', '--mode', '--round', '--plan', '--dir', '--json', '--no-write', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--sid', '--mode', '--round', '--plan', '--dir', '--json', '--no-write', '--step-back', '--step-back-arm', '--selfcheck-relocation'];
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); return; }
@@ -42,7 +49,15 @@ async function main() {
   const auditDir = path.resolve(readFlagValue(argv, '--dir').value || '.audit');
   const planFile = readFlagValue(argv, '--plan').value;
 
+  const wantStepBack = argv.includes('--step-back');
+  const arm = readFlagValue(argv, '--step-back-arm').value || 'same';
+  if (arm !== 'same' && arm !== 'different') throw new ArgvError('audit-structural-card: --step-back-arm must be same or different.');
   const { card, text } = await buildStructuralCard({ sid, mode, round: roundRes.value, planFile, caps, auditDir });
+  const provider = wantStepBack ? createStepBackProvider(arm) : null;
+  const section = await buildCheckpointSection({
+    sid, mode, round: roundRes.value, planFile, auditDir, stepBack: wantStepBack, provider: provider?.call ?? null, model: provider?.model ?? null,
+  });
+  if (section) card.stepBack = { checkpoint: section.checkpoint, signals: section.signals, record: section.record };
   if (!argv.includes('--no-write')) writeCardFile(auditDir, cardFileName(sid, roundRes.value), card);
   if (card.productivity && !argv.includes('--no-write')) {
     // Recorded only past the soft cap (recordCapStop refuses otherwise), as `on-demand`: the operator may still CONTINUE.
@@ -50,7 +65,8 @@ async function main() {
     const rec = await recordCapStop({ sid, mode, round: roundRes.value, caps, productivity: card.productivity, runId: card.productivity.lastRunId, trigger: 'on-demand' });
     process.stderr.write(rec.recorded ? '  [round-cap] cap reached, recorded (round_cap_reached, on-demand)\n' : `  [round-cap] cap-reached telemetry not recorded (${rec.reason})\n`);
   }
-  if (argv.includes('--json')) console.log(JSON.stringify(card, null, 2)); else console.log(text);
+  if (argv.includes('--json')) console.log(JSON.stringify(card, null, 2));
+  else console.log(section ? [text, '', ...section.lines].join('\n') : text);
 }
 
 if (isInvokedAsScript(import.meta.url)) {
