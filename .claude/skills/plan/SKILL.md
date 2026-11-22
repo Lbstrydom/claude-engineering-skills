@@ -112,18 +112,16 @@ Inline the returned `markdown` field as **"Neighbourhood considered"**
 near the top of the plan output. Handle by state:
 
 - `cloud:false` or `repoRegistered:false` → emit literal `npm run arch:refresh` hint; proceed (nothing compared).
-- `cloud:true, records:[]` → "No near-duplicates found — proceed."
+- `cloud:true, records:[]` → "No near-duplicates found — proceed" only if `coverage.status:"verified"`, else absence of evidence: search by hand.
 - `EMBEDDING_MISMATCH` / `RPC_ERROR` → emit `_consultation failed: <code>; plan proceeds without architectural context_`; continue.
 - `BAD_INPUT` → surface to user, abort plan generation.
 
 A `precedent` band means existing code occupies this space: open the named
 symbols and decide on the code whether to reuse, extend, or write a sibling —
-then record which and why under "Proposed Architecture". The band does not make
-that choice; a distance score cannot see dependency direction, API shape or
-ownership. `review` = nothing cleared the repo's noise floor (proceed
-greenfield); `unscored` = no embedding, so nothing was compared.
+then record which and why under "Proposed Architecture" (a distance score cannot see dependency direction, API shape or
+ownership). `review` = below the repo's noise floor (proceed); `unscored` = no embedding, nothing compared.
 
-The callout's **Domain** column flags domain-mismatch reuse candidates
+The **Domain** column flags domain-mismatch reuse candidates
 → `references/context-callouts.md` §Phase 0.5 — read when a candidate sits in another domain.
 
 ### Phase 0.5b — Compute target domain(s) and surface boundary work

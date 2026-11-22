@@ -16,20 +16,21 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { isSafeGitRevision } from '../vcs.mjs';
+import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 
-// Variables that make `git -C <root>` act on a DIFFERENT repository (a git hook, e.g. pre-push, sets several): dropped for every call.
-const GIT_REPO_SELECTORS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_PREFIX'];
-const cleanEnv = () => { const e = { ...process.env }; for (const k of GIT_REPO_SELECTORS) delete e[k]; return e; };
+// Variables that make `git -C <root>` act on a DIFFERENT repository (a git hook, e.g. pre-push, sets several) are dropped for every
+// call by the repo's one oracle, git's own `--local-env-vars` list (never a hand-kept copy that can miss a variable).
+const cleanEnv = (root) => sanitizeGitEnv(root);
 
 // `core.hooksPath` pointed at nothing: a repository's own post-checkout hook must not run while a tree is materialised, or it could
 // rewrite the files the audit is about to read. (Checkout FILTERS are not disabled: none of the corpus repos names one in
 // .gitattributes, so no file is filtered; a future corpus repo that does is a curation constraint.)
 const GIT_CONFIG = ['-c', `core.hooksPath=${os.devNull}`, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf'];
 const git = (root, args) => execFileSync('git', [...GIT_CONFIG, '-C', root, ...args],
-  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
+  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, env: cleanEnv(root) });
 
 /** Run git in `dir` and return raw bytes (paths are bytes, not necessarily UTF-8). */
-const gitBytes = (dir, args) => execFileSync('git', [...GIT_CONFIG, '-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, env: cleanEnv() });
+const gitBytes = (dir, args) => execFileSync('git', [...GIT_CONFIG, '-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024, env: cleanEnv(dir) });
 
 /** The id git gives a blob: sha1("blob <length>\0" + bytes). Computed here, so no path is ever handed back to git to interpret. */
 export const gitBlobId = (bytes) => crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
