@@ -19,7 +19,8 @@ reads were about 720 tokens per output token, and one chip reached 4,386 message
 
 1. Digest, not diff: a 42K-line diff is not reviewable in one call. The digest (209K chars, **measured**) holds each commit's
    subject and body, the net diff of `AGENTS.md`, `package.json`, the baselines and `skills/**/*.md`, the first 22 lines of every
-   new non-test script and the first 14 of every new doc. Builder (scratch script, run from the repo):
+   new non-test script and the first 14 of every new doc (75 and 22 here, all included; the builder fails on an unreadable file and
+   states the counts in the digest, so a size limit would be a labelled batch, never a silent cap). Builder (scratch script, run from the repo):
 
    ```js
    // node digest.mjs <base> <head> <out>
@@ -33,9 +34,11 @@ reads were about 720 tokens per output token, and one chip reached 4,386 message
      s += `\n--- ${f}\n${git('diff', '-U1', base, head, '--', f)}\n`;
    s += `\n## skills\n${git('diff', '-U1', base, head, '--', 'skills/**/*.md')}\n`;
    const added = (p) => git('diff', '--diff-filter=A', '--name-only', base, head, '--', p).trim().split('\n').filter(Boolean);
-   const lead = (f, n) => { try { return git('show', `${head}:${f}`).split('\n').slice(0, n).join('\n'); } catch { return ''; } };
-   for (const f of added('scripts').filter(f => !f.includes('test')).slice(0, 90)) s += `\n--- ${f}\n${lead(f, 22)}\n`;
-   for (const f of added('docs').slice(0, 40)) s += `\n--- ${f}\n${lead(f, 14)}\n`;
+   const lead = (f, n) => git('show', `${head}:${f}`).split('\n').slice(0, n).join('\n'); // throws on an unreadable file
+   const newScripts = added('scripts').filter(f => !f.includes('test')), newDocs = added('docs');
+   for (const f of newScripts) s += `\n--- ${f}\n${lead(f, 22)}\n`;
+   for (const f of newDocs) s += `\n--- ${f}\n${lead(f, 14)}\n`;
+   s += `\n## COVERAGE: ${newScripts.length} new scripts and ${newDocs.length} new docs, all included\n`;
    fs.writeFileSync(out, s);
    ```
 2. One call through the repo's seam, `createAnthropicClient()` (backend `sdk`) with `resolveModel('latest-opus')` = `claude-opus-5-5`,
@@ -80,8 +83,9 @@ Class 2: none found. Full range: 7 distinct real (2 MEDIUM+, 5 LOW) and 6 false,
 
 Control range, 8 findings: 3 real (all LOW: D, E, H), 5 false (drop-directory logic "implemented three times" - both callers import the
 same `scanDrop`; a stdout-flush baseline race that the baseline file contradicts; two size-ratchet "workarounds"; one-letter-apart
-npm script names). False-positive rate **5 of 8 (63%)**, with **0 MEDIUM-or-above class-1 findings**. So the prompt does not invent
-MEDIUM defects in a coherent range, but about half of everything it says is false: every finding needs verifying.
+npm script names). False-positive rate **5 of 8 (63%)**, with **0 MEDIUM-or-above class-1 findings**. In this one control range the prompt
+produced no MEDIUM-or-above real finding (n = 1, so not a claim about coherent ranges in general), and about half of everything it said
+was false: every finding needs verifying.
 
 ## Limits
 
