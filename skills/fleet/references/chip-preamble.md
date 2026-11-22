@@ -69,6 +69,10 @@ markers, and without them you wait for the user's /ship.]
 RECORDS. You never run the record catch-up (ship-record.mjs) or write a session-log entry for another PR: the coordinator
 owns that for the repo (coordinator-playbook §7). [rule 8]
 
+PHASE LENGTH. One chip covers ONE phase (plan, implement, audit or land). At the phase boundary write a hand-over note (done, head sha,
+what remains, decisions, evidence) in the shared notes folder and end your turn: a fresh chip takes the next phase. Past about 300
+messages, say so to the coordinator and stop at the next boundary (coordinator-playbook §10).
+
 FINAL REPORT. Per PR: the branch, the PR number, the files you changed, the audit rounds, the red and green evidence against
 your PROOF PLAN, whether it shipped itself (with the conditions output), and your Findings.
 

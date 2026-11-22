@@ -165,3 +165,21 @@ A red CI run is not made green by running it again. `ci-verdict` counts every at
 that ever failed reads `failed` (`failed-then-rerun`, exit 4) even when a later attempt passes. `--rerun-unrelated-flake`
 (`landing.md`, rule 8) is a diagnostic: its result is information beside the red verdict, never a merge basis. Only a new commit
 clears the head: fix the cause, or delete the test with a written reason naming the coverage lost. Never a sleep, retry or skip.
+
+## 10. One chip per phase, a handover at each boundary
+
+Cost is context re-read per turn, not output: across 110 sessions cached-input reads ran about 720 tokens per output token, and one
+chip reached 4,386 messages. So launch ONE chip per phase (plan,
+implement, audit, land), never one long chip for the whole task. At a phase boundary the chip writes a hand-over note (done, branch
+and head sha, what remains, decisions, evidence; the context-file shape of `handover-winddown.md`) in the shared notes folder, ends
+its turn, and the next phase starts as a fresh chip that reads it. A chip past about 300 messages is a candidate to wind down at the
+next boundary, not to continue.
+
+## 11. Step back on the merged range
+
+Per-PR audits judge one diff, so a duplicated mechanism, a stale doc or an overlapping gate across PRs is invisible to them. Every 20
+merges, and once at the end of a run, build a digest of the range (each commit's subject and body, the net diffs of AGENTS.md,
+skills and the baselines, the headers of new scripts and docs), send it to ONE strong model asking only for cross-PR problems
+(duplicated mechanisms, contradicting docs, overlapping gates, a PR undoing another), and verify every finding against the code
+before filing it: about half the claims were false in the first measurement. 20 is derived from one range (2 MEDIUM-or-above misses
+in 33 commits, none in a 7-commit control), so revise it with the next measurement.

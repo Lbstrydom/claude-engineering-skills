@@ -18,7 +18,13 @@ async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const root = process.cwd();
   const config = loadEfficacyConfig(root);
-  if (!config.enabled) process.exit(0); // silent no-op until a repo opts in
+  if (!config.enabled) {
+    // Opt-in by design (a synced script: every consumer lacks a config), so this stays exit 0, but it must
+    // never read as a clean run: say on stderr that nothing was checked (stdout stays empty for callers).
+    process.stderr.write('efficacy-lints: NOT RUN (no efficacy-lints.config.json, or enabled:false) - nothing was checked\n');
+    process.exitCode = 0; // return, never process.exit(): a forced exit can drop a pending pipe write (audit M2)
+    return;
+  }
 
   const { status, ruleResults, findings, coverage } = runEfficacyLints({ root, config, modelHint: config.modelHint });
   process.stdout.write(`efficacy-lints: ${status} (scanned ${coverage.scannedFiles} files, ${coverage.applicableSites} sites)\n`);
