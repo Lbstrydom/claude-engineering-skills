@@ -29,7 +29,6 @@ DECLARE
   want  TEXT;
   dups  BIGINT;
   cols_arr TEXT[];
-  idx   RECORD;
 BEGIN
   FOR spec IN
     SELECT * FROM (VALUES
@@ -65,48 +64,33 @@ BEGIN
         spec.tbl, want, dups;
     END IF;
 
-    -- Drop the same-named constraint with a different definition, and any unique constraint that is
-    -- the original columns plus `model` (the drifted variant, whatever it was named).
+    -- Drop only what is RECOGNISED as the drift: a unique constraint over exactly the original columns, or those plus
+    -- `model`, whatever it is named. A same-named constraint over any OTHER columns enforces some other rule: refuse.
     FOR cons IN
-      SELECT c.conname
+      SELECT c.conname,
+             (SELECT array_agg(a.attname::text ORDER BY a.attname)
+                FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)) AS keycols
         FROM pg_constraint c
        WHERE c.conrelid = to_regclass(spec.tbl) AND c.contype = 'u'
-         AND (
-           c.conname = spec.conname
-           OR (
-             (SELECT array_agg(a.attname::text ORDER BY a.attname)
-                FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey))
-             = (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr || ARRAY['model']) x)
-           )
-         )
     LOOP
-      EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', spec.tbl, cons.conname);
+      IF cons.keycols = (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr) x)
+         OR cons.keycols = (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr || ARRAY['model']) x) THEN
+        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', spec.tbl, cons.conname);
+      ELSIF cons.conname = spec.conname THEN
+        RAISE EXCEPTION '% on % is a unique constraint over % (not the original key or the model variant); refusing to drop it. Resolve it deliberately, then re-run --migrate.',
+          spec.conname, spec.tbl, cons.keycols;
+      END IF;
     END LOOP;
 
-    -- A bare index squatting on the name (no constraint behind it) would make ADD CONSTRAINT fail. Drop it ONLY when it is a
-    -- plain unique index on THIS table whose key is exactly the original columns, or those plus `model` (no predicate, no
-    -- expressions): anything else enforces some other rule and is an operator's call, so refuse with a diagnostic.
-    SELECT i.indrelid, i.indisunique, i.indpred IS NOT NULL AS partial, i.indexprs IS NOT NULL AS has_expr,
-           c.relnamespace::regnamespace::text AS ns,
-           (SELECT array_agg(a.attname::text ORDER BY a.attname)
-              FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)) AS keycols
-      INTO idx
-      FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
-     WHERE c.relkind = 'i' AND c.relname = spec.conname
-       AND c.relnamespace = (SELECT relnamespace FROM pg_class WHERE oid = to_regclass(spec.tbl));
-    IF FOUND THEN
-      IF idx.indrelid <> to_regclass(spec.tbl) THEN
-        RAISE EXCEPTION 'index % belongs to another table, not %; refusing to touch it. Rename or drop it deliberately, then re-run --migrate.',
-          spec.conname, spec.tbl;
-      END IF;
-      IF NOT idx.indisunique OR idx.partial OR idx.has_expr
-         OR idx.keycols NOT IN (
-              (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr) x),
-              (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr || ARRAY['model']) x)) THEN
-        RAISE EXCEPTION 'index % on % is not a plain unique index over the original key (columns %, partial %, expressions %); refusing to drop it. Resolve it deliberately, then re-run --migrate.',
-          spec.conname, spec.tbl, idx.keycols, idx.partial, idx.has_expr;
-      END IF;
-      EXECUTE format('DROP INDEX %s.%I', idx.ns, spec.conname);
+    -- A bare index (no constraint behind it) squatting on the name would make ADD CONSTRAINT fail. It is never dropped
+    -- automatically: its semantics (predicate, collation, opclass, NULL handling) are an operator's call.
+    IF EXISTS (
+      SELECT 1 FROM pg_class c
+       WHERE c.relkind = 'i' AND c.relname = spec.conname
+         AND c.relnamespace = (SELECT relnamespace FROM pg_class WHERE oid = to_regclass(spec.tbl))
+    ) THEN
+      RAISE EXCEPTION 'an index named % exists in the schema of % with no constraint behind it; refusing to drop it. Drop or rename it deliberately, then re-run --migrate.',
+        spec.conname, spec.tbl;
     END IF;
 
     EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s', spec.tbl, spec.conname, want);

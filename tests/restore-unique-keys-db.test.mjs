@@ -86,43 +86,33 @@ describe('restore original unique keys (DB integration)', { skip }, () => {
     });
   });
 
-  test('an identically named index on ANOTHER table is never dropped: refuses instead', async () => {
-    await inRolledBackTx(async (c) => {
-      await drift(c);
-      await c.query('ALTER TABLE prompt_variants DROP CONSTRAINT prompt_variants_pass_variant_model_key');
-      await c.query('CREATE TABLE zz_other (a int)');
-      await c.query('CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON zz_other (a)');
-      await c.query('SAVEPOINT s');
-      await assert.rejects(() => c.query(SQL), /belongs to another table/);
-      await c.query('ROLLBACK TO SAVEPOINT s');
-      const r = await c.query(`SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_variants_pass_variant_key' AND tablename = 'zz_other'`);
-      assert.equal(r.rowCount, 1, 'the unrelated index is untouched');
-    });
-  });
-
-  test('a same-named PARTIAL or differently-keyed unique index is refused, not dropped', async () => {
-    for (const ddl of [
-      'CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON prompt_variants (pass_name, variant_name) WHERE is_active',
-      'CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON prompt_variants (prompt_hash)',
-    ]) {
+  test('a same-named bare index (any table, any shape) is refused, never dropped', async () => {
+    const cases = [
+      ['CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON prompt_variants (pass_name, variant_name)', 'prompt_variants'],
+      ['CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON prompt_variants (pass_name, variant_name) WHERE is_active', 'prompt_variants'],
+      ['CREATE TABLE zz_other (a int); CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON zz_other (a)', 'zz_other'],
+    ];
+    for (const [ddl, tbl] of cases) {
       await inRolledBackTx(async (c) => {
         await drift(c);
         await c.query('ALTER TABLE prompt_variants DROP CONSTRAINT prompt_variants_pass_variant_model_key');
         await c.query(ddl);
         await c.query('SAVEPOINT s');
-        await assert.rejects(() => c.query(SQL), /not a plain unique index over the original key/);
+        await assert.rejects(() => c.query(SQL), /no constraint behind it/);
         await c.query('ROLLBACK TO SAVEPOINT s');
-        assert.equal((await c.query(`SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_variants_pass_variant_key'`)).rowCount, 1);
+        assert.equal((await c.query('SELECT 1 FROM pg_indexes WHERE indexname = $1 AND tablename = $2', ['prompt_variants_pass_variant_key', tbl])).rowCount, 1);
       });
     }
   });
 
-  test('a plain bare unique index over the original key IS replaced by the constraint', async () => {
+  test('a same-named constraint over UNRELATED columns is refused, not replaced', async () => {
     await inRolledBackTx(async (c) => {
       await c.query('ALTER TABLE prompt_variants DROP CONSTRAINT prompt_variants_pass_variant_key');
-      await c.query('CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON prompt_variants (pass_name, variant_name)');
-      await c.query(SQL);
-      assert.deepEqual(await defOf(c, 'prompt_variants_pass_variant_key'), ['UNIQUE (pass_name, variant_name)']);
+      await c.query('ALTER TABLE prompt_variants ADD CONSTRAINT prompt_variants_pass_variant_key UNIQUE (prompt_hash)');
+      await c.query('SAVEPOINT s');
+      await assert.rejects(() => c.query(SQL), /not the original key or the model variant/);
+      await c.query('ROLLBACK TO SAVEPOINT s');
+      assert.deepEqual(await defOf(c, 'prompt_variants_pass_variant_key'), ['UNIQUE (prompt_hash)']);
     });
   });
 
