@@ -41,16 +41,20 @@ export function finalReviewCostUsd(usage, model) {
  * @param {{runId: string|null, repoId?: string|null, model: string, provider: string, usage?: object, latencyMs?: number}} a
  * @returns {Promise<'recorded'|'skipped'|'failed'>}
  */
-export async function recordFinalReviewCall({ runId, repoId = null, model, provider, usage, latencyMs }) {
+export function captureReviewedTree(cwd = process.cwd()) {
+  try { const r = gitWorktreeTree(cwd); return r.ok ? r.tree : null; } catch { return null; }
+}
+
+export async function recordFinalReviewCall({ runId, repoId = null, model, provider, usage, latencyMs, auditedTree = undefined }) {
   try {
     if (!runId) return 'skipped';
     // Same per-call identity as the audit producer. The reviewer is its own process, so the tree is read
     // from the working tree it reviewed; no diff base is known here, so it stays null rather than guessed.
-    const treeRes = gitWorktreeTree(process.cwd());
-    const auditedTree = treeRes.ok ? treeRes.tree : null;
+    // The caller passes the tree captured BEFORE the provider request; only a caller that did not (undefined) falls back to reading it now.
+    const tree = auditedTree === undefined ? captureReviewedTree() : auditedTree;
     let branch = null;
     try { branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).toString().trim(); } catch { /* detached or no git: no branch segment, no guess */ }
-    if (!bindRun({ runId, repoId, workItemId: resolveWorkItemId({ branch }), producer: 'final-review', auditedTree })) return 'skipped';
+    if (!bindRun({ runId, repoId, workItemId: resolveWorkItemId({ branch }), producer: 'final-review', auditedTree: tree })) return 'skipped';
     record({
       purpose: 'final-review',
       model,

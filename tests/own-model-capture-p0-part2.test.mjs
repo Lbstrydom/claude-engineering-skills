@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { bindRun, record, drain, beginLogicalCall, _resetLlmCallLog } from '../scripts/lib/telemetry/llm-call-log.mjs';
 import { resolveWorkItemId, mintWorkItemId } from '../scripts/lib/ledger/work-item.mjs';
 import { identityFromTranscript, readSnapshotIdentity } from '../scripts/lib/bakeoff/snapshot-identity.mjs';
-import { buildInsertCallsSql } from '../scripts/lib/store/llm-calls.mjs';
+import { buildInsertCallsSql, droppedFieldsFor } from '../scripts/lib/store/llm-calls.mjs';
 import sectionCaptureCompleteness, { statusClass } from '../scripts/lib/dashboard/sections/capture-completeness.mjs';
 import { runCanary } from '../scripts/lib/capture/canary.mjs';
 
@@ -32,7 +32,7 @@ describe('per-call tree identity', () => {
   });
 
   test('NEGATIVE CONTROL: an unbound identity is null, and a non-oid value is refused rather than stored', () => {
-    bindRun({ runId: RUN, producer: 'audit', auditedTree: 'HEAD', diffBaseSha: 'not a sha' });
+    bindRun({ runId: RUN, producer: 'audit', auditedTree: 'a'.repeat(41), diffBaseSha: 'not a sha' });
     record({ purpose: 'a' });
     const [r] = drain().rows;
     assert.equal(r.audited_tree, null);
@@ -48,25 +48,38 @@ describe('resolveWorkItemId', () => {
     assert.equal(resolveWorkItemId({ env: {}, branch: 'claude/ces-own-model-p0b-c1973f' }), null);
     assert.equal(resolveWorkItemId({ env: {}, branch: null }), null);
   });
-  test('a malformed env value does not fall through to the branch', () => {
+  test('a malformed env value does not fall through to the branch, and says so', () => {
     assert.equal(resolveWorkItemId({ env: { OWN_MODEL_WORK_ITEM_ID: 'oops' }, branch: `wi-${wi}` }), null);
   });
 });
 
 describe('bake-off identity comes from the snapshot', () => {
   test('the newest round carrying an identity wins; none means absent, never the working tree', () => {
-    const t = { rounds: [{ _auditedTree: 'c'.repeat(40), _auditedSha: 'd'.repeat(40) }, { _auditedTree: TREE, _auditedSha: BASE }, { round: 3 }] };
+    const t = { rounds: [{ _auditedTree: 'c'.repeat(40), _auditedSha: 'd'.repeat(40) }, { _auditedTree: TREE, _auditedSha: BASE }] };
     assert.deepEqual(identityFromTranscript(t), { auditedSha: BASE, auditedTree: TREE, source: 'snapshot' });
+    // NEGATIVE CONTROL: the newest round carries none, so an OLDER round's identity is never borrowed.
+    assert.equal(identityFromTranscript({ rounds: [...t.rounds, { round: 3 }] }).source, 'absent');
+    // Git object ids are 40 or 64 hex chars: 41 is not one.
+    assert.equal(identityFromTranscript({ rounds: [{ _auditedTree: 'a'.repeat(41) }] }).source, 'absent');
     assert.deepEqual(identityFromTranscript({ rounds: [{ round: 1 }] }), { auditedSha: null, auditedTree: null, source: 'absent' });
     assert.equal(identityFromTranscript(null).source, 'absent');
     assert.equal(identityFromTranscript({ rounds: [{ _auditedTree: 'nope' }] }).source, 'absent');
   });
   test('an unreadable transcript is absent, not a throw', () => {
-    assert.equal(readSnapshotIdentity('/no/such/transcript.json').source, 'absent');
+    const r = readSnapshotIdentity('/no/such/transcript.json');
+    assert.equal(r.source, 'unreadable');
+    assert.ok(r.error);
   });
 });
 
 describe('writer column tiers', () => {
+  test('a store behind the migrations is told, not silently trimmed: dropped fields are named', () => {
+    const rows = [{ logical_call_id: 'x', audited_tree: TREE, diff_base_sha: null }];
+    assert.deepEqual(droppedFieldsFor(rows, { hasP0: true, hasTree: true }), []);
+    assert.deepEqual(droppedFieldsFor(rows, { hasP0: true, hasTree: false }), ['audited_tree']);
+    assert.deepEqual(droppedFieldsFor(rows, { hasP0: false, hasTree: false }), ['logical_call_id', 'audited_tree']);
+    assert.deepEqual(droppedFieldsFor([{ call_id: 'y' }], { hasP0: false, hasTree: false }), [], 'nothing carried, nothing dropped');
+  });
   test('the tree tier names both new columns; the older tiers never do', () => {
     const tree = buildInsertCallsSql([['call_id', 'uuid'], ['audited_tree', 'text'], ['diff_base_sha', 'text']]);
     assert.match(tree, /audited_tree text, diff_base_sha text/);

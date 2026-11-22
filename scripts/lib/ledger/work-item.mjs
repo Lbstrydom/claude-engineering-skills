@@ -79,7 +79,12 @@ export function workItemFromBranch(branch) {
  */
 export function resolveWorkItemId({ env = process.env, branch = null } = {}) {
   const v = env?.OWN_MODEL_WORK_ITEM_ID;
-  if (v) return isWorkItemId(v) ? v : null;
+  if (v) {
+    if (isWorkItemId(v)) return v;
+    process.stderr.write(`  [own-model] OWN_MODEL_WORK_ITEM_ID is not a UUIDv7 (${JSON.stringify(String(v).slice(0, 60))}); this call is NOT correlated to a work item
+`);
+    return null;
+  }
   return workItemFromBranch(branch);
 }
 

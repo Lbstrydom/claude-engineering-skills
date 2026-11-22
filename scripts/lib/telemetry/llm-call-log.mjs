@@ -47,7 +47,7 @@ export function callIdFor({ runId, producer, nonce, seq }) {
   return uuidV5(`${runId}|${producer}|${nonce}|${seq}`);
 }
 
-const GIT_OID = /^[0-9a-f]{40,64}$/;
+const GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const int = (v) => (Number.isFinite(v) ? Math.max(0, Math.round(v)) : null);
 const num = (v) => (Number.isFinite(v) ? v : null);
 const str = (v, n = 120) => (typeof v === 'string' && v ? v.slice(0, n) : null);

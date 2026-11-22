@@ -374,8 +374,8 @@ async function mintArmRun(arm, { plan, mode, id, transcript }) {
     // transcript's own rounds (`_auditedTree`/`_auditedSha`). A snapshot without one records NULL (a
     // wrong-but-plausible cwd tree would read as verified). Evidence, not a gate -- a failure leaves the run registered.
     if (armRunId) {
-      const { auditedSha, auditedTree, source } = readSnapshotIdentity(transcript);
-      if (source === 'absent') process.stderr.write(`  [bakeoff] arm ${arm.id}: snapshot carries no audited identity; recording none (not the working tree)
+      const { auditedSha, auditedTree, source, error } = readSnapshotIdentity(transcript);
+      if (source !== 'snapshot') process.stderr.write(`  [bakeoff] arm ${arm.id}: snapshot identity ${source}${error ? ` (${error})` : ''}; recording none (not the working tree)
 `);
       if (auditedSha || auditedTree) {
         // durableWrite never rejects for a store failure: it RETURNS `{outcome}`, so the outcome is what to inspect.

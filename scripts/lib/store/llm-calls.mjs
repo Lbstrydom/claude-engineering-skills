@@ -18,6 +18,13 @@ import { isCloudEnabled } from './repo.mjs';
 import { strictColumnExists } from './column-probes.mjs';
 
 let _warnedUnmigrated = false;
+let _warnedDegraded = false;
+
+/** PURE. The capture fields the supplied rows carry that an older column tier would silently drop. */
+export function droppedFieldsFor(rows, { hasP0, hasTree }) {
+  const carries = (cols) => cols.filter((c) => rows.some((r) => r?.[c] != null));
+  return [...(hasP0 ? [] : carries(P0_COLS.map(([n]) => n))), ...(hasTree ? [] : carries(TREE_COLS.map(([n]) => n)))];
+}
 
 // Column tiers by migration. A store that has not applied a newer migration keeps the older insert: an
 // older store must never lose its call rows because a newer column is absent.
@@ -63,6 +70,9 @@ export async function recordLlmCalls(payload) {
     }
     return { ok: true, applied: false, rows: 0, reason: 'store-not-migrated' };
   }
+  // Rows must belong to the run and producer the summary is keyed on: a mismatch would attribute calls to the wrong run.
+  const stray = rows.find((r) => r?.audit_run_id !== runId || r?.producer !== producer);
+  if (stray) return { ok: false, applied: false, rows: 0, error: new Error(`llm-calls: row ${stray.call_id} is for run ${stray.audit_run_id}/${stray.producer}, payload is ${runId}/${producer}`) };
   try {
     const hasP0 = await strictColumnExists('llm_call_provenance', 'logical_call_id', many, isCloudEnabled);
     const hasTree = hasP0 && await strictColumnExists('llm_call_provenance', 'audited_tree', many, isCloudEnabled);
@@ -80,6 +90,17 @@ export async function recordLlmCalls(payload) {
     });
     // A buffer that overflowed persisted only a SUBSET; the summary row keeps the truth (recorded/dropped)
     // and the orchestrator that drained the log marks the run incomplete when `dropped > 0`.
+    // A store behind the P0 migrations still gets its rows, but the fields its schema cannot hold are DROPPED, and the
+    // replay key (call_id) means a later migration cannot restore them. Say so in the receipt and on stderr: never a clean ok.
+    const dropped_fields = droppedFieldsFor(rows, { hasP0, hasTree });
+    if (dropped_fields.length) {
+      if (!_warnedDegraded) {
+        _warnedDegraded = true;
+        process.stderr.write(`  [llm-calls] store lacks migration 20261123120000/20261123140000 — DROPPED from call provenance: ${dropped_fields.join(', ')} (setup-postgres.mjs --migrate)
+`);
+      }
+      return { ok: true, applied: true, rows: written, degraded: `columns-missing:${dropped_fields.join(',')}` };
+    }
     return { ok: true, applied: true, rows: written };
   } catch (err) {
     return { ok: false, applied: false, rows: 0, error: err };

@@ -92,5 +92,10 @@ describe('own-model capture P0 (DB integration)', { skip }, () => {
     const r = await buildReport({ days: 7, repo: `omp0-${tag}` });
     assert.equal(r.schema, 'capture-completeness/v1');
     assert.ok(Array.isArray(r.auditDispatch) && Array.isArray(r.chipLaunch) && Array.isArray(r.fleetLand));
+    // The scoped run is one start, stamped with the schema version its rows carry: an empty or mis-grouped report fails here.
+    const g = r.auditDispatch.find((x) => x.repo === `omp0-${tag}`);
+    assert.ok(g, 'the scoped repo has a dispatch group');
+    assert.equal(g.starts, 1);
+    assert.equal(g.capture_schema_version, '1');
   });
 });

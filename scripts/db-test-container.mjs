@@ -115,7 +115,6 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // completeness query on the real schema are Postgres-only. Two edits, always: this list AND postgres-parity.yml.
   'tests/own-model-capture-p0-db.test.mjs',
   'tests/audit-capture-db.test.mjs',
-  'tests/audit-capture-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
   // CONFLICT re-drain, the outcome CHECK and every derived metric are Postgres-only.
   'tests/fleet-events-db.test.mjs',
