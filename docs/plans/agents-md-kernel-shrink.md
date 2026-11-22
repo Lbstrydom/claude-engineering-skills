@@ -210,7 +210,8 @@ relocation check and the targeted tests (§9).
   counts) and LF-folded, both labelled **measured**, with the command.
 
 ## 10. Expected end state (expected, not measured)
-After stages 1-4: about 45-50K resident, from 73.9K. What remains is tripwires (about 42.6K before shortening) and the
+After stages 1-4: about 45-50K resident, from 73.4K (stage 1 measured at 53% cut of the units it rewrote; at that rate
+stages 2-4 land nearer 50K). What remains is tripwires (about 42.6K before shortening) and the
 17.3K of gate-quoted units. Reaching 10-15K needs stage 5 plus a second shortening pass over tripwires; whether that is
 worth doing is a decision for after stage 4, on measured numbers.
 
@@ -227,7 +228,44 @@ worth doing is a decision for after stage 4, on measured numbers.
 - Final gate: Gemini (`latest-pro`) round 1 **APPROVE**, gate `approve` (blocking 0, debt 0), run `49e3cd94`.
 
 ## Implementation Log
-(stage entries appended below)
+
+### Stage 1 — 2026-11-22
+- **Pre check**: `relocation-check.mjs pre --base b52a77f1 --manifest docs/plans/agents-md-kernel-shrink.units.json --stage 1`
+  → 40 units checked, 0 problems (AGENTS.md on this branch was unchanged since `b52a77f1`: no rebase needed).
+- **Resident spec**: the stage-1 tripwire list in §7, applied as written. Deliberately made non-resident (detail kept in the
+  dossier and topic docs): the sentinel catalogue and live-catalog mechanics; the incident narratives behind the model-swap
+  and OpenRouter rules; the security "when NOT to consult" list and `/security-strategy bootstrap` hint; the quick-fix
+  layer names and signature list; the four reasons against a `$PATH` wrapper (the stub names that they exist and where).
+- **Change from §2**: stubs link their topic doc only. Instead of a dossier link on each of 18 stubs (about 1.5K chars), one
+  resident line after the preamble says moved text lives in `docs/reference/agents-md-dossiers.md` under the same H2.
+- **Edit**: 18 unit groups replaced; 16 dossier sections written; units 115 (gate-quoted) and 154 (host-contract marker)
+  untouched; every H2/H3 heading kept.
+- **Post check**: `post ... --stage 1 --dossier docs/reference/agents-md-dossiers.md` → 40 units checked, 0 problems.
+  Negative controls on scratch copies: one line deleted from unit 69 → `unit 69 ... found 0x`, exit 1; unit 75 pasted twice →
+  `found 2x`, exit 1; a second `## Model Resolution` → `appears twice`, exit 1. Later stages still intact: `pre` for stages
+  2, 3, 4 → 42, 35, 12 units, 0 problems.
+- **Gates and tests**: `context:check` OK; `gates:check` and `skills:check` exit 0 (27 contracted gates); all 28 gate
+  fragments present (direct count); `checklist:gen:check` current; `docs:refs:gate` exit 0 (dossier links resolve);
+  `guards:preflight` PASS (38 steps); 18 targeted test files that read AGENTS.md, `node --test` → 581 pass, 0 fail.
+- **Code audit R1** (H0 M3, all valid; M1 and M3 the same): the Azure stub had dropped `azureRoute: null` for an id that
+  means the public service, and narrowed "deployment or resource switch ... auto-promotes to a full re-embed". Both restored. R2 (sustainability, structure) PASS H0 M0 L0. R3 (plus wiring) PASS H0 M2: the tiered stub had
+  dropped "flag AND eligibility both hold before a provider is constructed", the provenance stub "or reorder a ship to
+  chase it". Both restored (the R3 suggestion of a new test is not applicable: no code changed). R4 PASS H0 M2: the R2+ stub had dropped
+  "the existence gate" as a read-first trigger, the model-swap stub "only intervention-over-organic-work earns a
+  shadow". Both restored, plus a self-sweep of every stub against its original that restored four more clauses the audit
+  had not yet named: a cadence is observed, never trusted (and the two doctors); `/brainstorm` voices are
+  `defaultProviders()`; the security exclusions and the `/security-strategy bootstrap` hint; the learning outbox.
+  R5 PASS H0 M1: the R2+ stub had dropped the `--ledger`/`--diff`/`--changed` qualifier; restored. Threshold
+  (H 0, M <= 2) met in R2-R5; GPT rounds stopped at 5 because every round since R2 found one or two dropped sub-clauses,
+  each fixed, none a design issue.
+  Final gate: Gemini (`latest-pro`) round 1 **APPROVE**, gate `approve` (blocking 0, debt 0), Code: FULL, run `e216f984`.
+  **Lesson for stages 2-4**: the resident spec must list every clause of each tripwire, not its headline, before editing.
+- **Measured** (`node -e` over `fs.readFileSync('AGENTS.md','utf8').length`, the count `context:check` uses; the file is LF):
+  AGENTS.md **73364 → 65743 chars, −7621 (−10.4%)**; with CLAUDE.md (2169, unchanged) the resident pair is 75533 → 67912.
+  The 18 groups covered 14942 chars of original text (§7's 14835 excludes blank-line separators and the H3 heading of
+  unit 150, which a group re-emits) and became 7134 chars of stubs, a 52% cut; the moved-detail line adds 187 back
+  (14942 − 7134 − 187 = 7621). That is below the 60-70% §7 expected, because most stage-1 units were tripwires rather than
+  dossier. Reproducible: re-running the stage-1 script on `b52a77f1`'s AGENTS.md gives a byte-identical file.
 
 ## 13. Relocation check source
 
