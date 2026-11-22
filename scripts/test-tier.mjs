@@ -12,7 +12,11 @@
  *   plan --head <rev> [--base <rev>] [--tier full|branch] [--pushes-default] --out <file>
  *       The PUSH envelope `prepush-check.mjs` hands `run-tests.mjs --tier-skip`. Runs the checkout's own selector.
  *   refresh-heavy --timing <file>
- *       Report only: which listed timings drifted, which unlisted files are heavy. Writes nothing.
+ *       Report only: which listed timings drifted, which unlisted files are heavy. Writes nothing. The file may be the raw
+ *       TEST_TIMING_KEEP report, a saved CI job summary or `gh run view <id> --log` output of a full-suite run.
+ *   timing-summary --timing <file>
+ *       The CI rendering of a kept report: a short table plus one `test-timing-json:` line. `full-suite.yml` appends it to the
+ *       job summary, so a baseline refresh needs no local full run and no artifact. Exit 3 (nothing printed) when unusable.
  *   ci-verdict (--pr <n> | --head <rev>) [--json] [--rerun-unrelated-flake]  (the flag needs --pr; see lib/ci-flake-rerun.mjs)
  *       The MERGE verdict for a repo that runs its full suite in CI (docs/plans/ci-full-suite-actions.md): prints the
  *       one-line `test-tier/v1 full <sha> ...` only when the trusted full-suite workflow succeeded on exactly this head,
@@ -28,6 +32,7 @@ import path from 'node:path';
 import { ArgvError, argOption, assertKnownFlags, finishAndExit, hasFlag } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { parseTimingReport } from './lib/test-timing-report.mjs';
+import { extractTimingReport, renderCiTimingSummary } from './lib/ci-timing-summary.mjs';
 import {
   SELECTOR_IDENTITY_FILES, TEST_TIER_VERSION, parseHeavyList, selectBranchTier, selectTier, summaryLine,
 } from './lib/test-tier.mjs';
@@ -123,12 +128,29 @@ function cmdPlan() {
   return EXIT.ok;
 }
 
+/** Print the CI rendering of a kept report (the marker line + a table). Exit 3 when it is unusable; never prints a partial one. */
+function cmdTimingSummary() {
+  const file = argOption('timing');
+  if (!file) throw new ArgvError('test-tier timing-summary: --timing <file> (a TEST_TIMING_KEEP report) is required');
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { process.stderr.write(`test-tier: timing report unavailable (${e.code ?? e.message})
+`); return EXIT.unmeasured; }
+  const r = renderCiTimingSummary(text);
+  if (!r.ok) { process.stderr.write(`test-tier: timing report unusable (${r.reason})
+`); return EXIT.unmeasured; }
+  process.stdout.write(r.text);
+  return EXIT.ok;
+}
+
 function cmdRefresh() {
   const file = argOption('timing');
   if (!file) throw new ArgvError('test-tier refresh-heavy: --timing <file> (a TEST_TIMING_KEEP report) is required');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return fail(`cannot read ${file}: ${e.message}`); }
-  const rep = parseTimingReport(text);
+  // The file may be the raw report, a saved CI job summary or `gh run view --log` output (see lib/ci-timing-summary.mjs).
+  const extracted = extractTimingReport(text);
+  if (extracted === null) return fail(`no test-timing/v1 report found in ${file} (expected the raw report or a line starting test-timing-json:)`);
+  const rep = parseTimingReport(extracted);
   if (!rep.ok) return fail(`the timing report is unusable: ${rep.reason}`);
   if (!rep.report.complete) return fail('the timing report is partial; a refresh from a partial run would mislead');
   // The list of the repository being asked about (the one in the working directory), as `select` and `plan` read it.
@@ -260,8 +282,9 @@ async function main() {
   if (sub === 'select') return cmdSelect();
   if (sub === 'plan') return cmdPlan();
   if (sub === 'refresh-heavy') return cmdRefresh();
+  if (sub === 'timing-summary') return cmdTimingSummary();
   if (sub === 'ci-verdict') return await cmdCiVerdict();
-  throw new ArgvError('usage: test-tier select --head <rev> [--base <rev>] [--json] | plan --head <rev> --out <file> [--tier full|branch] [--pushes-default] | refresh-heavy --timing <file> | ci-verdict (--pr <n> | --head <rev>) [--json] [--rerun-unrelated-flake]');
+  throw new ArgvError('usage: test-tier select --head <rev> [--base <rev>] [--json] | plan --head <rev> --out <file> [--tier full|branch] [--pushes-default] | refresh-heavy --timing <file> | timing-summary --timing <file> | ci-verdict (--pr <n> | --head <rev>) [--json] [--rerun-unrelated-flake]');
 }
 
 if (isInvokedAsScript(import.meta.url)) {
