@@ -168,6 +168,8 @@
     "db:check-rls:gate": "node scripts/check-rls.mjs --gate",
     "own-model:coverage:gate": "node scripts/own-model-coverage.mjs check --static",
     "own-model:coverage": "node scripts/own-model-coverage.mjs check --live",
+    "capture:completeness": "node scripts/capture-completeness.mjs report",
+    "capture:canary": "node scripts/capture-completeness.mjs canary",
     "skills:check-surface": "node scripts/check-stale-skill-surface.mjs --gate --source-surfaces",
     "security:triage": "node scripts/security-triage.mjs",
     "context:staleness": "node scripts/context-staleness.mjs",

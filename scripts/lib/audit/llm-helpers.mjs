@@ -35,7 +35,7 @@ import {
   retryAttemptsFor, retryAfterMs, nextRetryDelayMs,
 } from '../robustness.mjs';
 import { buildAuditPassPrompt } from './prompt-builder.mjs';
-import { recordGptCall } from '../telemetry/llm-call-log.mjs';
+import { recordGptCall, recordGptAttemptFailure, beginLogicalCall } from '../telemetry/llm-call-log.mjs';
 import { readProjectContextForPass, extractPlanForPass } from '../context.mjs';
 import { R2_ROUND_MODIFIER, buildRulingsBlock } from '../ledger.mjs';
 import { getActivePrompt, bootstrapFromConstants } from '../prompt-registry.mjs';
@@ -456,9 +456,15 @@ export async function callGPT(openai, opts) {
     noteLiveCall();
   }
 
+  const logicalCallId = beginLogicalCall();   // one id per invocation; every retry below is an attempt of it
   for (let attempt = 0; attempt <= ceiling; attempt++) {
+    const attemptStartMs = Date.now();
+    let attemptRecorded = false;   // a throw AFTER the success row (e.g. the call-record write) is not a failed provider attempt
     try {
       const result = await _callGPTOnce(openai, opts);
+      // THIS attempt's own usage and latency, before the retries' totals are folded into the returned result: the failed
+      // attempts are rows of their own, so folding them in here would count their tokens and cost twice.
+      const ownAttempt = { ...result, usage: { ...result.usage }, latencyMs: result.latencyMs };
       if (attempt > 0) {
         result.usage.input_tokens += accumulatedUsage.input_tokens;
         result.usage.cached_tokens += accumulatedUsage.cached_tokens;
@@ -468,11 +474,13 @@ export async function callGPT(openai, opts) {
         result._retried = true;
         result._attempts = attempt + 1;
       }
-      recordGptCall({ result, opts });   // metadata-only provenance; never throws
+      attemptRecorded = recordGptCall({ result: ownAttempt, opts, logicalCallId, attemptNo: attempt + 1 }) === true;   // metadata-only provenance; never throws
       if (recordKey) writeCallRecord(recordKey.requestKey, recordKey.keyFields, { result: result.result, usage: result.usage, model: result.model, reasoningEffort: result.reasoningEffort });
       return result;
     } catch (err) {
       lastErr = err;
+      // A failed attempt is a row with a typed outcome, not a gap (config errors never reached a provider).
+      if (err?.llmCategory !== 'config' && !attemptRecorded) { try { recordGptAttemptFailure({ err, opts, model: wireModel(), logicalCallId, attemptNo: attempt + 1, latencyMs: Date.now() - attemptStartMs }); } catch { /* telemetry never crashes a run */ } }
       if (err.llmUsage) {
         accumulatedUsage.input_tokens += err.llmUsage.input_tokens ?? 0;
         accumulatedUsage.cached_tokens += err.llmUsage.cached_tokens ?? 0;

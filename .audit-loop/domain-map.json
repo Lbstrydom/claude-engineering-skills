@@ -27,6 +27,11 @@
       "_why": "Own-model telemetry primitives (provenance stamps, the per-call log, the coverage core, the transcript archive core) are pure or filesystem-only and are called from the audit spine, the decision logger and the store; none imports the store writer it feeds, except final-review-call.mjs which reaches the registered writer through durable-write."
     },
     {
+      "pattern": "scripts/lib/capture/**",
+      "domain": "shared-lib",
+      "_why": "Own-model capture P0 (docs/plans/own-model-full-capture.md): the schema version, the pure reconciliation core and the canary. They import no store module statically; the store reads live in scripts/lib/store/capture-completeness-queries.mjs (stores) and the canary reaches the writer by dynamic import, the way final-review-call.mjs does."
+    },
+    {
       "pattern": "scripts/lib/brainstorm/**",
       "domain": "brainstorm"
     },

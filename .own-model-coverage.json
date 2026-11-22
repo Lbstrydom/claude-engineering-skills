@@ -28,7 +28,12 @@
     { "table": "audit_pass_stats", "column": "source_model", "since": "2026-10-29", "where": "model_pass", "expectFill": 0.9, "tolerance": 0.05 },
     { "table": "finding_adjudication_events", "column": "ruling_rationale", "since": "2026-10-29", "where": "non_campaign_event", "expectFill": 0.6, "tolerance": 0.1 },
     { "table": "finding_adjudication_events", "column": "adjudicator_model", "since": "2026-10-29", "where": "reviewer_event", "expectFill": 0.95, "tolerance": 0.05 },
-    { "table": "finding_equivalence", "column": "canonical_finding_id", "since": "2026-10-29", "expectFill": 0.99, "tolerance": 0.02 }
+    { "table": "finding_equivalence", "column": "canonical_finding_id", "since": "2026-10-29", "expectFill": 0.99, "tolerance": 0.02 },
+    { "table": "llm_call_provenance", "column": "logical_call_id", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
+    { "table": "llm_call_provenance", "column": "attempt_no", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
+    { "table": "llm_call_provenance", "column": "attempt_outcome", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
+    { "table": "llm_call_provenance", "column": "capture_schema_version", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
+    { "table": "llm_call_provenance", "column": "cost_usd", "since": "2026-11-23", "where": "audit_producer", "expectFill": 0.85, "tolerance": 0.1 }
   ],
   "exempt": [
     { "table": "audit_runs", "column": "audit_round", "reason": "NULL by design on unified runs (one row spans every round), plan A/B arm runs and bake-off arm runs; a null rate says nothing about capture quality. audit_session_id is the covered linkage column" },

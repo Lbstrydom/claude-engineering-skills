@@ -34,6 +34,24 @@ const INSERT_CALLS_SQL = `
       truncated boolean, retried boolean, fallback boolean, schema_version integer)
   ON CONFLICT (call_id) DO NOTHING`;
 
+// The P0 completeness columns (20261123120000). A store that has not applied that migration keeps the
+// legacy insert: an older store must never lose its call rows because a newer column is absent.
+const INSERT_CALLS_P0_SQL = `
+  INSERT INTO llm_call_provenance
+    (call_id, audit_run_id, repo_id, work_item_id, producer, purpose, model_resolved, route, prompt_hash, prompt_variant,
+     temperature, reasoning_effort, input_tokens, cached_tokens, output_tokens, reasoning_tokens, latency_ms, cost_usd,
+     truncated, retried, fallback, schema_version, logical_call_id, attempt_no, attempt_outcome, capture_schema_version)
+  SELECT call_id, audit_run_id, repo_id, work_item_id, producer, purpose, model_resolved, route, prompt_hash, prompt_variant,
+         temperature, reasoning_effort, input_tokens, cached_tokens, output_tokens, reasoning_tokens, latency_ms, cost_usd,
+         truncated, retried, fallback, schema_version, logical_call_id, attempt_no, attempt_outcome, capture_schema_version
+    FROM jsonb_to_recordset($1::jsonb) AS r(
+      call_id uuid, audit_run_id uuid, repo_id uuid, work_item_id text, producer text, purpose text, model_resolved text,
+      route text, prompt_hash text, prompt_variant text, temperature numeric, reasoning_effort text, input_tokens integer,
+      cached_tokens integer, output_tokens integer, reasoning_tokens integer, latency_ms integer, cost_usd numeric,
+      truncated boolean, retried boolean, fallback boolean, schema_version integer,
+      logical_call_id uuid, attempt_no integer, attempt_outcome text, capture_schema_version integer)
+  ON CONFLICT (call_id) DO NOTHING`;
+
 /**
  * @param {{runId: string, producer: string, nonce: string, rows: object[], recorded: number, dropped: number}} payload
  * @returns {Promise<{ok: boolean, applied: boolean, rows: number, reason?: string, error?: Error}>}
@@ -50,11 +68,12 @@ export async function recordLlmCalls(payload) {
     return { ok: true, applied: false, rows: 0, reason: 'store-not-migrated' };
   }
   try {
+    const hasP0 = await strictColumnExists('llm_call_provenance', 'logical_call_id', many, isCloudEnabled);
     const written = await withTx(async () => {
       let n = 0;
       if (rows.length) {
         // One statement over the whole batch; identity is the primary key, so a replay inserts nothing.
-        const res = await query(INSERT_CALLS_SQL, [JSON.stringify(rows)]);
+        const res = await query(hasP0 ? INSERT_CALLS_P0_SQL : INSERT_CALLS_SQL, [JSON.stringify(rows)]);
         n = res?.rowCount ?? 0;
       }
       await upsert('llm_call_log_summary', [{

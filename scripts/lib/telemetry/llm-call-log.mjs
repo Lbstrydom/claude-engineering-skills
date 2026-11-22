@@ -19,6 +19,8 @@
  */
 import crypto from 'node:crypto';
 import { isWorkItemId } from '../ledger/work-item.mjs';
+import { costFromUsage } from '../model-pricing.mjs';
+import { CAPTURE_SCHEMA_VERSION, ATTEMPT_OUTCOMES, attemptOutcomeForError } from '../capture/schema-version.mjs';
 
 export const LLM_CALL_SCHEMA_VERSION = 1;
 export const LLM_CALL_BUFFER_CAP = 500;
@@ -35,7 +37,12 @@ function uuidV5(name) {
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
 }
 
-/** PURE. The deterministic row identity. */
+/** PURE. The deterministic identity of one LOGICAL call (one `callGPT` / final-review invocation). */
+export function logicalCallIdFor({ runId, producer, nonce, lseq }) {
+  return uuidV5(`${runId}|${producer}|${nonce}|L${lseq}`);
+}
+
+/** PURE. The deterministic row identity (one row per ATTEMPT). */
 export function callIdFor({ runId, producer, nonce, seq }) {
   return uuidV5(`${runId}|${producer}|${nonce}|${seq}`);
 }
@@ -56,12 +63,14 @@ let state = null;
 let unboundDropped = 0;
 
 function fresh() {
-  return { bound: null, nonce: crypto.randomBytes(4).toString('hex'), seq: 0, rows: [], dropped: 0, recorded: 0 };
+  return { bound: null, nonce: crypto.randomBytes(4).toString('hex'), seq: 0, lseq: 0, rows: [], dropped: 0, recorded: 0 };
 }
 
 /** Bind this process's log to a run. Re-binding to a different run starts a new log. */
 export function bindRun({ runId, repoId = null, workItemId = null, producer = 'audit' } = {}) {
   try {
+    // LEARNING_DISABLE=1 turns every capture off: an unbound log makes record() a counted no-op.
+    if (process.env.LEARNING_DISABLE === '1') return false;
     if (!runId || !PRODUCERS.includes(producer)) return false;
     if (state?.bound?.runId === runId && state.bound.producer === producer) return true;
     state = fresh();
@@ -71,8 +80,21 @@ export function bindRun({ runId, repoId = null, workItemId = null, producer = 'a
 }
 
 /**
- * Record one accepted call. Never throws, never blocks.
- * @param {object} c purpose, model, route, promptHash, promptVariant, temperature, reasoningEffort,
+ * Mint the id of one LOGICAL call (a `callGPT` invocation, retries included). Attempts inside it
+ * carry this id and their own `call_id`, so "one call, three attempts" is one logical call.
+ * Returns null when no run is bound (the attempts then record nothing, counted). Never throws.
+ * @returns {string|null}
+ */
+export function beginLogicalCall() {
+  try {
+    if (!state?.bound) return null;
+    return logicalCallIdFor({ runId: state.bound.runId, producer: state.bound.producer, nonce: state.nonce, lseq: state.lseq++ });
+  } catch { return null; }
+}
+
+/**
+ * Record one provider ATTEMPT. Never throws, never blocks.
+ * @param {object} c logicalCallId, attemptNo, attemptOutcome (default 'success'), purpose, model, route, promptHash, promptVariant, temperature, reasoningEffort,
  *   usage {input_tokens, cached_tokens, output_tokens, reasoning_tokens}, latencyMs, costUsd, truncated, retried, fallback
  */
 export function record(c) {
@@ -80,11 +102,17 @@ export function record(c) {
     if (!state?.bound) { unboundDropped++; return false; }
     const seq = state.seq++;
     const u = c?.usage ?? {};
+    // An outside value never reaches the row unless it is in the closed vocabulary.
+    const outcome = ATTEMPT_OUTCOMES.includes(c?.attemptOutcome) ? c.attemptOutcome : (c?.attemptOutcome == null ? 'success' : 'error');
     if (state.rows.length >= LLM_CALL_BUFFER_CAP) { state.rows.shift(); state.dropped++; }
     state.recorded++;
     state.rows.push({
       call_id: callIdFor({ runId: state.bound.runId, producer: state.bound.producer, nonce: state.nonce, seq }),
       audit_run_id: state.bound.runId,
+      logical_call_id: /^[0-9a-f-]{36}$/.test(c?.logicalCallId ?? '') ? c.logicalCallId : logicalCallIdFor({ runId: state.bound.runId, producer: state.bound.producer, nonce: state.nonce, lseq: state.lseq++ }),
+      attempt_no: int(c?.attemptNo) ?? 1,
+      attempt_outcome: outcome,
+      capture_schema_version: CAPTURE_SCHEMA_VERSION,
       repo_id: state.bound.repoId,
       work_item_id: state.bound.workItemId,
       producer: state.bound.producer,
@@ -130,7 +158,7 @@ export function drain() {
  * Never throws.
  * @param {{result: object, opts: object}} a the `callGPT` result and its options
  */
-export function recordGptCall({ result, opts }) {
+export function recordGptCall({ result, opts, logicalCallId = null, attemptNo = 1 }) {
   try {
     if (!state?.bound) { unboundDropped++; return false; }
     const sys = typeof opts?.system === 'string' ? opts.system : (typeof opts?.systemPrompt === 'string' ? opts.systemPrompt : '');
@@ -144,10 +172,40 @@ export function recordGptCall({ result, opts }) {
       reasoningEffort: result?.reasoningEffort ?? null,
       usage: result?.usage,
       latencyMs: result?.latencyMs,
-      costUsd: null,
+      costUsd: costOf(result?.usage, result?.model),
       truncated: false,
       retried: result?._retried === true,
       fallback: false,
+      logicalCallId, attemptNo, attemptOutcome: 'success',
+    });
+  } catch { return false; }
+}
+
+/** USD for one attempt, or null when unpriced or unmetered: never a fabricated 0. */
+function costOf(usage, model) {
+  try { return model && usage ? (costFromUsage(usage, model).totalUsd ?? null) : null; } catch { return null; }
+}
+
+/**
+ * Record one FAILED attempt (a throw out of `_callGPTOnce`). A schema-reject, a timeout or a truncation
+ * is a call that happened and may have billed tokens, so it is a row with a typed outcome, never a gap.
+ * Never throws.
+ * @param {{err: any, opts: object, model?: string|null, logicalCallId?: string|null, attemptNo?: number, latencyMs?: number}} a
+ */
+export function recordGptAttemptFailure({ err, opts, model = null, logicalCallId = null, attemptNo = 1, latencyMs = null }) {
+  try {
+    if (!state?.bound) { unboundDropped++; return false; }
+    return record({
+      purpose: opts?.passName ?? null,
+      model: typeof model === 'string' ? model : null,
+      route: routeFor({ azure: Boolean(process.env.AZURE_OPENAI_ENDPOINT), model: typeof model === 'string' ? model : '' }),
+      usage: err?.llmUsage ?? null,
+      latencyMs,
+      costUsd: costOf(err?.llmUsage, model),
+      truncated: err?.llmCategory === 'truncated' || err?.llmCategory === 'incomplete',
+      retried: attemptNo > 1,
+      fallback: false,
+      logicalCallId, attemptNo, attemptOutcome: attemptOutcomeForError(err),
     });
   } catch { return false; }
 }
