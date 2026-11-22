@@ -191,11 +191,14 @@ async function summariseBatch(batch) {
     const text = res.content?.map(c => c.text || '').join('') || '';
     // Parse "N. summary" lines
     const out = batch.map(() => null);
+    let lastParsed = -1;
     for (const line of text.split('\n')) {
       const m = line.match(/^\s*(\d+)\.\s*(.*)$/);
       if (!m) continue;
       const idx = Number(m[1]) - 1;
-      if (idx >= 0 && idx < out.length) out[idx] = m[2].trim();
+      // `lastParsed` = last entry in RESPONSE order: the one a cut can have hit,
+      // which is not the highest index if entries arrive out of order.
+      if (idx >= 0 && idx < out.length) { out[idx] = m[2].trim(); lastParsed = idx; }
     }
     // TRUNCATION IS NOT AN EMPTY RESULT. Without this the run emits nulls for
     // the tail of a cut-off response and reports `summarised=X/Y` as though the
@@ -219,7 +222,7 @@ async function summariseBatch(batch) {
         : 'response omitted entries without reporting truncation';
       logProgress(`INCOMPLETE batch: ${detail} (${cause})`);
     }
-    return { summaries: out, health };
+    return { summaries: out, health, lastParsed };
   } catch (err) {
     logProgress(`batch failed: ${err.message} — falling back to null`);
     const summaries = batch.map(() => null);
@@ -258,16 +261,20 @@ async function summariseBatch(batch) {
  */
 export async function summariseWithSplit(batch, once, budget) {
   budget.calls++;
-  const { summaries, health, error } = await once(batch);
+  const { summaries, health, error, lastParsed } = await once(batch);
   const results = batch.map(() => ({ summary: null }));
   if (error) {
     for (const r of results) r.reason = `provider error: ${error}`;
     return results;
   }
   const redo = [];
-  let lastPresent = -1;
-  for (let i = 0; i < batch.length; i++) {
-    if (typeof summaries[i] === 'string' && summaries[i].trim()) lastPresent = i;
+  // The cut entry is the last one in RESPONSE order (`lastParsed`); a provider
+  // that cannot say falls back to the highest populated index.
+  let lastPresent = Number.isInteger(lastParsed) ? lastParsed : -1;
+  if (lastPresent < 0) {
+    for (let i = 0; i < batch.length; i++) {
+      if (typeof summaries[i] === 'string' && summaries[i].trim()) lastPresent = i;
+    }
   }
   for (let i = 0; i < batch.length; i++) {
     const present = typeof summaries[i] === 'string' && summaries[i].trim();
@@ -376,7 +383,9 @@ async function main() {
       calls: budget.calls, splitCalls: budget.splits,
     },
     complete: missing === 0,
-    failures: failures.slice(0, 100),
+    // EVERY failure with its reason, never capped: no unsummarised symbol is
+    // left without one (a full refresh once had 410).
+    failures,
   });
   for (const f of failures.slice(0, 20)) {
     logProgress(`UNSUMMARISED ${f.filePath}#${f.symbolName}: ${f.reason}`);

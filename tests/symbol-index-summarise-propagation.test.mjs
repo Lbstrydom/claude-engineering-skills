@@ -41,7 +41,7 @@ afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 
  * reads `stop_reason` off this envelope, which is how a truncation signal
  * reaches `summariseBatch` without stubbing anything inside it.
  */
-function writeFakeClaude({ result, stopReason }) {
+function writeFakeClaude({ result, stopReason, skipSecond = false }) {
   const scriptPath = path.join(tmpDir, 'fake-claude.mjs');
   const payload = JSON.stringify({
     result,
@@ -50,9 +50,18 @@ function writeFakeClaude({ result, stopReason }) {
     total_cost_usd: 0.0001,
     num_turns: 1,
   });
+  // skipSecond: the answer is derived from the REQUEST; every requested symbol
+  // is described as "about <name>" except sym2 when asked in a multi-symbol batch.
+  const derived = String.raw`let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{
+const names=[...d.matchAll(/^\d+\. \w+ \x60(\w+)\x60/gm)].map(m=>m[1]);
+const r=names.map((n,i)=>(names.length>1&&n==='sym2')?null:(i+1)+'. about '+n).filter(Boolean).join('\n');
+process.stdout.write(JSON.stringify({result:r,stop_reason:'end_turn',usage:{input_tokens:1,output_tokens:1},total_cost_usd:0,num_turns:1}));});
+`;
   fs.writeFileSync(
     scriptPath,
-    `process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(${JSON.stringify(payload)});});\n`,
+    skipSecond
+      ? derived
+      : `process.stdin.resume();process.stdin.on('end',()=>{process.stdout.write(${JSON.stringify(payload)});});\n`,
   );
   if (process.platform === 'win32') {
     const cmdPath = path.join(tmpDir, 'fake-claude.cmd');
@@ -87,8 +96,8 @@ function symbolRecord(i) {
 const SUBPROCESS_TIMEOUT_MS = 120_000;
 
 /** Run the real summariser CLI against the fake provider; return its envelope. */
-function runSummariser({ result, stopReason, symbols = 2 }) {
-  const bin = writeFakeClaude({ result, stopReason });
+function runSummariser({ result, stopReason, symbols = 2, skipSecond = false }) {
+  const bin = writeFakeClaude({ result, stopReason, skipSecond });
   const stdin = Array.from({ length: symbols }, (_, i) => symbolRecord(i + 1)).join('\n') + '\n';
   const r = spawnSync(process.execPath, [SUMMARISE], {
     cwd: REPO_ROOT,
@@ -164,8 +173,10 @@ describe('summarise CLI: the completeness verdict reaches the envelope', () => {
   });
 
   it('a short list is incomplete and attributed to the MODEL, not the ceiling', () => {
-    const out = runSummariser({ result: '1. only the first one', stopReason: 'end_turn' });
+    const out = runSummariser({ skipSecond: true });
     assert.equal(out.status, 0, `stderr: ${out.stderr.slice(0, 400)}`);
+    assert.deepEqual(out.records.filter(r => r.type === 'symbol').map(r => r.purposeSummary),
+      ['about sym1', 'about sym2'], 'each symbol gets ITS OWN recovered summary');
     // The skipped entry is re-asked alone; this fake answers any request with the
     // same one-entry list, so the re-ask succeeds. First attempt still reported.
     assert.equal(out.summary.counts.summarised, 2);
@@ -173,6 +184,15 @@ describe('summarise CLI: the completeness verdict reaches the envelope', () => {
     assert.equal(out.summary.complete, true);
     assert.equal(out.summary.counts.incompleteBatches, 1);
     assert.equal(out.summary.counts.truncatedBatches, 0, 'nothing says the ceiling was hit — the model skipped one');
+  });
+
+  it('a run with more than 100 failures reports a reason for every one', () => {
+    const N = 130;
+    const out = runSummariser({ result: '', stopReason: 'end_turn', symbols: N });
+    assert.equal(out.status, 0, `stderr: ${out.stderr.slice(0, 400)}`);
+    assert.equal(out.summary.counts.summarised, 0);
+    assert.equal(out.summary.failures.length, N, 'the envelope must not cap the failure list');
+    assert.ok(out.summary.failures.every(f => typeof f.reason === 'string' && f.reason));
   });
 
   it('the INCOMPLETE batch line names the case on stderr, so an operator can act', () => {

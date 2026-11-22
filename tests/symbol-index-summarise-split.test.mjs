@@ -95,6 +95,17 @@ describe('summariseWithSplit', () => {
   });
 });
 
+describe('summariseWithSplit: response order', () => {
+  it('out-of-order numbering: the cut entry is the last in RESPONSE order, not the highest index', async () => {
+    // The model emitted 2 then 1 and was cut inside entry 1.
+    const once = async (b) => (b.length === 2
+      ? { summaries: ['cut mid-sen', 'two ok'], health: { complete: false, missing: [], truncated: true }, lastParsed: 0 }
+      : { summaries: [`full ${b[0].symbolName}`], health: { complete: true, missing: [], truncated: false } });
+    const res = await summariseWithSplit(mk(2), once, budgetFor(2));
+    assert.deepEqual(res.map(r => r.summary), ['full s1', 'two ok']);
+  });
+});
+
 describe('summarise CLI: truncation above size K is recovered end to end', () => {
   let tmpDir;
   beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'summarise-split-')); });
@@ -143,6 +154,7 @@ describe('summarise CLI: truncation above size K is recovered end to end', () =>
     assert.equal(syms.length, N);
     assert.deepEqual(syms.map(s => s.purposeSummary), syms.map(s => `summary of ${s.symbolName}`));
     assert.equal(sum.counts.summarised, N);
+    assert.deepEqual(sum.failures, [], 'no failures, and the list is present');
     assert.equal(sum.complete, true);
     assert.equal(sum.counts.incompleteBatches, 1, 'the first attempt is still reported');
     assert.ok(sum.counts.splitCalls > 0);
