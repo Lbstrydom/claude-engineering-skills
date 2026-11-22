@@ -880,7 +880,7 @@
       "category": "plans"
     },
     "scripts/debt-auto-capture.mjs": {
-      "description": "Capture deferred audit findings into the tech-debt ledger.",
+      "description": "Capture deferred audit findings into the tech-debt ledger (from a round ledger, a final-review result, or one hand-authored --add entry).",
       "category": "audit"
     },
     "scripts/debt-ledger-migrate.mjs": {
