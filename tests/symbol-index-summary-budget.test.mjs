@@ -21,13 +21,17 @@ describe('summaryMaxTokens', () => {
   // (scripts/lib/config.mjs), so the normal arch-index run must send exactly
   // the ceiling it sent before this change. Without this, "only bites on small
   // batches" is a claim rather than a fact.
-  it('is byte-identical to the old constant at the configured default batch of 50', () => {
-    assert.equal(summaryMaxTokens(50), 4096);
+  // 2026-11-22: the old 4096 cap sat BELOW the measured need for a 50-symbol
+  // batch (4374 and 4577 output tokens), which truncated 55/151 batches.
+  it('does not clamp the configured default batch of 50 below its measured need', () => {
+    const measuredWorstCaseFor50 = 4577;
+    assert.ok(summaryMaxTokens(50) > measuredWorstCaseFor50 * 1.5,
+      `want >50% headroom over ${measuredWorstCaseFor50}, got ${summaryMaxTokens(50)}`);
   });
 
-  it('never exceeds the old constant, at any batch size', () => {
-    for (const n of [50, 51, 64, 100, 1000, 100000]) {
-      assert.ok(summaryMaxTokens(n) <= 4096, `batch ${n} must stay within 4096`);
+  it('is bounded at any batch size', () => {
+    for (const n of [64, 65, 100, 1000, 100000]) {
+      assert.ok(summaryMaxTokens(n) <= 16384, `batch ${n} must stay within 16384`);
     }
   });
 
@@ -57,7 +61,7 @@ describe('summaryMaxTokens', () => {
   // ceiling that would truncate every answer.
   it('falls back to the full ceiling on a nonsensical batch length', () => {
     for (const bad of [0, -1, NaN, Infinity, undefined, null, 'ten']) {
-      assert.equal(summaryMaxTokens(bad), 4096, `${String(bad)} must fail open`);
+      assert.equal(summaryMaxTokens(bad), 16384, `${String(bad)} must fail open`);
     }
   });
 
