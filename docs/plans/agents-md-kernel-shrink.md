@@ -335,6 +335,37 @@ worth doing is a decision for after stage 4, on measured numbers.
   Smaller than the §7 expectation (60-70%) because the Postgres, Anthropic and seam units are almost all tripwires whose every
   clause the resident spec keeps; the figure is a 14% cut of the stage's units, so stage 3's expected 60-70% needs the same discount.
 
+### Stage 3 — 2026-11-22
+- **Pre check**: `relocation-check.mjs pre ... --stage 3` → 35 units, 0 problems (live AGENTS.md = main `dfc888c2`, no rebase).
+- **Frozen, untouched**: units 21, 30, 53 (gate-quoted), every heading, and the stage-4 units. `ANCHORS` (13) all resolve after the edit.
+- **Resident spec (every clause kept unless listed non-resident)**: Overview/Skill Chain (18 skills, the chain order, disjoint
+  lenses, `/fleet` cooperative, `/harness-retro` propose-only); consumer layout upstream-owned (fix HERE + re-sync, a local edit is
+  invisible and overwritten), store fan-out and the empty-DSN air-gap rule, stdin-only report bodies; sync-layout single source of truth;
+  CLI smoke handler, `isInvokedAsScript`, the 16-of-26 census; `npm test` row carries date + command; Tier 3 seams; pre-ship (1)-(3);
+  `vcs.mjs` structured results and `runJsonLinesAsyncStrict`; verification rules 1, 2, 4. Non-resident (in the dossier and linked docs):
+  the sync banner detail, the `/ship` "0 open against 8" example, the workflow-runner-labels test name, the anecdote naming the
+  testing row's staleness, the "four review passes" count, the 12,216/80s figures, the 92% mechanism, the rename history.
+  Units kept verbatim because every clause is a tripwire: 12, 19, 22, 23, 24, 27, 48, 50, 52, 54-58, 181-183, 185, 187, 190, 192, 193.
+- **Edit**: 13 of 35 units shortened (9, 11, 20, 26, 29, 46, 49, 60, 62, 184, 188, 189, 191), 22 kept verbatim; 6 dossier sections
+  appended (35 units copied by script from `b52a77f1`, plus the `###`/`####` subsection headings of Consumer-repo layout and
+  Architecture, added after audit R1 M1). `scripts/check-docs-refs.mjs` BASELINE gains one pair,
+  `docs/reference/agents-md-dossiers.md→scripts/.sync-owned.json` (the same consumer-side write-target class as the three entries
+  above it: the dossier holds unit 22 verbatim, which names that path). Flagged for the coordinator: it is a baseline addition.
+- **Overlap**: nothing synced links to text moved here. `docs/audit/shared-references/` mentions AGENTS.md only as "a root-level
+  AGENTS.md line reference"; the only anchor links into AGENTS.md (`#local-weekly-maintenance-checks-opt-in`, `#accepted-technical-debt`)
+  point at sections this stage does not touch; every H2/H3/H4 heading is unchanged, so `§`-style citations in plans still resolve.
+- **Gates and tests**: `post --stage 1/2/3` → 40/42/35 units, 0 problems; negative controls on scratch copies: a line of unit 188
+  deleted → `found 0x`, exit 1; unit 183 pasted twice → `found 2x`, exit 1; a second `## Architecture` → `appears twice`, exit 1.
+  `context:check`, `gates:check`, `skills:check`, `checklist:gen:check`, `docs:refs:gate`, `size:ratchet:gate` exit 0; `pre --stage 4` → 12 units, 0 problems.
+  All 155 test files that name AGENTS.md (list built from the filesystem, plus `check-docs-refs.test.mjs`):
+  **3456 tests, 3448 pass, 8 skipped, 0 fail** (`prepush-installed-tree-identity` passed here; it needed no exemption).
+- **Code audit R1**: PASS H0 M1 L0, coverage complete (3 files): M1 the dossier lost the `####` subsection headings → fixed
+  (see Edit). R2 (sustainability, structure) PASS H0 M0 L0. Final gate (Gemini) round 1 **APPROVE**, gate `approve`
+  (blocking 0, debt 0), Code: FULL, run `ab23f665`.
+- **Measured** (`fs.readFileSync('AGENTS.md','utf8').length`, LF): AGENTS.md **63893 → 63147 chars, −746 (−1.2%)** this stage;
+  against pre-stage-1 main (73660) −10513 (−14.3%). The 35 units were 15173 chars (§7); 13 were shortened, a ~5% cut of the stage:
+  most are tripwires whose clauses all stay. Expect stage 4 at the same order; the end state is nearer ~62K than 45-50K.
+
 ## 13. Relocation check source
 
 Copy into a scratch file and run with Node 22 from the repo root (it imports `scripts/lib/cli-io.mjs` for `finishAndExit`, so every exit drains stdout; a whole-unit match means a unit must start and end at line boundaries, so `---` is not found inside a table separator). The manifest

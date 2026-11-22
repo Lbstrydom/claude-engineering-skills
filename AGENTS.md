@@ -189,21 +189,19 @@
 
 ## Project Overview
 
-18 AI-pair-programming skills covering the development quality lifecycle, planning
-through code audit to live UX testing and shipping. Node.js, ESM only
-(`"type": "module"`); CLI scripts + skill files invoked by AI coding assistants.
-Renamed from `claude-audit-loop` in Phase E.
+18 skills covering the quality lifecycle, planning through code audit to live UX testing and
+shipping. Node.js, ESM only (`"type": "module"`); CLI scripts + skill files invoked by AI
+coding assistants.
 
 ## Skill Chain
 
 18 skills; 16 run in this order: **plan → audit-plan → *(implement)* → audit-code
-→ ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the whole
-chain and pausing for human implementation. The four lenses are **disjoint** and
-run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
-nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain,
-coordinating concurrent sessions cooperatively
-(`references/coordinator-playbook.md`); `/harness-retro` runs after sessions,
-proposing checks for failures that recur across them (propose, never apply).
+→ ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the chain and
+pausing for human implementation. The four lenses are **disjoint** and run together on a
+UI PR — click-test (page DOM) ∥ persona-test (journey) ∥ nav-audit (system IA) ∥
+visual-audit (paint). `/fleet` sits beside the chain, coordinating concurrent sessions
+cooperatively (`references/coordinator-playbook.md`); `/harness-retro` proposes checks
+for failures recurring across sessions (propose, never apply).
 
 Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants) and
 the naming convention: [`skill-roster.md`](docs/reference/skill-roster.md) — read
@@ -281,21 +279,19 @@ their natural `scripts/`, gitignored via a managed block in their root
 without it npm swallows `--target` and the sync writes into EVERY consumer
 instead of the named one (verified 2026-07-20).
 
-> **Upstream-owned — never patch the synced copy (governance).** A failure in a
-> consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: fix it HERE
-> + re-sync. The local edit is gitignored (invisible to review), overwritten next
-> sync, and leaves the bug live for every other consumer. Each synced file carries
-> a banner saying so (`sync-banner.mjs`); drift backstops and the
-> `.githooks/pre-push.local` recipe for repo-specific push gates (never the managed
-> hook): [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
+> **Upstream-owned — never patch the synced copy.** A failure in a consumer's
+> `scripts/.claude-skills/**` file is an **UPSTREAM** bug: fix it HERE + re-sync. A local
+> edit is gitignored (invisible to review), overwritten next sync, and leaves the bug live
+> for every other consumer. Banner, drift backstops and the `.githooks/pre-push.local`
+> recipe for repo-specific push gates (never the managed hook):
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
 >
 > **Consumers are not all on ONE store**, so **an unasked question must never
-> render as an empty result** — a single-store read is blind to a consumer (`/ship`
-> printed `0 open` against 8). Fan out with `npm run upstream:queues` /
-> `stores:drift`; name a store by `storeDescriptor` (fingerprint + consumers, never
-> a hostname — this repo is public). **An EMPTY DSN env var is the AIR-GAP signal**
-> (`airGapDbUrl`) — never "fix" it to fall through to `~/.audit-loop.env`.
-> [Detail](docs/reference/consumer-repo-layout.md)
+> render as an empty result** — a single-store read is blind to a consumer. Fan out with
+> `npm run upstream:queues` / `stores:drift`; name a store by `storeDescriptor`
+> (fingerprint + consumers, never a hostname — this repo is public). **An EMPTY DSN env
+> var is the AIR-GAP signal** (`airGapDbUrl`) — never "fix" it to fall through to
+> `~/.audit-loop.env`. [Detail](docs/reference/consumer-repo-layout.md)
 >
 > **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
 > --affected-path <synced path>`; here: `npm run upstream:issues` →
@@ -346,10 +342,9 @@ instead of the named one (verified 2026-07-20).
 
 ### Sync mechanics — pointer
 
-Sync-behavior detail (the isolated subdir, the what-goes-where table, the
-managed-gitignore block, the `sync-*` module list):
-[`consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
-One structural invariant stays here: **the sync layout's single source of truth is
+Sync detail (isolated subdir, what-goes-where table, managed-gitignore block, `sync-*`
+modules): [`consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
+One invariant stays here: **the sync layout's single source of truth is
 [`sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** — never hand-compute one.
 
 **A consumer's package manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s
@@ -367,10 +362,9 @@ head of `main()` (CI fails if one lacks it); library modules get an import-test 
 [`relocation-guard.test.mjs`](tests/relocation-guard.test.mjs) instead. **The entry
 guard itself is `if (isInvokedAsScript(import.meta.url))`**
 ([cli-entry.mjs](scripts/lib/cli-entry.mjs)) — never a hand comparison of
-`process.argv[1]` with `import.meta.url`. Node realpaths one side and not the
-other, so through a symlink or junction the hand guard is false and the CLI exits
-0 having run nothing (16 of 26 did, measured 2026-10-13); no smoke run goes
-through a link, so the census in
+`process.argv[1]` with `import.meta.url`: Node realpaths one side only, so through a
+symlink or junction the hand guard is false and the CLI exits 0 having run nothing (16 of
+26 did, measured 2026-10-13). No smoke run goes through a link, so the census in
 [`cli-entry-guards.test.mjs`](tests/cli-entry-guards.test.mjs) is what enforces it.
 Snippet + current set: [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md)
 §CLI smoke contract.
@@ -418,8 +412,7 @@ Gemini loop, …) live in
 
 Run: `npm test` (Node.js built-in test runner — the suite under `tests/`).
 **Measured 2026-09-04: 14,711 tests, 0 fail, 39 skipped, 9m16s** (`npm test`, on
-a linked worktree). Carry the date and the command — the anecdote in
-§verification-discipline is about this very row going 2.3x stale.
+a linked worktree). Carry the date and the command.
 
 #### Pre-push runs against a clean checkout, not the working tree
 
@@ -433,8 +426,7 @@ escape hatches and #225: [`prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md
 **THIS repo's full suite runs in GitHub Actions, not on the shared machine.** CES
 is public, so `full-suite.yml` is its one full run per PR, and a local CES push is
 the **branch tier** by default (`.test-tiers.json`; `AUDIT_PREPUSH_TIER=full` and
-every push to `main` stay full). The Actions budget is gated by
-`tests/workflow-runner-labels.test.mjs`. Consumers get none of this — wine and
+every push to `main` stay full). Consumers get none of this — wine and
 storyline stay local-first. [Plan](docs/plans/ci-full-suite-actions.md) ·
 [runbook](docs/runbooks/gate-cost.md) §6.
 
@@ -488,19 +480,18 @@ near-zero and looks like lost progress.
 
 #### Testing doctrine — pointer
 
-Three tiers, because blanket TDD is theatre at the LLM boundary but rigor pays at
-deterministic seams. Tiers 1–2, the guarding tests and the deliberate deferrals:
-[`testing-doctrine.md`](docs/reference/testing-doctrine.md). Resident: **Tier 3 is
-non-negotiable** — two seams where a change lands with its test in the **same
-commit**, *(a)* **sensitive-path egress** (a leak ships credentials to a
-third-party LLM) and *(b)* the **consumer sync / relocation contract** (a break
-ships silently to repos you cannot observe).
+Three tiers: blanket TDD is theatre at the LLM boundary, rigor pays at deterministic
+seams ([`testing-doctrine.md`](docs/reference/testing-doctrine.md)). Resident: **Tier 3
+is non-negotiable** — a change lands with its test in the **same commit** at two seams,
+*(a)* **sensitive-path egress** (a leak ships credentials to a third-party LLM) and
+*(b)* the **consumer sync / relocation contract** (a break ships silently to repos you
+cannot observe).
 
 #### Pre-ship empirical verify — for skills that assert on a live runtime
 
 Static review cannot catch what only appears when a real browser renders real data
-— a mid-theme-transition `getComputedStyle` read once *fabricated* a bug that
-survived four review passes. **(1)** Any skill driving a browser must run against
+(a mid-theme-transition `getComputedStyle` read once *fabricated* a bug). **(1)** Any
+skill driving a browser must run against
 ONE real app before being called done; a field finding with a green repro routes
 to a regression test + ONE focused review, never the adjudication loop.
 **(2)** Freeze transitions AFTER the flip + `await document.fonts.ready`; an
@@ -856,9 +847,8 @@ implementation. Three invariants that constrain any change here:
   returns `{ok:true,…}` or `{ok:false, error:{code,…}}` over a closed
   `VcsErrorCode` enum, of which `EXEC_FAILED` is the **only** retryable code.
   Likewise `runJsonLinesAsyncStrict` ([subprocess.mjs](scripts/lib/subprocess.mjs))
-  hard-fails on parse errors by default — that closes the `.filter(Boolean)`
-  silent-data-loss invariant, where dropped lines let a caller read a short list
-  as a complete one.
+  hard-fails on parse errors by default: dropped lines (`.filter(Boolean)`) let a
+  caller read a short list as a complete one.
 
 Category lists, the 12-case diff-state matrix, both error enums and their exit
 codes: [`sensitive-paths-and-vcs.md`](docs/reference/sensitive-paths-and-vcs.md).
@@ -871,21 +861,20 @@ synced into ten skills' `references/` by `sync-shared-audit-refs.mjs` and
 byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 
 - **Pin a line number to the commit you read it at** — `path:120 (a4ec98da)`.
-  *5 of 9* bad claims in one verified document were correct when written and
-  decayed into wrong-but-**resolving** references. Cite append-newest-first files
+  Correct-when-written references decay into wrong-but-**resolving** ones (5 of 9 in one
+  verified document). Cite append-newest-first files
   (`status.md`) by section header, never by line. `npm run docs:citations -- <doc>`
   (report-only, not in `check`).
 - **Label figures `measured`/`derived`/`expected` and carry the command.** This
-  file's own test row read `~5250 tests (~12s)` against a real 12,216 in 80s —
-  *2.3x* and *6.7x* stale, and it is what you reach for when a run looks wrong.
+  file's own test row was *2.3x* and *6.7x* stale, and it is what you reach for
+  when a run looks wrong.
 - **A check is not trustworthy until seen to fail; when one fails, suspect the
   instrument first.** Red-then-green, one defect at a time; a before/after
   observation of a pre-existing defect is **not** a negative control. Six
   consecutive verification-script failures in one session were all instrument
   defects. `/audit-code` Step 4.5 and `/ux-lock` Step 2.5 own this.
 - **Reproducing a figure is not verifying its attribution.** A 22.5% reduction
-  reproduced perfectly while its stated cause was false — the parent already had
-  the credited property, and the real mechanism was *92%* of the delta;
+  reproduced perfectly while its stated cause was false;
   `/investigate` Step 2.5 reports `figure` and `attribution` separately.
 - **Promote a one-off check that mattered** — subject probe + negative control +
   vacuous-pass guard, with a disposition and a named retirement predicate:
