@@ -56,7 +56,7 @@ import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
 import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
-import { planGarbageCollection, executeGarbageCollection, renderGcReport, selectManifestBases, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
+import { planGarbageCollection, executeGarbageCollection, renderGcReport, retiredForReceipt, selectManifestBases, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
@@ -1700,7 +1700,7 @@ async function main() {
           divergedOverwritten: receiptDivergedOverwritten,
           divergenceRefused: divergenceRefusals,
           legacyRetired: receiptLegacyRetired,
-          retiredHeld,
+          retiredHeld: retiredForReceipt({ gcPlan, gcResult, retiredHeld, gcSkipped }),
           unchanged: repoUnchanged,
         });
         // commitReceipt re-reads the record at commit time (an external git operation during the run is detected, not

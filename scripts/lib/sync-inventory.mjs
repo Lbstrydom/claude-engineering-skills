@@ -157,6 +157,9 @@ export function syncMigrationsReport({ repoRoot = REPO_ROOT, ...io } = {}) {
       + 'an untrusted one — shipping a directory listing is how untracked files reached every consumer.',
     );
   }
+  if (r.missingOnDisk.length) {
+    throw new Error(`syncMigrations: ${r.missingOnDisk.length} migration(s) are tracked by git but absent from ${dir} (${r.missingOnDisk.join(', ')}). Refusing an incomplete source inventory - restore them, or git rm them if the retirement is intended.`);
+  }
   return { files: r.shippable.map((f) => `supabase/migrations/${f}`), untracked: r.untracked.map((f) => `supabase/migrations/${f}`) };
 }
 

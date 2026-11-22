@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 
 import { listShippableMigrations } from '../scripts/lib/migration-ownership.mjs';
 import { syncMigrationsReport, describeUntrackedMigrations } from '../scripts/lib/sync-inventory.mjs';
-import { planGarbageCollection, renderGcReport } from '../scripts/lib/sync-gc.mjs';
+import { planGarbageCollection, renderGcReport, retiredForReceipt } from '../scripts/lib/sync-gc.mjs';
 import { adviseForMissingMigrations, readRetiredMigrationNames } from '../scripts/lib/db/orphaned-migrations.mjs';
 import { decideSchemaPrecondition } from '../scripts/lib/audit/schema-precondition.mjs';
 
@@ -41,9 +41,31 @@ describe('the sync ships only what git tracks', () => {
     assert.deepEqual(r.untracked, []);
   });
 
-  it('a file tracked in the index but gone from disk is not shipped', () => {
-    const r = listShippableMigrations({ repoRoot: ROOT, migrationsDir: DIR, spawn: gitLists('001_a.sql', '002_gone.sql'), listDir: () => ['001_a.sql'] });
+  it('a file tracked in the index but gone from disk is an INCOMPLETE inventory: reported, and the sync refuses', () => {
+    const io = { repoRoot: ROOT, spawn: gitLists('001_a.sql', '002_gone.sql'), listDir: () => ['001_a.sql'] };
+    const r = listShippableMigrations({ migrationsDir: DIR, ...io });
     assert.deepEqual(r.shippable, ['001_a.sql']);
+    assert.deepEqual(r.missingOnDisk, ['002_gone.sql']);
+    assert.throws(() => syncMigrationsReport(io), /tracked by git but absent from .*002_gone.sql/);
+  });
+
+  it('a MISSING directory is "no migrations" only if git was asked first and answered', () => {
+    const enoent = () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); };
+    const ok = listShippableMigrations({ repoRoot: ROOT, migrationsDir: DIR, listDir: enoent, spawn: gitLists() });
+    assert.deepEqual([ok.status, ok.shippable], ['ok', []]);
+    const blind = listShippableMigrations({ repoRoot: ROOT, migrationsDir: DIR, listDir: enoent, spawn: () => ({ status: 128, stdout: '' }) });
+    assert.equal(blind.status, 'unverified', 'git unavailable must not read as an empty, verified set');
+  });
+
+  it('git runs with the repository-scoped variables stripped (an inherited GIT_INDEX_FILE cannot redirect the oracle)', () => {
+    const saved = process.env.GIT_INDEX_FILE;
+    process.env.GIT_INDEX_FILE = path.join(os.tmpdir(), 'some-other-index');
+    let seen;
+    try {
+      listShippableMigrations({ repoRoot: ROOT, migrationsDir: DIR, listDir: () => [], spawn: (cmd, args, opts) => { seen = opts.env; return { status: 0, stdout: '' }; } });
+    } finally { if (saved === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = saved; }
+    assert.ok(seen && typeof seen === 'object', 'an explicit env must be passed');
+    assert.equal(Object.keys(seen).some((k) => k.toUpperCase() === 'GIT_INDEX_FILE'), false);
   });
 
   it('git unavailable fails CLOSED: unverified, never the directory listing', () => {
@@ -209,5 +231,20 @@ describe('the sync report names what it refused and what it held', () => {
     });
     assert.equal(lines.length, 1);
     assert.match(lines[0], /hold .*x\.sql.*\.sync-overrides\.json declares this path as divergence/);
+  });
+});
+
+describe('the receipt records every retired path that may still be on disk', () => {
+  const none = { deletions: [], divergedHeld: [], declaredHeld: [], unknownBaseHeld: [], probeFailed: [] };
+  it('a failed deletion is recorded, not only the held ones', () => {
+    const r = retiredForReceipt({ gcPlan: none, gcResult: { failed: [{ path: '.audit-loop/migrations/b.sql', reason: 'EBUSY' }] }, retiredHeld: ['.audit-loop/migrations/a.sql'], gcSkipped: false });
+    assert.deepEqual(r, ['.audit-loop/migrations/a.sql', '.audit-loop/migrations/b.sql']);
+  });
+  it('a gc skipped for the whole target still records every candidate', () => {
+    const r = retiredForReceipt({
+      gcPlan: { ...none, deletions: ['.audit-loop/migrations/a.sql'], probeFailed: [{ path: '.audit-loop/migrations/b.sql', reason: 'refused' }] },
+      gcResult: { failed: [] }, retiredHeld: [], gcSkipped: true,
+    });
+    assert.deepEqual(r, ['.audit-loop/migrations/a.sql', '.audit-loop/migrations/b.sql']);
   });
 });

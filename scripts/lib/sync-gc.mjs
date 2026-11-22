@@ -153,6 +153,20 @@ export function renderGcReport({ gcPlan, gcResult, retiredHeld, overridesPath, c
 }
 
 /**
+ * What the sync receipt records as `retiredHeld`: every retired path that may STILL be on the consumer's disk - held ones, plus
+ * failed deletions and, when gc was skipped for the whole target, every candidate - so a consumer's "store behind" refusal can
+ * recognise an orphaned migration whatever stopped its removal. (`retiredHeld` itself stays the manifest-carry list.)
+ *
+ * @returns {string[]}
+ */
+export function retiredForReceipt({ gcPlan, gcResult, retiredHeld, gcSkipped }) {
+  const unresolved = gcSkipped
+    ? [...gcPlan.deletions, ...gcPlan.divergedHeld, ...gcPlan.declaredHeld, ...gcPlan.unknownBaseHeld, ...gcPlan.probeFailed.map((f) => f.path)]
+    : gcResult.failed.map((f) => f.path);
+  return [...new Set([...retiredHeld, ...unresolved])].sort();
+}
+
+/**
  * The manifest's base for each destination this run was responsible for (debt 4e0763d54f00). PURE.
  *
  * A path WRITTEN (or confirmed equal) this run takes the hash of the exact bytes handed to the write, never a re-read of the
