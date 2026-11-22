@@ -313,6 +313,8 @@ export async function runStepBack({ record, pack, provider, model = null }) {
   try { res = await provider({ system: STEP_BACK_SYSTEM_PROMPT, user: pack.text, model }); } catch (err) {
     return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: String(err?.message || err).slice(0, 200) }), usage: null };
   }
+  // A reply cut off at the output cap is an INSTRUMENT failure: never parsed, never reported as an invalid model answer.
+  if (res?.truncated) return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: 'reply truncated at the output cap (instrument failure, not a model answer)' }), usage: res?.usage ?? null, truncated: true };
   const parsed = parseStepBackOutput(res?.text ?? res?.output, { knownTopics: pack.topics ?? null });
   const outcome = parsed.ok ? { kind: 'valid', output: parsed.output } : { kind: 'invalid', raw: res?.text ?? null, error: parsed.error };
   return { record: applyStepBackOutcome(record, outcome), usage: res?.usage ?? null };

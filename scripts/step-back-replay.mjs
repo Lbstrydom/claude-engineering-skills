@@ -9,7 +9,7 @@
  *   node scripts/step-back-replay.mjs export --branches a,b --since 2026-11-19 --out .audit/step-back-export.json   (READ-ONLY SELECTs, filtered by repo_id)
  *   node scripts/step-back-replay.mjs propose --export .audit/step-back-export.json        (PROPOSES run-id lists per branch; pins nothing)
  *   node scripts/step-back-replay.mjs freeze --export .audit/step-back-export.json --spec docs/research/step-back-replay-spec.json --out <dataset.json>
- *   node scripts/step-back-replay.mjs run --dataset <dataset.json> --arms none,same,different --dry-run
+ *   node scripts/step-back-replay.mjs run --dataset <dataset.json> --arms none,same,different,higher --dry-run
  *   node scripts/step-back-replay.mjs run --dataset <dataset.json> --arms same,different --max-usd 20 --confirm-spend --results .audit/sbr-calls.jsonl --out .audit/sbr-results.json
  *   node scripts/step-back-replay.mjs score --dataset <dataset.json> --results .audit/sbr-calls.jsonl [--out <scores.json>]
  *
@@ -29,7 +29,8 @@ import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { freezeDataset, scoringPathFor } from './lib/audit/step-back-dataset.mjs';
 import { exportRows, freezeFromExport, proposeRuns } from './lib/audit/step-back-export.mjs';
-import { runReplay, scoreReplay, renderDryRun, readResultsJsonl, verifyDatasetInputs, sha256Hex, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
+import { claudeAvailability } from './lib/anthropic-client.mjs';
+import { runReplay, scoreReplay, renderDryRun, renderScoreTable, readResultsJsonl, verifyDatasetInputs, sha256Hex, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
 
 const KNOWN_FLAGS = ['--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
 export const EXIT_BUDGET_STOP = 5;
@@ -58,10 +59,11 @@ function scoreFrom({ datasetPath, resultsPath, arms, deps }) {
   const parsed = readResultsJsonl(fs.readFileSync(resultsPath, 'utf8'));
   // Ground truth is read ONLY here, after every call, and only from the results file's perspective.
   const truth = (deps.readScoring || ((p) => JSON.parse(fs.readFileSync(p, 'utf8'))))(scoringPathFor(datasetPath)).truth;
-  return { parsed, score: scoreReplay({ calls: parsed.calls, truth, arms: arms || parsed.arms || REPLAY_ARMS, plan: parsed.plan }) };
+  return { parsed, score: scoreReplay({ calls: parsed.calls, truth, arms: arms || parsed.arms || REPLAY_ARMS, plan: parsed.plan, unmeasured: parsed.unmeasured }) };
 }
 
-const summaryOf = (score) => Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs})`).join(' | ');
+const summaryOf = (score) => Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs}, truncated ${s.truncated ?? 0})`).join(' | ');
+const modelsOf = (parsed) => Object.fromEntries((parsed.plan || []).map((p) => [p.arm, p.model]));
 
 /** @returns {Promise<number>} the exit code */
 export async function main(argv = process.argv.slice(2), deps = {}) {
@@ -121,7 +123,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
       if (forbidden.includes(path.resolve(out))) throw new ArgvError('step-back-replay score: --out must not be the results file or any input (dataset, scoring, export, spec).');
     }
     if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, spentUsd: parsed.spentUsd, stopped: parsed.stopped, score });
-    console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}`);
+    console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}\n${renderScoreTable(score, modelsOf(parsed))}`);
     return 0;
   }
   if (cmd !== 'run') throw new ArgvError(`step-back-replay: unknown command "${cmd}" (export|propose|freeze|run|score).`);
@@ -153,13 +155,18 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   // Every record is appended (and flushed by the synchronous write) as it is produced: a later failure cannot lose paid output.
   const onRecord = dryRun ? undefined : (rec) => fs.appendFileSync(resultsPath, `${JSON.stringify(rec)}\n`);
   const res = await runReplay({ dataset, arms, maxUsd, dryRun, deps: { ...deps, onRecord } });
-  if (dryRun) { console.log(renderDryRun({ ...res, maxUsd })); return 0; }
+  if (dryRun) {
+    // The pinned-sdk question, asked of the one oracle (isClaudeAvailableFor('sdk') via claudeAvailability); never an env var.
+    const sdkAvailable = deps.sdkAvailable ?? claudeAvailability('sdk').available;
+    console.log(renderDryRun({ ...res, maxUsd, sdkAvailable }));
+    return 0;
+  }
 
   const { parsed, score } = scoreFrom({ datasetPath, resultsPath, arms, deps });
   const out = flag('--out');
-  if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, arms, maxUsd, spentUsd: parsed.spentUsd, stopped: res.stopped, unrecoverable: res.unrecoverable, score });
+  if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, arms, maxUsd, spentUsd: parsed.spentUsd, stopped: res.stopped, unrecoverable: res.unrecoverable, unmeasured: res.unmeasured, models: modelsOf(parsed), score });
   console.log(argv.includes('--json') ? JSON.stringify({ spentUsd: parsed.spentUsd, stopped: res.stopped, score }, null, 2)
-    : `step-back-replay: spent $${parsed.spentUsd.toFixed(4)} of $${maxUsd}${res.stopped ? ` - STOPPED (${res.stopped.reason})` : ''} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}`);
+    : `step-back-replay: spent $${parsed.spentUsd.toFixed(4)} of $${maxUsd}${res.stopped ? ` - STOPPED (${res.stopped.reason})` : ''} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}\n${renderScoreTable(score, modelsOf(parsed))}`);
   return res.stopped ? EXIT_BUDGET_STOP : 0;
 }
 

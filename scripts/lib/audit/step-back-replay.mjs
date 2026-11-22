@@ -59,8 +59,8 @@ export function upperBoundUsd({ modelId, inputChars, outputCeilingTokens = STEP_
   return (inputTokens * rate.input + outputCeilingTokens * rate.output) / 1_000_000;
 }
 
-export const REPLAY_ARMS = Object.freeze(['none', 'same', 'different']);
-export const PAID_ARMS = Object.freeze(['same', 'different']);
+export const REPLAY_ARMS = Object.freeze(['none', 'same', 'different', 'higher']);
+export const PAID_ARMS = Object.freeze(['same', 'different', 'higher']);
 export const ADOPTION_RULE = Object.freeze({ maxFalseStops: 0, minEarlyStops: 2 });
 export const STOPPING_ACTIONS = Object.freeze(['stop', 'structural']);
 
@@ -139,14 +139,18 @@ export async function prepareItems({ dataset, deps = {} }) {
 export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = {} }) {
   const paid = arms.filter((a) => PAID_ARMS.includes(a));
   if (!dryRun && !(Number.isFinite(maxUsd) && maxUsd > 0)) throw new Error('runReplay: a positive --max-usd is required for a paid run');
-  const makeProvider = deps.makeProvider || ((arm) => createStepBackProvider(arm));
-  const providers = Object.fromEntries(paid.map((a) => [a, makeProvider(a)]));
+  const makeProvider = deps.makeProvider || ((arm) => createStepBackProvider(arm, deps.providerSeams || {}));
+  const allProviders = Object.fromEntries(paid.map((a) => [a, makeProvider(a)]));
+  // An arm whose route is unavailable (the higher arm without an sdk route) is UNMEASURED with its reason: no plan rows, no call, no fallback.
+  const unmeasured = Object.fromEntries(paid.filter((a) => allProviders[a].unmeasuredReason).map((a) => [a, allProviders[a].unmeasuredReason]));
+  const providers = Object.fromEntries(Object.entries(allProviders).filter(([a]) => !unmeasured[a]));
+  const live = paid.filter((a) => !unmeasured[a]);
   const prepared = await prepareItems({ dataset, deps });
   const { items, unrecoverable } = prepared;
 
   const plan = [];
   for (const item of items) {
-    for (const arm of paid) {
+    for (const arm of live) {
       const prov = providers[arm];
       const upperUsd = upperBoundUsd({ modelId: prov.model, inputChars: item.inputChars, outputCeilingTokens: prov.outputCeilingTokens });
       plan.push({ pr: item.pr, checkpoint: item.checkpoint, arm, model: prov.model, packChars: item.pack.text.length, estimateUsd: upperUsd, upperBoundUsd: upperUsd, item });
@@ -154,10 +158,11 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
   }
   const publicPlan = plan.map(({ item, ...row }) => row);
   const estimatedUsd = publicPlan.reduce((s, p) => s + p.upperBoundUsd, 0);
-  const base = { plan: publicPlan, unrecoverable, controls: prepared.controls || [], estimatedUsd, upperBoundTotalUsd: estimatedUsd, preparedPrs: items.length };
+  const base = { plan: publicPlan, unmeasured, unrecoverable, controls: prepared.controls || [], estimatedUsd, upperBoundTotalUsd: estimatedUsd, preparedPrs: items.length };
   if (dryRun) return { ...base, calls: [], spentUsd: 0, stopped: null };
 
   deps.onRecord?.({ type: 'plan', plan: publicPlan, maxUsd, arms });
+  for (const [arm, reason] of Object.entries(unmeasured)) deps.onRecord?.({ type: 'unmeasured', arm, reason });
   const calls = []; let spent = 0; let stopped = null;
   for (const row of plan) {
     const { item, ...meta } = row;
@@ -169,16 +174,17 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
     }
     const prov = providers[row.arm];
     const record = initialStepBackRecord({ round: row.checkpoint, signals: { anyFires: true, unmeasured: [] } });
-    const { record: out, usage } = await runStepBack({ record, pack: item.pack, provider: prov.call, model: prov.model });
+    const { record: out, usage, truncated = false } = await runStepBack({ record, pack: item.pack, provider: prov.call, model: prov.model });
     const exact = usage && !usage.usageMissing && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
       ? estimateCostUsd({ modelId: prov.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }) : null;
     // No usable usage (absent, unpriced model, or an error after the provider may have processed the call): charge the bound.
     const cost = exact ?? row.upperBoundUsd;
     spent += cost;
     emit({
-      ...meta, status: out.state === 'step-back-valid' ? 'ok' : out.state === 'step-back-invalid' ? 'invalid' : 'unavailable',
+      ...meta, status: truncated ? 'truncated' : out.state === 'step-back-valid' ? 'ok' : out.state === 'step-back-invalid' ? 'invalid' : 'unavailable',
       action: out.output?.action ?? null, output: out.output ?? null, raw: out.state === 'step-back-invalid' ? out.raw : undefined,
-      error: out.error ?? out.reason ?? null, usage: usage ?? null, costUsd: cost, spendSource: exact == null ? 'upper-bound' : 'usage',
+      error: out.error ?? out.reason ?? null, truncated, usage: usage ?? null,
+      inputTokens: usage?.usageMissing ? null : (usage?.input_tokens ?? null), outputTokens: usage?.usageMissing ? null : (usage?.output_tokens ?? null), costUsd: cost, spendSource: exact == null ? 'upper-bound' : 'usage',
     });
   }
   return { ...base, calls, spentUsd: spent, stopped };
@@ -186,14 +192,31 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
 
 /** Rebuild `{plan, calls, spentUsd, stopped}` from the results JSONL text. Scoring reads THIS, so it can be re-run any time. */
 export function readResultsJsonl(text) {
-  let plan = []; let maxUsd = null; let arms = null; const calls = [];
+  let plan = []; let maxUsd = null; let arms = null; const calls = []; const unmeasured = {};
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
     const r = JSON.parse(line);
     if (r.type === 'plan') { plan = r.plan; maxUsd = r.maxUsd; arms = r.arms; } else if (r.type === 'call') calls.push(r);
+    else if (r.type === 'unmeasured') unmeasured[r.arm] = r.reason;
   }
   const stoppedCall = calls.find((c) => c.status === 'skipped-budget');
-  return { plan, calls, maxUsd, arms, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : null };
+  return { plan, calls, maxUsd, arms, unmeasured, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : null };
+}
+
+const emptyCost = () => ({ totalUsd: 0, inputTokens: 0, outputTokens: 0, calls: 0, valid: 0, costPerEarlyStop: null, costPerFalseStop: null, costPerValidDecision: null, perCheckpoint: [] });
+const ratio = (usd, n) => (n > 0 ? usd / n : null);
+
+/** Cost as a first-class result: metered USD and tokens per arm and per checkpoint, and cost per early stop / false stop / valid decision (null when the denominator is 0). */
+function costOf(mine, { earlyStops, falseStops }) {
+  const made = mine.filter((c) => c.status !== 'skipped-budget');
+  const totalUsd = mine.reduce((s, c) => s + (c.costUsd || 0), 0);
+  const valid = mine.filter((c) => c.status === 'ok').length;
+  return {
+    totalUsd, calls: made.length, valid,
+    inputTokens: made.reduce((s, c) => s + (c.inputTokens || 0), 0), outputTokens: made.reduce((s, c) => s + (c.outputTokens || 0), 0),
+    costPerEarlyStop: ratio(totalUsd, earlyStops), costPerFalseStop: ratio(totalUsd, falseStops), costPerValidDecision: ratio(totalUsd, valid),
+    perCheckpoint: made.map((c) => ({ pr: c.pr, checkpoint: c.checkpoint, action: c.action ?? null, status: c.status, costUsd: c.costUsd || 0, inputTokens: c.inputTokens ?? null, outputTokens: c.outputTokens ?? null })),
+  };
 }
 
 /**
@@ -202,10 +225,11 @@ export function readResultsJsonl(text) {
  * accepted HIGH, `falseStops` counts any PR stopped before a later accepted HIGH. An arm with calls missing is
  * `incomplete`, never adopted.
  */
-export function scoreReplay({ calls, truth, arms, plan }) {
+export function scoreReplay({ calls, truth, arms, plan, unmeasured = {} }) {
   const out = {};
   for (const arm of arms) {
-    if (arm === 'none') { out.none = { earlyStops: 0, falseStops: 0, invalidOutputs: 0, verdict: 'recorded-baseline (computed, not called)' }; continue; }
+    if (arm === 'none') { out.none = { earlyStops: 0, falseStops: 0, invalidOutputs: 0, truncated: 0, cost: emptyCost(), verdict: 'recorded-baseline (computed, not called)' }; continue; }
+    if (unmeasured[arm]) { out[arm] = { unmeasured: true, reason: unmeasured[arm], earlyStops: 0, falseStops: 0, invalidOutputs: 0, truncated: 0, complete: false, verdict: `unmeasured (${unmeasured[arm]})`, cost: emptyCost() }; continue; }
     const mine = calls.filter((c) => c.arm === arm);
     const idOf = (c) => `${c.pr}@${c.checkpoint}`;
     const plannedIds = new Set(plan.filter((p) => p.arm === arm).map(idOf));
@@ -227,12 +251,14 @@ export function scoreReplay({ calls, truth, arms, plan }) {
       else detail.push({ pr, checkpoint: cp, outcome: 'harmless-stop' });
     }
     const invalidOutputs = mine.filter((c) => c.status === 'invalid').length;
+    const truncated = mine.filter((c) => c.status === 'truncated').length;
     // A stop on a PR with no ground-truth entry cannot be scored: the arm is incomplete, never adoptable.
     const missingTruth = detail.some((d) => d.outcome === 'no-ground-truth');
     const complete = identitiesMatch && !missingTruth;
     const adopted = complete && falseStops <= ADOPTION_RULE.maxFalseStops && earlyStops >= ADOPTION_RULE.minEarlyStops;
     out[arm] = {
-      earlyStops, falseStops, invalidOutputs, complete, calls: { planned, completed: done }, missingTruth, detail,
+      earlyStops, falseStops, invalidOutputs, truncated, complete, calls: { planned, completed: done }, missingTruth, detail,
+      cost: costOf(mine, { earlyStops, falseStops }),
       verdict: !complete ? 'incomplete (not adopted)' : adopted ? 'adopted' : 'not adopted',
     };
   }
@@ -240,14 +266,31 @@ export function scoreReplay({ calls, truth, arms, plan }) {
   return { rule: { ...ADOPTION_RULE, ofBadPrs: badPrs }, arms: out };
 }
 
-/** The dry-run text: every planned call and the estimated total, nothing sent. */
-export function renderDryRun({ plan, unrecoverable, estimatedUsd, maxUsd = null, preparedPrs = 0, controls = [] }) {
+/** The dry-run text: every planned call, the per-arm planned calls and upper bounds, and the estimated total; nothing sent. */
+export function renderDryRun({ plan, unrecoverable, estimatedUsd, maxUsd = null, preparedPrs = 0, controls = [], unmeasured = {}, sdkAvailable = null }) {
   const lines = ['step-back-replay DRY RUN - no provider call was made'];
   plan.forEach((p, i) => lines.push(`  call ${i + 1}: PR #${p.pr} R${p.checkpoint} arm=${p.arm} model=${p.model} pack=${p.packChars} chars upper bound $${p.upperBoundUsd.toFixed(4)}`));
+  const perArm = new Map();
+  for (const p of plan) { const a = perArm.get(p.arm) || { model: p.model, calls: 0, usd: 0 }; a.calls++; a.usd += p.upperBoundUsd; perArm.set(p.arm, a); }
+  for (const [arm, a] of perArm) lines.push(`  arm ${arm}: model=${a.model} planned calls ${a.calls}, upper bound $${a.usd.toFixed(4)}`);
+  for (const [arm, reason] of Object.entries(unmeasured)) lines.push(`  arm ${arm}: UNMEASURED, 0 planned calls (${reason})`);
+  if (sdkAvailable !== null) lines.push(`higher arm: sdk available = ${sdkAvailable}`);
   lines.push(`planned calls: ${plan.length} (${preparedPrs} PR-checkpoints), UPPER-BOUND total $${estimatedUsd.toFixed(2)}${maxUsd ? ` against a hard stop of $${Number(maxUsd).toFixed(2)}` : ''}`);
   if (unrecoverable.length) lines.push(`unrecoverable (excluded, never imputed): ${unrecoverable.map((u) => `#${u.pr}${u.checkpoint ? ` R${u.checkpoint}` : ''} (${u.reason})`).join('; ')}`);
   if (controls.length) lines.push(`controls (no checkpoint, no call): ${controls.map((c) => `#${c.pr} (${c.rounds} rounds)`).join(', ')}`);
   return lines.join('\n');
+}
+
+/** The human score table: arm | model | calls | valid | early | false | invalid | truncated | USD | $/early stop | $/false stop. */
+export function renderScoreTable(score, models = {}) {
+  const usd = (n) => (n == null ? '-' : `$${n.toFixed(4)}`);
+  const rows = [['arm', 'model', 'calls', 'valid', 'early', 'false', 'invalid', 'truncated', 'USD', '$/early stop', '$/false stop']];
+  for (const [arm, s] of Object.entries(score.arms)) {
+    const c = s.cost || emptyCost();
+    rows.push([arm, models[arm] || '-', c.calls, c.valid, s.earlyStops, s.falseStops, s.invalidOutputs, s.truncated ?? 0, usd(c.totalUsd), usd(c.costPerEarlyStop), usd(c.costPerFalseStop)].map(String));
+  }
+  const w = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
+  return rows.map((r) => r.map((v, i) => v.padEnd(w[i])).join(' | ').trimEnd()).join('\n');
 }
 
 /**
