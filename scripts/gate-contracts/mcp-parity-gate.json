@@ -6,7 +6,7 @@
     {
       "id": "mcp-parity-rejects-missing-dash-y",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#mcp-config-mirrored",
       "stated": "`.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.",
       "implementation": "scripts/check-mcp-parity.mjs",
       "tests": [

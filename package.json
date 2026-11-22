@@ -111,6 +111,7 @@
     "skills:check": "node scripts/check-skill-refs.mjs && node scripts/check-skill-descriptions.mjs && node scripts/check-skill-frontmatter.mjs && node scripts/sync-shared-audit-refs.mjs --check && node scripts/regenerate-skill-copies.mjs --check && node scripts/check-gate-contracts.mjs && node scripts/check-stale-skill-surface.mjs --gate --source-surfaces",
     "gates:check": "node scripts/check-gate-contracts.mjs",
     "gate:provenance": "node scripts/gate-provenance.mjs",
+    "checklist": "node scripts/checklist.mjs",
     "audit:sync-shared-refs": "node scripts/sync-shared-audit-refs.mjs",
     "skills:manifest": "node scripts/build-manifest.mjs",
     "skills:manifest:check": "node scripts/build-manifest.mjs --check",

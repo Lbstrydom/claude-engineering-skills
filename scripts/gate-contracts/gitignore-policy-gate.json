@@ -6,7 +6,7 @@
     {
       "id": "gitignore-policy-rejects-undeclared-rules",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#gitignore-rule-declares-why",
       "stated": "An ignored path declares WHY it is ignored",
       "implementation": "scripts/check-gitignore-policy.mjs",
       "tests": [

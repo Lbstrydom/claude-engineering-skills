@@ -6,7 +6,7 @@
     {
       "id": "requirements-map-check-compares-rendered-content",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#generated-artifact-requirements-map",
       "stated": "`docs/requirements-map.md` (`requirements:map` / `requirements:map:check`)",
       "implementation": "scripts/requirements.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

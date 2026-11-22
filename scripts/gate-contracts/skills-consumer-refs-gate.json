@@ -6,7 +6,7 @@
     {
       "id": "skills-consumer-refs-gate-rejects-an-undeclared-unreachable-pointer",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#synced-skill-content-reachable-refs",
       "stated": "npm run skills:consumer-refs:gate",
       "implementation": "scripts/check-skill-consumer-refs.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs", "tests/skill-consumer-refs.test.mjs"],

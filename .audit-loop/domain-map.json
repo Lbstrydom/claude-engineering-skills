@@ -319,6 +319,10 @@
       "domain": "shared-lib"
     },
     {
+      "pattern": "scripts/lib/checklist/**",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/fit-check/**",
       "domain": "fit-check"
     },

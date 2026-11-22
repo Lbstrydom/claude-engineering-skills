@@ -6,7 +6,7 @@
     {
       "id": "docs-synced-links-gate-rejects-a-relative-link-that-leaves-the-closure",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#synced-markdown-relative-links",
       "stated": "npm run docs:synced-links:gate",
       "implementation": "scripts/check-synced-doc-links.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs", "tests/synced-doc-links.test.mjs"],

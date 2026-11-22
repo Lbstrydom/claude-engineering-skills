@@ -1,0 +1,112 @@
+/**
+ * @fileoverview Positive controls for CES's own checklist (verification-lessons plan, section 2.5, Phase 5).
+ *
+ * A checklist entry whose trigger silently stopped matching reads as "nothing to check", the failure that is invisible by
+ * construction. So every entry carries a CONTROL (a path plus a synthetic added line) that must fire it, and a NEGATIVE path
+ * (carrying a neutral line) that must not. The control is run through the REAL path (a unified-diff file through
+ * `matchChecklist`), not through the pure helper, so the test and the audit share one input.
+ *
+ * Also pins the other half of the gate-contract migration: every contract that cites `.audit-loop/checklist.json#<id>` has an
+ * entry bound back to it, and no entry claims a contract that does not cite it.
+ */
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { loadChecklist } from '../scripts/lib/checklist/schema.mjs';
+import { matchChecklist } from '../scripts/lib/checklist/match.mjs';
+import { checklistRefId } from '../scripts/lib/gate-honesty/schema.mjs';
+
+const REPO = path.resolve(import.meta.dirname, '..');
+const NEUTRAL = 'const x = 1;';
+const loaded = loadChecklist({ repoRoot: REPO });
+
+/** Fire a one-line added diff at `filePath` through the real matcher. */
+function fireOn(entry, filePath, text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-control-'));
+  const patch = path.join(dir, 'c.patch');
+  fs.writeFileSync(patch, `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1 @@\n+${text}\n`);
+  const r = matchChecklist({ entries: [entry], diffPath: patch, purpose: 'control', cwd: dir, logPath: path.join(dir, 'fires.jsonl'), runId: 'control' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  return r.fired.length === 1;
+}
+
+const controlFires = (e) => fireOn(e, e.control.path, e.control.text);
+const negativeStaysSilent = (e) => !fireOn(e, e.control.negativePath, NEUTRAL);
+
+test('the checklist file is present, valid, and non-empty (CES dogfoods its own tool)', () => {
+  assert.equal(loaded.ok, true, loaded.error);
+  assert.equal(loaded.absent, false);
+  assert.ok(loaded.entries.length > 0);
+});
+
+describe('every entry\'s control fires it and its negative stays silent', () => {
+  for (const e of loaded.entries ?? []) {
+    test(e.id, () => {
+      assert.equal(controlFires(e), true, `control for ${e.id} did not fire: ${e.control.path} :: ${e.control.text}`);
+      assert.ok(e.control.negativePath, `${e.id} declares no negativePath: a control with no negative cannot tell a trigger from a match-everything glob`);
+      assert.equal(negativeStaysSilent(e), true, `${e.id} fired on its negative path ${e.control.negativePath}`);
+    });
+  }
+});
+
+test('the instrument is seen to fail: a broken control and a match-everything trigger are both caught', () => {
+  const real = loaded.entries[0];
+  const broken = { ...real, control: { ...real.control, path: 'no/such/place.txt', text: 'nothing here' }, trigger: { paths: ['only/this/**'] } };
+  assert.equal(controlFires(broken), false, 'a control that does not match its trigger must read as a failure');
+  const greedy = { ...real, trigger: { paths: ['**'] } };
+  assert.equal(negativeStaysSilent(greedy), false, 'a trigger that matches everything must fail its negative');
+});
+
+describe('the gate-contract migration is bound in both directions', () => {
+  const contractFiles = [
+    ...fs.readdirSync(path.join(REPO, 'scripts', 'gate-contracts')).filter((f) => f.endsWith('.json') && !f.startsWith('_')).map((f) => `scripts/gate-contracts/${f}`),
+    ...fs.readdirSync(path.join(REPO, 'skills')).map((d) => `skills/${d}/gate-contract.json`).filter((f) => fs.existsSync(path.join(REPO, f))),
+  ];
+  const citing = []; // [{file, gate}]
+  for (const file of contractFiles) {
+    for (const gate of JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')).gates ?? []) {
+      if (checklistRefId(gate.statedIn ?? '') !== null) citing.push({ file, gate });
+    }
+  }
+
+  test('some contracts have migrated (the pilot moved the selectable sentences)', () => {
+    assert.ok(citing.length > 0);
+  });
+
+  test('every contract citing the checklist has an entry that names it back, carrying the same `stated` in its check', () => {
+    for (const { file, gate } of citing) {
+      const id = checklistRefId(gate.statedIn);
+      const entry = loaded.entries.find((e) => e.id === id);
+      assert.ok(entry, `${file}#${gate.id} cites checklist entry ${id}, which does not exist`);
+      assert.equal(entry.gateContract, `${file}#${gate.id}`);
+      assert.equal(entry.stated, gate.stated);
+      assert.ok(entry.check.includes(gate.stated));
+    }
+  });
+
+  test('every entry that claims a gate contract is cited by exactly that gate', () => {
+    for (const e of loaded.entries.filter((x) => x.gateContract)) {
+      const [file, gateId] = e.gateContract.split('#');
+      const gate = (JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')).gates ?? []).find((g) => g.id === gateId);
+      assert.ok(gate, `${e.id}: ${e.gateContract} names no such gate`);
+      assert.equal(gate.statedIn, `.audit-loop/checklist.json#${e.id}`, `${e.id}: the contract still cites ${gate.statedIn}`);
+    }
+  });
+});
+
+test('every commit an incident cites exists (skipped on a shallow clone)', (t) => {
+  const git = (...a) => execFileSync('git', a, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  let shallow;
+  try { shallow = git('rev-parse', '--is-shallow-repository') === 'true'; } catch { t.skip('not a git checkout'); return; }
+  if (shallow) { t.skip('shallow clone: history is not available'); return; }
+  for (const e of loaded.entries) {
+    // `debt 3627c83a` is a ledger id, not a commit.
+    const text = e.incident.replace(/debt [0-9a-f]{8}/g, '');
+    for (const sha of text.match(/\b[0-9a-f]{8}\b/g) ?? []) {
+      assert.doesNotThrow(() => git('cat-file', '-e', `${sha}^{commit}`), `${e.id} cites ${sha}, which is not a commit here`);
+    }
+  }
+});

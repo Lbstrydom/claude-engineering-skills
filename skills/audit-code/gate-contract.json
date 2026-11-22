@@ -23,7 +23,7 @@
       "id": "tiered-shadow-window-honesty",
       "kind": "executable",
       "oracle": "tiered-shadow-window",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#tiered-shadow-window-epoch-gated",
       "stated": "`comparedRuns` counts only rows the collector stamped with the\n  current `TIERED_SHADOW_CONTRACT_EPOCH`",
       "implementation": "scripts/lib/audit/tiered-shadow-summary.mjs",
       "tests": [

@@ -6,7 +6,7 @@
     {
       "id": "skills-check-detects-hand-edited-generated-copy",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#generated-skills-copy-never-hand-edited",
       "stated": "generated copy — run `npm run skills:regenerate`",
       "implementation": "scripts/regenerate-skill-copies.mjs",
       "tests": [
@@ -31,7 +31,7 @@
     {
       "id": "skills-check-detects-shared-reference-drift",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#skill-reference-summary-byte-match",
       "stated": "Every reference file has `summary:` YAML frontmatter that must byte-match",
       "implementation": "scripts/sync-shared-audit-refs.mjs",
       "tests": [
@@ -56,7 +56,7 @@
     {
       "id": "skills-check-detects-over-budget-description",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#skill-frontmatter-description-budget",
       "stated": "`description` is required, **max 1024 chars**",
       "implementation": "scripts/check-skill-descriptions.mjs",
       "tests": [
@@ -80,7 +80,7 @@
     {
       "id": "skills-check-detects-indented-frontmatter-key",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#skill-frontmatter-indented-key-inert",
       "stated": "indented under `description: |` it is description TEXT, parsed,",
       "implementation": "scripts/check-skill-frontmatter.mjs",
       "tests": [

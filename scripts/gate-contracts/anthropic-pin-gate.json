@@ -6,7 +6,7 @@
     {
       "id": "anthropic-pin-gate-detects-an-unpinned-system-call",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#anthropic-pin-unserviceable-param",
       "stated": "npm run anthropic:pin:gate",
       "implementation": "scripts/check-anthropic-pins.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

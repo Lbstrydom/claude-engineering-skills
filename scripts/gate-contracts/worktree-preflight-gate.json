@@ -6,7 +6,7 @@
     {
       "id": "worktree-preflight-rejects-skill-without-marker",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#worktree-documented-command-reachable",
       "stated": "Gate: `npm run worktree:preflight:gate`",
       "implementation": "scripts/check-worktree-preflight.mjs",
       "tests": ["tests/worktree-preflight-gate.test.mjs", "tests/gate-poison-pills.test.mjs"],

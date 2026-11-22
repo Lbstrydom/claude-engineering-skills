@@ -6,7 +6,7 @@
     {
       "id": "context-check-rejects-missing-agents-import",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#context-check-agents-md-size",
       "stated": "`npm run context:check` (run by",
       "implementation": "scripts/check-context-drift.mjs",
       "tests": ["tests/gate-poison-pills.test.mjs"],

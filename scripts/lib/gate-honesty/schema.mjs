@@ -223,10 +223,21 @@ export const GateContractBaselineSchema = z.object({
   }).strict()),
 }).strict();
 
+/** `statedIn` spelling for a sentence that moved into a checklist entry's `check` text. */
+export const CHECKLIST_STATED_IN = /^\.audit-loop\/checklist\.json#([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+
+/** @returns {string|null} the entry id when `statedIn` is a checklist reference, else null */
+export function checklistRefId(statedIn) {
+  const m = CHECKLIST_STATED_IN.exec(String(statedIn).replace(/\\/g, '/'));
+  return m ? m[1] : null;
+}
+
 /**
  * Closed source-authority policy (R3-H2 — the ONE shared check consumed by
  * the loader, the suite, and check-gate-contracts.mjs). `statedIn` is legal
- * ONLY as exactly `skills/<contractSkill>/SKILL.md` or exactly `AGENTS.md`.
+ * ONLY as exactly `skills/<contractSkill>/SKILL.md`, exactly `AGENTS.md`, or a
+ * checklist reference (`.audit-loop/checklist.json#<id>`; the id's existence is
+ * verified by the per-gate check, not here).
  *
  * @param {string} statedIn — as declared in the contract
  * @param {string} contractSkill — the contract's own `skill` field
@@ -234,7 +245,7 @@ export const GateContractBaselineSchema = z.object({
  */
 export function isApprovedStatedInSource(statedIn, contractSkill) {
   const norm = String(statedIn).replace(/\\/g, '/');
-  return norm === `skills/${contractSkill}/SKILL.md` || norm === 'AGENTS.md';
+  return norm === `skills/${contractSkill}/SKILL.md` || norm === 'AGENTS.md' || checklistRefId(norm) !== null;
 }
 
 /**
@@ -271,7 +282,7 @@ export function validateGateContract(raw, repoRoot) {
   const contract = parsed.data;
   const errors = validateGates(contract.gates, {
     owner: contract.skill,
-    approvedStatedIn: `skills/${contract.skill}/SKILL.md or AGENTS.md`,
+    approvedStatedIn: `skills/${contract.skill}/SKILL.md, AGENTS.md or .audit-loop/checklist.json#<id>`,
     isApproved: (s) => isApprovedStatedInSource(s, contract.skill),
     repoRoot,
   });
@@ -324,6 +335,12 @@ function validateGates(gates, { owner, approvedStatedIn, isApproved, repoRoot })
       }
     }
 
+    const checklistId = checklistRefId(gate.statedIn);
+    if (checklistId !== null) {
+      errors.push(...checkStatedInChecklist({ owner, gate, checklistId, repoRoot }));
+      continue;
+    }
+
     const statedAbs = path.resolve(repoRoot, gate.statedIn);
     if (!existsFile(statedAbs)) {
       errors.push(`[${owner}][${gate.id}] statedIn file does not exist: ${gate.statedIn}`);
@@ -336,7 +353,40 @@ function validateGates(gates, { owner, approvedStatedIn, isApproved, repoRoot })
 }
 
 /**
- * A CLI gate's contract — `scripts/gate-contracts/<gate>.json`.
+ * A gate whose sentence moved into a checklist entry: the entry must exist, be bound back to THIS gate (its `stated` and
+ * the `#<gateId>` of its `gateContract`), and carry `stated` verbatim in its `check` text. Read as raw JSON rather than
+ * through the checklist's Zod schema so this validator keeps no import edge into the synced checklist tool; the
+ * checklist's own suite validates the file's shape.
+ */
+function checkStatedInChecklist({ owner, gate, checklistId, repoRoot }) {
+  const tag = `[${owner}][${gate.id}]`;
+  const file = '.audit-loop/checklist.json';
+  const abs = path.resolve(repoRoot, file);
+  if (!existsFile(abs)) return [`${tag} statedIn ${gate.statedIn}: ${file} does not exist`];
+  const contained = resolveContainedPath(file, repoRoot);
+  if (!contained.ok) return [`${tag} statedIn ${gate.statedIn}: checklist path invalid (${contained.reason})`];
+  let entries;
+  try { entries = JSON.parse(fs.readFileSync(abs, 'utf-8')).entries; } catch (e) {
+    return [`${tag} statedIn ${gate.statedIn}: ${file} is not readable JSON (${String(e.message).split('\n')[0]})`];
+  }
+  if (!Array.isArray(entries)) return [`${tag} statedIn ${gate.statedIn}: ${file} has no entries array`];
+  const entry = entries.find((e) => e && e.id === checklistId);
+  if (!entry) return [`${tag} statedIn ${gate.statedIn}: no checklist entry with id "${checklistId}"`];
+  const errors = [];
+  if (typeof entry.gateContract !== 'string' || !entry.gateContract.endsWith(`#${gate.id}`)) {
+    errors.push(`${tag} checklist entry "${checklistId}" is not bound back to this gate (its gateContract must end with "#${gate.id}")`);
+  }
+  if (entry.stated !== gate.stated) {
+    errors.push(`${tag} checklist entry "${checklistId}" declares a different \`stated\` than the contract`);
+  }
+  if (typeof entry.check !== 'string' || !normaliseEol(entry.check).includes(normaliseEol(gate.stated))) {
+    errors.push(`${tag} stated "${gate.stated}" (${gate.statedIn}); not found verbatim in the entry's check text — prose/contract have drifted`);
+  }
+  return errors;
+}
+
+/**
+ * A CLI gate's contract —`scripts/gate-contracts/<gate>.json`.
  *
  * Same file layout idea as `skills/<name>/gate-contract.json` (contract beside its
  * subject), same `id`/`statedIn`/`stated`/`implementation`/`tests`/`proof` vocabulary, and
@@ -364,8 +414,8 @@ export function validateCliGateContract(raw, repoRoot) {
   const contract = parsed.data;
   const errors = validateGates(contract.gates, {
     owner: contract.gate,
-    approvedStatedIn: 'AGENTS.md',
-    isApproved: (s) => String(s).replace(/\\/g, '/') === 'AGENTS.md',
+    approvedStatedIn: 'AGENTS.md or .audit-loop/checklist.json#<id>',
+    isApproved: (s) => String(s).replace(/\\/g, '/') === 'AGENTS.md' || checklistRefId(s) !== null,
     repoRoot,
   });
   return errors.length === 0 ? { ok: true, contract } : { ok: false, errors };

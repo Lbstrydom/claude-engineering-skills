@@ -6,7 +6,7 @@
     {
       "id": "visual-contract-doc-drift-detected",
       "kind": "executable",
-      "statedIn": "AGENTS.md",
+      "statedIn": ".audit-loop/checklist.json#visual-contract-doc-example-drift",
       "stated": "silently until `npm run visual-contract-doc:gate` compared",
       "implementation": "scripts/check-visual-contract-doc-drift.mjs",
       "tests": [
