@@ -21,14 +21,14 @@ export const CANARY_PURPOSE = 'capture-canary';
 export async function readAuditRuns({ days, repo = null, fn = many }) {
   const hasP0 = await strictColumnExists('llm_call_provenance', 'logical_call_id', fn, isCloudEnabled);
   const p0 = hasP0
-    ? 'COUNT(DISTINCT logical_call_id)::int AS logical_calls, MAX(capture_schema_version) AS capture_schema_version'
-    : '0 AS logical_calls, NULL::integer AS capture_schema_version';
+    ? 'COUNT(DISTINCT logical_call_id)::int AS logical_calls, MIN(COALESCE(capture_schema_version, 0)) AS min_version, MAX(COALESCE(capture_schema_version, 0)) AS max_version'
+    : '0 AS logical_calls, 0 AS min_version, 0 AS max_version';
   const sql = `
     SELECT r.id AS run_id, r.created_at AS started_at, repo.name AS repo,
            (SELECT COUNT(*)::int FROM llm_call_log_summary s WHERE s.audit_run_id = r.id) AS summaries,
            (SELECT COALESCE(SUM(recorded), 0)::int FROM llm_call_log_summary s WHERE s.audit_run_id = r.id) AS recorded,
            (SELECT COALESCE(SUM(dropped), 0)::int FROM llm_call_log_summary s WHERE s.audit_run_id = r.id) AS dropped,
-           COALESCE(c.rows, 0) AS rows, COALESCE(c.logical_calls, 0) AS logical_calls, c.capture_schema_version
+           COALESCE(c.rows, 0) AS rows, COALESCE(c.logical_calls, 0) AS logical_calls, c.min_version, c.max_version
       FROM audit_runs r
       LEFT JOIN audit_repos repo ON repo.id = r.repo_id
       LEFT JOIN (
@@ -51,7 +51,9 @@ export async function readAuditRuns({ days, repo = null, fn = many }) {
     m[o.attempt_outcome] = Number(o.n);
     byRun.set(o.audit_run_id, m);
   }
-  return runs.map((r) => ({ ...r, outcomes: byRun.get(r.run_id) ?? {} }));
+  return runs.map(({ min_version: lo, max_version: hi, ...r }) => ({ ...r,
+    // Rows of two versions in one run are never attributed to either: they are labelled `mixed`, never pooled.
+    capture_schema_version: lo == null ? null : (Number(lo) === Number(hi) ? Number(lo) : 'mixed'), outcomes: byRun.get(r.run_id) ?? {} }));
 }
 
 /** Ledger `task` rows (chip launches), each flagged by whether the work item has an `outcome` row. */
@@ -59,7 +61,8 @@ export async function readChipTasks({ days, repo = null, fn = many }) {
   return fn(`
     SELECT t.repo_name AS repo, t.work_item_id, t.event_at,
            (t.work_item_id IS NOT NULL AND EXISTS (SELECT 1 FROM own_model_ledger o
-              WHERE o.kind = 'outcome' AND o.work_item_id = t.work_item_id)) AS has_outcome
+              WHERE o.kind = 'outcome' AND o.work_item_id = t.work_item_id
+                AND o.repo_name IS NOT DISTINCT FROM t.repo_name AND o.event_at >= t.event_at)) AS has_outcome
       FROM own_model_ledger t
      WHERE t.kind = 'task' AND t.event_at >= now() - ($1::int * interval '1 day')
        AND ($2::text IS NULL OR t.repo_name = $2)`, [days, repo]);

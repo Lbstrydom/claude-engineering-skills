@@ -459,6 +459,7 @@ export async function callGPT(openai, opts) {
   const logicalCallId = beginLogicalCall();   // one id per invocation; every retry below is an attempt of it
   for (let attempt = 0; attempt <= ceiling; attempt++) {
     const attemptStartMs = Date.now();
+    let attemptRecorded = false;   // a throw AFTER the success row (e.g. the call-record write) is not a failed provider attempt
     try {
       const result = await _callGPTOnce(openai, opts);
       if (attempt > 0) {
@@ -470,13 +471,13 @@ export async function callGPT(openai, opts) {
         result._retried = true;
         result._attempts = attempt + 1;
       }
-      recordGptCall({ result, opts, logicalCallId, attemptNo: attempt + 1 });   // metadata-only provenance; never throws
+      attemptRecorded = recordGptCall({ result, opts, logicalCallId, attemptNo: attempt + 1 }) === true;   // metadata-only provenance; never throws
       if (recordKey) writeCallRecord(recordKey.requestKey, recordKey.keyFields, { result: result.result, usage: result.usage, model: result.model, reasoningEffort: result.reasoningEffort });
       return result;
     } catch (err) {
       lastErr = err;
       // A failed attempt is a row with a typed outcome, not a gap (config errors never reached a provider).
-      if (err?.llmCategory !== 'config') { try { recordGptAttemptFailure({ err, opts, model: wireModel(), logicalCallId, attemptNo: attempt + 1, latencyMs: Date.now() - attemptStartMs }); } catch { /* telemetry never crashes a run */ } }
+      if (err?.llmCategory !== 'config' && !attemptRecorded) { try { recordGptAttemptFailure({ err, opts, model: wireModel(), logicalCallId, attemptNo: attempt + 1, latencyMs: Date.now() - attemptStartMs }); } catch { /* telemetry never crashes a run */ } }
       if (err.llmUsage) {
         accumulatedUsage.input_tokens += err.llmUsage.input_tokens ?? 0;
         accumulatedUsage.cached_tokens += err.llmUsage.cached_tokens ?? 0;

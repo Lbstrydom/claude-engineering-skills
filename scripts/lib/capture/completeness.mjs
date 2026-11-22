@@ -25,9 +25,13 @@ export const RUN_VERDICTS = Object.freeze([
   'reconciled',          // rows observed == recorded - dropped, nothing dropped
   'dropped',             // the buffer cap shed rows and counted them: explained loss
   'gap',                 // fewer rows landed than the producer counted: UNEXPLAINED loss
+  'excess',              // MORE rows than the counter admits: the counter and the rows disagree
   'in-flight',           // too young to judge (no summary yet, inside the grace window)
   'unmeasured',          // no producer counter exists: cannot tell loss from "no calls"
 ]);
+
+/** Fraction of calls that must carry a price before a cost sum is compared at all. */
+export const MIN_PRICED_FILL = 0.95;
 
 /** A run younger than this has not had time to flush its summary. */
 export const IN_FLIGHT_GRACE_MS = 6 * 60 * 60 * 1000;
@@ -53,9 +57,13 @@ export function judgeRun(r, nowMs) {
   }
   const recorded = n(r.recorded);
   const dropped = n(r.dropped);
+  // A counter that says zero and rows that say zero come from the SAME capture path: a broken seam and a run
+  // with no model calls read alike, so it is unmeasured, never reconciled.
+  if (recorded === 0 && observed === 0) return { verdict: 'unmeasured', expected: 0, observed, missing: 0 };
   const expected = Math.max(0, recorded - dropped);
   const missing = Math.max(0, expected - observed);
   if (missing > 0) return { verdict: 'gap', expected, observed, missing };
+  if (observed > expected) return { verdict: 'excess', expected, observed, missing: 0 };
   if (dropped > 0) return { verdict: 'dropped', expected, observed, missing: 0 };
   return { verdict: 'reconciled', expected, observed, missing: 0 };
 }
@@ -69,7 +77,7 @@ export function judgeRun(r, nowMs) {
 export function reconcileAuditDispatch(runs, nowMs) {
   const groups = new Map();
   for (const r of runs ?? []) {
-    const version = r.capture_schema_version == null ? 'pre-p0' : String(r.capture_schema_version);
+    const version = r.capture_schema_version == null || Number(r.capture_schema_version) === 0 ? 'pre-p0' : String(r.capture_schema_version);   // 'mixed' arrives already labelled
     const key = `${r.repo ?? 'unknown'}\u0000${version}`;
     let g = groups.get(key);
     if (!g) {
@@ -91,9 +99,10 @@ export function reconcileAuditDispatch(runs, nowMs) {
   for (const g of out) {
     const judged = g.starts - g.runs_by_verdict['in-flight'];
     g.status = judged === 0 ? 'unmeasured:zero-judgeable-starts'
-      : g.runs_by_verdict.gap > 0 ? 'gap'
+      : (g.runs_by_verdict.gap > 0 || g.runs_by_verdict.excess > 0) ? 'gap'
         : g.runs_by_verdict.unmeasured > 0 ? 'partial:unmeasured-runs'
-          : 'ok';
+          : g.runs_by_verdict.dropped > 0 ? 'partial:dropped'
+            : 'ok';
   }
   return out;
 }
@@ -148,6 +157,8 @@ export function reconcileCost(c, tolerance = 0.05) {
   const fill = rows > 0 ? n(c.priced_rows) / rows : null;
   if (calls == null || runs == null || !(runs > 0) || rows === 0) return { status: 'unmeasured:no-eligible-rows', call_cost_usd: calls, run_cost_usd: runs, fill };
   const delta = Math.abs(calls - runs) / runs;
+  // A sum over a subset of the calls agreeing with the total proves nothing about the rest.
+  if (fill < MIN_PRICED_FILL) return { status: 'partial:unpriced-rows', call_cost_usd: calls, run_cost_usd: runs, delta, fill, label: 'derived' };
   return { status: delta <= tolerance ? 'ok' : 'outside-tolerance', call_cost_usd: calls, run_cost_usd: runs, delta, fill, label: 'derived' };
 }
 
@@ -160,7 +171,8 @@ export function reconcileCost(c, tolerance = 0.05) {
 export function exitCodeFor(report) {
   const all = [...(report.auditDispatch ?? []), ...(report.chipLaunch ?? [])];
   if (all.some((g) => g.status === 'gap')) return 1;
-  const judged = (report.auditDispatch ?? []).filter((g) => !String(g.status).startsWith('unmeasured'));
-  if (judged.length === 0) return 3;
+  if ((report.auditDispatch ?? []).length === 0) return 3;
+  // Anything short of fully measured (unmeasured, partial:*) is not green: it exits 3 until it is explained.
+  if (all.some((g) => g.status !== 'ok')) return 3;
   return 0;
 }

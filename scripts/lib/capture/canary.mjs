@@ -58,6 +58,7 @@ export async function runCanary({ breakWrite = false, deps = {} } = {}) {
       [runId]);
     check('read back two rows', rows.length === 2, rows.length);
     check('one logical call', new Set(rows.map((r) => r.logical_call_id)).size === 1 && rows[0]?.logical_call_id === logicalCallId);
+    check('attempt numbers 1 and 2', rows.map((r) => Number(r.attempt_no)).join(',') === '1,2', rows.map((r) => r.attempt_no).join(','));
     check('two distinct attempt ids', new Set(rows.map((r) => r.call_id)).size === 2);
     check('typed outcomes', rows[0]?.attempt_outcome === 'schema-reject' && rows[1]?.attempt_outcome === 'success', rows.map((r) => r.attempt_outcome).join(','));
     check('schema version stamped', rows.length > 0 && rows.every((r) => r.capture_schema_version === CAPTURE_SCHEMA_VERSION));
@@ -69,6 +70,9 @@ export async function runCanary({ breakWrite = false, deps = {} } = {}) {
     try {   // never leave the synthetic run in the store; a failed cleanup is itself a failed check
       await query('DELETE FROM llm_call_provenance WHERE audit_run_id = $1', [runId]);
       await query('DELETE FROM llm_call_log_summary WHERE audit_run_id = $1', [runId]);
+      const left = await many('SELECT audit_run_id FROM llm_call_provenance WHERE audit_run_id = $1', [runId]);
+      const leftSum = await many('SELECT audit_run_id FROM llm_call_log_summary WHERE audit_run_id = $1', [runId]);
+      check('cleanup removed every canary row', left.length === 0 && leftSum.length === 0, `${left.length}+${leftSum.length} left`);
     } catch (err) { check('cleanup', false, err?.message ?? err); }
     try { log._resetLlmCallLog(); } catch { /* ignore */ }
   }

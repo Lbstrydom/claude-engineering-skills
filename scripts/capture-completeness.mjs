@@ -59,6 +59,8 @@ export async function main(argv = process.argv, deps = {}) {
   const sub = argv[2];
   assertKnownFlags(argv.slice(3), FLAGS, { cli: 'capture-completeness', from: 0 });
   if (sub !== 'report' && sub !== 'canary') throw new ArgvError('usage: capture-completeness.mjs report [--days N] [--repo NAME] [--json] | canary [--break-write]');
+  // Each subcommand accepts only its own flags: a flag that is accepted and ignored reads as honoured.
+  assertKnownFlags(argv.slice(3), [...(sub === 'report' ? ['--days', '--repo', '--json'] : ['--break-write']), '--selfcheck-relocation'], { cli: `capture-completeness ${sub}`, from: 0 });
   const initStore = deps.initStore ?? (async () => (await import('./lib/store/repo.mjs')).initLearningStore());
   const { closePool } = await import('./lib/db/client.mjs');
   try {
@@ -85,6 +87,7 @@ export async function main(argv = process.argv, deps = {}) {
 if (isInvokedAsScript(import.meta.url)) {
   main(process.argv).then((code) => finishAndExit(code), (err) => {
     process.stderr.write(`capture-completeness: ${err?.message ?? err}\n`);
+    if (process.argv.includes('--json')) emit({ ok: false, error: String(err?.message ?? err) });
     return finishAndExit(err?.code === 'ARGV_ERROR' ? 2 : 1);
   });
 }

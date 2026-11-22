@@ -139,6 +139,37 @@ describe('judgeRun / reconcileAuditDispatch', () => {
   });
 });
 
+describe('audit-code R1 fixes', () => {
+  const base = { started_at: OLD, summaries: 1, recorded: 5, dropped: 0, rows: 5 };
+  const grp = (rows) => reconcileAuditDispatch(rows.map((r, i) => ({ run_id: String(i), repo: 'r', capture_schema_version: 1, ...r })), NOW)[0];
+  test('a counter of zero with zero rows is unmeasured, never reconciled', () => {
+    assert.equal(judgeRun({ ...base, recorded: 0, rows: 0 }, NOW).verdict, 'unmeasured');
+  });
+  test('more rows than the counter admits is an excess, and the group is a gap', () => {
+    assert.equal(judgeRun({ ...base, rows: 7 }, NOW).verdict, 'excess');
+    assert.equal(grp([{ ...base, rows: 7 }]).status, 'gap');
+  });
+  test('dropped rows never read ok at group level', () => {
+    assert.equal(grp([{ ...base, dropped: 2, rows: 3 }]).status, 'partial:dropped');
+  });
+  test('a partial group or an uncorrelated chip group exits 3, not 0', () => {
+    const ok = grp([base]);
+    const partial = grp([base, { ...base, summaries: 0, recorded: 0, rows: 0 }]);
+    assert.equal(partial.status, 'partial:unmeasured-runs');
+    assert.equal(exitCodeFor({ auditDispatch: [ok], chipLaunch: [] }), 0);
+    assert.equal(exitCodeFor({ auditDispatch: [ok, partial], chipLaunch: [] }), 3);
+    assert.equal(exitCodeFor({ auditDispatch: [ok], chipLaunch: [{ status: 'partial:uncorrelated' }] }), 3);
+  });
+  test('a cost sum over a mostly unpriced set is partial, not ok', () => {
+    assert.equal(reconcileCost({ call_cost_usd: 1, run_cost_usd: 1, rows: 2, priced_rows: 1 }).status, 'partial:unpriced-rows');
+  });
+  test('mixed-version runs are labelled mixed and never pooled with either version', () => {
+    const g = reconcileAuditDispatch([{ run_id: 'a', repo: 'r', capture_schema_version: 'mixed', started_at: OLD, summaries: 1, recorded: 1, rows: 1 },
+      { run_id: 'b', repo: 'r', capture_schema_version: 0, started_at: OLD, summaries: 1, recorded: 1, rows: 1 }], NOW);
+    assert.deepEqual(g.map((x) => x.capture_schema_version), ['mixed', 'pre-p0']);
+  });
+});
+
 describe('chip launch, fleet land, cost', () => {
   test('chip launch: completed, open, gap and uncorrelated are kept apart', () => {
     const young = new Date(NOW - CHIP_GRACE_MS + 3600_000).toISOString();
