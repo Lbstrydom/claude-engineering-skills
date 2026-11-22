@@ -90,5 +90,19 @@ describe('arch-coverage-gate CLI staleness', () => {
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /stale measurement .*would FAIL under enforcement/);
   });
+  it('a missing or unparseable measuredAt never passes, enforce on or off (the envelope schema refuses it: exit 1, not 0)', () => {
+    for (const enforce of [true, false]) {
+      for (const bad of [undefined, 'yesterday']) {
+        const d = repo({ enforce, measuredAt: fresh });
+        const f = path.join(d, '.audit-loop', 'domain-deps-observed.json');
+        const env = JSON.parse(fs.readFileSync(f, 'utf8'));
+        if (bad === undefined) delete env.coverage.measuredAt; else env.coverage.measuredAt = bad;
+        fs.writeFileSync(f, JSON.stringify(env));
+        const r = runGate(d);
+        assert.notEqual(r.status, 0, `enforce=${enforce} measuredAt=${bad}: ${r.out}`);
+        assert.match(r.out, /could not read/);
+      }
+    }
+  });
   it('cleanup', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 });
