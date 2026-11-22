@@ -3,6 +3,12 @@
 Date 2026-11-22. Range `0ce1f50e..b52a77f1` (33 squash commits, #410-#449, 427 files, +42,592/-1,392). Every figure is labelled
 **measured** (a command's output), **derived** (arithmetic on measured figures) or **expected**.
 
+Population: measured from 1 store — d5a9d07b (self).
+
+The store line covers only the per-PR audit cross-check (a keyword query over `audit_findings` created since 2026-11-19, not filtered
+by repo). Everything else here is not store-derived: the range, digest and findings come from git and this repository's files at
+`b52a77f1`, and the token counts come from the model responses.
+
 ## Verdict
 
 **Adopted, at the margin.** Rule fixed before the run: adopt only if at least 2 findings are real, missed by the per-PR audits and
