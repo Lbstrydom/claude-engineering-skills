@@ -110,6 +110,9 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Enrolled 2026-10-28 with migration 20261028120000 (own-model telemetry PR 3): decision provenance columns, per-call
   // provenance idempotency, consent history and the coverage SQL are Postgres-only. Two edits, always.
   'tests/own-model-pr3-db.test.mjs',
+  // Enrolled 2026-11-22 with migration 20261123130000 (restore original unique keys): the drift repair, its no-op on a
+  // healthy store and its duplicate refusal need real constraints. Two edits, always — this list AND postgres-parity.yml.
+  'tests/restore-unique-keys-db.test.mjs',
   'tests/audit-capture-db.test.mjs',
   'tests/audit-capture-db.test.mjs',
   // Enrolled 2026-10-10 with migration 20261010120000 (fleet_events): the ON
