@@ -458,7 +458,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null, 
   let usageMissing = false; // a reply that reported no usage: the summed usage would be PARTIAL — null (unmeasured) beats a low price
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
-    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage)) return budgetStopMiss(usageMissing ? null : usage); // the retry is a SECOND paid call: re-check the budget with the first attempt's cost
+    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage, gotReply && usageMissing)) return budgetStopMiss(usageMissing ? null : usage); // the retry is a SECOND paid call: re-check the budget with the first attempt's cost
     let resp;
     try {
       const params = {
@@ -530,7 +530,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
   let usageMissing = false;
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
-    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage)) return budgetStopMiss(usageMissing ? null : usage, { systemFingerprint: lastFingerprint });
+    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage, gotReply && usageMissing)) return budgetStopMiss(usageMissing ? null : usage, { systemFingerprint: lastFingerprint });
     let resp;
     const messages = [
       { role: 'system', content: system },
@@ -815,7 +815,7 @@ async function cmdRun() {
             recordCall({ arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep, resolvedModel: model, recipient, usage: null, state: 'provider-error' });
             break cells;
           }
-          const beforeRetry = (u) => retryBudgetVerdict(readLedger(CALL_LEDGER_PATH), budgetUsd, u, model, costFromUsage);
+          const beforeRetry = (u, noUsage) => retryBudgetVerdict(readLedger(CALL_LEDGER_PATH), budgetUsd, u, model, costFromUsage, { replyWithoutUsage: noUsage });
           const r = recipient === 'anthropic'
             ? await runPass(anthropicClient, model, passName, chunk, { reasoningEffort, beforeRetry })
             : await runDeepseekPass(deepseekClient, model, passName, chunk, { reasoningEffort, beforeRetry });
@@ -1477,7 +1477,6 @@ async function cmdSonnetGeminiRetro() {
     const sonnetFindings = sonnetByCommit.get(sha) || [];
     const base = baselineReviewCompleted(sonnetData, sha); // findings are not completion: a partial baseline holds findings too
     if (!base.completed) { log(`  ${short}: S-sonnet review did not complete (latest state: ${base.state ?? 'none on record'}) — skipped, gemini net-new over a partial baseline is not a review`); out.perCommit.push({ sha, state: 'sonnet-baseline-incomplete', error: `S-sonnet latest state: ${base.state ?? 'none'}` }); continue; }
-    if (sonnetFindings.length === 0) { log(`  ${short}: no S-sonnet baseline on record — skipped`); out.perCommit.push({ sha, state: 'no-sonnet-baseline' }); continue; }
     const root = locateCommit(sha);
     if (!root) { log(`  ${short}: NOT FOUND in any repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
     const refused = refusedFor([geminiModel], root, recipientPolicy);

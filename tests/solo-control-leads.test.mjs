@@ -70,6 +70,9 @@ describe('H5/M8 — the retry is a second paid call and is budget-checked', () =
     assert.equal(retryBudgetVerdict([row({ costUsd: 1, spendId: 'x' })], 10, { input_tokens: 1000, output_tokens: 0 }, 'm', cost), null);
     assert.equal(retryBudgetVerdict([row({ costUsd: 1, spendId: 'x' })], 10, null, 'm', cost), null);
   });
+  test('a reply that came back with NO usage is billed-but-unpriced: the retry is unmeasured, not free', () => {
+    assert.equal(retryBudgetVerdict([], 10, null, 'm', () => null, { replyWithoutUsage: true })?.reason, 'unmeasured');
+  });
 
   const nonconforming = () => ({ content: [{ text: 'not json at all' }], usage: { input_tokens: 10, output_tokens: 5 } });
   test('runPass: a nonconforming first reply + a breached gate → ONE call, unmeasured (providerError), usage kept', async () => {

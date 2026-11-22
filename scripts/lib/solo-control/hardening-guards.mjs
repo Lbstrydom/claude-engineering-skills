@@ -35,10 +35,9 @@ export function nonNegativeNumber(raw, flag) {
  * the running total a FLOOR, and `floor < ceiling` proves nothing. The old check summed those rows as $0 and let
  * every later call through. Not counted as unmeasured: a `provider-error`/`excluded` row with NO usage — nothing
  * came back, so there is no evidence anything was billed, and counting it would wedge the experiment on its own
- * failures. Cells dedupe by callId, LAST row wins (the rule completion.mjs and aggregateCostForArm apply), so a
- * priced re-run supersedes its unpriced first attempt.
+ * failures.
  *
- * Cells dedupe by `budgetKey`: the per-PAID-call `spendId` when the row has one, so a `--force` rerun or a resumed cell that
+ * Cells dedupe by `budgetKey` (NOT by callId alone, as completion.mjs and aggregateCostForArm still do for SCORING): the per-PAID-call `spendId` when the row has one, so a `--force` rerun or a resumed cell that
  * re-paid under the same callId is ADDITIVE here. An unpriced first attempt that really was billed therefore stays unmeasured
  * after a priced rerun — the first bill is unknown, and "unpriced means unmeasured, never zero". Stated limit that remains: a
  * row written before spendId existed has none, and still dedupes by callId.

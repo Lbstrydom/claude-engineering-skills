@@ -31,9 +31,12 @@ export function fingerprintVerdict({ recipient, pinned, got }) {
  * @param {{input_tokens?: number, output_tokens?: number}|null} usage accumulated usage of the attempts so far
  * @param {string} resolvedModel
  * @param {(usage: object, model: string) => ({priced: boolean, unmeterable?: boolean, totalUsd?: number}|null)} costFn
+ * @param {{replyWithoutUsage?: boolean}} [opts] a reply CAME BACK but reported no usage: billable, price unknown → unmeasured
  * @returns {ReturnType<typeof budgetVerdict>}
  */
-export function retryBudgetVerdict(rows, budgetUsd, usage, resolvedModel, costFn) {
+export function retryBudgetVerdict(rows, budgetUsd, usage, resolvedModel, costFn, { replyWithoutUsage = false } = {}) {
+  // A reply that came back reporting NO usage was still billed: represent it as usage-bearing and unpriced (→ unmeasured), never as "nothing came back".
+  if (replyWithoutUsage && !usage) usage = {};
   const priced = usage ? costFn(usage, resolvedModel) : null;
   const pending = {
     callId: '__pending-retry__', costUsd: priced?.priced && !priced.unmeterable ? priced.totalUsd : null,

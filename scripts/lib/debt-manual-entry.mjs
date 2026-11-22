@@ -30,7 +30,7 @@ export const MANUAL_MIN_DETAIL = 10;
  * @returns {{ok: true, entries: object[]} | {ok: false, error: string}}
  */
 export function manualTopicId({ category, section, detail }) {
-  return `m${createHash('sha256').update(`${category}|${section}|${detail}`.toLowerCase().trim()).digest('hex').slice(0, 8)}`;
+  return `m${createHash('sha256').update(`${category}|${section}|${detail}`.trim()).digest('hex').slice(0, 8)}`;
 }
 
 export function manualToLedgerEntries(f) {
@@ -46,7 +46,7 @@ export function manualToLedgerEntries(f) {
   const rationale = text(f.rationale);
   if (rationale.length < MANUAL_MIN_RATIONALE) return { ok: false, error: `--rationale is required (at least ${MANUAL_MIN_RATIONALE} characters naming why this is debt, not a fix now)` };
   const line = f.line == null || f.line === '' ? null : String(f.line).trim();
-  if (line !== null && !/^\d+$/.test(line)) return { ok: false, error: `--line must be a positive integer, got ${JSON.stringify(f.line)}` };
+  if (line !== null && !/^[1-9]\d{0,8}$/.test(line)) return { ok: false, error: `--line must be a positive integer, got ${JSON.stringify(f.line)}` };
   const section = line ? `${file}:${line}` : file;
   const topicId = manualTopicId({ category, section, detail });
   return {

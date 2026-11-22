@@ -34,6 +34,11 @@ afterEach(() => { try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRet
 
 describe('manualToLedgerEntries (pure validation)', () => {
   const base = { severity: 'high', category: 'c', file: './a\\b.mjs', detail: 'a long enough detail', rationale: 'a rationale that is long enough to count' };
+  test('paths that differ only in case are DIFFERENT entries (case-sensitive filesystems)', () => {
+    const a = manualToLedgerEntries({ ...base, file: 'src/Foo.mjs' }).entries[0].topicId;
+    const b = manualToLedgerEntries({ ...base, file: 'src/foo.mjs' }).entries[0].topicId;
+    assert.notEqual(a, b);
+  });
   test('projects onto the ledger-entry shape, normalising severity and path, keying by a deterministic manual topic id', () => {
     const r = manualToLedgerEntries({ ...base, line: 7 });
     assert.equal(r.ok, true);
@@ -52,6 +57,7 @@ describe('manualToLedgerEntries (pure validation)', () => {
     ['short detail', { detail: 'short' }, /detail/],
     ['short rationale is refused, never padded', { rationale: 'too short' }, /rationale/],
     ['non-numeric line', { line: 'x' }, /line/],
+    ['line zero', { line: '0' }, /line/],
   ]) {
     test(`refuses: ${name}`, () => {
       const r = manualToLedgerEntries({ ...base, ...patch });
