@@ -45,6 +45,45 @@ describe('which tests load the shared files', () => {
     assert.deepEqual(testsLoading(['scripts/lib/contract.mjs'], io2).tests, ['tests/uses-user.test.mjs']);
     assert.deepEqual(testsLoading(['tests/fixtures/a.json'], io2).tests, ['tests/via-helper.test.mjs']);
   });
+  it('recognises every name Node discovers as a test, not only *.test.*', () => {
+    const f = {
+      'tests/helpers/h.mjs': 'export {};\n',
+      'tests/a.test.mjs': "import './helpers/h.mjs';\n", 'tests/b-test.mjs': "import './helpers/h.mjs';\n", 'tests/c_test.mjs': "import './helpers/h.mjs';\n",
+      'tests/test-d.mjs': "import './helpers/h.mjs';\n", 'tests/test.mjs': "import './helpers/h.mjs';\n", 'tests/latest.mjs': "import './helpers/h.mjs';\n",
+    };
+    const r = testsLoading(['tests/helpers/h.mjs'], { repoFiles: Object.keys(f), readFile: (x) => f[x] });
+    assert.deepEqual(r.tests, ['tests/a.test.mjs', 'tests/b-test.mjs', 'tests/c_test.mjs', 'tests/test-d.mjs', 'tests/test.mjs']);
+  });
+  it('matches a fixture named relative to the reading file (new URL(...)), not only by its repo-relative path', () => {
+    const f = {
+      'tests/fixtures/d.json': '{}\n',
+      'tests/reads.test.mjs': "const u = new URL('./fixtures/d.json', import.meta.url);\n",
+      'tests/sub/deeper.test.mjs': "const u = new URL('../fixtures/d.json', import.meta.url);\n",
+      'tests/no.test.mjs': "const u = new URL('./fixtures/other.json', import.meta.url);\n",
+    };
+    const r = testsLoading(['tests/fixtures/d.json'], { repoFiles: Object.keys(f), readFile: (x) => f[x] });
+    assert.deepEqual(r.tests, ['tests/reads.test.mjs', 'tests/sub/deeper.test.mjs']);
+  });
+  it('a helper that was DELETED (absent from the tracked files) still links the tests that import its old path', () => {
+    const f = { 'tests/old.test.mjs': "import './helpers/gone.mjs';\n" };
+    const r = testsLoading(['tests/helpers/gone.mjs'], { repoFiles: Object.keys(f), readFile: (x) => f[x] });
+    assert.deepEqual(r.tests, ['tests/old.test.mjs']);
+  });
+  it('the line says so with NO tests found, reports unread independently, always labels the reach best-effort, and names a generic fast tier when none is configured', () => {
+    const none = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: [], unread: 3 });
+    assert.ok(none.includes('no test file was found that loads them statically, which does not mean none does'), none);
+    assert.ok(none.includes('3 test/source file(s) could not be read'));
+    assert.ok(none.includes('static and best-effort'));
+    assert.ok(none.includes('the fast tier this repo defines'));
+    const found = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: ['tests/x.test.mjs'], unread: 0 });
+    assert.ok(found.includes('all 1 of the 1 test file(s) found loading them: `node --test tests/x.test.mjs`'), found);
+    assert.ok(found.includes('and the fast tier this repo defines'), 'tests found but no run configured: the generic fast tier is still named');
+  });
+  it('next carries the complete reach in the obligation evidence', () => {
+    const r = deriveObligations({ item: { id: 's1', branch: 's1', state: 'working', overlaps: [], paths: [] }, session: { id: 's1', state: 'working', paths: [] }, myFiles: ['tests/helpers/x.mjs'], sharedReach: { ok: true, tests: ['tests/a.test.mjs', 'tests/b.test.mjs'], unread: 1 }, cmd: 'fleet', now: NOW });
+    const o = r.obligations.find((x) => x.kind === 'shared-surface');
+    assert.deepEqual(o.evidence.reach, { ok: true, tests: ['tests/a.test.mjs', 'tests/b.test.mjs'], unread: 1, reason: null });
+  });
   it('an unrelated test is not listed (the control), and a shared file nobody loads yields none', () => {
     assert.equal(testsLoading(['tests/helpers/fx.mjs'], io()).tests.includes('tests/unrelated.test.mjs'), false);
     assert.deepEqual(testsLoading(['tests/helpers/orphan.mjs'], io()).tests, []);
@@ -57,14 +96,15 @@ describe('which tests load the shared files', () => {
   it('the line names the tests as one quoted command, caps the list with the exact count, and says what it could not read', () => {
     const many = Array.from({ length: REACH_NAME_CAP + 4 }, (_, i) => `tests/t${i}.test.mjs`);
     const line = sharedSurfaceLine(['tests/helpers/a.mjs'], { run: ['npm', 'run', 'fast'] }, 'fleet', { ok: true, tests: many, unread: 2 });
-    assert.ok(line.includes(`the ${many.length} test file(s) that load them: \`node --test `), line);
-    assert.ok(line.includes(`(first ${REACH_NAME_CAP} of ${many.length}; all ${many.length} are in the JSON as sharedSurface.tests)`));
-    assert.ok(line.includes('(2 test file(s) could not be read)'));
+    assert.ok(line.includes(`the first ${REACH_NAME_CAP} of the ${many.length} test file(s) found loading them: \`node --test `), line);
+    assert.ok(line.includes(`that command is PARTIAL — all ${many.length} are in the JSON as sharedSurface.tests`));
+    assert.ok(line.includes('2 test/source file(s) could not be read'));
     assert.ok(line.includes('and the fast tier `npm run fast`'));
+    assert.ok(line.includes('static and best-effort'));
   });
   it('an unavailable reach is said, and the generic sentence still stands when there is nothing else to name', () => {
     const line = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: false, reason: 'git ls-files failed' });
-    assert.ok(line.includes('(which tests load them could not be worked out: git ls-files failed)'), line);
+    assert.ok(line.includes('which tests load them could not be worked out (git ls-files failed)'), line);
   });
 });
 

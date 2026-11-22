@@ -690,7 +690,7 @@ export function cmdReady(ctx, flags) {
   const deferred = fullSuiteOf(ctx) === 'train';
   const suiteLine = deferred ? [`full suite: deferred to the train (.fleet.json fullSuite: "train") — \`${ctx.cmd} land\` is its one full-suite run; your plan's test log says "${FULL_SUITE_LOG_LINE}"`] : [];
   const landingLine = landingOf(ctx) === 'rollup' ? [landingRollupLine(ctx.cmd)] : [];
-  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), eol: eolJson(eol), sharedSurface: { checked: sharedChecked, touched: shared, run: ctx.config.sharedSurfaces?.run ?? null, ...(sharedReach ? { tests: sharedReach.ok ? sharedReach.tests : null, testsUnavailable: sharedReach.ok ? null : sharedReach.reason } : {}) }, text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...eolFlipLines(eol), ...(sharedLine ? [sharedLine] : []), ...pushLine, ...suiteLine, ...landingLine].join('\n') });
+  return ok({ id, record: tx.value.record, checks: gate.results, fullSuite: deferred ? 'deferred-to-train' : 'session', ...(unpushed ? { unpushed } : {}), eol: eolJson(eol), sharedSurface: { checked: sharedChecked, touched: shared, run: ctx.config.sharedSurfaces?.run ?? null, ...(sharedReach ? { tests: sharedReach.ok ? sharedReach.tests : null, unread: sharedReach.ok ? sharedReach.unread : null, testsUnavailable: sharedReach.ok ? null : sharedReach.reason } : {}) }, text: [`ready: ${id} @ ${oid.slice(0, 12)} (lease renewed)`, ...gateLines, ...eolFlipLines(eol), ...(sharedLine ? [sharedLine] : []), ...pushLine, ...suiteLine, ...landingLine].join('\n') });
 }
 
 /**
