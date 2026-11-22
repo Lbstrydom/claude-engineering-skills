@@ -40,7 +40,7 @@
  */
 
 /** A count is trustworthy only if it is an actual finite non-negative number. */
-function isCount(v) {
+export function isCount(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 

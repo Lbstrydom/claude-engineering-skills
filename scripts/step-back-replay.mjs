@@ -38,7 +38,12 @@ export const EXIT_BUDGET_STOP = 5;
 /** Append + fsync the descriptor: once this returns, the record has been handed to the OS and flushed to the device (fsync), not merely buffered in this process. A power loss mid-call can still lose the call in flight, never an earlier one. */
 function appendDurably(file, text) {
   const fd = fs.openSync(file, 'a');
-  try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try {
+    // writeSync may write fewer bytes than asked: loop until every byte is out, then fsync.
+    const buf = Buffer.from(text); let off = 0;
+    while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
 }
 
 const writeJson = (p, obj) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`); };
@@ -78,7 +83,7 @@ function scoreFrom({ datasetPath, resultsPath, arms, deps }) {
   return { parsed, dataset: JSON.parse(fs.readFileSync(datasetPath, 'utf8')), score: scoreReplay({ calls: parsed.calls, truth, arms: arms || parsed.arms || REPLAY_ARMS, plan: parsed.plan, unmeasured: parsed.unmeasured }) };
 }
 
-const summaryOf = (score) => Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs}, truncated ${s.truncated ?? 0})`).join(' | ');
+const summaryOf = (score) => Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs}, truncated ${s.truncated ?? 0}, provider-failure ${s.providerFailures ?? 0})`).join(' | ');
 const modelsOf = (parsed) => Object.fromEntries((parsed.plan || []).map((p) => [p.arm, p.model]));
 
 /** @returns {Promise<number>} the exit code */
@@ -139,7 +144,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
       if (forbidden.includes(path.resolve(out))) throw new ArgvError('step-back-replay score: --out must not be the results file or any input (dataset, scoring, export, spec).');
     }
     if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, spentUsd: parsed.spentUsd, stopped: parsed.stopped, score });
-    console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}\n${renderScoreTable(score, modelsOf(parsed))}`);
+    console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)}${parsed.tornFinalRecord ? ' - WARNING: torn final record (the call in flight was lost)' : ''} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}\n${renderScoreTable(score, modelsOf(parsed))}`);
     return 0;
   }
   if (cmd !== 'run') throw new ArgvError(`step-back-replay: unknown command "${cmd}" (export|propose|freeze|run|score).`);

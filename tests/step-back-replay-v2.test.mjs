@@ -132,7 +132,7 @@ test('cost: per-arm totals, per-call tokens, $/early stop, null when no stops, p
   assert.equal(diff.costPerEarlyStop, null);
   assert.equal(score.arms.none.cost.totalUsd, 0);
   const table = renderScoreTable(score, { same: 'gpt-5.5', different: 'gpt-5.5' });
-  assert.match(table.split('\n')[0], /arm +\| model +\| calls +\| valid +\| early +\| false +\| invalid +\| truncated +\| USD +\| \$\/early stop +\| \$\/false stop/);
+  assert.match(table.split('\n')[0], /USD +\| basis +\| \$\/early stop +\| \$\/false stop/);
   assert.match(table, /same +\| gpt-5\.5/);
 });
 

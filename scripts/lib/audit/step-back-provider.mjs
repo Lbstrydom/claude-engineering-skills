@@ -20,7 +20,7 @@
  * @module scripts/lib/audit/step-back-provider
  */
 import { resolveModel } from '../model-resolver.mjs';
-import { normalizeGeminiUsage } from '../gemini-usage.mjs';
+import { normalizeGeminiUsage, isCount } from '../gemini-usage.mjs';
 import { claudeAvailability, createAnthropicClient } from '../anthropic-client.mjs';
 
 export const STEP_BACK_ARM_MODELS = Object.freeze({ same: 'latest-gpt', different: 'latest-pro', higher: 'latest-opus' });
@@ -30,7 +30,6 @@ export const STEP_BACK_GEMINI_THINKING_BUDGET = 3000;
 /** maxOutputTokens for Gemini covers the thinking budget PLUS the answer, so it is also the real output ceiling. */
 export const STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS = STEP_BACK_GEMINI_THINKING_BUDGET + STEP_BACK_MAX_OUTPUT_TOKENS;
 
-const isCount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 /** Usage with BOTH counts present and numeric, else `usageMissing: true` (the call is then charged its upper bound, never $0). */
 function usageOf(inTok, outTok) {
   const ok = isCount(inTok) && isCount(outTok);
@@ -53,7 +52,11 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         const c = client || await (await import('../openai-client.mjs')).createOpenAIClient({ purpose: 'gpt' });
         const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS });
         const truncated = r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens';
-        return { text: r.output_text ?? '', truncated, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
+        // Any other non-success response is an INSTRUMENT failure, never parsed as a model decision.
+        let failure = null;
+        if (r.status === 'incomplete' && !truncated) failure = `OpenAI incomplete: ${r.incomplete_details?.reason ?? 'unknown reason'}`;
+        else if (r.status && r.status !== 'completed' && r.status !== 'incomplete') failure = `OpenAI status ${r.status}${r.error?.message ? `: ${r.error.message}` : ''}`;
+        return { text: r.output_text ?? '', truncated, failure, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
       },
     };
   }
@@ -71,7 +74,9 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         const c = client || await createClient({ backend: 'sdk' });
         const r = await c.messages.create({ model, max_tokens: STEP_BACK_MAX_OUTPUT_TOKENS, system, messages: [{ role: 'user', content: user }] });
         const text = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-        return { text, truncated: r.stop_reason === 'max_tokens', usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
+        const truncated = r.stop_reason === 'max_tokens';
+        const failure = truncated || r.stop_reason === 'end_turn' ? null : `Anthropic stop_reason ${r.stop_reason ?? 'absent'} (not end_turn)`;
+        return { text, truncated, failure, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
       },
     };
   }
@@ -85,8 +90,13 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         thinkingConfig: { thinkingBudget: STEP_BACK_GEMINI_THINKING_BUDGET, includeThoughts: false },
       } });
       const u = normalizeGeminiUsage(r.usageMetadata);
-      const truncated = r.candidates?.[0]?.finishReason === 'MAX_TOKENS';
-      return { text: r.text ?? '', truncated, usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, usageMissing: u.usageMissing } };
+      const fin = r.candidates?.[0]?.finishReason;
+      const truncated = fin === 'MAX_TOKENS';
+      let failure = null;
+      if (r.promptFeedback?.blockReason) failure = `Gemini blocked the prompt: ${r.promptFeedback.blockReason}`;
+      else if (!r.candidates?.length) failure = 'Gemini returned an empty candidate list';
+      else if (fin !== undefined && fin !== 'STOP' && fin !== 'MAX_TOKENS') failure = `Gemini finishReason ${fin}`;
+      return { text: r.text ?? '', truncated, failure, usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, usageMissing: u.usageMissing } };
     },
   };
 }
