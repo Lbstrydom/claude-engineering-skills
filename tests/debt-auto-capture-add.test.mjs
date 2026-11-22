@@ -44,6 +44,11 @@ describe('manualToLedgerEntries (pure validation)', () => {
     const b = manualToLedgerEntries({ ...base, category: 'A', file: 'B|C' }).entries[0].topicId;
     assert.notEqual(a, b);
   });
+  test('file "foo:1" without a line differs from file "foo" with line 1', () => {
+    const a = manualToLedgerEntries({ ...base, file: 'foo:1' }).entries[0].topicId;
+    const b = manualToLedgerEntries({ ...base, file: 'foo', line: '1' }).entries[0].topicId;
+    assert.notEqual(a, b);
+  });
   test('projects onto the ledger-entry shape, normalising severity and path, keying by a deterministic manual topic id', () => {
     const r = manualToLedgerEntries({ ...base, line: 7 });
     assert.equal(r.ok, true);
@@ -52,7 +57,7 @@ describe('manualToLedgerEntries (pure validation)', () => {
     assert.equal(e.severity, 'HIGH');
     assert.deepEqual(e.affectedFiles, ['a/b.mjs']);
     assert.equal(e.section, 'a/b.mjs:7');
-    assert.equal(e.topicId, manualTopicId({ category: 'c', section: 'a/b.mjs:7', detail: 'a long enough detail' }));
+    assert.equal(e.topicId, manualTopicId({ category: 'c', file: 'a/b.mjs', line: '7', detail: 'a long enough detail' }));
     assert.match(e.topicId, /^m[0-9a-f]{16}$/);
   });
   for (const [name, patch, re] of [

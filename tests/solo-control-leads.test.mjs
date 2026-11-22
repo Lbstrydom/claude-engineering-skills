@@ -72,6 +72,8 @@ describe('H5/M8 — the retry is a second paid call and is budget-checked', () =
   });
   test('a reply that came back with NO usage is billed-but-unpriced: the retry is unmeasured, not free', () => {
     assert.equal(retryBudgetVerdict([], 10, null, 'm', () => null, { replyWithoutUsage: true })?.reason, 'unmeasured');
+    // even a costFn that would price an empty usage at $0 must not be asked
+    assert.equal(retryBudgetVerdict([], 10, null, 'm', () => ({ priced: true, totalUsd: 0 }), { replyWithoutUsage: true })?.reason, 'unmeasured');
   });
 
   const nonconforming = () => ({ content: [{ text: 'not json at all' }], usage: { input_tokens: 10, output_tokens: 5 } });

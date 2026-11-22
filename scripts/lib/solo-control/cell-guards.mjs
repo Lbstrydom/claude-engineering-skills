@@ -36,8 +36,9 @@ export function fingerprintVerdict({ recipient, pinned, got }) {
  */
 export function retryBudgetVerdict(rows, budgetUsd, usage, resolvedModel, costFn, { replyWithoutUsage = false } = {}) {
   // A reply that came back reporting NO usage was still billed: represent it as usage-bearing and unpriced (→ unmeasured), never as "nothing came back".
-  if (replyWithoutUsage && !usage) usage = {};
-  const priced = usage ? costFn(usage, resolvedModel) : null;
+  const noPrice = replyWithoutUsage && !usage; // never handed to costFn: an empty usage could price as $0
+  if (noPrice) usage = {};
+  const priced = usage && !noPrice ? costFn(usage, resolvedModel) : null;
   const pending = {
     callId: '__pending-retry__', costUsd: priced?.priced && !priced.unmeterable ? priced.totalUsd : null,
     usage, state: usage ? 'ok' : 'provider-error',

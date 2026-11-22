@@ -29,8 +29,8 @@ export const MANUAL_MIN_DETAIL = 10;
  * @param {{severity?: string, category?: string, file?: string, line?: string|number, detail?: string, rationale?: string, principle?: string}} f
  * @returns {{ok: true, entries: object[]} | {ok: false, error: string}}
  */
-export function manualTopicId({ category, section, detail }) {
-  return `m${createHash('sha256').update(JSON.stringify([category, section, detail])).digest('hex').slice(0, 16)}`;
+export function manualTopicId({ category, file, line = null, detail }) {
+  return `m${createHash('sha256').update(JSON.stringify([category, file, line, detail])).digest('hex').slice(0, 16)}`;
 }
 
 export function manualToLedgerEntries(f) {
@@ -48,7 +48,7 @@ export function manualToLedgerEntries(f) {
   const line = f.line == null || f.line === '' ? null : String(f.line).trim();
   if (line !== null && !/^[1-9]\d{0,8}$/.test(line)) return { ok: false, error: `--line must be a positive integer, got ${JSON.stringify(f.line)}` };
   const section = line ? `${file}:${line}` : file;
-  const topicId = manualTopicId({ category, section, detail });
+  const topicId = manualTopicId({ category, file, line, detail });
   return {
     ok: true,
     entries: [{
