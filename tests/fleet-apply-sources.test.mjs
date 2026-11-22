@@ -25,7 +25,7 @@ function fakeGit(script) {
     if (sub === 'rev-parse') return OK(`${head}\n`);
     const list = q[sub] ?? [OK()];
     const r = list.length > 1 ? list.shift() : list[0];
-    if (r.ok && (sub === 'merge' || sub === 'commit')) head = 'c'.repeat(40);
+    if ((r.ok && (sub === 'merge' || sub === 'commit')) || r.moveHead) head = 'c'.repeat(40);
     return r;
   };
   return { wgit, calls };
@@ -78,6 +78,30 @@ describe('applySources — the one bounded retry', () => {
     assert.equal(ok.conflict, null, 'HEAD unchanged and tree clean: one retry lands');
     const moved = run({ merge: [lock, OK()], status: [OK(' M f\n')], diff: [OK('')] });
     assert.match(moved.conflict.reason, /^merge failed \(not a conflict\)/, 'a dirty tree is not retried');
+  });
+  it('an ambiguous "failed to run" (ENOBUFS: git DID run) is not a spawn failure: a moved HEAD is not retried', () => {
+    const enobufs = { ok: false, status: null, stdout: '', stderr: '', reason: 'git merge failed to run: spawnSync git ENOBUFS', moveHead: true };
+    const { conflict, sleeps } = run({ merge: [enobufs, OK()], diff: [OK('')] });
+    assert.equal(sleeps.length, 0);
+    assert.match(conflict.reason, /^merge failed \(not a conflict\).*ENOBUFS/);
+  });
+  it('a timeout with HEAD unchanged and a clean tree is retried once', () => {
+    const timeout = { ok: false, status: null, stdout: '', stderr: '', reason: 'git merge timed out after 60000ms' };
+    const { conflict, sleeps } = run({ merge: [timeout, OK()], status: [OK('')] });
+    assert.equal(conflict, null);
+    assert.equal(sleeps.length, 1);
+  });
+  it('a timeout that advanced HEAD is not retried', () => {
+    const timeout = { ok: false, status: null, stdout: '', stderr: '', reason: 'git merge timed out after 60000ms', moveHead: true };
+    const { conflict, sleeps } = run({ merge: [timeout, OK()], diff: [OK('')] });
+    assert.equal(sleeps.length, 0);
+    assert.match(conflict.reason, /timed out/);
+  });
+  it('pr mode: the squash commit step retries a spawn failure once and lands', () => {
+    const { conflict, sleeps, calls } = run({ commit: [ENOENT, OK()] }, { mergeMethod: 'pr' });
+    assert.equal(conflict, null);
+    assert.equal(sleeps.length, 1);
+    assert.equal(calls.filter((a) => a[0] === 'commit').length, 2);
   });
   it('a plain non-zero exit (no lock) is never retried', () => {
     const { conflict, sleeps } = run({ merge: [{ ok: false, status: 1, stdout: '', stderr: 'x', reason: 'git merge exited 1: x' }], diff: [OK('')] });

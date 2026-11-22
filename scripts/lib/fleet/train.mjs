@@ -392,7 +392,9 @@ const RETRY_DELAY_MS = 750;
 function retryTransient({ run, wgit, before, sleep, requireClean = false }) {
   const r = run();
   if (r.ok) return r;
-  const spawnFailed = r.status === null && /failed to run/.test(r.reason ?? '');
+  // Only an error CODE that means the process never started proves it: ENOBUFS/EPIPE arrive under the same
+  // "failed to run" wording after git DID run, so the wording alone is not evidence.
+  const spawnFailed = r.status === null && /failed to run: .*\b(?:ENOENT|EACCES|EAGAIN|EMFILE|ENFILE|ENOMEM)\b/.test(r.reason ?? '');
   const transient = spawnFailed || r.status === null || /index\.lock|EBUSY|EPERM/.test(`${r.stderr ?? ''} ${r.reason ?? ''}`);
   if (!transient) return r;
   if (!spawnFailed) {
