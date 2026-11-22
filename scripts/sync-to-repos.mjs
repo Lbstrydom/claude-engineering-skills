@@ -56,7 +56,7 @@ import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
 import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
-import { planGarbageCollection, executeGarbageCollection, selectManifestBases, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
+import { planGarbageCollection, executeGarbageCollection, renderGcReport, retiredForReceipt, selectManifestBases, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
@@ -70,7 +70,7 @@ import { lintSkillTree } from './lib/skill-frontmatter-layout.mjs';
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
 // The bundle inventory has ONE owner (lib/sync-inventory.mjs); this CLI declares no inventory list of its own.
-import { bundleForRepo, versionContractBundle, readSource, realMissingDeps } from './lib/sync-inventory.mjs';
+import { bundleForRepo, versionContractBundle, readSource, realMissingDeps, describeUntrackedMigrations } from './lib/sync-inventory.mjs';
 
 // Ownership comparand only: a source that cannot be read proves nothing, so it maps to null (the destination stays a collision);
 // only ENOENT is silent. Bundle RESOLUTION never does this (lib/sync-inventory.mjs `readSource` throws).
@@ -804,6 +804,8 @@ async function main() {
       ? (console.log(`  ${R}ABORT${X}  ${what}: ${r.state} (${r.reason ?? r.message ?? r.code}) — not treated as absent`), true) : false);
     try { // the per-consumer lock is released in the matching `finally` (after the receipt commit)
 
+    // Untracked source migrations are refused, never shipped (incident 2026-11-22; lib/sync-inventory.mjs).
+    { const m = describeUntrackedMigrations(repo.name, { R, D, X }); for (const line of m.lines) console.log(line); if (m.failed) { repoErrors++; totalErrors++; } }
     // ── Pre-flight: stale .github/skills/ shadow detection ────────────────
     // Runs unconditionally (including --dry-run) since it uses the INTENDED
     // bundle contents, not post-write disk state — round-2 Gemini gate H1.
@@ -1414,6 +1416,9 @@ async function main() {
       priorFiles, intendedDests, toolingDir: LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR,
       exists: (rel) => fs.existsSync(path.join(repo.path, rel)),
       probe: (rel) => hashConsumerFile(repo.path, rel), // a retired file the consumer EDITED is held, as the write path never overwrites one
+      // Retired migrations (.audit-loop/migrations/): unedited -> deleted, edited or override-declared -> held (lib/sync-gc.mjs).
+      retirePrefixes: [LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX],
+      isDeclaredDivergence: (rel) => matchOverride(rel, overridesDoc.overrides) != null,
     });
     const { orphanedTracked } = gcPlan;
     if (orphanedTracked.length) {
@@ -1439,13 +1444,8 @@ async function main() {
     }
     // Retired but NOT deleted: edited locally (deleted only under --overwrite-diverged), a malformed ownership record (never
     // deleted), or changed between the probe and the unlink. Their prior manifest entries are carried forward, below.
-    const retiredHeld = gcSkipped ? [] : [...(OVERWRITE_DIVERGED ? [] : gcPlan.divergedHeld), ...gcPlan.unknownBaseHeld, ...gcResult.held];
-    for (const f of gcPlan.divergedHeld.filter((x) => retiredHeld.includes(x))) console.log(`  ${D}hold${X}  ${f} ${D}(upstream retired it, but this copy was edited locally; --overwrite-diverged deletes it)${X}`);
-    for (const f of gcPlan.unknownBaseHeld) console.log(`  ${D}hold${X}  ${f} ${D}(its ownership record is malformed; delete it by hand if it is ours)${X}`);
-    for (const f of gcResult.held) console.log(`  ${D}hold${X}  ${f} ${D}(changed between the check and the delete)${X}`);
-    for (const f of gcPlan.probeFailed) console.log(`  ${R}gc SKIPPED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}) — no gc this run: nothing is deleted on a guess${X}`);
-    for (const f of gcResult.failed) console.log(`  ${R}gc FAILED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}; still tracked — the next run retries)${X}`);
-    for (const k of gcPlan.unsafeKeys) console.log(`  ${R}gc REFUSED${X} ${k} ${D}(manifest key is not a plain relative path — nothing this sync writes; dropped)${X}`);
+    const retiredHeld = gcSkipped ? [] : [...(OVERWRITE_DIVERGED ? [] : gcPlan.divergedHeld), ...gcPlan.declaredHeld, ...gcPlan.unknownBaseHeld, ...gcResult.held];
+    for (const line of renderGcReport({ gcPlan, gcResult, retiredHeld, overridesPath: OVERRIDES_PATH, colors: { R, Y, D, X } })) console.log(line);
     if (gcResult.failed.length || gcPlan.unsafeKeys.length || gcSkipped) { repoErrors++; totalErrors++; }
 
     // ── Commit point: write per-consumer manifest with layout: 'isolated' ──
@@ -1508,7 +1508,7 @@ async function main() {
         });
         if (keepJournalNow) keepJournal = true;
         Object.assign(consumerFileMap, carriedForFailedDeletions([...gcResult.failed,
-          ...(gcSkipped ? [...gcPlan.deletions, ...gcPlan.divergedHeld, ...gcPlan.unknownBaseHeld, ...gcPlan.probeFailed.map((f) => f.path)] : retiredHeld).map((p) => ({ path: p }))], priorFiles,
+          ...(gcSkipped ? [...gcPlan.deletions, ...gcPlan.divergedHeld, ...gcPlan.declaredHeld, ...gcPlan.unknownBaseHeld, ...gcPlan.probeFailed.map((f) => f.path)] : retiredHeld).map((p) => ({ path: p }))], priorFiles,
           (rel) => mayStillExist(path.join(repo.path, rel))));
         // Field-ownership contract (which fields describe the consumer vs the
         // source) lives in `buildConsumerManifest` — extracted so it is
@@ -1700,7 +1700,7 @@ async function main() {
           divergedOverwritten: receiptDivergedOverwritten,
           divergenceRefused: divergenceRefusals,
           legacyRetired: receiptLegacyRetired,
-          retiredHeld,
+          retiredHeld: retiredForReceipt({ gcPlan, gcResult, retiredHeld, gcSkipped }),
           unchanged: repoUnchanged,
         });
         // commitReceipt re-reads the record at commit time (an external git operation during the run is detected, not

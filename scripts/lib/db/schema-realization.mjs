@@ -32,6 +32,7 @@ import {
   detectLayout as detectLayoutOf,
 } from '../tooling-layout.mjs';
 import { effectiveDbTarget } from './client.mjs';
+import { adviseForMissingMigrations, readRetiredMigrationNames } from './orphaned-migrations.mjs';
 
 /** Thrown when the DB is provably missing migrations this bundle ships. */
 export const ERR_SCHEMA_BEHIND = 'ERR_SCHEMA_BEHIND';
@@ -315,7 +316,7 @@ export async function assertSchemaRealized({
       `${db ? `database ${db}` : 'database'} is behind this revision: ${missing.length} migration(s) `
       + `bundled in ${dir} but absent from public.audit_loop_migrations `
       + `(${missing.slice(0, 3).join(', ')}${missing.length > 3 ? `, +${missing.length - 3} more` : ''}). `
-      + `Run: ${setupPostgresCommand()}`,
+      + adviseForMissingMigrations({ missing, dir, command: setupPostgresCommand(), retired: readRetiredMigrationNames(dir) }).advice,
     );
     err.code = ERR_SCHEMA_BEHIND;
     err.missing = missing;
@@ -376,7 +377,7 @@ export async function checkMigrationRealization(repoRoot, adapters = {}) {
 
     const missing = findUnappliedMigrations(bundled, applied);
     return missing.length > 0
-      ? { behind: true, missing, dir, db: describeDatabase(pool), command: setupPostgresCommand() }
+      ? { behind: true, missing, dir, db: describeDatabase(pool), command: setupPostgresCommand(), retired: readRetiredMigrationNames(dir) }
       : { behind: false, reason: 'realized' };
   } catch {
     // Unreachable database, missing pg, bad DSN — all unmeasurable, none block.

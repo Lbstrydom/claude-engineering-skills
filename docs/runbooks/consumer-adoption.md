@@ -1571,6 +1571,17 @@ gitignored `consumer-repos.local.json`, not in tracked files.
 
 ## Sync internals (moved from AGENTS.md, 2026-07-13 sprawl trim)
 
+### Migrations: tracked-only source, visible retirement (2026-11-22)
+
+The migration set the sync ships to `.audit-loop/migrations/` is what **git tracks** under the source's `supabase/migrations/`
+(`syncMigrationsReport`, via `listShippableMigrations`), never the directory listing. An untracked file is named in the sync
+output (`refused … UNTRACKED source migration(s)`) and not shipped; if git cannot answer, the sync aborts for that target.
+When upstream stops tracking a migration the manifest says the sync wrote, GC retires it from the consumer by the usual
+rule: copy unchanged since the sync wrote it → removed (a working-tree deletion for the consumer to commit); edited →
+`hold`; declared in `.sync-overrides.json` → `hold`, never deleted even under `--overwrite-diverged`. Held ones land in the
+receipt's `retiredHeld`, which is how a consumer's "store behind this revision" refusal recognises an **orphaned** file and
+stops advising `--migrate` for it.
+
 ### Why isolated
 
 ai-organiser has its own `scripts/` with `automated-tests.js`,

@@ -26,6 +26,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+import { sanitizeGitEnv } from './git-env-sanitize.mjs';
+
 export const ALLOW_UNTRACKED_FLAG = '--allow-untracked-migrations';
 
 /**
@@ -63,7 +65,7 @@ export function assessMigrationOwnership({ repoRoot, migrationsDir, spawn = spaw
 
   const rel = path.relative(repoRoot, migrationsDir).replaceAll('\\', '/');
   const r = spawn('git', ['ls-files', '-z', '--', rel], {
-    cwd: repoRoot, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+    cwd: repoRoot, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: sanitizeGitEnv(repoRoot),
   });
   if (r.error || r.status !== 0) {
     const why = r.error ? (r.error.code || r.error.message) : `git exit ${r.status}`;
@@ -73,6 +75,51 @@ export function assessMigrationOwnership({ repoRoot, migrationsDir, spawn = spaw
   const tracked = new Set(String(r.stdout || '').split('\0').filter(Boolean).map((p) => p.replaceAll('\\', '/')));
   const untracked = onDisk.filter((f) => !tracked.has(`${rel}/${f}`));
   return untracked.length === 0 ? { status: 'tracked' } : { status: 'untracked', untracked };
+}
+
+/**
+ * The migrations the CONSUMER SYNC may ship: the `.sql` files in `migrationsDir` that git TRACKS - never the directory
+ * listing (incident 2026-11-22: three untracked files in a mirror checkout were copied into six consumers, which committed
+ * them; retiring them upstream then made every consumer audit refuse). Same oracle as {@link assessMigrationOwnership}.
+ *
+ * Untracked files are NOT an error here: they are returned in `untracked` so the sync can name them and ship the rest.
+ * FAIL CLOSED: if git cannot answer, the result is `unverified` and the caller must refuse - a listing taken on trust is
+ * exactly the failure this exists to remove. A missing directory is the normal "no migrations" case (`ok`, empty).
+ *
+ * @param {{repoRoot: string, migrationsDir: string, spawn?: typeof spawnSync, listDir?: (dir: string) => string[]}} opts
+ * @returns {{status: 'ok', shippable: string[], untracked: string[], missingOnDisk: string[]} | {status: 'unverified', reason: string}}
+ */
+export function listShippableMigrations({ repoRoot, migrationsDir, spawn = spawnSync, listDir = (d) => fs.readdirSync(d) }) {
+  // Git FIRST, always: an empty or missing directory is only "no migrations" if git, asked, agrees.
+  const rel = path.relative(repoRoot, migrationsDir).replaceAll('\\', '/');
+  const r = spawn('git', ['ls-files', '-z', '--', rel], {
+    cwd: repoRoot, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+    env: sanitizeGitEnv(repoRoot), // an inherited GIT_INDEX_FILE / GIT_DIR must not redirect the oracle to another repository
+  });
+  if (r.error || r.status !== 0) {
+    const why = r.error ? (r.error.code || r.error.message) : `git exit ${r.status}`;
+    return { status: 'unverified', reason: `git could not answer ("git ls-files ${rel}": ${why})` };
+  }
+  // Direct children only, exact repo-relative paths: a tracked `archive/003.sql` must not vouch for `003.sql`.
+  const tracked = String(r.stdout || '').split('\0').filter(Boolean).map((p) => p.replaceAll('\\', '/'))
+    .filter((p) => p.startsWith(`${rel}/`) && !p.slice(rel.length + 1).includes('/') && p.endsWith('.sql'))
+    .map((p) => p.slice(rel.length + 1)).sort();
+  let onDisk;
+  try {
+    onDisk = listDir(migrationsDir).filter((e) => e.endsWith('.sql')).sort();
+  } catch (err) {
+    if (err.code !== 'ENOENT') return { status: 'unverified', reason: `could not list ${migrationsDir} (${err.code || err.message})` };
+    onDisk = [];
+  }
+  const have = new Set(onDisk);
+  const owned = new Set(tracked);
+  return {
+    status: 'ok',
+    shippable: tracked.filter((f) => have.has(f)),
+    untracked: onDisk.filter((f) => !owned.has(f)),
+    // Tracked but absent from the work tree: an INCOMPLETE source inventory, never a silent retirement (the caller refuses).
+    missingOnDisk: tracked.filter((f) => !have.has(f)),
+  };
 }
 
 /** The refusal text for a non-`tracked` verdict (names the files and the remedy). */

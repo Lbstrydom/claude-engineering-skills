@@ -88,13 +88,12 @@ describe('lib/sync-inventory.mjs: syncMigrations distinguishes "no migrations" f
     } finally { fs.readdirSync = real; }
   });
 
-  it('ENOENT still means none — the expected-absence case must stay quiet', () => {
+  it('ENOENT still means none when git agrees (no tracked migrations) - the expected-absence case stays quiet', () => {
     // Vacuous-pass guard: a version that threw on everything would satisfy the test above while breaking every
-    // repo without a migrations directory.
-    const real = fs.readdirSync;
-    try {
-      fs.readdirSync = () => { const e = new Error('nope'); e.code = 'ENOENT'; throw e; };
-      assert.deepEqual(_internals.syncMigrations(), []);
-    } finally { fs.readdirSync = real; }
+    // repo without a migrations directory. Git is asked FIRST and injected: with the real index the directory is
+    // tracked, and "ENOENT but tracked" is (correctly) an incomplete inventory, covered in sync-migration-source-and-retirement.
+    const enoent = () => { throw Object.assign(new Error('nope'), { code: 'ENOENT' }); };
+    const none = () => ({ status: 0, stdout: '' });
+    assert.deepEqual(_internals.syncMigrationsReport({ listDir: enoent, spawn: none }), { files: [], untracked: [] });
   });
 });
