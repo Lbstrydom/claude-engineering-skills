@@ -73,6 +73,10 @@ export async function main(argv = process.argv, deps = {}) {
       emit({ ok: code === 0, ...out });
       return code;
     }
+    for (const f of ['--days', '--repo']) {   // a flag with no value must not silently fall back to the default scope
+      const i = argv.indexOf(f);
+      if (i >= 0 && (argv[i + 1] === undefined || String(argv[i + 1]).startsWith('--'))) throw new ArgvError(`${f} needs a value`);
+    }
     const days = Number(arg(argv, '--days') ?? 7);
     if (!Number.isInteger(days) || days < 1 || days > 365) throw new ArgvError('--days must be an integer 1..365');
     if (!await initStore()) { emit({ ok: false, schema: 'capture-completeness/v1', unmeasured: 'store-unreachable' }); return 3; }

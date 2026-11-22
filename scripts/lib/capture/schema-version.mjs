@@ -43,7 +43,8 @@ export function attemptOutcomeForError(err) {
     if (cat === 'timeout') return 'timeout';
     if (cat === 'cancel' || cat === 'aborted') return 'cancel';
     if (cat === 'refusal' || cat === 'content-filter') return 'refusal';
-    if (!cat && (err?.name === 'AbortError' || err?.code === 'ABORT_ERR')) return 'timeout';
+    // Our own timer abort arrives as an LlmError with category `timeout`; a bare abort is somebody else's cancel.
+    if (!cat && (err?.name === 'AbortError' || err?.code === 'ABORT_ERR')) return 'cancel';
     return 'error';
   } catch { return 'error'; }
 }

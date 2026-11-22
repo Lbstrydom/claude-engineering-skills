@@ -29,7 +29,8 @@ describe('attempt outcome vocabulary', () => {
     assert.equal(attemptOutcomeForError(new LlmError('x', { category: 'truncated' })), 'partial');
     assert.equal(attemptOutcomeForError(new LlmError('x', { category: 'empty' })), 'missing-payload');
     assert.equal(attemptOutcomeForError(null), 'error');
-    assert.equal(attemptOutcomeForError({ name: 'AbortError' }), 'timeout');
+    assert.equal(attemptOutcomeForError({ name: 'AbortError' }), 'cancel');
+    assert.equal(attemptOutcomeForError(new LlmError('t', { category: 'timeout' })), 'timeout');
   });
 });
 

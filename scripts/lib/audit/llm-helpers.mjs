@@ -462,6 +462,9 @@ export async function callGPT(openai, opts) {
     let attemptRecorded = false;   // a throw AFTER the success row (e.g. the call-record write) is not a failed provider attempt
     try {
       const result = await _callGPTOnce(openai, opts);
+      // THIS attempt's own usage and latency, before the retries' totals are folded into the returned result: the failed
+      // attempts are rows of their own, so folding them in here would count their tokens and cost twice.
+      const ownAttempt = { ...result, usage: { ...result.usage }, latencyMs: result.latencyMs };
       if (attempt > 0) {
         result.usage.input_tokens += accumulatedUsage.input_tokens;
         result.usage.cached_tokens += accumulatedUsage.cached_tokens;
@@ -471,7 +474,7 @@ export async function callGPT(openai, opts) {
         result._retried = true;
         result._attempts = attempt + 1;
       }
-      attemptRecorded = recordGptCall({ result, opts, logicalCallId, attemptNo: attempt + 1 }) === true;   // metadata-only provenance; never throws
+      attemptRecorded = recordGptCall({ result: ownAttempt, opts, logicalCallId, attemptNo: attempt + 1 }) === true;   // metadata-only provenance; never throws
       if (recordKey) writeCallRecord(recordKey.requestKey, recordKey.keyFields, { result: result.result, usage: result.usage, model: result.model, reasoningEffort: result.reasoningEffort });
       return result;
     } catch (err) {
