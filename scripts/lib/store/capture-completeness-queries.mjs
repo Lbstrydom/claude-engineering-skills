@@ -4,14 +4,14 @@
  * `./completeness.mjs` (pure). A store without the P0 columns still answers: the new-column
  * expressions degrade to NULL, which the report reads as `pre-p0`, never as success.
  *
- * @module scripts/lib/capture/completeness-queries
+ * @module scripts/lib/store/capture-completeness-queries
  */
 import { many } from '../db/query.mjs';
-import { isCloudEnabled } from '../store/repo.mjs';
-import { strictColumnExists } from '../store/column-probes.mjs';
+import { isCloudEnabled } from './repo.mjs';
+import { strictColumnExists } from './column-probes.mjs';
+import { CANARY_PURPOSE } from '../capture/schema-version.mjs';
 
-/** The synthetic canary's `purpose`: excluded from every figure so it can never pollute a population. */
-export const CANARY_PURPOSE = 'capture-canary';
+export { CANARY_PURPOSE };
 
 /**
  * One row per audit run in the window (code runs only: a plan audit has no per-pass call log).

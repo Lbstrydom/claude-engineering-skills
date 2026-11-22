@@ -16,6 +16,9 @@
 /** Integer, one constant. Bump on a meaning-changing change to any capture row. */
 export const CAPTURE_SCHEMA_VERSION = 1;
 
+/** The synthetic canary's `purpose`: excluded from every figure so it can never pollute a population. */
+export const CANARY_PURPOSE = 'capture-canary';
+
 /** What the provider attempt did. Closed. */
 export const ATTEMPT_OUTCOMES = Object.freeze([
   'success',

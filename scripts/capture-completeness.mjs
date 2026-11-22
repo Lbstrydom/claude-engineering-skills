@@ -25,7 +25,7 @@ const FLAGS = ['--days', '--repo', '--json', '--break-write', '--selfcheck-reloc
 
 /** Build the report from the store. `deps` is the test seam. */
 export async function buildReport({ days = 7, repo = null, nowMs = Date.now(), deps = {} } = {}) {
-  const q = deps.queries ?? await import('./lib/capture/completeness-queries.mjs');
+  const q = deps.queries ?? await import('./lib/store/capture-completeness-queries.mjs');
   const [runs, tasks, merges, cost] = await Promise.all([
     q.readAuditRuns({ days, repo }), q.readChipTasks({ days, repo }), q.readFleetMerges({ days, repo }), q.readCostFigures({ days, repo }),
   ]);

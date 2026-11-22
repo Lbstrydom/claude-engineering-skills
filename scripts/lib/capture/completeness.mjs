@@ -14,7 +14,7 @@
  * What cannot be observed is `unmeasured`, never zero loss. Zero starts is `unmeasured:zero-starts`,
  * never 100%. A reader never pools capture schema versions.
  *
- * Everything here is PURE (rows in, verdicts out). The store reads live in `./completeness-queries.mjs`.
+ * Everything here is PURE (rows in, verdicts out). The store reads live in `../store/capture-completeness-queries.mjs`.
  *
  * @module scripts/lib/capture/completeness
  */

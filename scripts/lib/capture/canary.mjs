@@ -12,8 +12,7 @@
  * @module scripts/lib/capture/canary
  */
 import crypto from 'node:crypto';
-import { CAPTURE_SCHEMA_VERSION } from './schema-version.mjs';
-import { CANARY_PURPOSE } from './completeness-queries.mjs';
+import { CAPTURE_SCHEMA_VERSION, CANARY_PURPOSE } from './schema-version.mjs';
 import { LlmError } from '../robustness.mjs';
 
 /** Closed results. Only `ok` and `disabled` exit 0. */
