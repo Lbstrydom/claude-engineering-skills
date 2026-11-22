@@ -142,8 +142,11 @@ describe('summarise CLI: the completeness verdict reaches the envelope', () => {
     const out = runSummariser({ result: '1. does a thing\n2. does another thing', stopReason: 'max_tokens' });
     assert.equal(out.status, 0, `CLI should succeed; stderr: ${out.stderr.slice(0, 400)}`);
     assert.ok(out.summary, 'a summary envelope must be emitted');
-    assert.equal(out.summary.counts.summarised, 2, 'both slots ARE populated — a null-count sees nothing wrong');
-    assert.equal(out.summary.counts.missing, 0);
+    // Since the split-retry change the CUT last entry is not trusted: it is
+    // re-asked alone, and this fake truncates that request too, so it ends
+    // unsummarised rather than being counted on the strength of a filled slot.
+    assert.equal(out.summary.counts.summarised, 1, 'the cut last entry must NOT count as summarised');
+    assert.equal(out.summary.counts.missing, 1);
     assert.equal(out.summary.complete, false, 'the verdict must survive the trip from the provider to stdout');
     assert.equal(out.summary.counts.truncatedBatches, 1);
     assert.equal(out.summary.counts.incompleteBatches, 1);
@@ -163,9 +166,11 @@ describe('summarise CLI: the completeness verdict reaches the envelope', () => {
   it('a short list is incomplete and attributed to the MODEL, not the ceiling', () => {
     const out = runSummariser({ result: '1. only the first one', stopReason: 'end_turn' });
     assert.equal(out.status, 0, `stderr: ${out.stderr.slice(0, 400)}`);
-    assert.equal(out.summary.counts.summarised, 1);
-    assert.equal(out.summary.counts.missing, 1);
-    assert.equal(out.summary.complete, false);
+    // The skipped entry is re-asked alone; this fake answers any request with the
+    // same one-entry list, so the re-ask succeeds. First attempt still reported.
+    assert.equal(out.summary.counts.summarised, 2);
+    assert.equal(out.summary.counts.missing, 0);
+    assert.equal(out.summary.complete, true);
     assert.equal(out.summary.counts.incompleteBatches, 1);
     assert.equal(out.summary.counts.truncatedBatches, 0, 'nothing says the ceiling was hit — the model skipped one');
   });
@@ -183,6 +188,6 @@ describe('summarise CLI: the completeness verdict reaches the envelope', () => {
     const out = runSummariser({ result: '1. first\n2. second', stopReason: 'max_tokens' });
     const syms = out.records.filter(r => r.type === 'symbol');
     assert.equal(syms.length, 2, 'an incomplete batch must not drop records — it must FLAG them');
-    assert.deepEqual(syms.map(s => s.purposeSummary), ['first', 'second']);
+    assert.deepEqual(syms.map(s => s.purposeSummary), ['first', null], 'the cut entry is left unsummarised, never filled');
   });
 });
