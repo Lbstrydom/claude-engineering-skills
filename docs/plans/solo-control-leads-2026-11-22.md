@@ -53,6 +53,12 @@ place. Tests: `tests/debt-auto-capture-add.test.mjs`.
 
 21 findings. **Fixed:** case-preserving manual topic id (H5/M6), completed zero-finding baseline no longer skipped (H7/M5), a reply with no usage makes the retry unmeasured not free (H8/H9), `--line` positive integer (L1), stale docstring (L2). **Dismissed false:** M7/M8 (the test uses a raw credential, no placeholder regex). **Deferred, filed as debt (11):** H1, H2, H10 (the schema-bound re-key above), H3, H4/M4 (judge-gpt resume), H6/M1 (pre-gate artifact), M2 (retro model stamping), M3 (usage rollup on budget stop; the budget reads the ledger, not `out.usage`), M9 (toggle-gate message) — all in code this diff does not touch.
 
+## Audit trail (/audit-code, base 9865dc65, SID audit-code-1795305783557-49708)
+
+R1–R6, measured GPT spend ≈ $2.2 (0.79 + 0.30 + 0.30 + 0.27 + 0.28 + 0.28). Fixed from the rounds: case-preserving and delimiter-unambiguous manual topic id, completed zero-finding baseline, a usage-less or partial-usage reply is unmeasured (retry gate and ledger row), `--line` positive integer, stdout drain on both `--add` exits. Dismissed with evidence: the redaction-test claims (no such regex in the file), raw-array bind on a read predicate (read-side contract), provider-error rows without usage being free (documented policy), incomplete-usage cells (counted unmeasured, now pinned). Deferred as debt (15+ entries, cloud-synced): repo identity / unit re-key (schema-bound), pre-gate artifact provenance, per-canonical dedupe semantics, rename-to-sensitive egress listing, judge-gpt resume, retro model stamping.
+
+R6 was not clean (the remaining findings are repeats of the deferred concerns plus dismissed claims; coverage `partial`: the 153 KB `solo-control-audit.mjs` is windowed for GPT). Structural-or-stop card read: **STOP** — accept the rest as debt, and rely on the Gemini final gate with FULL coverage on the exact head; no post-R6 code fix is outstanding.
+
 ## Not verified
 
 * H9's SQL against a real Postgres (text + stub-query tests only; CI's DB suites do not enrol this query).
