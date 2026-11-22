@@ -83,9 +83,14 @@ BEGIN
       EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', spec.tbl, cons.conname);
     END LOOP;
 
-    -- A bare index squatting on the name (no constraint behind it) would make ADD CONSTRAINT fail. Drop it ONLY
-    -- when it is a plain unique index on THIS table; an identically named index on another table is not ours.
-    SELECT i.indrelid, i.indisunique INTO idx
+    -- A bare index squatting on the name (no constraint behind it) would make ADD CONSTRAINT fail. Drop it ONLY when it is a
+    -- plain unique index on THIS table whose key is exactly the original columns, or those plus `model` (no predicate, no
+    -- expressions): anything else enforces some other rule and is an operator's call, so refuse with a diagnostic.
+    SELECT i.indrelid, i.indisunique, i.indpred IS NOT NULL AS partial, i.indexprs IS NOT NULL AS has_expr,
+           c.relnamespace::regnamespace::text AS ns,
+           (SELECT array_agg(a.attname::text ORDER BY a.attname)
+              FROM pg_attribute a WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)) AS keycols
+      INTO idx
       FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
      WHERE c.relkind = 'i' AND c.relname = spec.conname
        AND c.relnamespace = (SELECT relnamespace FROM pg_class WHERE oid = to_regclass(spec.tbl));
@@ -94,11 +99,14 @@ BEGIN
         RAISE EXCEPTION 'index % belongs to another table, not %; refusing to touch it. Rename or drop it deliberately, then re-run --migrate.',
           spec.conname, spec.tbl;
       END IF;
-      IF NOT idx.indisunique THEN
-        RAISE EXCEPTION 'index % on % is not a unique index; refusing to drop it. Resolve it deliberately, then re-run --migrate.',
-          spec.conname, spec.tbl;
+      IF NOT idx.indisunique OR idx.partial OR idx.has_expr
+         OR idx.keycols NOT IN (
+              (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr) x),
+              (SELECT array_agg(x ORDER BY x) FROM unnest(cols_arr || ARRAY['model']) x)) THEN
+        RAISE EXCEPTION 'index % on % is not a plain unique index over the original key (columns %, partial %, expressions %); refusing to drop it. Resolve it deliberately, then re-run --migrate.',
+          spec.conname, spec.tbl, idx.keycols, idx.partial, idx.has_expr;
       END IF;
-      EXECUTE format('DROP INDEX %I', spec.conname);
+      EXECUTE format('DROP INDEX %s.%I', idx.ns, spec.conname);
     END IF;
 
     EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s', spec.tbl, spec.conname, want);
