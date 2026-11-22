@@ -35,7 +35,7 @@ reads were about 720 tokens per output token, and one chip reached 4,386 message
    s += `\n## skills\n${git('diff', '-U1', base, head, '--', 'skills/**/*.md')}\n`;
    const added = (p) => git('diff', '--diff-filter=A', '--name-only', base, head, '--', p).trim().split('\n').filter(Boolean);
    const lead = (f, n) => git('show', `${head}:${f}`).split('\n').slice(0, n).join('\n'); // throws on an unreadable file
-   const newScripts = added('scripts').filter(f => !f.includes('test')), newDocs = added('docs');
+   const newScripts = added('scripts').filter(f => !/\.test\.mjs$|(^|\/)tests?\//.test(f)), newDocs = added('docs');
    for (const f of newScripts) s += `\n--- ${f}\n${lead(f, 22)}\n`;
    for (const f of newDocs) s += `\n--- ${f}\n${lead(f, 14)}\n`;
    s += `\n## COVERAGE: ${newScripts.length} new scripts and ${newDocs.length} new docs, all included\n`;
