@@ -27,7 +27,7 @@ import {
   broadClaimPatterns, claimMode, decideClaim, idleMsFrom, isBlockingConflict, isTerminalState, splitHidden, validateClaimPatterns,
 } from './overlap.mjs';
 import { eolFlipLines, eolFlips, eolJson } from './eol-flips.mjs';
-import { sharedSurfaceLine, sharedSurfaceTouched, testsLoadingIn } from './shared-surface.mjs';
+import { sharedSurfaceLine, sharedSurfaceTouched, testsLoadingAt } from './shared-surface.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { renderClaimVerdict, renderStatus, renderUnregistered } from './render.mjs';
 import {
@@ -659,7 +659,7 @@ export function cmdReady(ctx, flags) {
   const baseForShared = readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null;
   const sharedDiff = baseForShared ? changedFiles(ctx.cwd, baseForShared, oid) : { queried: false, files: [] };
   const shared = sharedDiff.queried ? sharedSurfaceTouched(sharedDiff.files, ctx.config.sharedSurfaces) : [];
-  const sharedReach = shared.length ? testsLoadingIn(ctx.cwd, shared) : null;
+  const sharedReach = shared.length ? testsLoadingAt(ctx.cwd, oid, shared) : null;
   const sharedChecked = sharedDiff.queried;
   // An unmeasured diff is SAID: an empty `touched` must never read as "checked, nothing shared".
   const sharedLine = sharedChecked ? sharedSurfaceLine(shared, ctx.config.sharedSurfaces, ctx.cmd, sharedReach)

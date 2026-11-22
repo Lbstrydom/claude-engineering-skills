@@ -12,8 +12,9 @@
  *
  * @module scripts/lib/fleet/shared-surface
  */
-import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { fileOverlap } from './overlap.mjs';
 import { RESOLVABLE_EXTENSIONS, parseImports, resolveSpecifier } from '../module-graph.mjs';
 import { runGit } from './git-facts.mjs';
@@ -46,8 +47,9 @@ export function sharedSurfaceTouched(files, cfg) {
  * @param {{run?: string[]|null}} cfg
  * @param {string} [cmd]
  * @param {{ok: boolean, tests?: string[], unread?: number, reason?: string}|null} [reach]
+ * @param {string} [where] where the COMPLETE test list lives in this caller's JSON (differs between `ready` and `next`)
  */
-export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null) {
+export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null, where = 'the JSON as sharedSurface.tests') {
   if (!touched.length) return null;
   const names = `${touched.slice(0, SHARED_NAME_CAP).map(printable).join(', ')}${touched.length > SHARED_NAME_CAP ? `, … ${touched.length - SHARED_NAME_CAP} more` : ''}`;
   const parts = [];
@@ -56,8 +58,8 @@ export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null) {
     if (reach.tests.length) {
       const shown = reach.tests.slice(0, REACH_NAME_CAP);
       const partial = reach.tests.length > shown.length;
-      parts.push(`${partial ? 'the first' : 'all'} ${shown.length} of the ${reach.tests.length} test file(s) found loading them: \`${renderCommand(['node', '--test', ...shown])}\``);
-      if (partial) caveats.push(`that command is PARTIAL — all ${reach.tests.length} are in the JSON as sharedSurface.tests`);
+      parts.push(`${partial ? 'the first' : 'all'} ${shown.length} of the ${reach.tests.length} test file(s) found loading them: \`${renderCommand(['node', '--test', ...shown.map((p) => (p.startsWith('-') ? `./${p}` : p))])}\``);
+      if (partial) caveats.push(`that command is PARTIAL — all ${reach.tests.length} are in ${where}`);
     } else caveats.push('no test file was found that loads them statically, which does not mean none does');
     if (reach.unread) caveats.push(`${reach.unread} test/source file(s) could not be read, so the list may be missing some`);
     caveats.push('the list is static and best-effort: a computed import() or a path built at run time is not followed, so run a broader suite when in doubt');
@@ -124,10 +126,47 @@ export function testsLoading(touched, { repoFiles, readFile }) {
   return { tests: [...reached].filter(isTestFile).sort(), unread };
 }
 
-/** The same, from a checkout: `git ls-files` for the file list and the working tree for the text. */
-export function testsLoadingIn(cwd, touched) {
-  const ls = runGit(['ls-files', '-z', '--full-name', '--', ':/'], cwd, { timeoutMs: 30_000 });
-  if (!ls.ok) return { ok: false, reason: `git ls-files failed (${ls.reason})` };
+/**
+ * Parse `git cat-file --batch` output: `<spec> blob <size>\n<bytes>\n` per object, or `<spec> missing\n`. Returns spec -> text.
+ * @param {Buffer} buf
+ * @param {string[]} specs the specs in the order they were asked
+ */
+function parseBatch(buf, specs) {
+  const out = new Map();
+  let at = 0;
+  for (const spec of specs) {
+    const nl = buf.indexOf(10, at);
+    if (nl < 0) break;
+    const header = buf.toString('utf8', at, nl);
+    at = nl + 1;
+    const m = /^\S+ blob (\d+)$/.exec(header);
+    if (!m) continue; // missing / not a blob
+    const size = Number(m[1]);
+    out.set(spec, buf.toString('utf8', at, at + size));
+    at += size + 1;
+  }
+  return out;
+}
+
+/**
+ * The same, from ONE COMMIT: the tree at `oid` (`git ls-tree`) for the file list and `git cat-file --batch` for the text, so the
+ * answer describes exactly the commit `ready` is marking (or the branch tip `next` reads), whatever the checkout or worktree it
+ * is asked from has on disk. One process reads every script blob.
+ * @param {string} cwd any checkout of the repository (the object store is shared)
+ * @param {string} oid the commit
+ * @param {string[]} touched
+ */
+export function testsLoadingAt(cwd, oid, touched) {
+  const ls = runGit(['ls-tree', '-r', '-z', '--name-only', oid], cwd, { timeoutMs: 30_000 });
+  if (!ls.ok) return { ok: false, reason: `git ls-tree failed (${ls.reason})` };
   const repoFiles = ls.stdout.split('\0').filter(Boolean);
-  return { ok: true, ...testsLoading(touched, { repoFiles, readFile: (p) => fs.readFileSync(path.join(cwd, p), 'utf8') }) };
+  const wanted = repoFiles.filter((f) => isScript(f) && !NOT_SOURCE.test(f) && !f.includes('\n'));
+  const specs = wanted.map((f) => `${oid}:${f}`);
+  const res = spawnSync('git', ['cat-file', '--batch'], {
+    cwd, env: { ...sanitizeGitEnv(cwd), GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C' },
+    input: `${specs.join('\n')}\n`, maxBuffer: 512 * 1024 * 1024, timeout: 60_000, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  if (res.error || res.status !== 0) return { ok: false, reason: `git cat-file --batch failed (${res.error?.message ?? `exit ${res.status}`})` };
+  const text = parseBatch(res.stdout, specs);
+  return { ok: true, ...testsLoading(touched, { repoFiles, readFile: (p) => { const t = text.get(`${oid}:${p}`); if (t === undefined) throw new Error('not read'); return t; } }) };
 }

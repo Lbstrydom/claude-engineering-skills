@@ -126,6 +126,41 @@ describe('through the real CLI', () => {
   });
 });
 
+describe('the reach describes the COMMIT, not the checkout', () => {
+  const COMMIT_ARGS = ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m'];
+  const setup = () => {
+    const fx = makeFleetRepo();
+    writeFile(fx.repo, 'tests/helpers/shared.mjs', 'export const x = 1;\n');
+    writeFile(fx.repo, 'tests/uses.test.mjs', "import { x } from './helpers/shared.mjs';\n");
+    git(['add', '--', 'tests/helpers/shared.mjs', 'tests/uses.test.mjs'], fx.repo);
+    git([...COMMIT_ARGS, 'add helper and test'], fx.repo);
+    return { fx, oid: git(['rev-parse', 'HEAD'], fx.repo) };
+  };
+  it('an uncommitted edit (or a different checked-out branch) does not change what is reported for the commit', async () => {
+    const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const { fx, oid } = setup();
+    writeFile(fx.repo, 'tests/uses.test.mjs', "export {}; // the import was removed in the working tree only\n");
+    const r = testsLoadingAt(fx.repo, oid, ['tests/helpers/shared.mjs']);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.tests, ['tests/uses.test.mjs'], 'read from the commit, not the disk');
+    git(['checkout', '-q', '-b', 'elsewhere'], fx.repo);
+    assert.deepEqual(testsLoadingAt(fx.repo, oid, ['tests/helpers/shared.mjs']).tests, ['tests/uses.test.mjs']);
+  });
+  it('an unknown commit is an unavailable reach with a reason, never an empty result', async () => {
+    const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const { fx } = setup();
+    const r = testsLoadingAt(fx.repo, 'f'.repeat(40), ['tests/helpers/shared.mjs']);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /git ls-tree failed/);
+  });
+  it('a test path that starts with a hyphen cannot be taken for an option, and the JSON location is the caller\'s own', () => {
+    const line = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: ['-odd.test.mjs', 'tests/x.test.mjs'], unread: 0 });
+    assert.ok(line.includes('node --test ./-odd.test.mjs tests/x.test.mjs'), line);
+    const many = Array.from({ length: REACH_NAME_CAP + 1 }, (_, i) => `tests/t${i}.test.mjs`);
+    assert.ok(sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: many, unread: 0 }, 'the next --json obligation evidence').includes('are in the next --json obligation evidence'));
+  });
+});
+
 describe('next says so when it could not look', () => {
   const item = { id: 's1', branch: 's1', state: 'working', overlaps: [], paths: [] };
   const session = { id: 's1', state: 'working', paths: [] };

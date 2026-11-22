@@ -147,7 +147,7 @@ export function deriveObligations({ item, session = null, advance = null, myFile
   }
   // Advice (info, never DO): a branch that changes shared test files should run the fast tier; fleet cannot see whether it did.
   const shared = sharedSurfaceTouched(myFiles, sharedSurfaces);
-  if (shared.length && !isTerminalState(item?.state ?? session?.state)) add('shared-surface', 'info', sharedSurfaceLine(shared, sharedSurfaces, cmd, sharedReach), { files: shared, reach: sharedReach ? { ok: sharedReach.ok, tests: sharedReach.ok ? sharedReach.tests : null, unread: sharedReach.ok ? sharedReach.unread : null, reason: sharedReach.ok ? null : sharedReach.reason } : null });
+  if (shared.length && !isTerminalState(item?.state ?? session?.state)) add('shared-surface', 'info', sharedSurfaceLine(shared, sharedSurfaces, cmd, sharedReach, 'the `next --json` obligation evidence (evidence.reach.tests)'), { files: shared, reach: sharedReach ? { ok: sharedReach.ok, tests: sharedReach.ok ? sharedReach.tests : null, unread: sharedReach.ok ? sharedReach.unread : null, reason: sharedReach.ok ? null : sharedReach.reason } : null });
   // Files that could not be read mean the check above may have missed a shared file: said, never read as "none".
   if (filesUnknown.length && sharedSurfaces?.globs?.length !== 0 && !isTerminalState(item?.state ?? session?.state)) add('shared-surface-unmeasured', 'info', `shared test files were not checked (${filesUnknown.join('; ')})`);
   const notes = [];
