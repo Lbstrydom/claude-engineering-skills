@@ -21,11 +21,21 @@
  * this from the hook would test the WORKING TREE instead, which is the exact
  * false-pass/false-block problem `prepush-check.mjs` exists to eliminate.
  *
- * Deliberately UNSCOPED — it runs on every check rather than only when a
- * path list says the DB seam changed. A stale path list that silently stops
- * matching is the failure mode this repo has hit twice, and paying the gate's
- * full cost on every push is cheaper than that risk. That trade is unchanged;
- * what follows is only what the cost currently IS.
+ * UNSCOPED by default, PATH-SCOPED only for a branch-tier push (gate census L-2, approved by Louis 2026-11-22). `npm run
+ * check`, `/ship`, every push to the default branch and the `full` tier still run this gate in full. Only the pre-push
+ * sandbox sets `AUDIT_PREPUSH_GATE_SCOPE=path`, and only when the tier ORACLE itself chose the branch tier for a push that
+ * does not update the default branch (`scopeFromOracle`: a stale heavy list or a changed selector makes it full, and an
+ * inherited value is cleared). Then the gate runs only when the explicit push range (`push-range.mjs`, never inferred)
+ * touches something it reads. The earlier version of this paragraph rejected a path list because "a stale path list that
+ * silently stops matching is the failure mode this repo has hit twice"; what changed is that the list is no longer a list:
+ * `dbSuitesTriggers` DERIVES it from the import closure of the enrolled suites on every run, so enrolling a suite or
+ * adding an import widens it by itself. Every uncertainty (unresolved range, git or tree unreadable, an import the closure
+ * cannot resolve, a computed dynamic import nobody has acknowledged below) runs the gate, and a skip prints
+ * `SKIPPED (path-scoped)` with its reason. Known limits, stated rather than hidden: the closure follows literal paths from
+ * tests and from the container driver to anything, and from libraries to data files only (library prose names too many
+ * scripts: following them reached 1,100 of 1,700 files); an acknowledged computed dynamic import is not followed; and the
+ * sandbox's own checks of `.githooks/**` run before this gate. Backstops: the full run on every push to main and the CI
+ * `postgres-parity` job.
  *
  * **Cost — `measured` 2026-08-11, and it SCALES, so do not read it as a
  * constant.** ~`22.2s` total on a 32-core Windows box (mean of 2 runs),
@@ -84,6 +94,8 @@ import { fileURLToPath } from 'node:url';
 
 import { ArgvError, assertKnownFlags, fmtMs } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { decideGateScope, importClosure, scopeLine } from './lib/gate-path-scope.mjs';
+import { CONTRACT_SUITE_FILES, DESTRUCTIVE_SUITE_FILES, ISOLATED_SUITE_FILES } from './db-test-container.mjs';
 
 /** Every flag this CLI accepts. Enforced below — see `cli:flags:gate`. */
 const KNOWN_FLAGS = Object.freeze(['--selfcheck-relocation']);
@@ -229,11 +241,53 @@ function realRunSuites() {
   );
 }
 
+/**
+ * What this gate reads, DERIVED from the pushed tree: the import closure (plus literally named repo paths) of every file
+ * it executes: the enrolled suites, the container driver and the scoping code itself. Plus the two things that are data
+ * rather than code: the migrations directory `setup-postgres.mjs --migrate` applies (a literal directory, so a prefix).
+ * What every test shares and the tier selector's own files are added by `decideGateScope` for every scoped gate. The expected-schema fixture is named by a literal
+ * in the driver, so the closure already holds it. The stale hand list `DB_SEAM_PREFIXES` is deliberately not consulted.
+ */
+export function dbSuitesTriggers(tree) {
+  const roots = [
+    ...ISOLATED_SUITE_FILES, ...DESTRUCTIVE_SUITE_FILES, ...CONTRACT_SUITE_FILES,
+    'scripts/db-test-container.mjs', 'scripts/db-suites-gate.mjs', 'scripts/lib/gate-path-scope.mjs',
+  ];
+  const { files, uncertain, blind } = importClosure({
+    roots,
+    literalFrom: ['scripts/db-test-container.mjs'],
+    skipLiteral: (lit) => /^tests\/[^/]+\.test\.mjs$/.test(lit),
+    acknowledgedComputed: ACKNOWLEDGED_COMPUTED_IMPORTS,
+    tree,
+  });
+  // `tests/fixtures/` as a prefix: a suite may enumerate a fixture DIRECTORY, which no literal path names.
+  return { files, prefixes: ['supabase/migrations/', 'tests/fixtures/'], uncertain, blind };
+}
+
+/**
+ * Computed a dynamic import edges inside the closure that were READ and judged unable to reach the DB suites, each with the
+ * reason. A NEW computed import in the closure is not on this list, so it is `uncertain` and the gate runs in full until a
+ * person reads it and adds it here (tests/gate-path-scope.test.mjs fails when an entry no longer matches a live one).
+ */
+export const ACKNOWLEDGED_COMPUTED_IMPORTS = Object.freeze({
+  'scripts/lib/test-tier.mjs': { calls: 1, reason: 'the text a dynamic import in comments and messages, no dynamic import call' },
+  'scripts/ux-lock-run.mjs': { calls: 1, reason: 'the word in an error message (alias imports), no dynamic import call' },
+  'scripts/lib/anthropic-client.mjs': { calls: 1, reason: 'optional provider SDK packages (bare specifiers, so package.json is the input, and it is one)' },
+  'scripts/learning/replay.mjs': { calls: 1, reason: 'imports an operator-supplied policy module path (a CLI argument); no DB suite runs it' },
+  'scripts/lib/sync-isolation-verify.mjs': { calls: 1, reason: 'imports the consumer-sync verification target; a sync tool the DB suites never execute' },
+  'tests/helpers/audit-capture-oldschema-child.mjs': { calls: 4, reason: 'its targets are named as literal `new URL(\'scripts/...\')` paths, which the literal scan follows (and the test that spawns it names the helper)' },
+});
+
 function main() {
   // Before the selfcheck branch: a typo'd flag must be refused, not silently
   // dropped into a full suite run the operator did not ask for.
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'db-suites-gate' });
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
+  // Path-scoping (gate census L-2): only ever active for a branch-tier push from the pre-push sandbox; every uncertainty
+  // runs the gate. A skip is printed, never silent.
+  const scope = decideGateScope({ gate: 'db-suites-gate', env: process.env, cwd: repoRoot(), triggers: dbSuitesTriggers });
+  process.stderr.write(scopeLine('db-suites-gate', scope));
+  if (!scope.run) return 0;
   return decide({
     dockerAvailable: () => probeDocker(),
     runSuites: realRunSuites,
