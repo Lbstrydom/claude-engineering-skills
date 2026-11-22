@@ -713,6 +713,15 @@ export const TelemetryDataSchema = z.object({
     truncated: z.boolean().default(false),
     windowMet: z.boolean().default(false),
   }).optional(),
+  // Own-model capture completeness (docs/plans/own-model-full-capture.md P0). Optional so pre-feature snapshots validate.
+  captureCompleteness: z.object({
+    cloud: z.boolean(),
+    windowDays: count,
+    exitCode: z.number().int(),
+    cost: z.string(),
+    captureSchemaVersion: count,
+    groups: z.array(z.object({ section: z.string(), repo: z.string(), status: z.string(), detail: z.string() })),
+  }).optional(),
 });
 
 // ── Audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md) ──

@@ -33,6 +33,8 @@
     { "table": "llm_call_provenance", "column": "attempt_no", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
     { "table": "llm_call_provenance", "column": "attempt_outcome", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
     { "table": "llm_call_provenance", "column": "capture_schema_version", "since": "2026-11-23", "expectFill": 0.99, "tolerance": 0.02 },
+    { "table": "llm_call_provenance", "column": "audited_tree", "since": "2026-11-24", "expectFill": 0.9, "tolerance": 0.1 },
+    { "table": "llm_call_provenance", "column": "diff_base_sha", "since": "2026-11-24", "where": "audit_producer", "expectFill": 0.6, "tolerance": 0.2 },
     { "table": "llm_call_provenance", "column": "cost_usd", "since": "2026-11-23", "where": "audit_producer", "expectFill": 0.85, "tolerance": 0.1 }
   ],
   "exempt": [

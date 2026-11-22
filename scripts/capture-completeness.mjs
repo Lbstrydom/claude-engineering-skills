@@ -5,6 +5,7 @@
  *
  *   node scripts/capture-completeness.mjs report [--days N] [--repo NAME] [--json]
  *   node scripts/capture-completeness.mjs canary [--break-write]
+ *   node scripts/capture-completeness.mjs flush-ledger
  *
  * report: start events from audit dispatch, chip launch and fleet land, reconciled against
  *   completions, per repo x capture_schema_version. Exit 0 measured and no gap / 1 a measured gap /
@@ -12,58 +13,41 @@
  * canary: one synthetic two-attempt call through the real metadata pipeline into the store, read back
  *   and deleted. Exit 0 ok (or disabled by LEARNING_DISABLE=1) / 1 failed / 3 unmeasured.
  *   `--break-write` is its negative control: it must exit 1.
+ * flush-ledger: deliver the local decision-ledger spool to the store (the only thing that ever delivers it). Exit 0 flushed /
+ *   disabled, 1 a failed flush (events stay spooled), 3 unmeasured (cloud off).
  *
  * @module scripts/capture-completeness
  */
 import './lib/load-env.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { assertKnownFlags, ArgvError, arg, emit, finishAndExit } from './lib/cli-io.mjs';
-import { reconcileAuditDispatch, reconcileChipLaunch, reconcileFleetLand, reconcileCost, exitCodeFor } from './lib/capture/completeness.mjs';
-import { CAPTURE_SCHEMA_VERSION } from './lib/capture/schema-version.mjs';
+import { buildReport, renderReport } from './lib/capture/report.mjs';
+
+export { buildReport, renderReport };
 
 const FLAGS = ['--days', '--repo', '--json', '--break-write', '--selfcheck-relocation'];
-
-/** Build the report from the store. `deps` is the test seam. */
-export async function buildReport({ days = 7, repo = null, nowMs = Date.now(), deps = {} } = {}) {
-  const q = deps.queries ?? await import('./lib/store/capture-completeness-queries.mjs');
-  const [runs, tasks, merges, cost] = await Promise.all([
-    q.readAuditRuns({ days, repo }), q.readChipTasks({ days, repo }), q.readFleetMerges({ days, repo }), q.readCostFigures({ days, repo }),
-  ]);
-  const report = {
-    schema: 'capture-completeness/v1', capture_schema_version: CAPTURE_SCHEMA_VERSION, windowDays: days, repo,
-    auditDispatch: reconcileAuditDispatch(runs, nowMs),
-    chipLaunch: reconcileChipLaunch(tasks, nowMs),
-    fleetLand: reconcileFleetLand(merges),
-    cost: reconcileCost(cost),
-  };
-  report.exitCode = exitCodeFor(report);
-  return report;
-}
-
-/** One line per group, so a person reads the loss without reading JSON. */
-export function renderReport(r) {
-  const lines = [`capture:completeness (window ${r.windowDays}d, schema v${r.capture_schema_version}) exit ${r.exitCode}`];
-  const sect = (title, rows, fmt) => {
-    lines.push(`${title}:${rows.length ? '' : ' unmeasured:zero-starts'}`);
-    for (const g of rows) lines.push(`  ${fmt(g)}`);
-  };
-  sect('audit-dispatch', r.auditDispatch, (g) => `${g.repo} v${g.capture_schema_version}: ${g.status} | starts ${g.starts}, attempts ${g.attempts}/${g.expected_attempts} expected, logical ${g.logical_calls}, ${JSON.stringify(g.runs_by_verdict)}`);
-  sect('chip-launch', r.chipLaunch, (g) => `${g.repo}: ${g.status} | starts ${g.starts}, completed ${g.completed}, open ${g.open}, gaps ${g.gaps}, uncorrelated ${g.uncorrelated}`);
-  sect('fleet-land', r.fleetLand, (g) => `${g.repo}: ${g.status} | starts ${g.starts}`);
-  lines.push(`cost: ${r.cost.status}${r.cost.delta == null ? '' : ` (delta ${(r.cost.delta * 100).toFixed(1)}%, derived)`}`);
-  return lines.join('\n');
-}
 
 export async function main(argv = process.argv, deps = {}) {
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   const sub = argv[2];
   assertKnownFlags(argv.slice(3), FLAGS, { cli: 'capture-completeness', from: 0 });
-  if (sub !== 'report' && sub !== 'canary') throw new ArgvError('usage: capture-completeness.mjs report [--days N] [--repo NAME] [--json] | canary [--break-write]');
+  if (sub !== 'report' && sub !== 'canary' && sub !== 'flush-ledger') throw new ArgvError('usage: capture-completeness.mjs report [--days N] [--repo NAME] [--json] | canary [--break-write] | flush-ledger');
   // Each subcommand accepts only its own flags: a flag that is accepted and ignored reads as honoured.
-  assertKnownFlags(argv.slice(3), [...(sub === 'report' ? ['--days', '--repo', '--json'] : ['--break-write']), '--selfcheck-relocation'], { cli: `capture-completeness ${sub}`, from: 0 });
+  assertKnownFlags(argv.slice(3), [...(sub === 'report' ? ['--days', '--repo', '--json'] : sub === 'canary' ? ['--break-write'] : []), '--selfcheck-relocation'], { cli: `capture-completeness ${sub}`, from: 0 });
   const initStore = deps.initStore ?? (async () => (await import('./lib/store/repo.mjs')).initLearningStore());
   const { closePool } = await import('./lib/db/client.mjs');
   try {
+    if (sub === 'flush-ledger') {
+      // The decision ledger spools locally and is delivered only by a flush; nothing ran one, so 14 events sat spooled
+      // since 2026-10-27 with 0 rows in own_model_ledger. A flush that cannot deliver is exit 1, never an empty table.
+      if (process.env.LEARNING_DISABLE === '1') { emit({ ok: true, result: 'disabled' }); return 0; }
+      if (!await initStore()) { emit({ ok: false, result: 'unmeasured:cloud-off' }); return 3; }
+      const { ledgerDir, flushSpool } = await import('./lib/ledger/spool.mjs');
+      const { recordLedgerEvents } = await import('./lib/store/own-model-ledger.mjs');
+      const res = await flushSpool({ dir: ledgerDir(), write: recordLedgerEvents });
+      emit({ ok: !res.error, result: res.error ? 'failed' : 'flushed', ...res });
+      return res.error ? 1 : 0;
+    }
     if (sub === 'canary') {
       if (process.env.LEARNING_DISABLE === '1') { emit({ ok: true, result: 'disabled', checks: [] }); return 0; }
       if (!await initStore()) { emit({ ok: false, result: 'unmeasured:cloud-off', checks: [] }); return 3; }

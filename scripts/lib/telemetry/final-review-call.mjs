@@ -15,6 +15,9 @@
 import { bindRun, record, drain } from './llm-call-log.mjs';
 import { routeFor } from './llm-call-log.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
+import { resolveWorkItemId } from '../ledger/work-item.mjs';
+import { gitWorktreeTree } from '../vcs.mjs';
+import { execFileSync } from 'node:child_process';
 
 /**
  * USD for one final-review call, priced the way the GPT path prices its aggregate
@@ -41,7 +44,13 @@ export function finalReviewCostUsd(usage, model) {
 export async function recordFinalReviewCall({ runId, repoId = null, model, provider, usage, latencyMs }) {
   try {
     if (!runId) return 'skipped';
-    if (!bindRun({ runId, repoId, workItemId: process.env.OWN_MODEL_WORK_ITEM_ID, producer: 'final-review' })) return 'skipped';
+    // Same per-call identity as the audit producer. The reviewer is its own process, so the tree is read
+    // from the working tree it reviewed; no diff base is known here, so it stays null rather than guessed.
+    const treeRes = gitWorktreeTree(process.cwd());
+    const auditedTree = treeRes.ok ? treeRes.tree : null;
+    let branch = null;
+    try { branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).toString().trim(); } catch { /* detached or no git: no branch segment, no guess */ }
+    if (!bindRun({ runId, repoId, workItemId: resolveWorkItemId({ branch }), producer: 'final-review', auditedTree })) return 'skipped';
     record({
       purpose: 'final-review',
       model,

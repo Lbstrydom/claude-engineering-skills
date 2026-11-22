@@ -460,7 +460,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
         scopeMode, commitSha, branch, planId, runId, auditSessionId: auditIdentity?.auditSessionId, auditRound: auditIdentity?.auditRound,
       });
-      (await import('../telemetry/llm-call-log.mjs')).bindRun({ runId: cloudRunId, repoId: cloudRepoId, workItemId: process.env.OWN_MODEL_WORK_ITEM_ID, producer: 'audit' });
+      (await import('./bind-call-log.mjs')).bindAuditCallLog({ runId: cloudRunId, repoId: cloudRepoId, branch: ctx?.auditedBranch ?? branch, auditedTree: ctx?.auditedTree ?? null, auditBaseCommit });
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity
       // (file count, LOC, scope mode) and record pass_selection decision
       // pre-wave with outcome=null; the outcome is backfilled at audit-end.

@@ -70,6 +70,19 @@ export function workItemFromBranch(branch) {
   return m ? m[1] : null;
 }
 
+/**
+ * The work item a process should stamp on its captures: `OWN_MODEL_WORK_ITEM_ID` when it is a
+ * UUIDv7, else the `wi-` segment of the branch, else null. A malformed env value does NOT fall
+ * through to the branch (a mistyped id is a loud failure elsewhere, never silently replaced).
+ * @param {{env?: object, branch?: string|null}} [a]
+ * @returns {string|null}
+ */
+export function resolveWorkItemId({ env = process.env, branch = null } = {}) {
+  const v = env?.OWN_MODEL_WORK_ITEM_ID;
+  if (v) return isWorkItemId(v) ? v : null;
+  return workItemFromBranch(branch);
+}
+
 /** The PR-body footer convention: a line `Work-Item: <uuidv7>`; null when absent. */
 export function workItemFromPrBody(body) {
   if (typeof body !== 'string') return null;

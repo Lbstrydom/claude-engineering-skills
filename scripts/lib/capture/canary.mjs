@@ -15,6 +15,10 @@ import crypto from 'node:crypto';
 import { CAPTURE_SCHEMA_VERSION, CANARY_PURPOSE } from './schema-version.mjs';
 import { LlmError } from '../robustness.mjs';
 
+// Synthetic git object ids the canary stamps per call and must read back (P0 part 2: per-call tree identity).
+const CANARY_TREE = 'c'.repeat(40);
+const CANARY_BASE = 'd'.repeat(40);
+
 /** Closed results. Only `ok` and `disabled` exit 0. */
 export const CANARY_RESULTS = Object.freeze(['ok', 'failed', 'unmeasured:cloud-off', 'unmeasured:store-not-migrated', 'disabled']);
 
@@ -32,7 +36,7 @@ export async function runCanary({ breakWrite = false, deps = {} } = {}) {
   const check = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), ...(detail === undefined ? {} : { detail: String(detail) }) });
   try {
     log._resetLlmCallLog();
-    if (!log.bindRun({ runId, producer: 'audit' })) return { result: 'failed', checks: [{ name: 'bind', ok: false, detail: 'bindRun refused' }] };
+    if (!log.bindRun({ runId, producer: 'audit', auditedTree: CANARY_TREE, diffBaseSha: CANARY_BASE })) return { result: 'failed', checks: [{ name: 'bind', ok: false, detail: 'bindRun refused' }] };
     const logicalCallId = log.beginLogicalCall();
     const opts = { passName: CANARY_PURPOSE };
     log.recordGptAttemptFailure({
@@ -61,6 +65,12 @@ export async function runCanary({ breakWrite = false, deps = {} } = {}) {
     check('two distinct attempt ids', new Set(rows.map((r) => r.call_id)).size === 2);
     check('typed outcomes', rows[0]?.attempt_outcome === 'schema-reject' && rows[1]?.attempt_outcome === 'success', rows.map((r) => r.attempt_outcome).join(','));
     check('schema version stamped', rows.length > 0 && rows.every((r) => r.capture_schema_version === CAPTURE_SCHEMA_VERSION));
+    // Per-call tree identity (20261123140000). A store without the columns fails HERE, loudly: migrate it first.
+    try {
+      const ids = await many('SELECT audited_tree, diff_base_sha FROM llm_call_provenance WHERE audit_run_id = $1', [runId]);
+      check('tree identity stamped on every attempt', ids.length === 2 && ids.every((r) => r.audited_tree === CANARY_TREE && r.diff_base_sha === CANARY_BASE),
+        ids.map((r) => `${r.audited_tree}/${r.diff_base_sha}`).join(','));
+    } catch (err) { check('tree identity stamped on every attempt', false, err?.message ?? err); }
     const sum = await many('SELECT recorded, dropped FROM llm_call_log_summary WHERE audit_run_id = $1', [runId]);
     check('summary counter matches', sum.length === 1 && Number(sum[0].recorded) === 2 && Number(sum[0].dropped) === 0);
   } catch (err) {
