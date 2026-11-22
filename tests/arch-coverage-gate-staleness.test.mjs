@@ -90,5 +90,5 @@ describe('arch-coverage-gate CLI staleness', () => {
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /stale measurement .*would FAIL under enforcement/);
   });
-  it('cleanup', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+  it('cleanup', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 });
