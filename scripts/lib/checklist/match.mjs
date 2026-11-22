@@ -281,6 +281,14 @@ export function matchEntries({ entries, mode, files = [], diffFiles = [], readFi
     for (const p of candidatePaths) {
       if (paths.some((g) => globMatch(norm(g), p))) note('path', p);
     }
+    // A generated copy changed WITHOUT its source is the hand-edit; one changed WITH it is a regeneration and stays silent.
+    for (const { path: copy, source } of entry.trigger.unpairedPaths ?? []) {
+      const changed = new Set(candidatePaths);
+      for (const p of candidatePaths.filter((x) => x.startsWith(copy))) {
+        const counterpart = source + p.slice(copy.length);
+        if (!changed.has(counterpart)) note('path', `${p} (without ${counterpart})`);
+      }
+    }
     if (symbols.length) {
       const res = symbols.map(symbolRe);
       if (mode === 'files') {

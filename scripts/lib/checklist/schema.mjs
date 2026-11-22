@@ -26,12 +26,19 @@ const Trigger = z.object({
   patterns: z.array(nonEmpty).min(1).optional(),
   /** Where `patterns` count. Absent = every changed file, which is rarely what a pattern means (a markdown plan quoting `process.exit(` is not a call). */
   patternPaths: z.array(nonEmpty).min(1).optional(),
+  /** A GENERATED copy edited without its source: fires on a changed path under `path` (a directory prefix ending `/`) whose
+   *  counterpart, the same remainder under `source`, is NOT also changed. A copy that changes with its source (a regeneration)
+   *  is silent; a copy changed alone (a hand-edit) fires. */
+  unpairedPaths: z.array(z.object({
+    path: nonEmpty.regex(/\/$/, 'a directory prefix ending in /'),
+    source: nonEmpty.regex(/\/$/, 'a directory prefix ending in /'),
+  }).strict()).min(1).optional(),
 }).strict().superRefine((t, ctx) => {
   if (t.patternPaths && !t.patterns) {
     ctx.addIssue({ code: 'custom', path: ['patternPaths'], message: 'patternPaths scopes patterns; it needs `patterns`' });
   }
-  if (!t.paths && !t.symbols && !t.patterns) {
-    ctx.addIssue({ code: 'custom', message: 'a trigger needs at least one of paths, symbols, patterns' });
+  if (!t.paths && !t.symbols && !t.patterns && !t.unpairedPaths) {
+    ctx.addIssue({ code: 'custom', message: 'a trigger needs at least one of paths, symbols, patterns, unpairedPaths' });
   }
   for (const [i, p] of (t.patterns ?? []).entries()) {
     try { new RegExp(p); } catch (e) {

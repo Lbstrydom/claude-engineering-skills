@@ -16,8 +16,8 @@ import { createHash } from 'node:crypto';
 export const FROZEN = Object.freeze({
   frozenOn: '2026-11-22',
   files: Object.freeze({
-    checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d' }),
-    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: '511fa697e45809de56200354d1cc87b30198392919918c83aefe85d11bd9eb21' }),
+    checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '7f574f3fa1f0f1e0232be8e1497ec805d63181db2cdc7e0b8d041e963dd37f04' }),
+    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: 'dcb4e4df0afc58d22a8ff29f7808b6a7db7a31c6d4c565b4244591acd48a5f50' }),
     scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'c758c13a21c6b582dafde08c9e0249657cf7bdfcb08720118ef47cc20d615b39' }),
   }),
 });

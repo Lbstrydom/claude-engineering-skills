@@ -34,9 +34,22 @@ test('the freshness check passes on the repo and the instrument is seen to fail 
   const tmp = mkTmp(path.join(os.tmpdir(), 'checklist-gen-'));
   fs.cpSync(path.join(REPO, 'scripts', 'gate-contracts'), path.join(tmp, 'scripts', 'gate-contracts'), { recursive: true });
   fs.cpSync(path.join(REPO, 'skills', 'audit-code', 'gate-contract.json'), path.join(tmp, 'skills', 'audit-code', 'gate-contract.json'));
+  fs.cpSync(path.join(REPO, '.skill-size-baseline.json'), path.join(tmp, '.skill-size-baseline.json'));
+  const committed = read(path.join(REPO, '.audit-loop', 'checklist.json'));
+  assert.equal(buildChecklistText(tmp), committed, 'the copied inputs regenerate the committed file (so the next two differences are the edits)');
   const f = path.join(tmp, 'scripts', 'gate-contracts', 'stdout-flush-gate.json');
-  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('"stated": "An exit that stdout can reach must drain first"', '"stated": "An exit that stdout can reach must drain first, reworded"'));
-  assert.notEqual(buildChecklistText(tmp), read(path.join(REPO, '.audit-loop', 'checklist.json')));
+  const original = fs.readFileSync(f, 'utf8');
+  fs.writeFileSync(f, original.replace('"stated": "An exit that stdout can reach must drain first"', '"stated": "An exit that stdout can reach must drain first, reworded"'));
+  assert.notEqual(buildChecklistText(tmp), committed);
+  fs.writeFileSync(f, original);
+  // The size-ratchet trigger is the baseline's own file list: a file newly pinned in the baseline changes the checklist.
+  const b = path.join(tmp, '.skill-size-baseline.json');
+  const j = JSON.parse(fs.readFileSync(b, 'utf8'));
+  j.files['skills/newly-oversized/SKILL.md'] = 12500;
+  fs.writeFileSync(b, JSON.stringify(j));
+  const regenerated = buildChecklistText(tmp);
+  assert.notEqual(regenerated, committed);
+  assert.ok(JSON.parse(regenerated).entries.find((e) => e.id === 'skill-markdown-size-ratchet').trigger.paths.includes('skills/newly-oversized/SKILL.md'));
 });
 
 test('a prefix that matches no gate is an error, never a silently dropped entry', () => {

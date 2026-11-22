@@ -150,6 +150,25 @@ describe('post-edit mode (--diff <base>)', () => {
     assert.equal(ChecklistFileSchema.safeParse({ version: 1, entries: [{ ...scoped, trigger: { paths: ['a'], patternPaths: ['b'] }, check: 'c', incident: 'i', control: { path: 'a', text: 't' } }] }).success, false, 'patternPaths without patterns is refused');
   });
 
+  test('unpairedPaths fires on a generated copy changed WITHOUT its source, and is silent on a regeneration', () => {
+    const copy = entry('copy', { unpairedPaths: [{ path: '.claude/skills/', source: 'skills/' }] });
+    const rec = (p) => ({ path: p, oldPath: null, status: 'modified', added: ['x'], removed: [] });
+    const fire = (paths) => matchEntries({ entries: [copy], mode: 'diff', diffFiles: paths.map(rec) });
+    const alone = fire(['.claude/skills/ship/SKILL.md']);
+    assert.equal(alone.length, 1, 'a hand-edited copy fires');
+    assert.match(alone[0].evidence[0], /without skills\/ship\/SKILL\.md/);
+    assert.equal(fire(['skills/ship/SKILL.md', '.claude/skills/ship/SKILL.md']).length, 0, 'a regeneration (copy + source) is silent');
+    assert.equal(fire(['skills/ship/SKILL.md']).length, 0, 'a source edit alone is silent');
+    assert.equal(fire(['skills/cycle/SKILL.md', '.claude/skills/ship/SKILL.md']).length, 1, 'pairing is per file: another skill\'s source does not pair it');
+    // Files mode (the pre-edit step) uses the same pairing over the planned paths.
+    assert.equal(matchEntries({ entries: [copy], mode: 'files', files: ['.claude\\skills\\ship\\SKILL.md'] }).length, 1);
+    assert.equal(matchEntries({ entries: [copy], mode: 'files', files: ['skills/ship/SKILL.md', '.claude/skills/ship/SKILL.md'] }).length, 0);
+    const parse = (trigger) => ChecklistFileSchema.safeParse({ version: 1, entries: [{ ...copy, trigger }] }).success;
+    assert.equal(parse({ unpairedPaths: [{ path: '.claude/skills/', source: 'skills/' }] }), true, 'unpairedPaths alone is a trigger');
+    assert.equal(parse({ unpairedPaths: [{ path: '.claude/skills', source: 'skills/' }] }), false, 'a prefix must end in /');
+    assert.equal(parse({ unpairedPaths: [{ path: '.claude/skills/' }] }), false, 'a pair needs its source');
+  });
+
   test('an unresolvable base is a structured failure, never "no matches", and records nothing', () => {
     const dir = makeRepo({ 'a.mjs': 'x\n' });
     const log = path.join(dir, 'fires.jsonl');
