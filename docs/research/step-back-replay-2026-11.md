@@ -7,6 +7,8 @@
   step-back ships on-demand (`audit-structural-card.mjs --step-back`), never as an automatic round gate.
 - **Spend (metered from provider usage)**: **$4.77** of a $20 hard stop (18 calls). Preflight upper bound was $17.51.
 
+Population: measured from 1 store — d5a9d07b repo-scoped (self).
+
 ## 1. What ran
 
 | Item | Value |

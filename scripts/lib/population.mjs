@@ -82,6 +82,7 @@ export const EXEMPT_STORE_CLIS = Object.freeze([
   { file: 'scripts/ship-commit.mjs', reason: 'commit provenance gate; "verdict" is the gate outcome for one commit, store used only for schema realization' },
   { file: 'scripts/ship-train.mjs', reason: 'ship-train base-pinning verdict for a set of PRs; no store population is measured' },
   { file: 'scripts/slice-recurrence-check.mjs', reason: 'one-shot recurrence check over this repo rows for one file; no cross-store claim' },
+  { file: 'scripts/step-back-replay.mjs', reason: 'single-store research harness over this repo own audit rows (a read-only export); its verdict is published in docs/research with its population line, no cross-store claim' },
 ]);
 
 function fail(msg) { throw new TypeError(`population: ${msg}`); }

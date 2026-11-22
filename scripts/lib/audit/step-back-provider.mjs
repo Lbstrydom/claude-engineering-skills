@@ -13,6 +13,7 @@
  * @module scripts/lib/audit/step-back-provider
  */
 import { resolveModel } from '../model-resolver.mjs';
+import { normalizeGeminiUsage } from '../gemini-usage.mjs';
 
 export const STEP_BACK_ARM_MODELS = Object.freeze({ same: 'latest-gpt', different: 'latest-pro' });
 export const STEP_BACK_MAX_OUTPUT_TOKENS = 4000;
@@ -42,7 +43,6 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
     call: async ({ system, user }) => {
       const ai = client || await (await import('../llm-wrappers.mjs')).getGeminiClient();
       if (!ai) throw new Error('no Gemini route (GEMINI_API_KEY unset)');
-      const { normalizeGeminiUsage } = await import('../gemini-usage.mjs');
       const r = await ai.models.generateContent({ model, contents: user, config: { systemInstruction: system, maxOutputTokens: STEP_BACK_MAX_OUTPUT_TOKENS, responseMimeType: 'application/json' } });
       const u = normalizeGeminiUsage(r.usageMetadata);
       return { text: r.text ?? '', usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, usageMissing: u.usageMissing } };
