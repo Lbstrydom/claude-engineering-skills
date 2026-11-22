@@ -120,3 +120,22 @@ describe('applySources — append-only path unchanged', () => {
     assert.deepEqual(conflict.files, ['docs/log.md']);
   });
 });
+
+describe('one label rule for a train that stopped (render-train, land probe, tested-together)', () => {
+  it('conflictVerdict: CONFLICT only for a merge/append-only conflict reason', async () => {
+    const { conflictVerdict } = await import('../scripts/lib/fleet/render-train.mjs');
+    assert.equal(conflictVerdict({ sourceId: 's1', reason: 'merge conflict' }), 'CONFLICT at s1');
+    assert.equal(conflictVerdict({ sourceId: 's1', reason: 'append-only conflict — GitHub would refuse it too' }), 'CONFLICT at s1');
+    assert.equal(conflictVerdict({ sourceId: 's1', reason: 'merge failed (not a conflict): git merge failed to run: spawnSync git ENOENT' }), 'STOPPED (not a confirmed conflict) at s1');
+    assert.equal(conflictVerdict({ sourceId: 's1', reason: 'conflict list unavailable: x' }), 'STOPPED (not a confirmed conflict) at s1');
+  });
+  it('the status hint and the rendered train use it', async () => {
+    const { testedTogetherLine } = await import('../scripts/lib/fleet/tested-together.mjs');
+    const { renderBuilt } = await import('../scripts/lib/fleet/render-train.mjs');
+    const mk = (reason) => ({ trainId: 't', conflict: { sourceId: 's1', reason, files: [] }, sources: [], tierResults: [], testCommand: [], worktree: 'w' });
+    assert.match(testedTogetherLine({ count: 2, tested: true, by: mk('merge failed (not a conflict): x') }), /STOPPED \(not a confirmed conflict\) at s1/);
+    assert.match(testedTogetherLine({ count: 2, tested: true, by: mk('merge conflict') }), /: CONFLICT at s1/);
+    const txt = renderBuilt({ train: { ...mk('merge failed (not a conflict): x'), phase: 'conflict', mergeMethod: 'pr', destination: { remote: 'origin', ref: 'main' }, baseOid: 'a'.repeat(40), result: 'none', notes: [] }, approvability: { ok: false, reason: 'r' }, cmd: 'fleet' });
+    assert.match(txt, /STOPPED \(not a confirmed conflict\) at s1: merge failed/);
+  });
+});

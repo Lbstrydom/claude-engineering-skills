@@ -11,6 +11,7 @@
  *
  * @module scripts/lib/fleet/tested-together
  */
+import { conflictVerdict } from './render-train.mjs';
 
 /** The ready (id, oid) pairs `land` would take, from a `buildStatus` result. */
 export const readySet = (status) => status.items
@@ -55,7 +56,7 @@ export function testedTogetherLine(r, { cmd = 'fleet', probeTier = null } = {}) 
   if (!r) return null;
   if (r.tested) {
     const t = r.by;
-    const verdict = t.conflict ? `CONFLICT at ${t.conflict.sourceId}` : t.result ?? 'none';
+    const verdict = t.conflict ? conflictVerdict(t.conflict) : t.result ?? 'none';
     const what = (t.tierResults ?? []).map((x) => x.name).join('+') || 'no tier';
     return `ready set (${r.count} branches) tested together in ${t.trainId} (${what}): ${verdict}`;
   }

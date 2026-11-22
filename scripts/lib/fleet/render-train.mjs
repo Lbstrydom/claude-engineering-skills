@@ -12,6 +12,14 @@ import { printable } from './eol-flips.mjs';
 const o12 = (o) => String(o ?? '?').slice(0, 12);
 
 /** What each non-terminal phase still needs (status lists these). */
+/**
+ * The ONE label rule for a train that stopped while applying a source: "CONFLICT" only when the reason says the tree
+ * conflicted (applySources' 'merge conflict' / 'append-only conflict'); a spawn failure or any other stop is not one.
+ * @param {{sourceId?: string, reason?: string}} c
+ */
+export const conflictVerdict = (c) =>
+  `${/^(?:merge conflict|append-only conflict)/.test(c?.reason ?? '') ? 'CONFLICT' : 'STOPPED (not a confirmed conflict)'} at ${c?.sourceId}`;
+
 export function trainNextStep(train, cmd) {
   const id = train.trainId;
   switch (train.phase) {
@@ -58,7 +66,7 @@ export function renderBuilt({ train, approvability, cmd }) {
   L.push('  sources (landing order):');
   train.sources.forEach((s, i) => L.push(`    ${i + 1}. ${s.id} @ ${o12(s.oid)}${s.prNumber ? `  (PR #${s.prNumber})` : ''}`));
   if (train.candidate) L.push(`  candidate ${o12(train.candidate.oid)} (tree ${o12(train.candidate.tree)})`);
-  if (train.conflict) L.push(`  ${/^(?:merge conflict|append-only conflict)/.test(train.conflict.reason ?? '') ? 'CONFLICT' : 'STOPPED (not a confirmed conflict)'} at${train.conflict.sourceId}: ${train.conflict.reason}${train.conflict.files?.length ? ` — ${train.conflict.files.join(', ')}` : ''} (worktree left for inspection: ${train.worktree})`);
+  if (train.conflict) L.push(`  ${conflictVerdict(train.conflict)}: ${train.conflict.reason}${train.conflict.files?.length ? ` — ${train.conflict.files.join(', ')}` : ''} (worktree left for inspection: ${train.worktree})`);
   if (train.conflict?.stderr) L.push(`    git exited ${train.conflict.status ?? 'without a status'}: ${train.conflict.stderr.split('\n')[0]}`);
   if (train.depsChanged !== null && train.depsChanged !== undefined) L.push(`  dependencies changed vs base: ${train.depsChanged}`);
   for (const t of train.tierResults ?? []) L.push(`  tier ${t.name}: ${t.result}${t.reason ? ` (${t.reason})` : ''}${t.reran ? ' [after rerun]' : ''}  log ${t.logPath ?? '-'}${t.note ? `\n    note: ${t.note}` : ''}${t.cleanupWarning ? `\n    warn: cleanup after the tier exited failed (${t.cleanupWarning}) — a process it started may still be running` : ''}`);
