@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { OBSERVED_FILE, ObservedDepsSchema } from './lib/observed-deps.mjs';
 import { loadCoverageConfig } from './lib/symbol-index/domain-tagger.mjs';
-import { coverageGateExitCode, GRAPH_STATUS } from './lib/symbol-index/graph-verdict.mjs';
+import { assessMeasurementAge, coverageGateExitCode, GRAPH_STATUS } from './lib/symbol-index/graph-verdict.mjs';
 import { log } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
@@ -117,6 +117,23 @@ function main() {
 
   const verdict = envelope.coverage?.verdict
     ?? { status: GRAPH_STATUS.UNKNOWN, reason: 'not_measured' };
+
+  // A verdict is a statement about the graph that was MEASURED, and `arch:render` reuses an envelope it did not
+  // re-extract: the pre-push sandbox read one dated 63 days earlier and printed VERIFIED. Age is judged on the
+  // measurement's own `measuredAt`, never on the file's mtime (a copy resets mtime and keeps the stale content).
+  const age = assessMeasurementAge({ measuredAt: envelope.coverage?.measuredAt });
+  const ageLabel = age.state === 'unmeasured'
+    ? 'measuredAt is missing or not a usable past date'
+    : `measured ${age.measuredAt} (${age.ageDays.toFixed(1)} days old, bound ${age.maxAgeDays})`;
+  if (age.state !== 'fresh' && config.enforce) {
+    log(`arch:coverage-gate: FAILED — the coverage measurement is ${age.state === 'stale' ? 'STALE' : 'UNMEASURED'}: ${ageLabel}.`);
+    log('  Under enforcement an old or undated measurement never passes: it describes a graph that may no longer exist.');
+    log('  Refresh it on the default branch: `npm run arch:refresh && npm run arch:render`.');
+    process.exit(2);
+  }
+  if (age.state !== 'fresh') {
+    log(`arch:coverage-gate: note — ${age.state === 'stale' ? 'stale' : 'unmeasured'} measurement (${ageLabel}); this would FAIL under enforcement`);
+  }
 
   const exitCode = coverageGateExitCode(verdict, config);
   const label = `${verdict.status.toUpperCase()}${verdict.reason ? ` (${verdict.reason})` : ''}`;
