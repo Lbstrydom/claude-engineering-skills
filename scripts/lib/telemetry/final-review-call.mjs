@@ -50,7 +50,7 @@ export async function recordFinalReviewCall({ runId, repoId = null, model, provi
         input_tokens: usage?.input_tokens ?? usage?.inputTokens,
         cached_tokens: usage?.cached_tokens ?? usage?.cachedTokens,
         output_tokens: usage?.output_tokens ?? usage?.outputTokens,
-        reasoning_tokens: usage?.reasoning_tokens ?? usage?.reasoningTokens,
+        reasoning_tokens: usage?.reasoning_tokens ?? usage?.reasoningTokens ?? usage?.thinking_tokens,
       },
       latencyMs,
       costUsd: finalReviewCostUsd(usage, model),
