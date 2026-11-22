@@ -3,7 +3,7 @@
  * @fileoverview CLI — the step-back replay harness and its dataset freezer
  * (docs/plans/verification-lessons.md §2.4). A PAID run needs --confirm-spend, --max-usd and --results (a JSONL file
  * every paid call is appended to BEFORE scoring); --dry-run prints the planned calls and the preflight cost bound and makes none.
- * The bound is conservative, not absolute: characters cannot truly upper-bound tokens, so the hard stop is enforced on METERED
+ * The chars/2 figure is a PREFLIGHT ESTIMATE of tokens, not an upper bound; the hard stop is enforced on METERED actuals after each call, and a measured overrun raises the remaining per-arm bounds to 1.25x the largest measured call. The bound is conservative, not absolute: characters cannot truly upper-bound tokens, so the hard stop is enforced on METERED
  * actuals after each call. A paid run REFUSES an existing --results path (it never truncates); a resume is `score` only.
  *
  *   node scripts/step-back-replay.mjs export --branches a,b --since 2026-11-19 --out .audit/step-back-export.json   (READ-ONLY SELECTs, filtered by repo_id)
@@ -35,6 +35,12 @@ import { runReplay, scoreReplay, renderDryRun, renderScoreTable, readResultsJson
 const KNOWN_FLAGS = ['--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
 export const EXIT_BUDGET_STOP = 5;
 
+/** Append + fsync the descriptor: once this returns, the record has been handed to the OS and flushed to the device (fsync), not merely buffered in this process. A power loss mid-call can still lose the call in flight, never an earlier one. */
+function appendDurably(file, text) {
+  const fd = fs.openSync(file, 'a');
+  try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
 const writeJson = (p, obj) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`); };
 
 /** READ-ONLY repo id lookup (a plain SELECT; never `resolveRepoForStoreResult`, which can INSERT a repo row). */
@@ -55,11 +61,21 @@ async function withOneConnection(fn) {
   try { return await fn((sql, params) => client.query(sql, params)); } finally { client.release(); }
 }
 
+/** The three input files whose hashes the results header records, so `score` can refuse a swapped dataset or scoring file. */
+function inputHashesOf({ datasetPath, dataset, readBytes = (p) => fs.readFileSync(p) }) {
+  return { datasetSha256: sha256Hex(readBytes(datasetPath)), scoringSha256: sha256Hex(readBytes(scoringPathFor(datasetPath))), exportSha256: dataset.inputs?.exportSha256 ?? null };
+}
+
 function scoreFrom({ datasetPath, resultsPath, arms, deps }) {
   const parsed = readResultsJsonl(fs.readFileSync(resultsPath, 'utf8'));
+  const rec = parsed.inputs;
+  if (!rec?.datasetSha256 || !rec?.scoringSha256) throw new ArgvError('step-back-replay score: the results header records no dataset/scoring hashes; it cannot be verified against --dataset.');
+  const have = inputHashesOf({ datasetPath, dataset: JSON.parse(fs.readFileSync(datasetPath, 'utf8')), readBytes: deps.readBytes });
+  if (have.datasetSha256 !== rec.datasetSha256 || have.scoringSha256 !== rec.scoringSha256) throw new ArgvError('step-back-replay score: --dataset or its scoring file does not match the hashes recorded in the results header (a different freeze); refusing to score.');
+  if (rec.exportSha256 && have.exportSha256 !== rec.exportSha256) throw new ArgvError('step-back-replay score: the dataset records a different export hash than the results header; refusing to score.');
   // Ground truth is read ONLY here, after every call, and only from the results file's perspective.
   const truth = (deps.readScoring || ((p) => JSON.parse(fs.readFileSync(p, 'utf8'))))(scoringPathFor(datasetPath)).truth;
-  return { parsed, score: scoreReplay({ calls: parsed.calls, truth, arms: arms || parsed.arms || REPLAY_ARMS, plan: parsed.plan, unmeasured: parsed.unmeasured }) };
+  return { parsed, dataset: JSON.parse(fs.readFileSync(datasetPath, 'utf8')), score: scoreReplay({ calls: parsed.calls, truth, arms: arms || parsed.arms || REPLAY_ARMS, plan: parsed.plan, unmeasured: parsed.unmeasured }) };
 }
 
 const summaryOf = (score) => Object.entries(score.arms).map(([a, s]) => `${a}: ${s.verdict} (early ${s.earlyStops}, false ${s.falseStops}, invalid ${s.invalidOutputs}, truncated ${s.truncated ?? 0})`).join(' | ');
@@ -116,10 +132,10 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   if (cmd === 'score') {
     const datasetPath = flag('--dataset'); const resultsPath = flag('--results');
     if (!datasetPath || !resultsPath) throw new ArgvError('step-back-replay score: --dataset and --results are required.');
-    const { parsed, score } = scoreFrom({ datasetPath, resultsPath, deps });
+    const { parsed, dataset: scoredDataset, score } = scoreFrom({ datasetPath, resultsPath, deps });
     const out = flag('--out');
     if (out) {
-      const forbidden = [datasetPath, scoringPathFor(datasetPath), resultsPath, parsed.dataset?.exportPath, flag('--spec')].filter(Boolean).map((p) => path.resolve(p));
+      const forbidden = [datasetPath, scoringPathFor(datasetPath), resultsPath, scoredDataset.exportPath, scoredDataset.inputs?.specPath, flag('--spec')].filter(Boolean).map((p) => path.resolve(p));
       if (forbidden.includes(path.resolve(out))) throw new ArgvError('step-back-replay score: --out must not be the results file or any input (dataset, scoring, export, spec).');
     }
     if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, spentUsd: parsed.spentUsd, stopped: parsed.stopped, score });
@@ -153,8 +169,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     fs.writeFileSync(target, '', { flag: 'wx' });
   }
   // Every record is appended (and flushed by the synchronous write) as it is produced: a later failure cannot lose paid output.
-  const onRecord = dryRun ? undefined : (rec) => fs.appendFileSync(resultsPath, `${JSON.stringify(rec)}\n`);
-  const res = await runReplay({ dataset, arms, maxUsd, dryRun, deps: { ...deps, onRecord } });
+  const onRecord = dryRun ? undefined : (rec) => appendDurably(resultsPath, `${JSON.stringify(rec)}\n`);
+  const inputHashes = dryRun ? null : inputHashesOf({ datasetPath, dataset, readBytes: deps.readBytes });
+  const res = await runReplay({ dataset, arms, maxUsd, dryRun, deps: { ...deps, onRecord, inputHashes } });
   if (dryRun) {
     // The pinned-sdk question, asked of the one oracle (isClaudeAvailableFor('sdk') via claudeAvailability); never an env var.
     const sdkAvailable = deps.sdkAvailable ?? claudeAvailability('sdk').available;

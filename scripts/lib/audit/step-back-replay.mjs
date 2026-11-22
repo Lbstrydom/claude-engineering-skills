@@ -59,6 +59,8 @@ export function upperBoundUsd({ modelId, inputChars, outputCeilingTokens = STEP_
   return (inputTokens * rate.input + outputCeilingTokens * rate.output) / 1_000_000;
 }
 
+export const OVERRUN_FACTOR = 1.25;
+export const BOUND_NOTE = 'chars/2 is a PREFLIGHT estimate of tokens, not an upper bound; the hard stop is enforced on METERED actuals after each call.';
 export const REPLAY_ARMS = Object.freeze(['none', 'same', 'different', 'higher']);
 export const PAID_ARMS = Object.freeze(['same', 'different', 'higher']);
 export const ADOPTION_RULE = Object.freeze({ maxFalseStops: 0, minEarlyStops: 2 });
@@ -161,14 +163,16 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
   const base = { plan: publicPlan, unmeasured, unrecoverable, controls: prepared.controls || [], estimatedUsd, upperBoundTotalUsd: estimatedUsd, preparedPrs: items.length };
   if (dryRun) return { ...base, calls: [], spentUsd: 0, stopped: null };
 
-  deps.onRecord?.({ type: 'plan', plan: publicPlan, maxUsd, arms });
+  deps.onRecord?.({ type: 'plan', plan: publicPlan, maxUsd, arms, inputs: deps.inputHashes ?? null });
   for (const [arm, reason] of Object.entries(unmeasured)) deps.onRecord?.({ type: 'unmeasured', arm, reason });
-  const calls = []; let spent = 0; let stopped = null;
+  const calls = []; let spent = 0; let stopped = null; const maxMeasured = {};
   for (const row of plan) {
     const { item, ...meta } = row;
     const emit = (c) => { calls.push(c); deps.onRecord?.({ type: 'call', ...c }); };
-    if (stopped || spent + row.upperBoundUsd > maxUsd) {
-      stopped ||= { reason: 'max-usd', detail: `spent $${spent.toFixed(4)} + upper bound $${row.upperBoundUsd.toFixed(4)} would exceed the $${maxUsd} cap`, before: `PR #${row.pr} R${row.checkpoint} ${row.arm}` };
+    // A measured overrun raises the remaining bounds: never below 1.25x the largest MEASURED call of the same arm so far.
+    const bound = Math.max(row.upperBoundUsd, OVERRUN_FACTOR * (maxMeasured[row.arm] || 0));
+    if (stopped || spent + bound > maxUsd) {
+      stopped ||= { reason: 'max-usd', detail: `spent $${spent.toFixed(4)} + upper bound $${bound.toFixed(4)} would exceed the $${maxUsd} cap`, before: `PR #${row.pr} R${row.checkpoint} ${row.arm}` };
       emit({ ...meta, status: 'skipped-budget', action: null, costUsd: 0, spendSource: 'none' });
       continue;
     }
@@ -178,7 +182,8 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
     const exact = usage && !usage.usageMissing && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
       ? estimateCostUsd({ modelId: prov.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }) : null;
     // No usable usage (absent, unpriced model, or an error after the provider may have processed the call): charge the bound.
-    const cost = exact ?? row.upperBoundUsd;
+    const cost = exact ?? bound;
+    if (exact != null) maxMeasured[row.arm] = Math.max(maxMeasured[row.arm] || 0, exact);
     spent += cost;
     emit({
       ...meta, status: truncated ? 'truncated' : out.state === 'step-back-valid' ? 'ok' : out.state === 'step-back-invalid' ? 'invalid' : 'unavailable',
@@ -192,15 +197,15 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
 
 /** Rebuild `{plan, calls, spentUsd, stopped}` from the results JSONL text. Scoring reads THIS, so it can be re-run any time. */
 export function readResultsJsonl(text) {
-  let plan = []; let maxUsd = null; let arms = null; const calls = []; const unmeasured = {};
+  let plan = []; let maxUsd = null; let arms = null; let inputs = null; const calls = []; const unmeasured = {};
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
     const r = JSON.parse(line);
-    if (r.type === 'plan') { plan = r.plan; maxUsd = r.maxUsd; arms = r.arms; } else if (r.type === 'call') calls.push(r);
+    if (r.type === 'plan') { plan = r.plan; maxUsd = r.maxUsd; arms = r.arms; inputs = r.inputs ?? null; } else if (r.type === 'call') calls.push(r);
     else if (r.type === 'unmeasured') unmeasured[r.arm] = r.reason;
   }
   const stoppedCall = calls.find((c) => c.status === 'skipped-budget');
-  return { plan, calls, maxUsd, arms, unmeasured, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : null };
+  return { plan, calls, maxUsd, arms, inputs, unmeasured, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : null };
 }
 
 const emptyCost = () => ({ totalUsd: 0, inputTokens: 0, outputTokens: 0, calls: 0, valid: 0, costPerEarlyStop: null, costPerFalseStop: null, costPerValidDecision: null, perCheckpoint: [] });
@@ -233,7 +238,8 @@ export function scoreReplay({ calls, truth, arms, plan, unmeasured = {} }) {
     const mine = calls.filter((c) => c.arm === arm);
     const idOf = (c) => `${c.pr}@${c.checkpoint}`;
     const plannedIds = new Set(plan.filter((p) => p.arm === arm).map(idOf));
-    const doneIds = new Set(mine.filter((c) => c.status === 'ok' || c.status === 'invalid').map(idOf));
+    // Completeness = every planned identity has a VALID decision: an invalid or truncated checkpoint leaves the arm incomplete.
+    const doneIds = new Set(mine.filter((c) => c.status === 'ok').map(idOf));
     const planned = plannedIds.size; const done = doneIds.size;
     // Completeness is the planned IDENTITY set against the completed one, never a count: a missing or an extra identity is incomplete.
     const identitiesMatch = planned > 0 && [...plannedIds].every((k) => doneIds.has(k)) && [...doneIds].every((k) => plannedIds.has(k));
@@ -263,7 +269,7 @@ export function scoreReplay({ calls, truth, arms, plan, unmeasured = {} }) {
     };
   }
   const badPrs = Object.values(truth).filter((t) => t.label === 'bad').length;
-  return { rule: { ...ADOPTION_RULE, ofBadPrs: badPrs }, arms: out };
+  return { rule: { ...ADOPTION_RULE, ofBadPrs: badPrs }, basis: BOUND_NOTE, arms: out };
 }
 
 /** The dry-run text: every planned call, the per-arm planned calls and upper bounds, and the estimated total; nothing sent. */
@@ -275,6 +281,7 @@ export function renderDryRun({ plan, unrecoverable, estimatedUsd, maxUsd = null,
   for (const [arm, a] of perArm) lines.push(`  arm ${arm}: model=${a.model} planned calls ${a.calls}, upper bound $${a.usd.toFixed(4)}`);
   for (const [arm, reason] of Object.entries(unmeasured)) lines.push(`  arm ${arm}: UNMEASURED, 0 planned calls (${reason})`);
   if (sdkAvailable !== null) lines.push(`higher arm: sdk available = ${sdkAvailable}`);
+  lines.push(BOUND_NOTE);
   lines.push(`planned calls: ${plan.length} (${preparedPrs} PR-checkpoints), UPPER-BOUND total $${estimatedUsd.toFixed(2)}${maxUsd ? ` against a hard stop of $${Number(maxUsd).toFixed(2)}` : ''}`);
   if (unrecoverable.length) lines.push(`unrecoverable (excluded, never imputed): ${unrecoverable.map((u) => `#${u.pr}${u.checkpoint ? ` R${u.checkpoint}` : ''} (${u.reason})`).join('; ')}`);
   if (controls.length) lines.push(`controls (no checkpoint, no call): ${controls.map((c) => `#${c.pr} (${c.rounds} rounds)`).join(', ')}`);

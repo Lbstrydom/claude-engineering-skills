@@ -166,3 +166,94 @@ test('adoption rule unchanged: falseStops 0 and earlyStops >= 2', () => {
   assert.equal(scoreReplay({ calls: [mk(1), mk(2)], truth, arms: ['higher'], plan }).arms.higher.verdict, 'adopted');
   assert.equal(scoreReplay({ calls: [mk(1)], truth, arms: ['higher'], plan: plan.slice(0, 1) }).arms.higher.verdict, 'not adopted');
 });
+
+// ---- audit round 1 -------------------------------------------------------------------------
+
+test('H4/M2: ANY invalid or truncated checkpoint makes the arm incomplete, never adopted, even with enough early stops', () => {
+  const truth = { 1: { label: 'bad', acceptedHighRounds: [1] }, 2: { label: 'bad', acceptedHighRounds: [1] }, 3: { label: 'bad', acceptedHighRounds: [1] } };
+  const plan = [1, 2, 3].map((pr) => ({ pr, checkpoint: 3, arm: 'same' }));
+  const c = (pr, status, action = 'stop') => ({ pr, checkpoint: 3, arm: 'same', status, action: status === 'ok' ? action : null });
+  for (const bad of ['invalid', 'truncated']) {
+    const s = scoreReplay({ calls: [c(1, 'ok'), c(2, 'ok'), c(3, bad)], truth, arms: ['same'], plan });
+    assert.equal(s.arms.same.earlyStops, 2);
+    assert.equal(s.arms.same.complete, false);
+    assert.match(s.arms.same.verdict, /incomplete/);
+  }
+});
+
+test('H7/H8: a partial or non-numeric usage object is usageMissing in every provider', async () => {
+  const same = createStepBackProvider('same', { resolve: (m) => m, client: { responses: { create: async () => ({ output_text: 'x', usage: { input_tokens: 5 } }) } } });
+  assert.equal((await same.call({ system: 's', user: 'u' })).usage.usageMissing, true);
+  const higher = createStepBackProvider('higher', { resolve: (m) => m, sdkAvailability: () => ({ available: true, error: null }), client: { messages: { create: async () => ({ content: [], usage: { input_tokens: 'many', output_tokens: 3 } }) } } });
+  assert.equal((await higher.call({ system: 's', user: 'u' })).usage.usageMissing, true);
+  const diff = createStepBackProvider('different', { resolve: (m) => m, client: { models: { generateContent: async () => ({ text: 'x', usageMetadata: { promptTokenCount: 9 } }) } } });
+  assert.equal((await diff.call({ system: 's', user: 'u' })).usage.usageMissing, true);
+  const full = createStepBackProvider('same', { resolve: (m) => m, client: { responses: { create: async () => ({ output_text: 'x', usage: { input_tokens: 5, output_tokens: 0 } }) } } });
+  assert.equal((await full.call({ system: 's', user: 'u' })).usage.usageMissing, false);
+  // and the replay charges such a call its bound, never $0
+  const w = world();
+  const res = await runReplay({ dataset: w.dataset, arms: ['same'], maxUsd: 5, deps: { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => ({ model: 'gpt-5.5', call: same.call }) } });
+  assert.equal(res.calls[0].spendSource, 'upper-bound');
+  assert.ok(res.calls[0].costUsd > 0);
+});
+
+test('H3: a measured overrun raises the remaining bound to 1.25x the largest measured call of the arm', async () => {
+  const w = world2();
+  let calls = 0;
+  // Estimated bound is ~0.12 (4000 out @ $30/M); the first call MEASURES $0.30 (10000 out tokens), so the next bound is 0.375.
+  const makeProvider = () => ({ model: 'gpt-5.5', call: async () => { calls++; return { text: GOOD, usage: { input_tokens: 0, output_tokens: 10000 } }; } });
+  const res = await runReplay({ dataset: w.dataset, arms: ['same'], maxUsd: 0.6, deps: { readExport: () => w.exp, openRevision: w.openRevision, makeProvider } });
+  // spent 0.30 + bound 0.375 > 0.6 => second call refused although its ESTIMATE (~0.12) alone would have fit.
+  assert.equal(calls, 1);
+  assert.equal(res.calls[1].status, 'skipped-budget');
+  assert.equal(res.stopped.reason, 'max-usd');
+});
+
+test('H2/M1/H5: results header records hashes; score refuses a different dataset or scoring file, and reads the export path from the dataset', async () => {
+  const w = world();
+  const results = path.join(w.dir, 'calls.jsonl');
+  const deps = { readExport: () => w.exp, readBytes: w.readBytes, openRevision: w.openRevision, makeProvider: () => ({ model: 'gpt-5.5', call: async () => ({ text: GOOD, usage: { input_tokens: 10, output_tokens: 10 } }) }) };
+  const orig = console.log; console.log = () => {};
+  try {
+    await main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '5', '--confirm-spend', '--results', results], deps);
+    const header = JSON.parse(fs.readFileSync(results, 'utf8').split('\n')[0]);
+    assert.match(header.inputs.datasetSha256, /^[0-9a-f]{64}$/);
+    assert.match(header.inputs.scoringSha256, /^[0-9a-f]{64}$/);
+    assert.equal(header.inputs.exportSha256, w.dataset.inputs.exportSha256);
+    assert.equal(await main(['score', '--dataset', w.dsPath, '--results', results], deps), 0);
+    // export path comes from the verified dataset: --out onto it is refused
+    await assert.rejects(() => main(['score', '--dataset', w.dsPath, '--results', results, '--out', w.dataset.exportPath], deps), /--out must not be/);
+    // a tampered scoring file is refused
+    const sp = scoringPathFor(w.dsPath);
+    fs.writeFileSync(sp, `${fs.readFileSync(sp, 'utf8')} `);
+    await assert.rejects(() => main(['score', '--dataset', w.dsPath, '--results', results], deps), /does not match the hashes/);
+  } finally { console.log = orig; }
+});
+
+test('M3: every record is fsynced after its append', async () => {
+  const w = world();
+  const results = path.join(w.dir, 'fs.jsonl');
+  const synced = []; const real = fs.fsyncSync; fs.fsyncSync = (fd) => { synced.push(fd); return real(fd); };
+  const orig = console.log; console.log = () => {};
+  try {
+    await main(['run', '--dataset', w.dsPath, '--arms', 'same', '--max-usd', '5', '--confirm-spend', '--results', results], { readExport: () => w.exp, readBytes: w.readBytes, openRevision: w.openRevision, makeProvider: () => ({ model: 'gpt-5.5', call: async () => ({ text: GOOD, usage: { input_tokens: 1, output_tokens: 1 } }) }) });
+  } finally { console.log = orig; fs.fsyncSync = real; }
+  assert.equal(synced.length, fs.readFileSync(results, 'utf8').trim().split('\n').length);
+});
+
+test('H6: the dry-run and the score state that chars/2 is an estimate and the hard stop is on metered actuals', () => {
+  assert.match(renderDryRun({ plan: [], unrecoverable: [], estimatedUsd: 0 }), /PREFLIGHT estimate.*METERED actuals/);
+  assert.match(scoreReplay({ calls: [], truth: {}, arms: ['none'], plan: [] }).basis, /METERED actuals/);
+});
+
+/** Two checkpoints (R3 and R6) so a second call exists. */
+function world2() {
+  const runs = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `r${n}`, branch: 'bb', audited_sha: SHA(String(n)), created_at: at(8 + n), plan_file: 'plan.md' }));
+  const findings = [{ id: 'F1', run_id: 'r1', finding_fingerprint: 'fp1', severity: 'HIGH', category: 'c', primary_file: 'src/a.mjs', detail_snapshot: 'd', round_raised: 1, created_at: at(10) }];
+  const exp = { version: 1, since: '2026-11-19', branches: ['bb'], runs, findings, events: [] };
+  const w = world();
+  const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const { dataset } = freezeFromExport({ exp, exportPath: 'x.json', inputs: { exportSha256: sha('EXPORT-BYTES'), specPath: 'spec.json', specSha256: sha('SPEC-BYTES') }, spec: { prs: [{ pr: 1, label: 'bad', branch: 'bb', runIds: runs.map((r) => r.id) }] } });
+  return { ...w, dataset, exp };
+}
+

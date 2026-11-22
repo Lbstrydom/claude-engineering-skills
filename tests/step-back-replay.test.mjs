@@ -157,7 +157,7 @@ test('scoring: adopted only with falseStops = 0 and earlyStops >= 2; first stop 
   assert.deepEqual([s.rule.maxFalseStops, s.rule.minEarlyStops, s.rule.ofBadPrs], [ADOPTION_RULE.maxFalseStops, ADOPTION_RULE.minEarlyStops, 3]);
   // Only one early stop -> not adopted; an invalid output counts and never stops; a missing call makes the arm incomplete.
   const one = scoreReplay({ calls: [call('same', 1, 3, 'stop'), call('same', 2, 3, null, 'invalid'), call('same', 2, 6, 'defect'), call('same', 3, 3, 'defect'), call('same', 5, 3, 'defect')], truth, arms: ['same'], plan: plan.filter((p) => p.arm === 'same') });
-  assert.deepEqual([one.arms.same.earlyStops, one.arms.same.invalidOutputs, one.arms.same.verdict], [1, 1, 'not adopted']);
+  assert.deepEqual([one.arms.same.earlyStops, one.arms.same.invalidOutputs, one.arms.same.verdict], [1, 1, 'incomplete (not adopted)']);  // an invalid checkpoint leaves the arm incomplete (R1 H4)
   const partial = scoreReplay({ calls: calls.slice(0, 3), truth, arms: ['same'], plan: plan.filter((p) => p.arm === 'same') });
   assert.equal(partial.arms.same.verdict, 'incomplete (not adopted)');
 });

@@ -30,6 +30,13 @@ export const STEP_BACK_GEMINI_THINKING_BUDGET = 3000;
 /** maxOutputTokens for Gemini covers the thinking budget PLUS the answer, so it is also the real output ceiling. */
 export const STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS = STEP_BACK_GEMINI_THINKING_BUDGET + STEP_BACK_MAX_OUTPUT_TOKENS;
 
+const isCount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+/** Usage with BOTH counts present and numeric, else `usageMissing: true` (the call is then charged its upper bound, never $0). */
+function usageOf(inTok, outTok) {
+  const ok = isCount(inTok) && isCount(outTok);
+  return { input_tokens: isCount(inTok) ? inTok : 0, output_tokens: isCount(outTok) ? outTok : 0, usageMissing: !ok };
+}
+
 /**
  * @param {'same'|'different'|'higher'} arm
  * @param {{client?: object, resolve?: Function, createClient?: Function, sdkAvailability?: () => {available: boolean, error: string|null}}} [seams]
@@ -46,7 +53,7 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         const c = client || await (await import('../openai-client.mjs')).createOpenAIClient({ purpose: 'gpt' });
         const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS });
         const truncated = r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens';
-        return { text: r.output_text ?? '', truncated, usage: { input_tokens: r.usage?.input_tokens ?? 0, output_tokens: r.usage?.output_tokens ?? 0, usageMissing: !r.usage } };
+        return { text: r.output_text ?? '', truncated, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
       },
     };
   }
@@ -64,7 +71,7 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         const c = client || await createClient({ backend: 'sdk' });
         const r = await c.messages.create({ model, max_tokens: STEP_BACK_MAX_OUTPUT_TOKENS, system, messages: [{ role: 'user', content: user }] });
         const text = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-        return { text, truncated: r.stop_reason === 'max_tokens', usage: { input_tokens: r.usage?.input_tokens ?? 0, output_tokens: r.usage?.output_tokens ?? 0, usageMissing: !r.usage } };
+        return { text, truncated: r.stop_reason === 'max_tokens', usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
       },
     };
   }
