@@ -672,6 +672,130 @@
         "tests/helpers/git-bash.mjs",
         "tests/helpers/git.mjs"
       ]
+    },
+    {
+      "file": "tests/fleet-ci-admission.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 131671,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json",
+        "scripts/lib/ledger/**",
+        "scripts/lib/pinned-worktree/**"
+      ]
+    },
+    {
+      "file": "tests/fleet-land-ship-batch.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 112842,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json",
+        "scripts/lib/ledger/**",
+        "scripts/lib/pinned-worktree/**"
+      ]
+    },
+    {
+      "file": "tests/fleet-rollup.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 106602,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json",
+        "scripts/lib/ledger/**",
+        "scripts/lib/pinned-worktree/**",
+        "scripts/lib/store/**",
+        "scripts/lib/db/**"
+      ]
+    },
+    {
+      "file": "tests/fleet-lease-run-cli.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos",
+      "measuredMs": 72924,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json",
+        "scripts/lib/ledger/**",
+        "scripts/lib/pinned-worktree/**",
+        "scripts/lib/store/**",
+        "scripts/lib/db/**",
+        "scripts/lib/spawn-target.mjs"
+      ]
+    },
+    {
+      "file": "tests/fleet-serial-golden.test.mjs",
+      "why": "fleet family: spawns scripts/fleet.mjs against throwaway repos; replays tests/fixtures/fleet-serial-golden.json",
+      "measuredMs": 68747,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/fleet.mjs",
+        "scripts/lib/fleet/**",
+        "tests/helpers/fleet-*.mjs",
+        "tests/helpers/git.mjs",
+        "tests/fixtures/fleet/**",
+        ".fleet.json",
+        "scripts/lib/ledger/**",
+        "scripts/lib/pinned-worktree/**",
+        "tests/fixtures/fleet-serial-golden.json"
+      ]
+    },
+    {
+      "file": "tests/prepush-hook-bounded-steps.test.mjs",
+      "why": "prepush-hook family: drives the generated pre-push hook body and prepush-step runner against throwaway remotes",
+      "measuredMs": 113883,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/install-prepush-hook.mjs",
+        "scripts/prepush-step.mjs",
+        "scripts/lib/prepush-*.mjs",
+        "scripts/lib/push-range.mjs",
+        "scripts/lib/audit/**",
+        "scripts/lib/fleet/lease*.mjs",
+        ".githooks/**",
+        "tests/lib/**",
+        "tests/helpers/git.mjs",
+        "scripts/check-plan-status.mjs",
+        "scripts/lib/plan-*.mjs",
+        "scripts/lib/db/**",
+        "scripts/lib/store/**"
+      ]
+    },
+    {
+      "file": "tests/prepush-hook-v14.test.mjs",
+      "why": "prepush-hook family: drives the generated pre-push hook body and prepush-step runner against throwaway remotes",
+      "measuredMs": 101990,
+      "measuredAt": "2026-11-22",
+      "reach": [
+        "scripts/install-prepush-hook.mjs",
+        "scripts/prepush-step.mjs",
+        "scripts/lib/prepush-*.mjs",
+        "scripts/lib/push-range.mjs",
+        "scripts/lib/audit/**",
+        "scripts/lib/fleet/lease*.mjs",
+        ".githooks/**",
+        "tests/lib/**",
+        "tests/helpers/git.mjs"
+      ]
     }
   ]
 }
