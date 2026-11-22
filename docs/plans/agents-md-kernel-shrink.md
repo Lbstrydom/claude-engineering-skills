@@ -201,7 +201,8 @@ relocation check and the targeted tests (§9).
   command and its output go in the Implementation Log. The script is a migration artifact kept in this plan (§13), not a
   repo gate; it is retired when the stages end.
 - **Gate fragments:** `npm run gates:check`, plus a direct count that all 28 fragments are present before and after.
-- **Readers:** `node --test` on `tests/check-context-drift.test.mjs`, `tests/context-size.test.mjs`,
+- **Readers:** every test file that names AGENTS.md (`rg -l "AGENTS.md" tests --glob "*.test.mjs"`), which includes
+  `tests/checklist-gen-pilot.test.mjs` (the `ANCHORS` table); stage 1 first ran only `tests/check-context-drift.test.mjs`, `tests/context-size.test.mjs`,
   `tests/doc-sections.test.mjs`, `tests/accepted-debt-check.test.mjs`, `tests/gate-honesty.test.mjs`,
   `tests/gate-honesty-checklist-statedin.test.mjs`, `tests/check-docs-refs.test.mjs`,
   `tests/brainstorm-arch-context.test.mjs`, `tests/repo-context.test.mjs`, `tests/checklist-controls.test.mjs`. No full
@@ -266,6 +267,13 @@ worth doing is a decision for after stage 4, on measured numbers.
   differs between `b52a77f1` and main. `post --stage 1` → 40 units, 0 problems; the pre-merge dossier against the
   rebased manifest → `unit 32 ... found 0x`, exit 1 (the control); `pre` for stages 2-4 → 0 problems. Measured after
   the merge: AGENTS.md **65944** chars (main's own AGENTS.md is 73660, so −7716 against main).
+- **CI fix (PR #456, run 45014511649)**: `tests/checklist-gen-pilot.test.mjs` "kernelEstimate anchors every entry" failed:
+  the checklist entry `provider-route-not-env-var` anchors on "An availability gate must ask whether a ROUTE exists"
+  (`ANCHORS` in `scripts/lib/checklist/pilot.mjs`), and the Azure stub had reworded it. The sentence is restored
+  word-for-word in the stub; the checklist source is unchanged. All 13 `ANCHORS` strings now resolve in AGENTS.md. The
+  targeted set in §9 had missed this test file; stages 2-4 run every test file that names AGENTS.md
+  (`rg -l "AGENTS.md" tests --glob "*.test.mjs"`, 159 files) and check the `ANCHORS` table before editing.
+  Measured: AGENTS.md **65970** chars (main 73660, −7690).
   **Lesson for stages 2-4**: the resident spec must list every clause of each tripwire, not its headline, before editing.
 - **Measured** (`node -e` over `fs.readFileSync('AGENTS.md','utf8').length`, the count `context:check` uses; the file is LF):
   AGENTS.md **73364 → 65743 chars, −7621 (−10.4%)**; with CLAUDE.md (2169, unchanged) the resident pair is 75533 → 67912.
