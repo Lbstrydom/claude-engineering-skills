@@ -161,8 +161,11 @@ function parseBatch(buf, specs) {
  * @param {string} oid the commit
  * @param {string[]} touched
  */
-export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIPTS } = {}) {
-  const ls = runGit(['ls-tree', '-r', '-z', '--full-tree', '--name-only', oid], cwd, { timeoutMs: 30_000 });
+export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIPTS, budgetMs = REACH_BUDGET_MS } = {}) {
+  // ONE end-to-end deadline: each git call gets only what is left, and the per-file reads check it too.
+  const deadline = Date.now() + budgetMs;
+  const left = () => Math.max(1, deadline - Date.now());
+  const ls = runGit(['ls-tree', '-r', '-z', '--full-tree', '--name-only', oid], cwd, { timeoutMs: left() });
   if (!ls.ok) return { ok: false, reason: `git ls-tree failed (${ls.reason})` };
   const repoFiles = ls.stdout.split('\0').filter(Boolean);
   const wanted = repoFiles.filter((f) => isScript(f) && !NOT_SOURCE.test(f) && !f.includes('\n'));
@@ -170,11 +173,10 @@ export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIP
   const specs = wanted.map((f) => `${oid}:${f}`);
   const res = spawnSync('git', ['cat-file', '--batch'], {
     cwd, env: { ...sanitizeGitEnv(cwd), GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C' },
-    input: `${specs.join('\n')}\n`, maxBuffer: 256 * 1024 * 1024, timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'],
+    input: `${specs.join('\n')}\n`, maxBuffer: 256 * 1024 * 1024, timeout: left(), stdio: ['pipe', 'pipe', 'pipe'],
   });
   if (res.error || res.status !== 0) return { ok: false, reason: `git cat-file --batch failed (${res.error?.message ?? `exit ${res.status}`})` };
   const text = parseBatch(res.stdout, specs);
-  const deadline = Date.now() + REACH_BUDGET_MS;
   const reach = testsLoading(touched, { repoFiles, readFile: (p) => { if (Date.now() > deadline) throw new Error('over the time budget'); const t = text.get(`${oid}:${p}`); if (t === undefined) throw new Error('not read'); return t; } });
   // Files skipped for lack of time are counted as unread: the caveat then says the list may be incomplete.
   return { ok: true, ...reach };

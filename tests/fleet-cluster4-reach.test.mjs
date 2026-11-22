@@ -168,6 +168,12 @@ describe('the reach describes the COMMIT, not the checkout', () => {
     assert.equal(r.ok, false);
     assert.match(r.reason, /scripts is more than the 1 this analysis reads/);
   });
+  it('one end-to-end budget: a spent budget is an unavailable reach or counted-unread files, never a hang or a silent partial', async () => {
+    const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const { fx, oid } = setup();
+    const r = testsLoadingAt(fx.repo, oid, ['tests/helpers/shared.mjs'], { budgetMs: 1 });
+    assert.ok(r.ok === false ? /timed out|failed/.test(r.reason) : r.unread > 0, JSON.stringify(r));
+  });
   it('an unknown commit is an unavailable reach with a reason, never an empty result', async () => {
     const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
     const { fx } = setup();
