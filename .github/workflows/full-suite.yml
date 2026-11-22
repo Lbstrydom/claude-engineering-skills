@@ -107,5 +107,27 @@ jobs:
       - name: Install Chromium for the extract integration test
         run: npx playwright install --with-deps chromium
 
+      # TEST_TIMING_KEEP makes the runner copy its per-file timing report to a file on THIS runner (never uploaded). The next
+      # step prints it into the job summary and the log, so a baseline refresh of .test-tiers.json can read per-file
+      # timings from CI (`node scripts/test-tier.mjs refresh-heavy --timing <saved log>`) instead of a 16-minute local run.
       - name: npm test
+        env:
+          TEST_TIMING_KEEP: ${{ runner.temp }}/test-timing.json
         run: npm test
+
+      # Observation only, and it must never change the verdict: `if: always()` so a failing suite still reports, and the
+      # command's own non-zero exit (a missing or partial report) is turned into a notice, and `continue-on-error` plus `|| true`
+      # on the prints mean nothing in this step (a full disk, a summary-size limit) can turn the job red. The step takes
+      # seconds; no artifact, no cache, no extra job.
+      - name: Test timing report (job summary)
+        if: always()
+        continue-on-error: true
+        env:
+          TIMING_FILE: ${{ runner.temp }}/test-timing.json
+        run: |
+          if node scripts/test-tier.mjs timing-summary --timing "$TIMING_FILE" > "$RUNNER_TEMP/timing-summary.md"; then
+            cat "$RUNNER_TEMP/timing-summary.md" || true
+            cat "$RUNNER_TEMP/timing-summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "::notice title=audit-loop-no-measurement::test timing report unavailable or partial; no per-file timings from this run"
+          fi
