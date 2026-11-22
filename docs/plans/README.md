@@ -19,7 +19,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [AGENTS.md kernel shrink, staged (tripwire / pointer / dossier inventory)](./agents-md-kernel-shrink.md) | `In Progress` |  |
+| [AGENTS.md kernel shrink, staged (tripwire / pointer / dossier inventory)](./agents-md-kernel-shrink.md) | `In Progress` | stages 1-4 done (the staged shrink pauses here); stage 5 NOT SCHEDULED, pending Louis |
 | [Out-of-diff audit noise — a pre-existing tag (8a) and changed-chunk scoping (1c)](./audit-out-of-diff-noise.md) | `In Progress` | 8a and the 1c mechanism are built (1c is OFF by default); the recall campaign below has not run, so 1c stays… |
 | [One CI-evidence oracle for fleet landing (approve, serial, ship-batch, rollup)](./ci-evidence-oracle.md) | `Draft` |  |
 | [Coordinator-owned aggregate ship (one ship action per batch)](./coordinator-aggregate-ship.md) | `In Progress` |  |

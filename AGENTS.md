@@ -142,10 +142,9 @@
 > generated file lands in exactly ONE of two categories; never tracked-but-
 > unverified-and-volatile:
 > - **A — derived from external/mutable state OR carrying volatile provenance
->   (timestamps, HEAD shas) → gitignored.** Not source, and not a pure function of
->   committed source: `.audit-loop/domain-deps-observed.json`, `.audit-loop/cache/`,
->   `dashboard/*.html`, `scripts/.sync-manifest.json`, `docs/architecture-map.md`
->   (regenerate with `npm run arch:render`), `skills.manifest.json`.
+>   (timestamps, HEAD shas) → gitignored.** Not source, not a pure function of
+>   committed source: `.audit-loop/domain-deps-observed.json`, `dashboard/*.html`,
+>   `docs/architecture-map.md` (`npm run arch:render`), `skills.manifest.json`, …
 > - **B — a pure, deterministic function of committed source → committed AND
 >   freshness-verified in the pre-push `check`.** Regeneration must be
 >   byte-identical (no clocks/shas/network): `.claude/skills/**`
@@ -162,28 +161,24 @@
 <!-- arch-map-discoverability:end -->
 
 > **Design right-sizing — the simplest structurally-honest solution.** At any
-> non-trivial fork, reject BOTH cliffs: the **band-aid** (patch the symptom or
+> non-trivial fork, reject BOTH cliffs: the **band-aid** (patch the symptom, or
 > defer the real fix *because it's harder*) and the **over-engineering** (an
-> abstraction / config / artifact no *current* requirement needs). Forcing
-> question: *"what's the band-aid, what's the over-built version, and why is mine
-> the smallest thing that's a true function of the problem?"* `/plan` and
-> `/audit-code` carry the full check; a `defer` is honest only as a true scope
+> abstraction / config / artifact no *current* requirement needs). Ask: *"what's
+> the band-aid, what's the over-built version, and why is mine the smallest thing
+> that's a true function of the problem?"* A `defer` is honest only as a true scope
 > boundary or documented debt, **never because the correct fix is larger**.
 >
-> **Scope is decided by impact, not authorship (load-bearing test).** The
-> companion failure mode: dismissing a finding as "out-of-scope / pre-existing /
-> not introduced by this change" when the change being shipped actually *depends*
-> on the cited path. Authorship and plan-ownership are the wrong test; **impact**
-> is the right one — *does the correctness or stability of what I'm shipping ride
-> on this path?* If yes it is in-scope **for the fix/defer decision** even when
-> pre-existing, and a silent defer is the band-aid. A pre-existing finding in a
-> *changed* file is a yellow flag, and passing tests don't clear it — a green
-> suite only covers exercised paths. Legitimate `defer` requires naming the
-> **independence** (the new code does not call/depend on the cited path), not the
-> authorship; for a same-file finding, that the cited code does not share the SAME
-> column/constraint or the SAME transaction instance the new code depends on —
-> sharing a table or a broader boundary is not sufficient. `/audit-code` (Step 3)
-> and `/audit-plan` (Step 3) enforce this.
+> **Scope is decided by impact, not authorship (load-bearing test).** Do not dismiss
+> a finding as "out-of-scope / pre-existing / not introduced by this change" when the
+> change being shipped *depends* on the cited path: *does the correctness or
+> stability of what I'm shipping ride on it?* If yes it is in-scope **for the
+> fix/defer decision** even when pre-existing, and a silent defer is the band-aid.
+> A pre-existing finding in a *changed* file is a yellow flag; a green suite only
+> covers exercised paths. A `defer` must name the **independence** (the new code
+> does not call/depend on the cited path); for a same-file finding, that it does not
+> share the SAME column/constraint or the SAME transaction instance — sharing a
+> table or a broader boundary is not sufficient. `/plan`, `/audit-code` and
+> `/audit-plan` (Step 3) enforce both.
 
 > **Moved detail**: text cut from this file lives verbatim in [agents-md-dossiers.md](docs/reference/agents-md-dossiers.md) under the same H2 heading; the stub left here keeps the rule.
 
@@ -250,14 +245,14 @@ colocated `gate-contract.json` binding a stated gate to its enforcing code+test
 skill is a sibling — shared env vars and cloud audit store, distinct scopes.
 
 > **AN UNMEASURED ROUND MUST NOT WEAR A CLEAN ROUND'S CLOTHES.** A round that lost
-> every pass to Azure 429s printed `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 —
-> one word from a clean audit, and the convergence test reads only those three
-> numbers, so `/cycle` converges and ships. Pinned: `formatAuditSummaryLine`
-> refuses the counts-first shape for INCOMPLETE; `openai-audit.mjs` sets **exit 3**
-> (1 already means "the CLI errored"); `countFindings` folds INCOMPLETE into its
-> `failed` flag, so ONE predicate answers "is this round evidence". 429 is budgeted
-> apart from a generic transient (`retryAttemptsFor`/`nextRetryDelayMs`), and
-> `describeLostWrites` flags a `42P10`-shaped error as **store schema drift**.
+> every pass to Azure 429s printed `Verdict: INCOMPLETE | H:0 M:0 L:0`, exit 0 — one
+> word from a clean audit — and the convergence test reads only those numbers, so
+> `/cycle` converges and ships. Pinned: `formatAuditSummaryLine` refuses the
+> counts-first shape for INCOMPLETE; `openai-audit.mjs` sets **exit 3** (1 means
+> "the CLI errored"); `countFindings` folds INCOMPLETE into `failed`, so ONE
+> predicate answers "is this round evidence". 429 is budgeted apart from a generic
+> transient (`retryAttemptsFor`/`nextRetryDelayMs`); `describeLostWrites` flags a
+> `42P10`-shaped error as **store schema drift**.
 > [Detail](docs/reference/audit-internals.md)
 
 **Four imperatives the roster is too late to tell you.** **(1)** A new mechanical
@@ -388,25 +383,23 @@ Validate a diagram with `mcp__mermaid__generate_mermaid_diagram` (`outputType: "
 | Package | Version | Notes |
 |---------|---------|-------|
 | `zod` | **4.6.7** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
-| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged, live-verified on the 7.8.0 + zod 4.5.2 bump (2026-09-03); zod 4.6.5 (#115) and 4.6.7 (#294) are CI-verified only |
+| `openai` | **7.8.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged (live-verified 2026-09-03; later zod bumps CI-verified only) |
 | `@google/genai` | ^2.19.0 | `responseMimeType: 'application/json'` + `responseSchema` for structured output |
 | `dotenv` | 17.4.2 | Load via `lib/load-env.mjs`, never `dotenv/config` (cwd-only) |
 
 ## Architecture
 
 **Do not hand-maintain a module tree here** — [`docs/architecture-map.md`](docs/architecture-map.md)
-is the live, generated per-symbol index (bootstrap note at the top of this file);
-an inline tree goes stale silently, the one removed 2026-07-13 listing 2 test
-files against 100+ real. Layout in one line: `scripts/*.mjs` are CLI entry points,
-`scripts/lib/**` focused modules (split from the former `shared.mjs` monolith,
-still a backwards-compatible barrel), `tests/` the Node test-runner suite, and
-`.claude/skills/**` is generated from `skills/**`.
+is the live, generated per-symbol index; an inline tree goes stale silently (the
+one removed 2026-07-13 listed 2 test files against 100+ real). Layout:
+`scripts/*.mjs` are CLI entry points, `scripts/lib/**` focused modules
+(`shared.mjs` stays a backwards-compatible barrel), `tests/` the Node test-runner
+suite, `.claude/skills/**` is generated from `skills/**`.
 
-Per-module prose (openai-audit, gemini-review, the learning-store barrel) and the
-named patterns (adaptive sizing, semantic dedup, atomic persistence, the closed
-Gemini loop, …) live in
+Per-module prose and the named patterns (adaptive sizing, semantic dedup,
+atomic persistence, the closed Gemini loop, …) live in
 [`audit-internals.md`](docs/reference/audit-internals.md) — condensed out
-2026-07-20 having already rotted, exactly what the rule above prevents.
+2026-07-20 having rotted, exactly what the rule above prevents.
 
 ### Testing
 
