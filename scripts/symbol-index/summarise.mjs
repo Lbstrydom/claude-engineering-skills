@@ -224,9 +224,10 @@ async function summariseBatch(batch) {
     }
     return { summaries: out, health, lastParsed };
   } catch (err) {
-    logProgress(`batch failed: ${err.message} — falling back to null`);
+    const msg = String(err?.message || err || '') || 'unknown provider error';
+    logProgress(`batch failed: ${msg} — falling back to null`);
     const summaries = batch.map(() => null);
-    return { summaries, health: assessBatchCompleteness(summaries, undefined), error: err.message };
+    return { summaries, health: assessBatchCompleteness(summaries, undefined), failed: true, error: msg };
   }
 }
 
@@ -261,10 +262,19 @@ async function summariseBatch(batch) {
  */
 export async function summariseWithSplit(batch, once, budget) {
   budget.calls++;
-  const { summaries, health, error, lastParsed } = await once(batch);
+  // A rejected `once` (client construction, a non-Error throw) is a provider
+  // failure like a returned one: normalised to a NON-EMPTY diagnostic, and
+  // discriminated by `failed`, never by the message being truthy.
+  let r0;
+  try {
+    r0 = await once(batch);
+  } catch (err) {
+    r0 = { failed: true, error: String(err?.message || err || '') || 'unknown provider error' };
+  }
+  const { summaries, health, error, lastParsed } = r0;
   const results = batch.map(() => ({ summary: null }));
-  if (error) {
-    for (const r of results) r.reason = `provider error: ${error}`;
+  if (r0.failed || error !== undefined) {
+    for (const r of results) r.reason = `provider error: ${error || 'unknown provider error'}`;
     return results;
   }
   const redo = [];

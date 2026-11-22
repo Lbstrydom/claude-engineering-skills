@@ -69,6 +69,19 @@ describe('summariseWithSplit', () => {
     assert.match(res[0].reason, /provider error: boom/);
   });
 
+  it('a rejected provider call (empty message, non-Error, init failure) is a failure, not split', async () => {
+    for (const thrown of [new Error(''), 'plain string', undefined, null]) {
+      let n = 0;
+      const once = async () => { n++; throw thrown; };
+      const res = await summariseWithSplit(mk(6), once, budgetFor(6));
+      assert.equal(n, 1, `thrown=${String(thrown)} must not be retried in halves`);
+      assert.ok(res.every(r => r.summary === null && /^provider error: .+/.test(r.reason)));
+    }
+    const once2 = async () => ({ summaries: [null], health: { complete: false, missing: [1], truncated: false }, failed: true, error: '' });
+    const res2 = await summariseWithSplit(mk(1), once2, budgetFor(1));
+    assert.match(res2[0].reason, /provider error: unknown provider error/);
+  });
+
   it('the retry bound holds: <= 2n calls even when every call truncates', async () => {
     for (const n of [1, 2, 7, 50]) {
       const { once, calls } = stub({ k: 0, alwaysTruncate: true });
