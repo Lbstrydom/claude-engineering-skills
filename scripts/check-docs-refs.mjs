@@ -321,6 +321,8 @@ export const BASELINE = new Set([
   'AGENTS.md→scripts/.sync-owned.json',
   'docs/runbooks/consumer-adoption.md→scripts/.sync-owned.json',
   'docs/reference/consumer-repo-layout.md→scripts/.sync-owned.json',
+  // the AGENTS.md dossier holds the moved AGENTS.md text verbatim, so it cites the same path
+  'docs/reference/agents-md-dossiers.md→scripts/.sync-owned.json',
   // never-produced audit-summary, cited in an archived plan
   'docs/plans/architecture-intent-framework.md→docs/completed/architecture-intent-framework-audit-summary.md',
   // generated `--out` / never-produced experiment docs

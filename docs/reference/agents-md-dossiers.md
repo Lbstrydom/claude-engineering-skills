@@ -539,3 +539,281 @@ the response schema forbade outright.
   the Zod source: **a prompt that names a field is a claim about a contract you
   have not checked.** A required field must also be filled by every non-LLM
   constructor, so adding one is never a one-line change.
+
+## Project Overview
+
+<!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
+
+18 AI-pair-programming skills covering the development quality lifecycle, planning
+through code audit to live UX testing and shipping. Node.js, ESM only
+(`"type": "module"`); CLI scripts + skill files invoked by AI coding assistants.
+Renamed from `claude-audit-loop` in Phase E.
+
+## Skill Chain
+
+<!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
+
+18 skills; 16 run in this order: **plan → audit-plan → *(implement)* → audit-code
+→ ux-lock → deploy → the four UI lenses → ship**, with `/cycle` driving the whole
+chain and pausing for human implementation. The four lenses are **disjoint** and
+run together on a UI PR — click-test (page DOM) ∥ persona-test (journey) ∥
+nav-audit (system IA) ∥ visual-audit (paint). `/fleet` sits beside the chain,
+coordinating concurrent sessions cooperatively
+(`references/coordinator-playbook.md`); `/harness-retro` runs after sessions,
+proposing checks for failures that recur across them (propose, never apply).
+
+Diagram, per-skill scope and depth (modes, flags, wave/lens design invariants) and
+the naming convention: [`skill-roster.md`](../../docs/reference/skill-roster.md) — read
+it before renaming a skill or "simplifying" a wave.
+
+## Consumer-repo layout (isolation)
+
+<!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
+
+This repo's tooling deploys to consumers under **`scripts/.claude-skills/`**, not
+their natural `scripts/`, gitignored via a managed block in their root
+`.gitignore`. Untracked, so a fresh clone of a consumer needs `npm run sync --
+--target <name>` from THIS repo to hydrate it. **The `--` is load-bearing**:
+without it npm swallows `--target` and the sync writes into EVERY consumer
+instead of the named one (verified 2026-07-20).
+
+> **Upstream-owned — never patch the synced copy (governance).** A failure in a
+> consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: fix it HERE
+> + re-sync. The local edit is gitignored (invisible to review), overwritten next
+> sync, and leaves the bug live for every other consumer. Each synced file carries
+> a banner saying so (`sync-banner.mjs`); drift backstops and the
+> `.githooks/pre-push.local` recipe for repo-specific push gates (never the managed
+> hook): [consumer-adoption.md](../../docs/runbooks/consumer-adoption.md).
+>
+> **Consumers are not all on ONE store**, so **an unasked question must never
+> render as an empty result** — a single-store read is blind to a consumer (`/ship`
+> printed `0 open` against 8). Fan out with `npm run upstream:queues` /
+> `stores:drift`; name a store by `storeDescriptor` (fingerprint + consumers, never
+> a hostname — this repo is public). **An EMPTY DSN env var is the AIR-GAP signal**
+> (`airGapDbUrl`) — never "fix" it to fall through to `~/.audit-loop.env`.
+> [Detail](../../docs/reference/consumer-repo-layout.md)
+>
+> **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report
+> --affected-path <synced path>`; here: `npm run upstream:issues` →
+> `ack|fix|wont-fix|annotate|history`. **Every body and `--note` goes on stdin** —
+> a backtick in an argv note runs as command substitution and silently elides text
+> the append-only log cannot repair; `annotate` is the only legal repair, never a
+> second `fixed`. [consumer-adoption.md](../../docs/runbooks/consumer-adoption.md)
+> §Reporting an upstream bug.
+
+> **"Is this file mine to fix?" must be answerable OFFLINE**, and no single signal
+> answers it — git-ignore state, the content banner and the sync manifest each have
+> a hole. The one predicate is `createUpstreamOwnershipOracle`, unioning git-ignore
+> state with the **committed** `scripts/.sync-owned.json`; compare
+> **case-insensitively**. **`skills:hydrate` cannot run in CI by construction** and
+> FAILS there rather than exiting 0 having copied nothing. The three holes, and why
+> `debt:review` never leverage-ranks upstream-owned entries:
+> [consumer-repo-layout.md](../../docs/reference/consumer-repo-layout.md)
+
+> **Upstream bug, but you're blocked?** Patching upstream-owned *source* stays
+> forbidden; a **runtime/env/DB** unblock is OK if you report it, label it
+> `TEMP — pending upstream fix` and reconcile when the fix lands.
+> [consumer-adoption.md](../../docs/runbooks/consumer-adoption.md) §Blocked.
+
+> **Consumer divergence is DECLARED, never inferred — and the sync must never
+> revert it silently.** The **manifest hash, never HEAD**, is the three-way BASE;
+> standing divergence lives in the committed `.sync-overrides.json`
+> (`scripts/.claude-skills/**` is never claimable — that is an upstream report);
+> and the committed, append-only `.sync-receipt.json` is a deliberate
+> generated-artifact-policy exception, because its dirtiness is the only evidence
+> a sync ran. The three mechanics in full (refusal rules, `upstreamMoved`,
+> `--overwrite-diverged`) before you touch the sync:
+> [consumer-repo-layout.md](../../docs/reference/consumer-repo-layout.md) §Consumer
+> divergence · [Plan](../../docs/plans/consumer-sync-durability.md).
+
+### Sync mechanics — pointer
+
+Sync-behavior detail (the isolated subdir, the what-goes-where table, the
+managed-gitignore block, the `sync-*` module list):
+[`consumer-adoption.md`](../../docs/runbooks/consumer-adoption.md) §"Sync internals".
+One structural invariant stays here: **the sync layout's single source of truth is
+[`sync-path-map.mjs`](../../scripts/lib/sync-path-map.mjs)** — never hand-compute one.
+
+**A consumer's package manager is [`package-manager.mjs`](../../scripts/lib/package-manager.mjs)'s
+answer, never a hardcoded `npm`/`npx`** — the managers are not swappable, so two
+lockfiles + no `packageManager` field is **ambiguous and left alone**, never
+guessed. Adjudicate an install by RE-PROBING `node_modules`, never the exit code
+(pnpm exits non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install). The
+corepack/`.cmd` trap:
+[consumer-adoption.md](../../docs/runbooks/consumer-adoption.md) §Your package manager.
+
+### CLI smoke contract (`--selfcheck-relocation`)
+
+A CLI in `CLI_SMOKE_SET` implements the `--selfcheck-relocation` handler at the
+head of `main()` (CI fails if one lacks it); library modules get an import-test in
+[`relocation-guard.test.mjs`](../../tests/relocation-guard.test.mjs) instead. **The entry
+guard itself is `if (isInvokedAsScript(import.meta.url))`**
+([cli-entry.mjs](../../scripts/lib/cli-entry.mjs)) — never a hand comparison of
+`process.argv[1]` with `import.meta.url`. Node realpaths one side and not the
+other, so through a symlink or junction the hand guard is false and the CLI exits
+0 having run nothing (16 of 26 did, measured 2026-10-13); no smoke run goes
+through a link, so the census in
+[`cli-entry-guards.test.mjs`](../../tests/cli-entry-guards.test.mjs) is what enforces it.
+Snippet + current set: [consumer-repo-layout.md](../../docs/reference/consumer-repo-layout.md)
+§CLI smoke contract.
+
+## Architecture
+
+<!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
+
+### Testing
+
+Run: `npm test` (Node.js built-in test runner — the suite under `tests/`).
+**Measured 2026-09-04: 14,711 tests, 0 fail, 39 skipped, 9m16s** (`npm test`, on
+a linked worktree). Carry the date and the command — the anecdote in
+§verification-discipline is about this very row going 2.3x stale.
+
+#### Pre-push runs against a clean checkout, not the working tree
+
+The hook runs `check` in a throwaway worktree at the **commit being pushed**
+([`prepush-check.mjs`](../../scripts/prepush-check.mjs)) — never `git stash`, which
+yanks a concurrent session's files mid-edit. **A killed hook must fail CLOSED**:
+Git for Windows reads a signal-killed hook as exit 0, so the marked
+`fail-closed-on-signal` trap block stays byte-identical in both hooks. Why,
+escape hatches and #225: [`prepush-sandbox.md`](../../docs/runbooks/prepush-sandbox.md) §1, §8.
+
+**THIS repo's full suite runs in GitHub Actions, not on the shared machine.** CES
+is public, so `full-suite.yml` is its one full run per PR, and a local CES push is
+the **branch tier** by default (`.test-tiers.json`; `AUDIT_PREPUSH_TIER=full` and
+every push to `main` stay full). The Actions budget is gated by
+`tests/workflow-runner-labels.test.mjs`. Consumers get none of this — wine and
+storyline stay local-first. [Plan](../../docs/plans/ci-full-suite-actions.md) ·
+[runbook](../../docs/runbooks/gate-cost.md) §6.
+
+**A rerun may diagnose, never clear.** `ci-verdict` counts every attempt for the head sha, so a head that ever failed reads `failed` (`failed-then-rerun`, exit 4) even when a rerun is green; only a new commit clears it, never a retry, sleep or skip. [Plan](../../docs/plans/verification-lessons.md) §2.1.
+
+#### A spend-bearing run PINS its revision — it never shares the working tree
+
+The store refuses a snapshot whose arms disagree, so two died on 2026-08-17
+(~$13) — one to a rebase, one to a **concurrent session's commit**. Run ANY
+revision-stamped, spend-bearing job (arm-eval, solo-control, model-eval, replays)
+via `npm run fixture:create`. Two traps it does not remove: gitignored inputs are
+ABSENT, and **trust the store, not the fixture's local bake-off log**, which reads
+near-zero and looks like lost progress.
+[Runbook](../../docs/runbooks/pinned-revision-fixture.md)
+
+- **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
+  that *skips* on a missing input passes having read nothing. **Adding a check? Ask
+  whether it can go green in a clean checkout having checked nothing — if so it
+  needs a strictness flag, not a tolerated skip.** A sandbox setup failure is a
+  push failure, not a pass.
+
+- **`npm test` refuses a green it did not earn.** Node can report a suite as
+  `not ok` and still exit 0, so `adjudicateRun` ([run-tests.mjs](../../scripts/run-tests.mjs))
+  keys on the **consequence**, not the cause, and fails **closed** when its own
+  report is missing. [prepush-sandbox.md](../../docs/runbooks/prepush-sandbox.md) §2.3.
+
+- **One range, one resolver** — [`push-range.mjs`](../../scripts/lib/push-range.mjs).
+  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD~1`);
+  an unresolvable explicit base fails hard, never demotes to inference.
+  [prepush-sandbox.md](../../docs/runbooks/prepush-sandbox.md) §3.
+
+- **Hashing working-tree bytes ≠ hashing committed source.** A generator hashing
+  files for a *committed* artifact must canonicalise CRLF→LF with `canonicalizeEol`
+  ([`file-io.mjs`](../../scripts/lib/file-io.mjs)), the one byte-level fold — but NOT
+  where the exact bytes ARE the contract. The tell: **git says clean and your tool
+  says changed; git is right.** That and the worktree-`node_modules` rule:
+  [prepush-sandbox.md](../../docs/runbooks/prepush-sandbox.md) §2.1–2.2.
+
+- **An mtime freshness oracle is usually wrong in the HEALTHY case, not merely
+  lossy** — the writer's own ordering decides it, and `lock newer than
+  node_modules/` was the normal post-install state. Ask **who writes these two
+  paths, in what order**; then use the tool's own content record instead (npm keeps
+  `node_modules/.package-lock.json`). Compare CONTENT, never key counts.
+  [prepush-sandbox.md](../../docs/runbooks/prepush-sandbox.md) §4.
+
+#### Testing doctrine — pointer
+
+Three tiers, because blanket TDD is theatre at the LLM boundary but rigor pays at
+deterministic seams. Tiers 1–2, the guarding tests and the deliberate deferrals:
+[`testing-doctrine.md`](../../docs/reference/testing-doctrine.md). Resident: **Tier 3 is
+non-negotiable** — two seams where a change lands with its test in the **same
+commit**, *(a)* **sensitive-path egress** (a leak ships credentials to a
+third-party LLM) and *(b)* the **consumer sync / relocation contract** (a break
+ships silently to repos you cannot observe).
+
+#### Pre-ship empirical verify — for skills that assert on a live runtime
+
+Static review cannot catch what only appears when a real browser renders real data
+— a mid-theme-transition `getComputedStyle` read once *fabricated* a bug that
+survived four review passes. **(1)** Any skill driving a browser must run against
+ONE real app before being called done; a field finding with a green repro routes
+to a regression test + ONE focused review, never the adjudication loop.
+**(2)** Freeze transitions AFTER the flip + `await document.fonts.ready`; an
+empty/failed capture degrades to `unverified`, never "verified / 0 findings".
+**(3)** **Audit your success paths** — ask of any green-emitting branch *"can this
+return green without having checked anything?"*
+→ [`pre-ship-empirical-verify.md`](../../docs/runbooks/pre-ship-empirical-verify.md).
+
+## Sensitive paths + VCS contract (canonical locations)
+
+<!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
+
+[`scripts/lib/sensitive-paths.mjs`](../../scripts/lib/sensitive-paths.mjs) is the
+**single source of truth** for sensitive-path classification (`sensitive` vs
+`generatedNoise`) — four consumers delegate to it; never add a fifth
+implementation. Three invariants that constrain any change here:
+
+- **Skip logging goes through `formatSkipLog`.** Sensitive entries aggregate;
+  `SENSITIVE_PATHS_DEBUG=1` emits `[redacted:<sha256-hex8>].<ext>` — never
+  basenames, never full paths.
+
+- **Fail closed, always.** `resolveAndClassify` re-checks the realpath, so a
+  symlink named innocently but resolving into `~/.ssh/` is caught; a resolution
+  error or a repo-escaping symlink classifies as `sensitive`, and `redactSecrets`
+  returns `[REDACTED:redaction-failed]` rather than leak a payload it could not
+  process (INC-001 in [security-strategy.md](../../docs/security-strategy.md)).
+
+- **Structured results, never bare throws.** [`vcs.mjs`](../../scripts/lib/vcs.mjs)
+  returns `{ok:true,…}` or `{ok:false, error:{code,…}}` over a closed
+  `VcsErrorCode` enum, of which `EXEC_FAILED` is the **only** retryable code.
+  Likewise `runJsonLinesAsyncStrict` ([subprocess.mjs](../../scripts/lib/subprocess.mjs))
+  hard-fails on parse errors by default — that closes the `.filter(Boolean)`
+  silent-data-loss invariant, where dropped lines let a caller read a short list
+  as a complete one.
+
+Category lists, the 12-case diff-state matrix, both error enums and their exit
+codes: [`sensitive-paths-and-vcs.md`](../../docs/reference/sensitive-paths-and-vcs.md).
+
+## Verification discipline (cross-skill)
+
+<!-- moved in stage 3, 2026-11-22; the original ### / #### subsection headings are kept -->
+
+Eight rules, each led by its measurement. Canonical:
+[`verification-discipline.md`](../../docs/audit/shared-references/verification-discipline.md),
+synced into ten skills' `references/` by `sync-shared-audit-refs.mjs` and
+byte-checked in `npm run check`. **Edit the canonical, never a copy.**
+
+- **Pin a line number to the commit you read it at** — `path:120 (a4ec98da)`.
+  *5 of 9* bad claims in one verified document were correct when written and
+  decayed into wrong-but-**resolving** references. Cite append-newest-first files
+  (`status.md`) by section header, never by line. `npm run docs:citations -- <doc>`
+  (report-only, not in `check`).
+
+- **Label figures `measured`/`derived`/`expected` and carry the command.** This
+  file's own test row read `~5250 tests (~12s)` against a real 12,216 in 80s —
+  *2.3x* and *6.7x* stale, and it is what you reach for when a run looks wrong.
+
+- **A check is not trustworthy until seen to fail; when one fails, suspect the
+  instrument first.** Red-then-green, one defect at a time; a before/after
+  observation of a pre-existing defect is **not** a negative control. Six
+  consecutive verification-script failures in one session were all instrument
+  defects. `/audit-code` Step 4.5 and `/ux-lock` Step 2.5 own this.
+
+- **Reproducing a figure is not verifying its attribution.** A 22.5% reduction
+  reproduced perfectly while its stated cause was false — the parent already had
+  the credited property, and the real mechanism was *92%* of the delta;
+  `/investigate` Step 2.5 reports `figure` and `attribution` separately.
+
+- **Promote a one-off check that mattered** — subject probe + negative control +
+  vacuous-pass guard, with a disposition and a named retirement predicate:
+  [contract-test-scaffold.md](../../skills/audit-code/examples/contract-test-scaffold.md).
+
+- **Verify what the consumer receives, not what the producer sent.** `/ship`
+  Step 6.8; `unverified` must name a concrete blocked prerequisite, never a bare
+  "not applicable".
