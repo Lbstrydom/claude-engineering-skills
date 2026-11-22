@@ -80,6 +80,8 @@ const isTestFile = (f) => isScript(f) && /(?:^|\/)(?:[^/]*[._-]test|test(?:-[^/]
 /** Upper bounds on the analysis: past either, the reach is UNAVAILABLE with the reason (never a silently partial list). */
 export const REACH_MAX_SCRIPTS = 8000;
 export const REACH_BUDGET_MS = 20_000;
+/** A script larger than this is not parsed (counted unread): it bounds the CPU one file can cost, which a time check between files cannot. */
+export const REACH_MAX_SOURCE_BYTES = 1_000_000;
 /** Skipped wholesale: vendored trees that are never part of a test's reach. */
 const NOT_SOURCE = /^(node_modules|\.git)\//;
 /** A relative path written as a string literal: `'./x.json'`, `new URL('../fixtures/a.json', import.meta.url)`, `path.join(__dirname, '../x')`. */
@@ -128,7 +130,23 @@ export function testsLoading(touched, { repoFiles, readFile }) {
     const t = queue.shift();
     for (const imp of importersOf.get(t) ?? []) { reached.add(imp); seed(imp); }
   }
+  // A CHANGED test file is itself an affected test (nothing need import it).
+  for (const t of touched) if (files.has(t) && repoFiles.includes(t)) reached.add(t);
   return { tests: [...reached].filter(isTestFile).sort(), unread };
+}
+
+/**
+ * The reader `testsLoadingAt` hands the graph walk: every read checks the ONE deadline (so a spent budget leaves the rest counted
+ * unread, never a hang) and refuses an oversized blob. Injectable clock so the budget is testable without timing luck.
+ */
+export function makeBoundedReader({ text, oid, deadline, now = Date.now, maxBytes = REACH_MAX_SOURCE_BYTES }) {
+  return (p) => {
+    if (now() > deadline) throw new Error('over the time budget');
+    const t = text.get(`${oid}:${p}`);
+    if (t === undefined) throw new Error('not read');
+    if (Buffer.byteLength(t) > maxBytes) throw new Error('too large to parse');
+    return t;
+  };
 }
 
 /**
@@ -161,10 +179,10 @@ function parseBatch(buf, specs) {
  * @param {string} oid the commit
  * @param {string[]} touched
  */
-export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIPTS, budgetMs = REACH_BUDGET_MS } = {}) {
+export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIPTS, budgetMs = REACH_BUDGET_MS, now = Date.now } = {}) {
   // ONE end-to-end deadline: each git call gets only what is left, and the per-file reads check it too.
-  const deadline = Date.now() + budgetMs;
-  const left = () => Math.max(1, deadline - Date.now());
+  const deadline = now() + budgetMs;
+  const left = () => Math.max(1, deadline - now());
   const ls = runGit(['ls-tree', '-r', '-z', '--full-tree', '--name-only', oid], cwd, { timeoutMs: left() });
   if (!ls.ok) return { ok: false, reason: `git ls-tree failed (${ls.reason})` };
   const repoFiles = ls.stdout.split('\0').filter(Boolean);
@@ -177,7 +195,7 @@ export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIP
   });
   if (res.error || res.status !== 0) return { ok: false, reason: `git cat-file --batch failed (${res.error?.message ?? `exit ${res.status}`})` };
   const text = parseBatch(res.stdout, specs);
-  const reach = testsLoading(touched, { repoFiles, readFile: (p) => { if (Date.now() > deadline) throw new Error('over the time budget'); const t = text.get(`${oid}:${p}`); if (t === undefined) throw new Error('not read'); return t; } });
+  const reach = testsLoading(touched, { repoFiles, readFile: makeBoundedReader({ text, oid, deadline, now }) });
   // Files skipped for lack of time are counted as unread: the caveat then says the list may be incomplete.
   return { ok: true, ...reach };
 }

@@ -168,11 +168,30 @@ describe('the reach describes the COMMIT, not the checkout', () => {
     assert.equal(r.ok, false);
     assert.match(r.reason, /scripts is more than the 1 this analysis reads/);
   });
-  it('one end-to-end budget: a spent budget is an unavailable reach or counted-unread files, never a hang or a silent partial', async () => {
-    const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
-    const { fx, oid } = setup();
-    const r = testsLoadingAt(fx.repo, oid, ['tests/helpers/shared.mjs'], { budgetMs: 1 });
-    assert.ok(r.ok === false ? /timed out|failed/.test(r.reason) : r.unread > 0, JSON.stringify(r));
+  it('the reader enforces ONE deadline and a size bound, with an injected clock (no timing luck)', async () => {
+    const { makeBoundedReader } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const text = new Map([['abc:a.mjs', 'export {};'], ['abc:big.mjs', 'x'.repeat(50)]]);
+    let t = 0;
+    const read = makeBoundedReader({ text, oid: 'abc', deadline: 100, now: () => t, maxBytes: 20 });
+    assert.equal(read('a.mjs'), 'export {};');
+    assert.throws(() => read('big.mjs'), /too large to parse/);
+    assert.throws(() => read('missing.mjs'), /not read/);
+    t = 101; // the budget is spent
+    assert.throws(() => read('a.mjs'), /over the time budget/);
+  });
+  it('spent-budget and oversized reads are COUNTED unread by the walk, never read as "does not load it"', async () => {
+    const { makeBoundedReader } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const f = { 'tests/helpers/h.mjs': 'export {};', 'tests/a.test.mjs': "import './helpers/h.mjs';", 'tests/b.test.mjs': "import './helpers/h.mjs';" };
+    const text = new Map(Object.entries(f).map(([k, v]) => [`o:${k}`, v]));
+    let t = 0;
+    const read = makeBoundedReader({ text, oid: 'o', deadline: 5, now: () => (t += 3) });
+    const r = testsLoading(['tests/helpers/h.mjs'], { repoFiles: Object.keys(f), readFile: read });
+    assert.ok(r.unread >= 1, JSON.stringify(r));
+  });
+  it('a CHANGED test file is itself an affected test, even when nothing imports it', () => {
+    const f = { 'tests/helpers/cache.test.mjs': 'export {};' };
+    const r = testsLoading(['tests/helpers/cache.test.mjs'], { repoFiles: Object.keys(f), readFile: (x) => f[x] });
+    assert.deepEqual(r.tests, ['tests/helpers/cache.test.mjs']);
   });
   it('an unknown commit is an unavailable reach with a reason, never an empty result', async () => {
     const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
