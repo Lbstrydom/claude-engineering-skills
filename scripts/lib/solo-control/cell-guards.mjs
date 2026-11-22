@@ -50,6 +50,11 @@ export function retryBudgetVerdict(rows, budgetUsd, usage, resolvedModel, costFn
  * complete usage with output 0, so a partial price was recorded as a real one. Anything less is unmeasured (null), never a low price. */
 export const usageComplete = (u, inKey, outKey) => !!u && Number.isFinite(u[inKey]) && Number.isFinite(u[outKey]);
 
+/** Must the ledger row for this cell be usage-bearing and unpriced (unmeasured)? True for a budget-stopped reply that reported no
+ * usable usage, AND for a reply refused by the fingerprint pin that reported none: the refusal downgrades the cell to
+ * `provider-error`, and a provider-error row with null usage is read as "nothing came back" (free) — wrong for a reply that did. */
+export const usageUnknownFor = (r, fp) => !!r.replyWithoutUsage || (!!fp?.refuse && !r.providerError && !r.usage);
+
 /** The terminal return of a pass stopped before its retry by the budget gate: the cell is UNMEASURED (never a conformance
  * miss scored against the model), and `usage` keeps whatever the first attempt billed. */
 export const budgetStopMiss = (usage, extra = {}) => ({ findings: [], usage, rawText: null, ...extra, providerError: true, budgetStop: true });

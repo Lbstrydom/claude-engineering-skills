@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import { budgetVerdict } from '../scripts/lib/solo-control/hardening-guards.mjs';
 import { aggregateBudgetSpent, appendLedgerRow, computeSpendId, computeCallId, sharedPassCreditRows } from '../scripts/lib/solo-control/ledger.mjs';
-import { fingerprintVerdict, retryBudgetVerdict } from '../scripts/lib/solo-control/cell-guards.mjs';
+import { fingerprintVerdict, retryBudgetVerdict, usageUnknownFor } from '../scripts/lib/solo-control/cell-guards.mjs';
 import { DISCOVER_COMMITS_SQL, EXTERNAL_FINDINGS_SQL, discoverCommits, fetchExternalFindings, partitionDiscoveredRows } from '../scripts/lib/solo-control/store-queries.mjs';
 import { baselineReviewCompleted } from '../scripts/lib/solo-control/completion.mjs';
 import { blockVerdictUnlessFinal } from '../scripts/lib/solo-control/run-guards.mjs';
@@ -150,6 +150,19 @@ describe('M1 — a DeepSeek reply without a fingerprint cannot pass the pin', ()
   });
   test('negative control: anthropic carries no fingerprint by design and is never refused', () => {
     assert.equal(fingerprintVerdict({ recipient: 'anthropic', pinned: null, got: undefined }).refuse, null);
+  });
+});
+
+describe('Gemini G1 — a fingerprint-refused reply with no usage is unmeasured, not a free provider-error', () => {
+  test('refused + null usage + a reply came back → usage-unknown; the resulting row is read as UNMEASURED', () => {
+    assert.equal(usageUnknownFor({ usage: null, findings: [] }, { refuse: 'missing' }), true);
+    assert.equal(budgetVerdict([row({ costUsd: null, pricingVersion: null, usage: {}, state: 'provider-error', spendId: 'g' })], 100)?.reason, 'unmeasured');
+  });
+  test('negative controls: refused WITH usage (priced), no reply at all, or an un-refused cell are unaffected', () => {
+    assert.equal(usageUnknownFor({ usage: { input_tokens: 1, output_tokens: 1 } }, { refuse: 'drift' }), false);
+    assert.equal(usageUnknownFor({ usage: null, providerError: true }, { refuse: null }), false);
+    assert.equal(usageUnknownFor({ usage: null }, { refuse: null }), false);
+    assert.equal(usageUnknownFor({ usage: null, replyWithoutUsage: true }, { refuse: null }), true);
   });
 });
 

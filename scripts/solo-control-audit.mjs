@@ -103,7 +103,7 @@ import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/pol
 import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corpus.mjs';
 import { computeCallId, computeSpendId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { discoverCommits, partitionDiscoveredRows, fetchExternalFindings } from './lib/solo-control/store-queries.mjs';
-import { fingerprintVerdict, retryBudgetVerdict, budgetStopMiss, usageComplete } from './lib/solo-control/cell-guards.mjs';
+import { fingerprintVerdict, retryBudgetVerdict, budgetStopMiss, usageComplete, usageUnknownFor } from './lib/solo-control/cell-guards.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { clampToSchema, parseJsonLoose, REASONING_TIERS, assertReasoningTier } from './lib/solo-control/cold-pass-support.mjs';
@@ -838,7 +838,7 @@ async function cmdRun() {
           }
           recordCall({
             arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep,
-            resolvedModel: model, recipient, usage: r.usage, state: cellState, usageUnknown: !!r.replyWithoutUsage,
+            resolvedModel: model, recipient, usage: r.usage, state: cellState, usageUnknown: usageUnknownFor(r, fp),
           });
           if (r.budgetStop) { budgetHit = budgetBreached(budgetUsd) || { spentUsd: 0, reason: 'unmeasured', unmeasured: 1, complete: false }; break cells; }
           if (cellState !== 'provider-error') findings.push(...r.findings);
