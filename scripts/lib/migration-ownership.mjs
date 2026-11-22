@@ -75,6 +75,43 @@ export function assessMigrationOwnership({ repoRoot, migrationsDir, spawn = spaw
   return untracked.length === 0 ? { status: 'tracked' } : { status: 'untracked', untracked };
 }
 
+/**
+ * The migrations the CONSUMER SYNC may ship: the `.sql` files in `migrationsDir` that git TRACKS - never the directory
+ * listing (incident 2026-11-22: three untracked files in a mirror checkout were copied into six consumers, which committed
+ * them; retiring them upstream then made every consumer audit refuse). Same oracle as {@link assessMigrationOwnership}.
+ *
+ * Untracked files are NOT an error here: they are returned in `untracked` so the sync can name them and ship the rest.
+ * FAIL CLOSED: if git cannot answer, the result is `unverified` and the caller must refuse - a listing taken on trust is
+ * exactly the failure this exists to remove. A missing directory is the normal "no migrations" case (`ok`, empty).
+ *
+ * @param {{repoRoot: string, migrationsDir: string, spawn?: typeof spawnSync, listDir?: (dir: string) => string[]}} opts
+ * @returns {{status: 'ok', shippable: string[], untracked: string[]} | {status: 'unverified', reason: string}}
+ */
+export function listShippableMigrations({ repoRoot, migrationsDir, spawn = spawnSync, listDir = (d) => fs.readdirSync(d) }) {
+  let onDisk;
+  try {
+    onDisk = listDir(migrationsDir).filter((e) => e.endsWith('.sql')).sort();
+  } catch (err) {
+    if (err.code === 'ENOENT') return { status: 'ok', shippable: [], untracked: [] };
+    return { status: 'unverified', reason: `could not list ${migrationsDir} (${err.code || err.message})` };
+  }
+  if (onDisk.length === 0) return { status: 'ok', shippable: [], untracked: [] };
+  const rel = path.relative(repoRoot, migrationsDir).replaceAll('\\', '/');
+  const r = spawn('git', ['ls-files', '-z', '--', rel], {
+    cwd: repoRoot, encoding: 'utf-8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0) {
+    const why = r.error ? (r.error.code || r.error.message) : `git exit ${r.status}`;
+    return { status: 'unverified', reason: `git could not answer ("git ls-files ${rel}": ${why})` };
+  }
+  const tracked = new Set(String(r.stdout || '').split('\0').filter(Boolean).map((p) => p.replaceAll('\\', '/')));
+  return {
+    status: 'ok',
+    shippable: onDisk.filter((f) => tracked.has(`${rel}/${f}`)),
+    untracked: onDisk.filter((f) => !tracked.has(`${rel}/${f}`)),
+  };
+}
+
 /** The refusal text for a non-`tracked` verdict (names the files and the remedy). */
 export function describeOwnershipRefusal(verdict, migrationsDir) {
   if (verdict.status === 'untracked') {

@@ -29,6 +29,7 @@ import { enumerateSkillFiles, listSkillNames } from './skill-packaging.mjs';
 import { CONSUMER_REPOS } from './consumer-repos.mjs';
 import { collectImportClosure } from './module-graph.mjs';
 import { ignoredUntrackedPaths } from './disowned-paths.mjs';
+import { listShippableMigrations } from './migration-ownership.mjs';
 import {
   CORE_ENTRY, LEARNING_ENTRY, ARCH_ENTRY, SYNC_ISOLATION_ENTRY, DEBT_ENTRY,
 } from './sync-entry-lists.mjs';
@@ -129,24 +130,58 @@ const CORE_ASSETS = [
  * `.audit-loop/migrations` in the loop body).
  */
 export function syncMigrations() {
-  const dir = path.join(REPO_ROOT, 'supabase', 'migrations');
-  try {
-    return fs.readdirSync(dir)
-      .filter((f) => f.endsWith('.sql'))
-      .sort()
-      .map((f) => `supabase/migrations/${f}`);
-  } catch (err) {
-    // ENOENT is the NORMAL case — a repo without migrations legitimately has no
-    // such directory. Every other errno is not: EACCES on an existing directory,
-    // an I/O failure, or a mis-resolved REPO_ROOT all previously returned `[]`,
-    // which is indistinguishable from "no migrations" and ships a bundle with
-    // the schema silently missing.
-    if (err.code === 'ENOENT') return [];
+  return syncMigrationsReport().files;
+}
+
+/**
+ * The migration source set AND what was refused: `{files, untracked}`.
+ *
+ * **The set is what git TRACKS under `supabase/migrations/`, never the directory listing** (incident 2026-11-22: a mirror
+ * checkout held three untracked, `.git/info/exclude`d migrations; the sync copied them into six consumers, which committed
+ * them). An untracked file is never shipped and is returned in `untracked` so the sync names it. If git cannot answer the
+ * question this THROWS - an unverifiable set is not a clean one.
+ *
+ * ENOENT is the NORMAL case - a repo without migrations legitimately has no such directory. Every other errno is not:
+ * EACCES on an existing directory, an I/O failure, or a mis-resolved REPO_ROOT all previously returned `[]`, which is
+ * indistinguishable from "no migrations" and ships a bundle with the schema silently missing.
+ *
+ * @param {{repoRoot?: string, spawn?: Function, listDir?: (dir: string) => string[]}} [opts] injectable for tests
+ * @returns {{files: string[], untracked: string[]}}
+ */
+export function syncMigrationsReport({ repoRoot = REPO_ROOT, ...io } = {}) {
+  const dir = path.join(repoRoot, 'supabase', 'migrations');
+  const r = listShippableMigrations({ repoRoot, migrationsDir: dir, ...io });
+  if (r.status !== 'ok') {
     throw new Error(
-      `syncMigrations: cannot read ${dir} (${err.code || err.message}). Refusing to report an empty `
-      + 'migration set — that would ship a bundle whose schema is silently absent.',
-      { cause: err },
+      `syncMigrations: cannot establish the tracked migration set of ${dir} (${r.reason}). Refusing to report an empty migration set or `
+      + 'an untrusted one — shipping a directory listing is how untracked files reached every consumer.',
     );
+  }
+  return { files: r.shippable.map((f) => `supabase/migrations/${f}`), untracked: r.untracked.map((f) => `supabase/migrations/${f}`) };
+}
+
+/**
+ * The per-target report of source migrations the sync REFUSED (untracked), as printable lines, plus whether the tracked set
+ * could not be established at all (`failed`: git could not answer - the target's sync fails closed).
+ *
+ * @param {string} repoName
+ * @param {{R: string, D: string, X: string}} colors
+ * @param {() => {untracked: string[]}} [report] injectable for tests
+ * @returns {{lines: string[], failed: boolean}}
+ */
+export function describeUntrackedMigrations(repoName, { R, D, X }, report = syncMigrationsReport) {
+  try {
+    const { untracked } = report();
+    if (!untracked.length) return { lines: [], failed: false };
+    return {
+      failed: false,
+      lines: [
+        `  ${R}refused${X}  ${untracked.length} UNTRACKED source migration(s) not shipped to ${repoName} ${D}(git does not own them; delete them, or git add + commit upstream):${X}`,
+        ...untracked.map((f) => `    ${R}?${X} ${f}`),
+      ],
+    };
+  } catch (err) {
+    return { lines: [`  ${R}ABORT${X}  cannot establish the tracked migration set: ${err.message}`], failed: true };
   }
 }
 
@@ -403,6 +438,6 @@ export function getAllConsumerInventories() {
 export const _internals = {
   CORE_ENTRY, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY,
   SYNC_ISOLATION_ENTRY, CORE_ASSETS, EDITOR_FILES, CLAUDE_CODE_FILES,
-  bundleForRepo, syncMigrations, buildSkillFiles, buildFileUniverse,
+  bundleForRepo, syncMigrations, syncMigrationsReport, buildSkillFiles, buildFileUniverse,
   REPO_ROOT,
 };

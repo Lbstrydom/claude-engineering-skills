@@ -32,6 +32,7 @@
  */
 
 import { checkMigrationRealization, defaultRepoRoot } from '../db/schema-realization.mjs';
+import { adviseForMissingMigrations } from '../db/orphaned-migrations.mjs';
 
 /** Set to `1` to audit anyway, accepting local-only findings and a `not-run` trailer. */
 export const SCHEMA_BEHIND_OVERRIDE_ENV = 'AUDIT_ALLOW_SCHEMA_BEHIND';
@@ -71,6 +72,10 @@ export function decideSchemaPrecondition({ realization, override }) {
     return { proceed: true, reason: realization?.reason ?? 'realized', message: '' };
   }
   const what = describeSchemaBehind(realization);
+  // A missing migration the sync retired is ORPHANED: `--migrate` would re-apply it (incident 2026-11-22), so no such advice.
+  const advice = adviseForMissingMigrations({
+    missing: realization.missing ?? [], dir: realization.dir, command: realization.command, retired: realization.retired ?? [],
+  });
   if (override) {
     return {
       proceed: true,
@@ -87,7 +92,7 @@ export function decideSchemaPrecondition({ realization, override }) {
       + 'This audit would run to completion, print a verdict, and lose its provenance: the run row\n'
       + 'cannot be registered, so no gate-evidence marker is written and a commit from this tree\n'
       + 'reads `AI-Gate: not-run` however clean the audit was. Refusing before spending, not after.\n'
-      + `Run: ${realization.command}      then re-run this audit.\n`
+      + `${advice.advisesMigrate ? `${advice.advice}      then re-run this audit.` : advice.advice}\n`
       + `Override (audit anyway, accepting local-only results): ${SCHEMA_BEHIND_OVERRIDE_ENV}=1\n`,
   };
 }

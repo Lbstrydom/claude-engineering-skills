@@ -89,17 +89,27 @@ function isPlainRelativeKey(key) {
  *
  * Without a `probe` every candidate is a deletion (the pre-existing behaviour, kept for callers that have no disk to ask).
  *
+ * ## Retiring a tracked, manifest-owned path (2026-11-22)
+ *
+ * `retirePrefixes` extends the probe-gated retirement to TRACKED destinations the sync owns by manifest record (the migrations
+ * at `.audit-loop/migrations/`): upstream stopped tracking a migration, so a consumer's copy would otherwise persist for ever
+ * and make every consumer audit refuse. Same three-way rule as the tooling dir; `isDeclaredDivergence(key)` (the consumer's
+ * `.sync-overrides.json`) holds a key in `declaredHeld`, which nothing deletes.
+ *
  * @param {string} args.toolingDir                  e.g. `scripts/.claude-skills`
+ * @param {string[]} [args.retirePrefixes]
+ * @param {(key: string) => boolean} [args.isDeclaredDivergence]
  * @param {(rel: string) => boolean} args.exists
  * @param {(rel: string) => {state: 'present', hash: string} | {state: 'absent'} | {state: 'refused'|'failed', reason?: string}} [args.probe]
- * @returns {{deletions: string[], orphanedTracked: string[], unsafeKeys: string[], divergedHeld: string[], unknownBaseHeld: string[], alreadyAbsent: string[], probeFailed: Array<{path: string, reason: string}>, probedHash: Record<string, string>}}
+ * @returns {{deletions: string[], orphanedTracked: string[], unsafeKeys: string[], divergedHeld: string[], declaredHeld: string[], unknownBaseHeld: string[], alreadyAbsent: string[], probeFailed: Array<{path: string, reason: string}>, probedHash: Record<string, string>}}
  */
-export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, exists, probe }) {
+export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, exists, probe, retirePrefixes = [], isDeclaredDivergence = () => false }) {
   const prefix = `${toolingDir}/`;
   const deletions = [];
   const orphanedTracked = [];
   const unsafeKeys = [];
   const divergedHeld = [];
+  const declaredHeld = []; // a retired file a consumer's `.sync-overrides.json` claims: never deleted, with or without --overwrite-diverged
   const unknownBaseHeld = [];
   const alreadyAbsent = [];
   const probeFailed = [];
@@ -107,8 +117,12 @@ export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, e
   for (const key of Object.keys(priorFiles || {})) {
     if (intendedDests.has(key) || SYNC_RUN_ARTIFACTS.includes(key)) continue;
     if (!isPlainRelativeKey(key)) unsafeKeys.push(key);
-    else if (key.startsWith(prefix)) {
+    else if (key.startsWith(prefix) || (typeof probe === 'function' && retirePrefixes.some((p) => key.startsWith(p)))) {
+      // `retirePrefixes` (audit-loop's `.audit-loop/migrations/`) are TRACKED consumer paths that the sync nonetheless OWNS
+      // by manifest record: they retire only through the probe (unedited -> delete, edited -> hold), never blindly, and
+      // never without a probe (without one such a key stays advisory, below).
       if (typeof probe !== 'function') { deletions.push(key); continue; }
+      if (!key.startsWith(prefix) && isDeclaredDivergence(key)) { declaredHeld.push(key); continue; }
       const seen = probe(key);
       if (seen.state === 'absent') alreadyAbsent.push(key);
       else if (seen.state !== 'present') probeFailed.push({ path: key, reason: `${seen.state}${seen.reason ? `: ${seen.reason}` : ''}` });
@@ -117,7 +131,25 @@ export function planGarbageCollection({ priorFiles, intendedDests, toolingDir, e
       else divergedHeld.push(key);
     } else if (exists(key)) orphanedTracked.push(key);
   }
-  return { deletions, orphanedTracked, unsafeKeys, divergedHeld, unknownBaseHeld, alreadyAbsent, probeFailed, probedHash };
+  return { deletions, orphanedTracked, unsafeKeys, divergedHeld, declaredHeld, unknownBaseHeld, alreadyAbsent, probeFailed, probedHash };
+}
+
+/**
+ * The operator-facing lines for what gc held, skipped, failed or refused (moved out of sync-to-repos.mjs, which may not grow).
+ * PURE: returns the lines. `declaredHeld` is the 2026-11-22 addition: a retired migration the consumer's overrides claim.
+ *
+ * @returns {string[]}
+ */
+export function renderGcReport({ gcPlan, gcResult, retiredHeld, overridesPath, colors: { R, Y, D, X } }) {
+  const out = [];
+  for (const f of gcPlan.declaredHeld) out.push(`  ${Y}hold${X}  ${f} ${D}(upstream retired it; your ${overridesPath} declares this path as divergence, so it is kept. Remove the override to let the sync retire it)${X}`);
+  for (const f of gcPlan.divergedHeld.filter((x) => retiredHeld.includes(x))) out.push(`  ${D}hold${X}  ${f} ${D}(upstream retired it, but this copy was edited locally; --overwrite-diverged deletes it)${X}`);
+  for (const f of gcPlan.unknownBaseHeld) out.push(`  ${D}hold${X}  ${f} ${D}(its ownership record is malformed; delete it by hand if it is ours)${X}`);
+  for (const f of gcResult.held) out.push(`  ${D}hold${X}  ${f} ${D}(changed between the check and the delete)${X}`);
+  for (const f of gcPlan.probeFailed) out.push(`  ${R}gc SKIPPED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}) — no gc this run: nothing is deleted on a guess${X}`);
+  for (const f of gcResult.failed) out.push(`  ${R}gc FAILED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}; still tracked — the next run retries)${X}`);
+  for (const k of gcPlan.unsafeKeys) out.push(`  ${R}gc REFUSED${X} ${k} ${D}(manifest key is not a plain relative path — nothing this sync writes; dropped)${X}`);
+  return out;
 }
 
 /**
