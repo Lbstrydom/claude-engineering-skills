@@ -102,7 +102,7 @@ describe('pre-edit mode (--files)', () => {
     try {
       const r = matchChecklist({ entries: [E_SYMBOL], files: [path.relative(dir, outside)], purpose: 'test', cwd: dir, record: false });
       assert.deepEqual(ids(r), []);
-    } finally { fs.rmSync(outside, { force: true }); }
+    } finally { fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 

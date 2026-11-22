@@ -277,7 +277,7 @@
       "check": "docs/plans/README.md is the generated plans index (Category B): a plan's status change needs `npm run plans:index`. AGENTS.md (Generated-artifact policy): \"Regeneration must be byte-identical ... `docs/plans/README.md`, the status-bucketed plans index (`plans:index` / `plans:index:check`), ...\" The index reads TRACKED plans only.",
       "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the plans:index:check gate, which fails the push on the mistake.",
       "control": {
-        "path": "docs/plans/example-plan.md",
+        "path": "docs/plans/verification-lessons.md",
         "text": "**Status**: shipped",
         "negativePath": "scripts/lib/vcs.mjs"
       },
@@ -715,7 +715,7 @@
       "id": "npm-run-flag-swallowed",
       "trigger": {
         "patterns": [
-          "npm run [a-z][\\w:.-]* --[a-z]"
+          "npm run [a-z][\\w:.-]*\\s+--[a-z]"
         ],
         "patternPaths": [
           "**/*.md",
@@ -723,11 +723,11 @@
           "**/*.yml"
         ]
       },
-      "check": "`npm run x --flag` is swallowed by npm: the flag never reaches the script. Write `npm run x -- --flag`. The `--` is load-bearing for `npm run sync -- --target <name>`: without it the sync writes into EVERY consumer.",
-      "incident": "2026-07-20: `npm run sync --target` without the `--` was verified to write into every consumer instead of the named one.",
+      "check": "A flag written straight after an npm script name is swallowed by npm: it never reaches the script. Put `--` between the script name and the flag, as in `npm run sync -- --target <name>`; without it the sync writes into EVERY consumer.",
+      "incident": "2026-07-20: the sync run with its target flag and no `--` was verified to write into every consumer instead of the named one.",
       "control": {
-        "path": "docs/runbooks/example.md",
-        "text": "Run `npm run sync --target wine` to update wine.",
+        "path": "docs/runbooks/gate-cost.md",
+        "text": "Run `npm run sync\t--target wine` to update wine.",
         "negativePath": "scripts/lib/vcs.mjs"
       }
     },

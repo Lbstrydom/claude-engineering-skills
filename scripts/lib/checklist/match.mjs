@@ -24,6 +24,7 @@ import { globMatch } from '../glob-match.mjs';
 import { resolvePushRange } from '../push-range.mjs';
 import { sanitizeGitEnv } from '../git-env-sanitize.mjs';
 import { FIRE_PURPOSES } from './schema.mjs';
+import { SOURCE_CODE_EXTENSION_ALTERNATION } from '../file-taxonomy.mjs';
 
 export const FIRES_LOG = path.join('.audit', 'checklist-fires.jsonl');
 const MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -127,7 +128,7 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
 }
 
 /** A symbol is only a USE in code: a markdown or JSON file that merely names `createAnthropicClient` is a mention, and would fire every entry on every doc edit. */
-const CODE_FILE = /\.(mjs|cjs|js|jsx|ts|tsx|mts|cts|vue|sql|py)$/i;
+const CODE_FILE = new RegExp(`\\.(${SOURCE_CODE_EXTENSION_ALTERNATION})$`, 'i');
 
 const symbolRe = (name) => new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$')}(?![\\w$])`);
 

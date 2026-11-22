@@ -68,3 +68,11 @@ unaffected. A stale ledger (in-scope files changed since extraction) or
 uncovered target files surface as a `[requirements]` stderr line; if you
 see `[stale]`, run `node scripts/requirements.mjs extract --files <…>`
 then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
+
+## Checklist (automatic)
+
+When `.audit-loop/checklist.json` exists, the repo tripwires the change fires are appended to the rubric as a
+`<checklist>` block, using the SAME matcher as `node scripts/checklist.mjs` with the audit's own `--files` / `--diff`
+(paths and symbols from `--files`; patterns only from `--diff`). Absent file, or nothing fired: the prompt is byte-identical.
+A `[checklist] skipped` stderr line means an invalid checklist or unreadable diff; the audit continues without the block.
+Each fired entry names its incident: check the diff does not repeat it. The file is consumer-owned.
