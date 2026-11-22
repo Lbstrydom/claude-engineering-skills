@@ -165,3 +165,9 @@ When the guard cannot decide, the skip names the real cause instead: `git-exec-f
 |----------|----------|---------|---------|
 | `ARCH_REFRESH_ALLOW_BRANCH_PUBLISH` | No | — | Set to `1` to publish a refresh from a non-default branch or an off-branch detached HEAD. Same effect as `--allow-branch-publish`. Only `1` opts in. The next incremental refresh on the default branch will anchor on this snapshot, so run `npm run arch:refresh:full` on the default branch afterwards. |
 | `ARCH_INDEX_PYTHON` | No | — (probes `py -3`, `python`, `python3` on Windows; `python3`, `python` elsewhere) | The Python interpreter (>= 3.9) the symbol index uses to parse `.py` files (`lib/symbol-index/python-extract.mjs`). When set it is the ONLY interpreter tried: an unusable one makes every `.py` file report as unparseable in coverage, never silently falls back to another. Unset and none found → the same unparseable report, with the remedy printed. |
+
+## Diff-triggered checklist
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `AUDIT_CHECKLIST_INJECT` | No | unset (OFF) | `1` appends the `<checklist>` block (the repo tripwires the change fires, from `.audit-loop/checklist.json`) to every `/audit-code` pass prompt. Only the exact value `1` injects. **Unset, the prompt is byte-identical whether or not the checklist file exists**, because a prompt change reaches every audit everywhere. The audit ALWAYS evaluates the checklist and records the fires to `.audit/checklist-fires.jsonl` (purpose `operational`), injection or not; an evaluation that could not run says so on stderr and as `_checklist: "unmeasured"` on the round. Observe-only pilot, review due 2026-12-06 or after 150 merged PRs (`docs/research/checklist-pilot-2026-11.md` section Decision). |

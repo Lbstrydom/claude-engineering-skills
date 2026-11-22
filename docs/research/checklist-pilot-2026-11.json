@@ -3064,5 +3064,428 @@
   "failures": [
     "noise max on held-out window (14 > 12)",
     "kernel size above 15K target"
-  ]
+  ],
+  "redesignV3": {
+    "label": "seen data, NOT a confirmation; no threshold claim",
+    "entries": 39,
+    "merged": 0,
+    "narrowed": [
+      "skill-frontmatter-description-budget",
+      "skill-frontmatter-indented-key-inert",
+      "synced-skill-content-reachable-refs",
+      "worktree-documented-command-reachable",
+      "skill-reference-summary-byte-match"
+    ],
+    "checklistSha256": "8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d",
+    "pilotWindow": {
+      "entries": {
+        "median": 2.5,
+        "max": 9,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          3,
+          4,
+          4,
+          4,
+          5,
+          5,
+          5,
+          6,
+          7,
+          7,
+          7,
+          7,
+          9
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      },
+      "checks": {
+        "median": 2.5,
+        "max": 9,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          3,
+          4,
+          4,
+          4,
+          5,
+          5,
+          5,
+          6,
+          7,
+          7,
+          7,
+          7,
+          9
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      }
+    },
+    "heldOutWindow": {
+      "entries": {
+        "median": 2,
+        "max": 10,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          4,
+          4,
+          6,
+          7,
+          8,
+          10
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      },
+      "checks": {
+        "median": 2,
+        "max": 10,
+        "min": 0,
+        "distribution": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          2,
+          3,
+          3,
+          4,
+          4,
+          6,
+          7,
+          8,
+          10
+        ],
+        "thresholds": {
+          "median": 5,
+          "max": 12
+        }
+      }
+    },
+    "frozen": {
+      "ok": true,
+      "frozenOn": "2026-11-22",
+      "mismatches": []
+    },
+    "controls": [
+      {
+        "id": "anthropic-pin-unserviceable-param",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-artifact-bundle-deps",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "context-check-agents-md-size",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "db-suite-two-edit-enrolment",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "architecture-intent-domain-roster",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "synced-markdown-relative-links",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "emit-softfail-opt-out",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "gitignore-rule-declares-why",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "cli-help-is-a-pure-read",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "mcp-config-mirrored",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "own-model-capture-column-coverage",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "migrations-schema-portable",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-artifact-plans-index",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-artifact-requirements-map",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "generated-skills-copy-never-hand-edited",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-reference-summary-byte-match",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-frontmatter-description-budget",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-frontmatter-indented-key-inert",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "synced-skill-content-reachable-refs",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "skill-markdown-size-ratchet",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "exit-after-stdout-must-drain",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "upstream-report-disposition-resolves",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "visual-contract-doc-example-drift",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "windowed-view-declares-its-window",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "worktree-documented-command-reachable",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "tiered-shadow-window-epoch-gated",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "cli-entry-guard-is-isinvokedasscript",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "disposable-db-allowlist",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "canonicalize-eol-before-hashing",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "jsonb-write-seam",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "durable-write-registration",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "sensitive-paths-single-oracle",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "provider-route-not-env-var",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "npm-run-flag-swallowed",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "prompt-seed-and-mechanical-wave",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "sync-inventory-single-owner",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "learning-repo-name-is-owner-slash-repo",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "schema-error-is-not-empty-result",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      },
+      {
+        "id": "domain-retag-both-directions",
+        "controlFires": true,
+        "negativeSilent": true,
+        "verdict": "pass"
+      }
+    ]
+  },
+  "decision": "2026-11-22: no shrink; noise rule unchanged; observe-only to 2026-12-06 or 150 merged PRs; kernel target stays 10-15K, shrink becomes a separate plan"
 }

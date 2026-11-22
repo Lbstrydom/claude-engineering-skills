@@ -1,17 +1,23 @@
 # Checklist pilot, 2026-11 (verification-lessons plan, Phase 5)
 
-Status: **FAIL on thresholds (iii) held-out noise and the kernel-size target; do not run Cluster F on this evidence.** AGENTS.md was not edited: every moved sentence exists in both AGENTS.md and the checklist.
+Status: **FAIL on thresholds (iii) held-out noise and the kernel-size target (v2). A redesigned v3 is built and FROZEN; its confirmation run on PRs merged after the freeze is a later task. Cluster F does not run.** AGENTS.md was not edited: every moved sentence exists in both AGENTS.md and the checklist. See section Decision.
 
 Everything below is reproducible from the repo at a pinned tip (`9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6`, origin/main when measured):
 
 ```
-npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --json   # pilot window, v2
-npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 30 --json   # held-out window, v2
-npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --checklist docs/research/checklist-pilot-2026-11-v1-checklist.json --json   # v1 (add --skip 30 for v1 held-out)
+# every replay names its checklist explicitly and records the sha256 of the file it read (checklistSha256 in the output)
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --checklist docs/research/checklist-pilot-2026-11-v1-checklist.json --json   # v1, pilot window
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 30 --checklist docs/research/checklist-pilot-2026-11-v1-checklist.json --json   # v1, held-out window
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --checklist docs/research/checklist-pilot-2026-11-v2-checklist.json --json   # v2, pilot window  (the committed v2 as measured)
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 30 --checklist docs/research/checklist-pilot-2026-11-v2-checklist.json --json   # v2, held-out window (the confirmation figure)
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --json                     # v3 = the committed .audit-loop/checklist.json
 npm run checklist:pilot -- --incidents --json   # the commits that earned each entry
 npm run checklist:pilot -- --controls  --json   # per-entry control / negative verdicts
 npm run checklist:pilot -- --kernel    --json   # kernel size estimate
+npm run checklist:pilot -- --verify-frozen      # sha256 of checklist, matcher and scoring code vs the pinned constants
 ```
+
+Checklist sha256 (CRLF folded to LF): v1 `a328f88f964f2758c3b0d085b284aca013c31e15c21c963499d1dcf9f25a58da`, v2 `cbc40e19d1786c9367b95aee081e7018db8036bdacf21412d997787718949fed`, v3 `8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d`. The v1 and v2 numbers in this document were measured with exactly these two frozen files; the v2 file is byte-identical to what was committed when they were measured.
 
 Per-entry evidence (the `pass` rows a Cluster F test would require): `docs/research/checklist-pilot-2026-11.json`. Frozen v1 entries: `docs/research/checklist-pilot-2026-11-v1-checklist.json`. The committed `.audit-loop/checklist.json` is generated (`npm run checklist:gen`, checked by `checklist:gen:check` in `check:static`).
 
@@ -133,3 +139,57 @@ Incident replay rows: `cli-entry-guard-is-isinvokedasscript` @ `82b63557` fired 
 | Kernel <= 15K (plan target, not a pilot threshold) | **FAIL** | 49373 to 61111 chars remain |
 
 **Overall: FAIL. Per plan section 2.5 ("Fail any, Cluster F does not run; the report says which") Cluster F does not run on this evidence.** What would change the answer is a human decision, not a rerun: either accept a revised noise rule, or redesign the skill-surface entries (merge, or pattern-scope) and re-measure on a fresh window that nobody has tuned on. Nothing was shrunk.
+
+
+## Redesign (v3): skills-surface entries, and the new "individual checks" metric
+
+The v2 held-out failure (max 14) was eight to nine entries firing on the same `skills/**` edit. The redesign follows the rule set after the brainstorm: **merge only entries that are truly redundant (same check, same trigger); narrow triggers where the diff can actually distinguish them; count individual checks so grouping cannot fake a pass.** The noise rule is unchanged (median <= 5, max <= 12), and v3 was NOT tuned against a threshold.
+
+- **Merged: none.** No two entries are the same check with the same trigger: each of the 26 migrated entries is bound one-to-one to a gate contract, and the two frontmatter entries ask different questions (description budget and a silent bad `name`, versus an indented key that is inert). Entry count stays **39**.
+- **Narrowed (5 entries, path trigger replaced by a pattern the diff can distinguish):** `skill-frontmatter-description-budget` (now fires on a changed `name:` or `description:` line), `skill-frontmatter-indented-key-inert` (an indented optional-key line), `synced-skill-content-reachable-refs` (an added `npm run` alias or a docs markdown path in skill markdown), `worktree-documented-command-reachable` (a line naming `scripts/.claude-skills/` in skill markdown), `skill-reference-summary-byte-match` (a changed `summary:` line or reference-index row; the shared-references path trigger is kept). **Cost, stated plainly:** these five no longer fire at the pre-edit `--files` step by path, only at `--diff`.
+- **New metric, "individual checks a reviewer must perform" per PR (`checkCount`).** Each fired entry contributes its `checks` value (an optional entry field, default 1); an entry that merges k distinct checks MUST declare `checks: k`, so merging can never lower the figure. It is reported beside "entries fired", and the same rule (median <= 5, max <= 12) is read against it. Because nothing was merged, `checkCount` equals entries fired in v3; the metric is wired so a later merge cannot lower it.
+
+**Seen data, NOT a confirmation. No threshold claim is made from these rows.** v3 was designed after both windows were examined, so its numbers on them are descriptive only:
+
+| Entries fired / checks per PR, median / max | v2 | v3 (seen data) |
+|---|---|---|
+| Pilot window #410-#442 | 2.5 / 10 | 2.5 / 9 (checks 2.5 / 9) |
+| Held-out window #380-#409 | 2 / 14 | 2 / 10 (checks 2 / 10) |
+
+v3 on the old data also keeps: controls 39/39, the supplementary incident replay 13/13, the in-window incident on #436 firing, and kernel remaining 49373 to 61111 chars. The first run that counts is the confirmation below.
+
+## Freeze
+
+The instrument is frozen at this commit. Anything that decides a figure is pinned by sha256 (CRLF folded to LF) in `scripts/lib/checklist/frozen.mjs`; `npm run checklist:pilot -- --verify-frozen` reports any difference and `--replay --confirmation` refuses to run unless there is none (`tests/checklist-frozen.test.mjs`).
+
+| Part | File | sha256 |
+|---|---|---|
+| Checklist | `.audit-loop/checklist.json` | `8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d` |
+| Matcher | `scripts/lib/checklist/match.mjs` | `7b58d81d55072c39da3ac1cd3c5a9f7c089ff48ad21855cbf9c0db27c554b350` |
+| Scoring code | `scripts/lib/checklist/pilot.mjs` | `4f3b957b1e60b46adea076b80841ee44fa427e687b252c97a7a45f53262d1af1` |
+
+**Confirmation (a later task, not run here):** replay the PRs merged AFTER the freeze lands on main, with `--confirmation`, and judge median <= 5 and max <= 12 on both entries fired and checks per PR. Editing any of the three ends the freeze: update the constants and this table together and start a new confirmation window after the new freeze.
+
+## Audit-found trigger gaps, deferred to the redesign
+
+Round-1 audit findings about trigger COVERAGE. They are deferred on purpose: changing triggers on seen data would make the pilot numbers stale and would be tuning on the held-out set. They are inputs to the next redesign, not defects of the tooling.
+
+- M1, M16: `anthropic-pin-unserviceable-param` matches `tool_choice` but not `system` / `tools` in a client call.
+- M4, M17: `npm-run-flag-swallowed` scopes to `.md`, `.json`, `.yml`; it omits `.yaml`, `.mjs`, `.js`, `.sh`.
+- M6: `learning-repo-name-is-owner-slash-repo` misses an assignment followed by a trailing comment.
+- M7: several controls match the oracle (a helper name, a path) rather than reproducing the incident they cite.
+- M8: `provider-route-not-env-var` matches the negated key check but not a positive `ANTHROPIC_API_KEY` read.
+- M18: `generated-skills-copy-never-hand-edited` covers `.claude/skills/**` but not `scripts/.claude-skills/**`.
+- M19: the generator embeds trigger symbols, patterns and control examples in `gen.mjs`, so editing it fires many unrelated entries.
+- M20: `generated-artifact-bundle-deps` names the artifact, generator and entry lists, not a new import elsewhere in the bundle.
+
+Dismissed: H1 (`round-signals.mjs` belongs to Cluster D, not yet on main) and M21-M26 (adjacency-enumeration notices).
+
+## Decision
+
+**2026-11-22, the coordinator under Louis's delegation, after a /brainstorm with GPT and Gemini and a debate round.**
+
+1. **No shrink; Cluster F does not run.** The plan's rule stands: a failed threshold stops the shrink.
+2. **The noise rule is unchanged (median <= 5, max <= 12), with no post-hoc revision.** The skills-surface entries are redesigned (merge only true redundancy, narrow distinguishable triggers, count individual checks), the instrument is frozen, and the re-test runs on PRs merged after the freeze, as a later task.
+3. **Ship observe-only.** Fire-logging is ON; prompt injection is OFF by default (`AUDIT_CHECKLIST_INJECT=1` opts in); AGENTS.md is untouched. **End date: 2026-12-06 or 150 merged PRs, whichever comes first.** At the end date the fire log is reviewed and the checklist is kept, redesigned or retired.
+4. **The kernel target stays 10-15K for now.** The shrink becomes a separate plan for Louis: a full 217-unit inventory with four dispositions (`kernel`, `checklist`, `enforced`, `relocated`), and a check that each `enforced:` gate really fails on the mistake before its AGENTS.md text becomes a pointer.

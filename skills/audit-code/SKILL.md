@@ -189,7 +189,7 @@ ignored). → `references/round-recipes.md` §R2+ scope — read when tempted to
 ### Automatic waves and rubrics (no flag)
 
 - **Requirements rubric + checklist** — `.requirements/ledger.json` → `<requirements_rubric>`,
-  `.audit-loop/checklist.json` → `<checklist>`. `[stale]` → `node scripts/requirements.mjs extract
+  `.audit-loop/checklist.json` → `<checklist>` (if `AUDIT_CHECKLIST_INJECT=1`). `[stale]` → `node scripts/requirements.mjs extract
   --files <…>` then `reconcile`. → `references/round-recipes.md` §Requirements rubric, §Checklist.
 - **Duplication wave (Wave 5)** — a near-duplicate of an indexed symbol becomes a
   `[Duplication]` finding that **gates convergence like a `quickfix` finding**. JS/TS

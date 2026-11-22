@@ -71,8 +71,8 @@ then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
 
 ## Checklist (automatic)
 
-When `.audit-loop/checklist.json` exists, the repo tripwires the change fires are appended to the rubric as a
-`<checklist>` block, using the SAME matcher as `node scripts/checklist.mjs` with the audit's own `--files` / `--diff`
-(paths and symbols from `--files`; patterns only from `--diff`). Absent file, or nothing fired: the prompt is byte-identical.
-A `[checklist] skipped` stderr line means an invalid checklist or unreadable diff; the audit continues without the block.
-Each fired entry names its incident: check the diff does not repeat it. The file is consumer-owned.
+When `.audit-loop/checklist.json` exists the audit evaluates it with the SAME matcher as `node scripts/checklist.mjs` (the audit's own
+`--files` / `--diff`; patterns only from `--diff`) and records the fires, but appends the `<checklist>` block to the rubric ONLY under
+`AUDIT_CHECKLIST_INJECT=1` (observe-only by default: unset, the prompt is byte-identical). `[checklist] UNMEASURED` on stderr, and
+`_checklist: "unmeasured"` on the round, mean the checklist could not be evaluated (invalid file, unreadable diff or file); the audit
+continues without it. Each injected entry names its incident: check the diff does not repeat it. The file is consumer-owned.

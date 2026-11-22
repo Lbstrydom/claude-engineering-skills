@@ -7,6 +7,8 @@
  *   node scripts/checklist-pilot.mjs --incidents [--checklist <file>] [--out-dir <dir>] [--json]
  *   node scripts/checklist-pilot.mjs --kernel [--checklist <file>] [--json]
  *   node scripts/checklist-pilot.mjs --controls [--checklist <file>] [--json]   (per-entry control/negative verdicts)
+ *   node scripts/checklist-pilot.mjs --verify-frozen                            (sha256 of checklist, matcher and scoring code vs the pinned constants)
+ *   add --confirmation to --replay: refuses to run unless the instrument is the frozen one
  *
  * `--skip 30` is the held-out window (the 30 PRs before the pilot window). Writes patches and a throwaway fires log under
  * `--out-dir` (default a temp dir), never the repo's `.audit/` log. Source-repo-only; read-only on the repo.
@@ -22,8 +24,9 @@ import path from 'node:path';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { replayWindow, incidentReplay, kernelEstimate, controlRows } from './lib/checklist/pilot.mjs';
+import { verifyFrozen } from './lib/checklist/frozen.mjs';
 
-const FLAGS = ['--replay', '--incidents', '--kernel', '--controls', '--tip', '--skip', '--count', '--checklist', '--out-dir', '--json', '--help', '-h', '--selfcheck-relocation'];
+const FLAGS = ['--replay', '--incidents', '--kernel', '--controls', '--verify-frozen', '--confirmation', '--tip', '--skip', '--count', '--checklist', '--out-dir', '--json', '--help', '-h', '--selfcheck-relocation'];
 
 function value(argv, name) {
   const i = argv.indexOf(name);
@@ -39,12 +42,19 @@ async function main() {
   let out;
   try {
     assertKnownFlags(argv, FLAGS, { cli: 'checklist-pilot' });
-    const modes = ['--replay', '--incidents', '--kernel', '--controls'].filter((m) => argv.includes(m));
-    if (modes.length !== 1) throw new ArgvError('checklist-pilot: pass exactly one of --replay, --incidents, --kernel, --controls');
+    const modes = ['--replay', '--incidents', '--kernel', '--controls', '--verify-frozen'].filter((m) => argv.includes(m));
+    if (modes.length !== 1) throw new ArgvError('checklist-pilot: pass exactly one of --replay, --incidents, --kernel, --controls, --verify-frozen');
     const repoRoot = process.cwd();
     const checklistFile = value(argv, '--checklist') ?? undefined;
     const outDir = path.resolve(value(argv, '--out-dir') ?? fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-pilot-')));
-    if (modes[0] === '--replay') {
+    if (argv.includes('--confirmation')) {
+      // A confirmation run is only a confirmation if the instrument is the frozen one.
+      const v = verifyFrozen(repoRoot);
+      if (!v.ok) throw new Error(`--confirmation refused: the instrument is not the frozen one (${v.mismatches.map((m) => m.name).join(', ')} differ; run --verify-frozen)`);
+    }
+    if (modes[0] === '--verify-frozen') {
+      out = verifyFrozen(repoRoot);
+    } else if (modes[0] === '--replay') {
       const tip = value(argv, '--tip');
       if (!tip) throw new ArgvError('checklist-pilot: --replay needs --tip <sha> (the window is defined from a pinned commit)');
       const { _replay, _git, ...rest } = replayWindow({ repoRoot, tip, skip: Number(value(argv, '--skip') ?? 0), count: Number(value(argv, '--count') ?? 30), checklistFile, outDir });

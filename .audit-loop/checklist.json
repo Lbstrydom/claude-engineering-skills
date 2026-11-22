@@ -325,9 +325,17 @@
       "id": "skill-reference-summary-byte-match",
       "trigger": {
         "paths": [
-          "skills/*/references/**",
           "docs/audit/shared-references/**",
           "scripts/sync-shared-audit-refs.mjs"
+        ],
+        "patterns": [
+          "^summary:",
+          "^\\| `references/"
+        ],
+        "patternPaths": [
+          "skills/*/references/*.md",
+          "skills/*/SKILL.md",
+          "docs/audit/shared-references/*.md"
         ]
       },
       "check": "A reference file's `summary:` frontmatter must byte-match its parent SKILL.md reference-index row; edit the canonical shared reference, never a synced copy. AGENTS.md: \"Every reference file has `summary:` YAML frontmatter that must byte-match the parent SKILL.md's reference-index row, enforced by `npm run skills:check`\".",
@@ -344,8 +352,13 @@
       "id": "skill-frontmatter-description-budget",
       "trigger": {
         "paths": [
-          "skills/*/SKILL.md",
           "scripts/check-skill-descriptions.mjs"
+        ],
+        "patterns": [
+          "^(name|description):"
+        ],
+        "patternPaths": [
+          "skills/*/SKILL.md"
         ]
       },
       "check": "A skill's description is required and capped; a bad `name` is a silent skip. AGENTS.md: \"**(3) Frontmatter is a contract** (enforced by `skills:check`), and its sharpest trap is silence: a bad `name` is a **silent skip**; `description` is required, **max 1024 chars**; every optional key sits at **column 0**\".",
@@ -362,8 +375,13 @@
       "id": "skill-frontmatter-indented-key-inert",
       "trigger": {
         "paths": [
-          "skills/*/SKILL.md",
           "scripts/check-skill-frontmatter.mjs"
+        ],
+        "patterns": [
+          "^\\s+(argument-hint|allowed-tools|user-invocable|disable-model-invocation|model|summary):"
+        ],
+        "patternPaths": [
+          "skills/*/SKILL.md"
         ]
       },
       "check": "An optional frontmatter key indented under `description: |` is description text, not a key. AGENTS.md: \"every optional key sits at **column 0** — indented under `description: |` it is description TEXT, parsed, valid and **inert**.\"",
@@ -380,12 +398,11 @@
       "id": "synced-skill-content-reachable-refs",
       "trigger": {
         "paths": [
-          "skills/*/SKILL.md",
-          "skills/*/references/**",
           ".skill-consumer-refs-baseline.json"
         ],
         "patterns": [
-          "npm run [a-z][\\w:.-]*"
+          "npm run [a-z][\\w:.-]*",
+          "docs/[\\w./-]+\\.md"
         ],
         "patternPaths": [
           "skills/**/*.md"
@@ -512,8 +529,13 @@
       "id": "worktree-documented-command-reachable",
       "trigger": {
         "paths": [
-          "skills/*/SKILL.md",
           "scripts/check-worktree-preflight.mjs"
+        ],
+        "patterns": [
+          "scripts/\\.claude-skills/"
+        ],
+        "patternPaths": [
+          "skills/**/*.md"
         ]
       },
       "check": "A skill documenting a command into scripts/.claude-skills/ must warn that the tree is absent in a linked git worktree. AGENTS.md (seven shapes): \"*(4)* a documented command whose tooling cannot reach a linked worktree (Gate: `npm run worktree:preflight:gate`)\".",

@@ -138,25 +138,25 @@ gated('generated-skills-copy-never-hand-edited', 'skills-check-detects-hand-edit
   incident: NOINC('skills:check'),
   control: { path: '.claude/skills/ship/SKILL.md', text: 'Hand-edited line in the generated copy.' } });
 gated('skill-reference-summary-byte-match', 'skills-check-detects-shared-reference-drift', {
-  trigger: { paths: ['skills/*/references/**', 'docs/audit/shared-references/**', 'scripts/sync-shared-audit-refs.mjs'] },
+  trigger: { paths: ['docs/audit/shared-references/**', 'scripts/sync-shared-audit-refs.mjs'], patterns: ['^summary:', '^\\| `references/'] },
   lead: "A reference file's `summary:` frontmatter must byte-match its parent SKILL.md reference-index row; edit the canonical shared reference, never a synced copy.",
   context: 'AGENTS.md: "@@ the parent SKILL.md\'s reference-index row, enforced by `npm run skills:check`".',
   incident: NOINC('skills:check'),
   control: { path: 'skills/audit-code/references/round-recipes.md', text: 'summary: a reworded summary that no longer matches the index row' } });
 gated('skill-frontmatter-description-budget', 'skills-check-detects-over-budget', {
-  trigger: { paths: ['skills/*/SKILL.md', 'scripts/check-skill-descriptions.mjs'] },
+  trigger: { paths: ['scripts/check-skill-descriptions.mjs'], patterns: ['^(name|description):'] },
   lead: "A skill's description is required and capped; a bad `name` is a silent skip.",
   context: 'AGENTS.md: "**(3) Frontmatter is a contract** (enforced by `skills:check`), and its sharpest trap is silence: a bad `name` is a **silent skip**; @@; every optional key sits at **column 0**".',
   incident: 'A bad `name` is a silent skip: the skill vanishes from discovery with no error (AGENTS.md, skill surfaces invariant 3).',
   control: { path: 'skills/ship/SKILL.md', text: 'description: a description edited without re-measuring its length' } });
 gated('skill-frontmatter-indented-key-inert', 'skills-check-detects-indented', {
-  trigger: { paths: ['skills/*/SKILL.md', 'scripts/check-skill-frontmatter.mjs'] },
+  trigger: { paths: ['scripts/check-skill-frontmatter.mjs'], patterns: ['^\\s+(argument-hint|allowed-tools|user-invocable|disable-model-invocation|model|summary):'] },
   lead: 'An optional frontmatter key indented under `description: |` is description text, not a key.',
   context: 'AGENTS.md: "every optional key sits at **column 0** — @@ valid and **inert**."',
   incident: 'An indented key parsed, validated and did nothing: description TEXT, inert (AGENTS.md, skill surfaces invariant 3).',
   control: { path: 'skills/ship/SKILL.md', text: '  argument-hint: <indented under description, so inert>' } });
 gated('synced-skill-content-reachable-refs', 'skills-consumer-refs-gate', {
-  trigger: { paths: ['skills/*/SKILL.md', 'skills/*/references/**', '.skill-consumer-refs-baseline.json'], patterns: ['npm run [a-z][\\w:.-]*'] },
+  trigger: { paths: ['.skill-consumer-refs-baseline.json'], patterns: ['npm run [a-z][\\w:.-]*', 'docs/[\\w./-]+\\.md'] },
   lead: 'Synced skill content must name tooling BY PATH and may not name an `npm run` alias or an out-of-closure docs/ file a consumer cannot reach.',
   context: 'AGENTS.md (seven shapes): "*(5)* synced content naming an `npm run` alias or an out-of-closure `docs/` file — **name synced tooling BY PATH** and the sync rewrites it (@@)".',
   incident: 'Consumer-reported shape (5): synced skill text named an npm alias or docs/ file that did not exist in the consumer.',
@@ -192,7 +192,7 @@ gated('windowed-view-declares-its-window', 'windowed-views-gate', {
   incident: 'unremediated_acceptances fell 116 to 47 over five weeks purely because rows aged out of a 7-30 day window; the two windows shared 0 rows and 110 of the 116 were still open.',
   control: { path: 'supabase/migrations/20261122000001_view.sql', text: "CREATE OR REPLACE VIEW recent_runs AS SELECT * FROM audit_runs WHERE created_at > now() - interval '7 days';" } });
 gated('worktree-documented-command-reachable', 'worktree-preflight', {
-  trigger: { paths: ['skills/*/SKILL.md', 'scripts/check-worktree-preflight.mjs'] },
+  trigger: { paths: ['scripts/check-worktree-preflight.mjs'], patterns: ['scripts/\\.claude-skills/'] },
   lead: 'A skill documenting a command into scripts/.claude-skills/ must warn that the tree is absent in a linked git worktree.',
   context: 'AGENTS.md (seven shapes): "*(4)* a documented command whose tooling cannot reach a linked worktree (@@)".',
   incident: 'Consumer-reported shape (4): a documented command whose tooling is gitignored and so absent in every linked worktree.',
@@ -280,6 +280,10 @@ const SCOPES = {
   'emit-softfail-opt-out': CODE,
   'own-model-capture-column-coverage': ['supabase/migrations/**'],
   'synced-skill-content-reachable-refs': ['skills/**/*.md'],
+  'skill-reference-summary-byte-match': ['skills/*/references/*.md', 'skills/*/SKILL.md', 'docs/audit/shared-references/*.md'],
+  'skill-frontmatter-description-budget': ['skills/*/SKILL.md'],
+  'skill-frontmatter-indented-key-inert': ['skills/*/SKILL.md'],
+  'worktree-documented-command-reachable': ['skills/**/*.md'],
   'exit-after-stdout-must-drain': CODE,
   'windowed-view-declares-its-window': ['supabase/migrations/**'],
   'cli-entry-guard-is-isinvokedasscript': CODE,

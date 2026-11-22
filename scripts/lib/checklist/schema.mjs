@@ -55,6 +55,9 @@ export const ChecklistEntrySchema = z.object({
   check: nonEmpty,
   incident: nonEmpty,
   control: Control,
+  /** Distinct checks this entry asks of a reviewer (default 1). A MERGED entry declares k, so grouping cannot fake a pass: the pilot's
+   *  `checkCount` per PR sums this over the fired entries. */
+  checks: z.number().int().min(1).optional(),
   gateContract: z.string().regex(/^[^#\s]+\.json#[^#\s]+$/, "gateContract is '<file>#<gateId>'").optional(),
   stated: nonEmpty.optional(),
 }).strict().superRefine((e, ctx) => {

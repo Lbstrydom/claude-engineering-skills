@@ -76,11 +76,13 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
     return { fired: r.fired, files: parseUnifiedDiff(diff).length };
   };
 
+  const checksOf = new Map(entries.map((e) => [e.id, e.checks ?? 1]));
   const perPr = prs.map((w) => {
     const r = replay(w.sha);
-    return { ...w, files: r.files, firedCount: r.fired.length, fired: r.fired.map((f) => ({ id: f.id, via: f.via })) };
+    return { ...w, files: r.files, firedCount: r.fired.length, checkCount: r.fired.reduce((n, f) => n + checksOf.get(f.id), 0), fired: r.fired.map((f) => ({ id: f.id, via: f.via })) };
   });
   const counts = perPr.map((p) => p.firedCount);
+  const checkCounts = perPr.map((p) => p.checkCount);
   const entryRows = entries.map((e) => {
     const firedOnPrs = perPr.filter((p) => p.fired.some((f) => f.id === e.id)).map((p) => p.pr);
     const windowIncidents = (IN_WINDOW_INCIDENTS[e.id] ?? []).map((sha) => {
@@ -93,6 +95,8 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
     tip: tipSha, skip, count: perPr.length, checklist: checklistFile ?? '.audit-loop/checklist.json', checklistSha256: sha256File(path.resolve(repoRoot, checklistFile ?? '.audit-loop/checklist.json')), entries: entries.length,
     window: perPr.length ? { newest: { pr: perPr[0].pr, date: perPr[0].date }, oldest: { pr: perPr.at(-1).pr, date: perPr.at(-1).date } } : null,
     noise: { median: median(counts), max: Math.max(...counts), min: Math.min(...counts), distribution: [...counts].sort((a, b) => a - b), thresholds: { median: 5, max: 12 } },
+    // "Individual checks a reviewer must perform" per PR: an entry counts `checks` (default 1), so merging entries cannot lower it.
+    checks: { median: median(checkCounts), max: Math.max(...checkCounts), min: Math.min(...checkCounts), distribution: [...checkCounts].sort((a, b) => a - b), thresholds: { median: 5, max: 12 } },
     perPr, entryRows,
     neverFired: entryRows.filter((e) => e.firedOnCount === 0).map((e) => e.id),
     _replay: replay, _git: git,
