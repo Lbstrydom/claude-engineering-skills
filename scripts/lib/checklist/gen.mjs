@@ -29,12 +29,11 @@ function loadGates(repoRoot) {
   return out;
 }
 
-/** The skill markdown files the size ratchet already pins (over the limit), sorted: the files that may not grow. */
+/** The skill markdown files the size ratchet already pins (over the limit), sorted: the files that may not grow. An empty
+ *  list is valid (every file shrank under the limit); the baseline and the ratchet stay in the trigger either way. */
 function oversizedSkillFiles(repoRoot) {
   const j = JSON.parse(fs.readFileSync(path.join(repoRoot, '.skill-size-baseline.json'), 'utf8'));
-  const files = Object.keys(j.files ?? {}).sort();
-  if (!files.length) throw new Error('checklist gen: .skill-size-baseline.json lists no files');
-  return files;
+  return Object.keys(j.files ?? {}).sort();
 }
 
 /** @param {string} repoRoot @returns {string} the exact text of `.audit-loop/checklist.json` */

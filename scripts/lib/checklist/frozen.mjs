@@ -17,8 +17,10 @@ export const FROZEN = Object.freeze({
   frozenOn: '2026-11-22',
   files: Object.freeze({
     checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '7f574f3fa1f0f1e0232be8e1497ec805d63181db2cdc7e0b8d041e963dd37f04' }),
-    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: 'dcb4e4df0afc58d22a8ff29f7808b6a7db7a31c6d4c565b4244591acd48a5f50' }),
+    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: 'fc00e14d59be335017c17609e0254520188adbef037483735dcfe17785016aca' }),
     scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'c758c13a21c6b582dafde08c9e0249657cf7bdfcb08720118ef47cc20d615b39' }),
+    // v4: the schema decides how an entry is LOADED (trigger keys, the `checks` default), so it is part of the instrument too.
+    schema: Object.freeze({ path: 'scripts/lib/checklist/schema.mjs', sha256: '3661d2bd4ec556cdc31874617a33aa87fde89aa5de705e32222f0ab4deb64035' }),
   }),
 });
 

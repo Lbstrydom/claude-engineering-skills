@@ -50,6 +50,11 @@ test('the freshness check passes on the repo and the instrument is seen to fail 
   const regenerated = buildChecklistText(tmp);
   assert.notEqual(regenerated, committed);
   assert.ok(JSON.parse(regenerated).entries.find((e) => e.id === 'skill-markdown-size-ratchet').trigger.paths.includes('skills/newly-oversized/SKILL.md'));
+  // An empty baseline (every file shrank under the limit) is valid: the entry keeps the baseline and ratchet paths.
+  j.files = {};
+  fs.writeFileSync(b, JSON.stringify(j));
+  const emptied = JSON.parse(buildChecklistText(tmp)).entries.find((e) => e.id === 'skill-markdown-size-ratchet');
+  assert.deepEqual(emptied.trigger.paths, ['.skill-size-baseline.json', 'scripts/skill-size-ratchet.mjs']);
 });
 
 test('a prefix that matches no gate is an error, never a silently dropped entry', () => {

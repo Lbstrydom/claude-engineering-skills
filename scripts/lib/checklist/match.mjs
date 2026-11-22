@@ -154,6 +154,7 @@ export function parseUnifiedDiff(text) {
       const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
       if (!m || !cur) throw new DiffParseError(`malformed hunk header: ${JSON.stringify(line.slice(0, 60))}`); // counts are never defaulted
       cur.hasHunk = true;
+      (cur.hunks ??= []).push(m[0]); // where each change sits: a regenerated copy has the same hunk ranges as its source
       remOld = Number(m[1] ?? 1);
       remNew = Number(m[2] ?? 1);
     } else if (cur && (line.startsWith('Binary files ') || line === 'GIT binary patch')) cur.binary = true;
@@ -254,6 +255,14 @@ export function collectGitDiff({ base, cwd = process.cwd(), run = gitRunner(cwd)
 /** A symbol is only a USE in code: a markdown or JSON file that merely names `createAnthropicClient` is a mention, and would fire every entry on every doc edit. */
 const CODE_FILE = new RegExp(`\\.(${SOURCE_CODE_EXTENSION_ALTERNATION})$`, 'i');
 
+/** Two diff records make the same change: same kind (added/deleted/modified), the same hunk ranges (where), and the same
+ *  added and removed lines (what), EOL-folded. */
+function sameChange(a, b) {
+  const kind = (f) => (f.status === 'renamed' ? 'modified' : f.status);
+  const eq = (x = [], y = []) => x.length === y.length && x.every((l, i) => l.replace(/\r$/, '') === y[i].replace(/\r$/, ''));
+  return kind(a) === kind(b) && eq(a.hunks, b.hunks) && eq(a.added, b.added) && eq(a.removed, b.removed);
+}
+
 const symbolRe = (name) => new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$')}(?![\\w$])`);
 
 /**
@@ -283,10 +292,27 @@ export function matchEntries({ entries, mode, files = [], diffFiles = [], readFi
     }
     // A generated copy changed WITHOUT its source is the hand-edit; one changed WITH it is a regeneration and stays silent.
     for (const { path: copy, source } of entry.trigger.unpairedPaths ?? []) {
-      const changed = new Set(candidatePaths);
-      for (const p of candidatePaths.filter((x) => x.startsWith(copy))) {
-        const counterpart = source + p.slice(copy.length);
-        if (!changed.has(counterpart)) note('path', `${p} (without ${counterpart})`);
+      if (mode === 'files') {
+        // Pre-edit: only the planned paths are known, so pairing is by path.
+        const changed = new Set(candidatePaths);
+        for (const p of candidatePaths.filter((x) => x.startsWith(copy))) {
+          const counterpart = source + p.slice(copy.length);
+          if (!changed.has(counterpart)) note('path', `${p} (without ${counterpart})`);
+        }
+        continue;
+      }
+      // Diff: a regeneration is a copy whose change IS its source's change (same kind, same lines). A copy edited alongside a
+      // different source edit, or modified while its source was deleted, is still a hand-edit.
+      // Both sides of a rename count: a copy moved OUT of the copy tree is still a changed copy.
+      const sides = (f) => [...new Set([f.path, f.oldPath].filter(Boolean).map(norm))];
+      const byPath = new Map(diffFiles.flatMap((f) => sides(f).map((p) => [p, f])));
+      for (const f of diffFiles) {
+        for (const p of sides(f).filter((x) => x.startsWith(copy))) {
+          const counterpart = source + p.slice(copy.length);
+          const s = byPath.get(counterpart);
+          if (!s) note('path', `${p} (without ${counterpart})`);
+          else if (!sameChange(f, s)) note('path', `${p} (differs from the change to ${counterpart})`);
+        }
       }
     }
     if (symbols.length) {
