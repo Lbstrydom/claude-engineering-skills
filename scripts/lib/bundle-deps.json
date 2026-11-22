@@ -166,6 +166,7 @@
         "scripts/.claude-skills/lib/audit/review-effort-event.mjs",
         "scripts/.claude-skills/lib/audit/stage1-triage.mjs",
         "scripts/.claude-skills/lib/audit/stage1-triager-resolver.mjs",
+        "scripts/.claude-skills/lib/audit/step-back.mjs",
         "scripts/.claude-skills/lib/audit/tiered-provider-calls.mjs",
         "scripts/.claude-skills/lib/audit/usage-event.mjs",
         "scripts/.claude-skills/lib/brainstorm/schemas.mjs",

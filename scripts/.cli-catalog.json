@@ -765,6 +765,10 @@
       "description": "What each expected exporter has sent CES (received / stale / rejected / never received / drop unreadable). An absent export is unmeasured, never zero. Advisory.",
       "category": "sync"
     },
+    "step-back:replay": {
+      "description": "Step-back replay harness over a frozen dataset: `freeze` lists each PR's SID, ledger, result paths and audited shas; `run` replays R3/R6 checkpoints per arm (none|same|different) through an injected provider, meters spend, hard-stops at --max-usd and scores with the pre-registered rule. --dry-run prints the plan and cost and makes no call; a paid run needs --max-usd and --confirm-spend.",
+      "category": "audit"
+    },
     "stores:drift": {
       "description": "Migration drift across EVERY consumer store, not just the ambient one (advisory; never blocks).",
       "category": "sync"

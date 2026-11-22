@@ -1,0 +1,86 @@
+{
+  "prs": [
+    {
+      "pr": 410,
+      "label": "bad",
+      "branch": "claude/model-eval-audit-at-commit-tree",
+      "runIds": [
+        "930b00a4-3e74-4f55-9c2c-3773cda8bc54",
+        "d4eade1d-bde4-4baa-9513-0464da0c8be1",
+        "14fb8e90-e496-4d1d-97b6-26a281474c83",
+        "6a8e2db4-deaa-41c5-b022-c7ab61b1729b",
+        "fc43d783-ea4c-4456-b6aa-208ad4804051",
+        "52437faf-a390-4660-a786-62ba13028f03",
+        "0bf697ea-1117-40cf-a687-9886543e3088"
+      ]
+    },
+    {
+      "pr": 421,
+      "label": "bad",
+      "branch": "claude/solo-control-hardening-bdb23f",
+      "runIds": [
+        "55660316-bd94-492c-8c24-ba5254620a26",
+        "219b87f1-3bac-4bb1-8120-4e29dde64ffe",
+        "1a3d22a0-c51d-487b-8ec7-e37cf027a467",
+        "82545997-5148-41c9-ab35-2d107aa0801c",
+        "d7beb047-303a-43ed-9dfc-88e67c816a15",
+        "80fb0bd3-43a4-4902-b5c1-3db108d238df"
+      ]
+    },
+    {
+      "pr": 424,
+      "label": "bad",
+      "branch": "ces/telemetry-export-p3",
+      "runIds": [
+        "9a3f6ef0-8cb6-48df-ba2b-f782f3a99124",
+        "bbba6763-b5bd-4545-9ea3-68c203d4766e",
+        "77964385-15de-4140-9c72-1b304ecb36c6",
+        "4cb30e6a-afd0-4778-8299-4f3abc168c6a",
+        "bdd31f9c-7cbe-4700-b1cc-6c59607797d9",
+        "7c1d9686-11c9-494b-bad9-55047398492d"
+      ]
+    },
+    {
+      "pr": 429,
+      "label": "bad",
+      "branch": "claude/solo-control-reaudit-421",
+      "runIds": [
+        "267bf993-02d2-4965-9878-2eb13d56a039",
+        "022c4d03-6191-466a-bea4-b3b18dfd1ebd",
+        "8c19d598-9c20-4b80-a2eb-61d52332cad6",
+        "3be3f27e-02f7-4c30-b1ba-183608f17883",
+        "4440fb50-0dde-41b3-9905-af7f53ce4d63",
+        "a02113f2-5df0-46e8-930e-0a49158cee93"
+      ]
+    },
+    {
+      "pr": 426,
+      "label": "converged",
+      "branch": "claude/sashiko-adjudicated-scoring",
+      "runIds": [
+        "97ebab0d-c2af-4822-9b34-15f51ca7d9e3",
+        "5d56aa7f-66a1-4942-bda5-0095da56904c",
+        "1ac21a24-3fdd-4d8d-aeb5-c4452cb4cc7b",
+        "f7ddc0db-26d8-4cbd-9da3-84fb7f6055e7"
+      ]
+    },
+    {
+      "pr": 412,
+      "label": "converged",
+      "branch": "ces/arch-coverage-and-git-timeout",
+      "runIds": [
+        "78dc02ed-34d6-4f1c-90b5-c0ec7c5176c4",
+        "6446417e-fa9c-4432-80d3-79374384536c"
+      ]
+    },
+    {
+      "pr": 425,
+      "label": "converged",
+      "branch": "ces/coverage-read-failed",
+      "runIds": [
+        "8737fc87-0907-4b18-b7d3-74cc64b7cb8f",
+        "a6a5acd9-2ae2-4cc2-8996-f8d374c099d2"
+      ]
+    }
+  ]
+}
