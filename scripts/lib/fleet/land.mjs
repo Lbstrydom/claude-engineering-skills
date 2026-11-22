@@ -20,7 +20,7 @@ import { redTierLines } from './tier-failure.mjs';
 import { LAND_RECORD_NUDGE, invalidateRecordCache, recordCommandFor } from './record-count.mjs';
 import { unregisteredCacheDir } from './unregistered.mjs';
 import {
-  renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
+  conflictVerdict, renderAbandon, renderApprove, renderBuilt, renderConfirm, renderDryRun, renderReconcile, renderSerial,
 } from './render-train.mjs';
 
 /**
@@ -166,7 +166,7 @@ function finishBuilt(r, cmd) {
     // A probe is never approvable: green exits 0, a tier that ran red exits 4, a conflict (no tier ran) exits 3.
     const green = r.train.result === 'green' || r.train.result === 'green-after-rerun';
     const code = red ? 'red' : green && !r.train.conflict ? 'ok' : 'refused';
-    const verdict = r.train.conflict ? `CONFLICT at ${r.train.conflict.sourceId}` : r.train.result ?? 'none';
+    const verdict = r.train.conflict ? conflictVerdict(r.train.conflict) : r.train.result ?? 'none';
     const text = [`PROBE (tier ${r.train.testCommand[0]?.name} only, never approvable) — ${verdict}`,
       renderBuilt({ train: r.train, approvability: r.approvability, cmd }), ...(red ? redTierLines(r.train) : [])].join('\n');
     return { ...r, ok: code === 'ok', code, reason: code === 'ok' ? undefined : `probe: ${verdict}`, trainId: r.train.trainId, text };
