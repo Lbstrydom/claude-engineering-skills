@@ -282,6 +282,59 @@ worth doing is a decision for after stage 4, on measured numbers.
   (14942 − 7134 − 187 = 7621). That is below the 60-70% §7 expected, because most stage-1 units were tripwires rather than
   dossier. Reproducible: re-running the stage-1 script on `b52a77f1`'s AGENTS.md gives a byte-identical file.
 
+### Stage 2 — 2026-11-22
+- **Pre check**: `relocation-check.mjs pre ... --stage 2` → 42 units, 0 problems (live AGENTS.md = main `0c345714`, no rebase).
+- **Frozen, untouched**: units 94, 96, 103, 179 (gate-quoted), headings, and unit 104's label line. `ANCHORS` in
+  `scripts/lib/checklist/pilot.mjs` checked before editing: stage 2 hosts `LEARNING_REPO_NAME` (row kept verbatim in its
+  first words), `jsonb-safe write seam`, `Every audit-store write in`, `A SCHEMA ERROR IS NOT AN EMPTY RESULT`, `"Disposable" is an ALLOWLIST`.
+- **Resident spec (every clause kept resident unless listed under non-resident)**:
+  - Env table: `OPENAI_API_KEY` required, rest degrades; `AUDIT_DB_URL` unset → local-only mode not an error, Session pooler
+    5432 never Transaction; `LEARNING_DISABLE=1` kills all; `LEARNING_REPO_NAME` is the `owner/repo` slug matching
+    `audit_repos.name`, a bare name silently misses (weekly-review), `install.mjs`/`setup.mjs` derive it; `FINAL_REVIEW_TIMEOUT_MS`
+    coupled to `FINAL_REVIEW_HARD_DEADLINE_MS` (floor `2x timeout + 60000`, raise both), `finalReviewTimeoutMs()`,
+    `finalReviewModelSpec()` owns the one default; `AUDIT_AUTHOR_TIER_HINT` observation-only, never routes (folded into the pointer line).
+    Non-resident: the `GEMINI_REVIEW_TIMEOUT_MS` alias, the `SUPABASE_AUDIT_*` sunset row, "#16 graceful degradation".
+  - Postgres: Connect (5432 not 6543 and why; credential is the access control; pool owns `public` or `BYPASSRLS` so bypasses
+    RLS; owner/runtime split's `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` is the forgotten line; `public`-only v1); no dashboard
+    migrations (idempotent source migration, retry `--migrate`); `commit_sha` is HEAD at capture, use `audited_sha`/`audited_tree`,
+    NULL on both is unverifiable; jsonb seam (raw values, `pgArray`, both failure modes); `durableWrite` (registration, four
+    outcomes, `lost`/`spilled` → incomplete, new store writer registered or exempted with a reason); schema error ≠ empty
+    result (the catch question, `isSchemaFaultSqlstate`/`describeSchemaFault`, one assertion on a real Postgres); disposable
+    allowlist (fails closed, never "not $VENDOR", host+port+database identity, no env escape hatch, fresh-replay regen);
+    RPC bounded at the caller (unit kept verbatim). Non-resident: the "72% zero file-overlap across 94 runs" measurement, the
+    pg-direct intro sentence's detail, the Design/Operations descriptions, `npm run setup:cloud`, outcome-semantics prose.
+  - Anthropic: one seam, `CLAUDE_BACKEND` serves only what it can serve faithfully, `sdk` default bills the key, `cli` on the Max
+    credit, local `cli`, `createAnthropicClient()` never `new Anthropic()`; forced tool-calling needs the `sdk` pin and the seam
+    throws since 2026-11-15; `max_tokens` unenforced on `cli` (verbatim); availability is the backend's answer, `isClaudeAvailable()`
+    vs `isClaudeAvailableFor('sdk')` at a pinned site; `claude-trace` cannot meter (verbatim). Non-resident: the "committed default
+    stays `sdk` for CI" reason, `--output-format json`, the 20/20-runs figure, "highest-volume call site", the smoke-test line (moved into the pointer).
+  - Arch memory: MANDATORY `get-neighbourhood` consult with `targetPaths`/`intentDescription`/`k: 8` (verbatim), three bands and the
+    `μ + 3σ` rule, `precedent` (open symbols first, decide on the code, `above-floor-cluster` strongest), `review` (uncalibrated bands
+    `review` only, run `arch:refresh`), `unscored` (verbatim), retired band names, When-NOT list including the `repoRegistered:false`
+    case, the hook is acceleration only and other hosts run it by hand. Non-resident: "Claude Code or Copilot", band-semantics prose, trigger verbs/cost/cache/disable-flag (link).
+  - Requirements: CLI, committed ledger is the single artefact, `/audit-code` rubric injection, egress safety (verbatim).
+    Non-resident: the `extract → reconcile → index` chain, "index derived in-memory", "unaffected when absent".
+  - Seam: producer SKILL.md / consumer code, silent both ways, the 0-of-7 incident; grep the SKILL.md before reading a field
+    (verbatim), real-row fixture, one accessor, distinct mismatch names (verbatim), the schema-forbids-field variant (verbatim).
+    Non-resident: the second incident's prose (it stays in the variant bullet and in `testing-doctrine.md`).
+- **Edit**: 28 of the 42 units shortened (26) or removed (2: env rows 86, 87), the other 14 kept verbatim because every clause
+  is load-bearing (measured: `pre --stage 2` after the edit reports exactly 28 changed units); 6 dossier sections appended (42 units, copied by script from the `b52a77f1` text with `rebaseLinks`).
+- **Post check**: `post ... --stage 2 --dossier ...` → 42 units, 0 problems; stage 1 still 40, 0. Negative controls on scratch
+  copies: a line of unit 98 deleted → `found 0x`, exit 1; unit 99 pasted twice → `found 2x`, exit 1; a second
+  `## Anthropic Backend Routing` → `appears twice`, exit 1.
+- **Gates and tests**: `context:check`, `gates:check`, `docs:refs:gate`, `skills:check`, `checklist:gen:check` all exit 0;
+  `pre --stage 3` and `--stage 4` → 35 and 12 units, 0 problems. Every `ANCHORS` string still resolves (the checklist
+  tests ran). All 159 test files that name AGENTS.md (`node --test`, list built from the filesystem): **3501 tests, 3492
+  pass, 8 skipped, 1 fail** — `prepush-installed-tree-identity` "the real npm-written hidden lockfile" (`node_modules/lru-cache`
+  absent in this linked worktree with no `node_modules`), the known environmental failure, nothing else.
+- **Code audit R1**: PASS H0 M0 L0, coverage complete. Self-sweep of every stub against its original restored one clause
+  (the `BYPASSRLS` role "with DML grants"). Final gate (Gemini) round 1 flagged only this log's missing Gates/Measured bullets (this entry).
+- **Measured** (`fs.readFileSync('AGENTS.md','utf8').length`, the count `context:check` uses; LF file): AGENTS.md
+  **65970 → 63893 chars, −2077 (−3.1%)** this stage; against the pre-stage-1 file (73660 on main) −9767 (−13.3%). With
+  CLAUDE.md (2169) the resident pair is 66062. The 42 units' original text covered 14786 chars (§7); 28 were cut or removed.
+  Smaller than the §7 expectation (60-70%) because the Postgres, Anthropic and seam units are almost all tripwires whose every
+  clause the resident spec keeps; the figure is a 14% cut of the stage's units, so stage 3's expected 60-70% needs the same discount.
+
 ## 13. Relocation check source
 
 Copy into a scratch file and run with Node 22 from the repo root (it imports `scripts/lib/cli-io.mjs` for `finishAndExit`, so every exit drains stdout; a whole-unit match means a unit must start and end at line boundaries, so `---` is not found inside a table separator). The manifest

@@ -292,3 +292,250 @@ the store) or `waived`/`not-run` (declared); **`passed` is rare by design** — 
 hand-write `.audit/last-audit-run.json` or reorder a ship to chase it. Reading or
 querying trailers, and gate refusals:
 [`commit-provenance.md`](../../docs/reference/commit-provenance.md).
+
+## Environment Variables
+
+<!-- moved in stage 2, 2026-11-22 -->
+
+**Full table** (every variable, default and purpose):
+[`docs/reference/environment-variables.md`](../../docs/reference/environment-variables.md).
+Azure work-profile vars: [`azure-work-profile.md`](../../docs/runbooks/azure-work-profile.md).
+The rows below are the ones whose semantics constrain how you write code:
+
+| Variable | Default | Load-bearing because |
+|----------|---------|----------------------|
+| `OPENAI_API_KEY` | — | The one **required** variable. Everything else degrades gracefully. |
+| `AUDIT_DB_URL` | — | Postgres DSN for the store. Unset → **local-only mode**, not an error (#16 graceful degradation). Supabase: **Session pooler (5432)**, never the Transaction pooler. |
+| `LEARNING_DISABLE` | — | `1` kills **all** adaptive-learning behaviour + telemetry in one variable. |
+| `LEARNING_REPO_NAME` | — | Must be the **`owner/repo` slug** (matches `audit_repos.name`) — a bare repo name silently misses the lookup, which is how weekly-review sat broken for weeks in every consumer. `install.mjs`/`setup.mjs` derive it; don't hand-type it. |
+| `FINAL_REVIEW_TIMEOUT_MS` | `270000` | **COUPLED** to `FINAL_REVIEW_HARD_DEADLINE_MS`: the watchdog floor is `2x timeout + 60000`, so 270s is the most the default admits — raise both together. Read by `finalReviewTimeoutMs()` (`GEMINI_REVIEW_TIMEOUT_MS` is a deprecated alias); `finalReviewModelSpec()` owns the ONE default for `FINAL_REVIEW_MODEL`. |
+| `AUDIT_AUTHOR_TIER_HINT` | — | **Observation-only** — it records an author-model tier and must never route. |
+| ~~`SUPABASE_AUDIT_*`~~ | — | **Sunset in M4.** The runtime DSN's credential is the access control — there is no separate write-role key. |
+
+## Postgres-Parity Store (M1–M4)
+
+<!-- moved in stage 2, 2026-11-22 -->
+
+The cloud learning store talks to **Postgres directly via the `pg` driver** — no
+`@supabase/supabase-js` / PostgREST layer; "Supabase-hosted vs self-hosted" is just
+a connection string. **Load-bearing invariants** (the rest is in the docs below):
+
+- **Connect**: `AUDIT_DB_URL` + `AUDIT_DB_SSL_MODE=no-verify`, via the Supabase
+  **Session pooler (5432)**, **NOT the Transaction pooler (6543)** — 6543 drops
+  server-side prepared statements and the `search_path=public` pin the `db/` seam
+  needs. Single-tenant: a role's credential is the access control (no separate
+  read/write keys). The runtime `pg.Pool` ([`db/client.mjs`](../../scripts/lib/db/client.mjs))
+  either owns `public` or is a `BYPASSRLS` role with DML grants, so it **bypasses
+  RLS** (correct here); an **owner + least-privilege runtime split** is supported,
+  and its `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` line is the one that gets
+  forgotten ([postgres-parity.md](../../docs/runbooks/postgres-parity.md) §Two roles). The
+  schema is **`public`-only** in v1. Moving to a different store:
+  [moving-the-audit-store.md](../../docs/runbooks/moving-the-audit-store.md). Setup recipe,
+  `--migrate`/`--adopt`/`--check-drift`, `npm run setup:cloud`:
+  [postgres-parity.md](../../docs/runbooks/postgres-parity.md) §Connecting + §Setup recipe.
+
+- **Never use the dashboard as the routine migration path** — it reintroduces the
+  silent-drift the ledger exists to eliminate; make the source migration idempotent
+  and retry `--migrate` instead.
+
+- **`audit_runs.commit_sha` is HEAD at audit-capture time, not the commit
+  containing the audited diff** — the parent on a dirty tree (the normal case).
+  Use `audited_sha`/`audited_tree` for target identity; NULL on both means
+  unverifiable, never guess. Measured 2026-09-20: 72% zero file-overlap between
+  `commit_sha`'s diff and its own findings across 94 sampled runs.
+  [Plan](../../docs/plans/audit-target-identity-commit-sha-correction.md).
+
+- **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.**
+  `serializeWriteParam` auto-serializes a plain array bound to ANY column on the
+  write path (node-postgres otherwise binds an ARRAY literal jsonb rejects with
+  `22P02` or silently stores as `{}`). **Pass jsonb values raw**; a real
+  `text[]`/`int[]` column opts OUT with **`pgArray(value)`** — a jsonb writer that
+  forgets is safe, a `text[]` writer that forgets fails LOUDLY.
+  [postgres-parity.md](../../docs/runbooks/postgres-parity.md) §jsonb write seam.
+
+- **Every audit-store write in `legacy-production-audit.mjs`'s cloud block goes
+  through `durableWrite`** ([durable-write.mjs](../../scripts/lib/durable-write.mjs)),
+  registered in [audit-store-writers.mjs](../../scripts/lib/audit-store-writers.mjs).
+  Four outcomes, not interchangeable: `written` · `spilled` · `lost` · `skipped`
+  (cloud off is a supported mode, not a failure); `lost` **or** `spilled` makes a
+  run `incomplete`. A new write-shaped export under `scripts/lib/store/**` must be
+  registered or exempted **with a reason** — `npm test` derives the set from the
+  filesystem, the only side that can see a module no list mentions. Outcome
+  semantics, spill-eligibility and the single bootstrap:
+  [postgres-parity.md](../../docs/runbooks/postgres-parity.md) · [plan](../../docs/plans/audit-store-write-durability.md).
+
+- **A SCHEMA ERROR IS NOT AN EMPTY RESULT — and a bare `catch { return null }`
+  renders it as one.** Ask of any catch around a query: *can a broken query and an
+  absent row leave here as the same value?* `isSchemaFaultSqlstate` /
+  `describeSchemaFault` ([db/errors.mjs](../../scripts/lib/db/errors.mjs)) make a
+  read-path catch **degrade loudly**. Testing the pure decision is not enough —
+  **split it out AND put one assertion on a real Postgres**; the pure tests passed
+  throughout the whole period a freshness cache was dead (incident 2026-09-05).
+  [postgres-parity.md](../../docs/runbooks/postgres-parity.md).
+
+- **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
+  `isDisposableDbHost` / `assertDisposableDbUrl` ([db/client.mjs](../../scripts/lib/db/client.mjs))
+  guard the suites that `DROP SCHEMA public CASCADE` and the schema fixture.
+  **Never re-express this as "not $VENDOR"** — a denylist is only as current as the
+  last infra change, and the one it replaced went inert the day the store moved.
+  Production identity is compared as host+port+database, never as a DSN string; no
+  env escape hatch, deliberately; and **regenerate the fixture only from a fresh
+  replay** (`npm run db:local:regen`).
+  [postgres-parity.md](../../docs/runbooks/postgres-parity.md) §Incident + §Correction.
+
+- **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
+  decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
+  search_path`) but PRESERVES the ACL; **changing the argument list makes a
+  DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
+  old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
+  or by a `proacl` that reads `NULL`.
+  [memory-health-gate.md](../../docs/reference/memory-health-gate.md).
+
+→ **Design** (the no-adapter `pg`-direct decision, schema scope, privilege model): [`postgres-parity.md`](../../docs/plans/postgres-parity.md) + [`schema-coupling`](../../docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup, migration-drift CLI + exit codes, break-glass atomic-apply, shared cloud config): [`runbooks/postgres-parity.md`](../../docs/runbooks/postgres-parity.md).
+
+## Anthropic Backend Routing
+
+<!-- moved in stage 2, 2026-11-22 -->
+
+All Claude API calls go through one seam,
+[`anthropic-client.mjs`](../../scripts/lib/anthropic-client.mjs); `CLAUDE_BACKEND`
+switches transport without touching call sites — for the calls that transport can
+serve faithfully (refusal rule below). `sdk` (committed default, and what an unset
+`CLAUDE_BACKEND` resolves to) is the direct `@anthropic-ai/sdk` API billing
+`ANTHROPIC_API_KEY`; `cli` spawns `claude -p --output-format json` on the Max 20x
+Agent SDK credit. **Local status: `cli`** (gitignored `.env`; the committed default
+stays `sdk` for CI without the `claude` CLI). Call sites use
+`createAnthropicClient()`, never `new Anthropic()` — guarded by
+[anthropic-client-migration.test.mjs](../../tests/anthropic-client-migration.test.mjs).
+Smoke test: `npm run anthropic:ping`.
+
+- **Forced tool-calling needs `{backend:'sdk'}` explicitly (found 2026-07-14).**
+  `cli` always spawns `claude -p --tools ''`, so a caller forcing `tool_choice` got
+  a plain `text` block with **no error** — costing the tiered-recall discovery
+  generator a whole shadow window (20/20 runs fell back to legacy). Since
+  2026-11-15 the seam THROWS instead, so the pin is the fix, not the intent.
+
+- **`max_tokens` is UNENFORCED on `cli`** — accepted and ignored, not merely
+  unenforceable, so it is never a bound for cost or for parse safety.
+
+- **Availability is the backend's own answer, never `process.env.ANTHROPIC_API_KEY`.**
+  A raw env check skips a fully-available backend — fourth instance found
+  2026-11-14 in [summarise.mjs](../../scripts/symbol-index/summarise.mjs), the
+  highest-volume Claude call site here, which under `CLAUDE_BACKEND=cli` with no
+  key emitted **null summaries for the whole symbol corpus**. Ask
+  `isClaudeAvailable()` where the ambient backend will serve the call, and
+  `isClaudeAvailableFor('sdk')` at a PINNED site — the ambient answer is `true` on
+  a keyless `cli` install, so a pinned site passed its gate then threw
+  `ANTHROPIC_API_KEY required` for a backend nobody selected.
+
+- **`claude-trace` cannot meter the scripted cli backend** (it corrupts the JSON
+  envelope on stdout). Use the backend's own self-reported `cost_usd`.
+
+→ Backend table, cost-telemetry detail, migration pattern, and the full
+call-site list: [`docs/reference/anthropic-backend-routing.md`](../../docs/reference/anthropic-backend-routing.md).
+
+## Architectural Memory — pre-fix consultation (MANDATORY)
+
+<!-- moved in stage 2, 2026-11-22 -->
+
+[Architectural memory](../../docs/plans/architectural-memory.md) indexes every symbol in
+this repo into the audit store with embeddings, so near-duplicates are findable
+before new code is written. `/plan` consults it automatically — **but ad-hoc fixes
+in Claude Code or Copilot bypass the planning skill entirely**, where most
+architectural drift creeps in.
+
+**Rule** — before writing a new function, class, hook, component, route, method or
+constant as part of a fix or feature request, you MUST run
+`node scripts/cross-skill.mjs get-neighbourhood --json` with `targetPaths` (files
+you intend to touch), `intentDescription` (one line on what you are about to write)
+and `k: 8`.
+
+Then act on the recommendation column. **Three bands, and no absolute cosine
+numbers — the cutoff is `μ + 3σ` over the repo's OWN embedding background**,
+computed at `arch:refresh`:
+
+- **`precedent`** — existing code occupies this space: open the named symbols
+  **before** you write anything, then decide on the code whether to reuse, extend
+  or write a sibling, and say which and why. The band does **not** decide that for
+  you. `bandReason: above-floor-cluster` is the *strongest* duplication signal,
+  not a weaker one.
+
+- **`review`** — nothing rose above this repo's noise floor; proceed greenfield.
+  **An uncalibrated repo (`bandReason: uncalibrated-repo`) bands `review` only**:
+  honest, not degraded; run `npm run arch:refresh`.
+
+- **`unscored`** — the symbol has **no embedding**, so nothing was compared. This
+  is *absence of evidence*, not a weak match. Never read it as "checked and
+  rejected".
+
+The old `reuse`/`extend`/`justify-divergence` band names are **retired** — seeing
+them means stale tooling. Band semantics and recalibration history:
+[arch-memory-band-recalibration.md](../../docs/plans/arch-memory-band-recalibration.md).
+
+**When NOT to consult**: bug fixes changing only an existing function's body (no
+new symbol); trivial edits (typos, formatting, one-line conditionals); doc-only or
+test-only changes (unless adding test helpers); cloud store offline
+(`{"cloud": false}` — log an `arch:refresh` hint, proceed). `{"cloud": true, "repoRegistered": false}`
+is NOT offline: the store is up and this repo has no row — nothing was compared, so run `arch:refresh`.
+
+**The rule above is host-neutral and mandatory; the hook is Claude-Code-only
+ACCELERATION, not cross-agent enforcement.** A
+`> **Architectural-memory consultation**` callout means
+`.claude/hooks/arch-memory-check.sh` fired — treat it as authoritative.
+**Copilot, Cursor and every other host get no hook** — there you run the command
+above by hand, and so must Claude when the hook didn't fire (a question that
+became a fix mid-conversation). Trigger verbs, cost, cache and the disable flag:
+[enforcement-mechanisms.md](../../docs/reference/enforcement-mechanisms.md)
+§The two accelerators.
+
+## Requirements Layer — de-facto invariant ledger
+
+<!-- moved in stage 2, 2026-11-22 -->
+
+A materialized view of the codebase's de-facto requirements — the invariants the
+code already enforces. CLI `scripts/requirements.mjs` (`extract --files` →
+`reconcile` → `index`); the **committed `.requirements/ledger.json`** is the single
+persisted artefact (the index is derived in-memory). `/audit-code` injects a
+`<requirements_rubric>` block when the ledger exists, and is unaffected when it
+doesn't. Per-module detail and the `.requirements/` layout:
+[`requirements-layer.md`](../../docs/plans/requirements-layer.md).
+
+**Egress safety (resident)** — `extract --files` is user-supplied: every path is
+repo-root-contained AND symlink-resolved before read; sensitive paths (and
+sensitive symlink targets) are refused; bodies are secret-redacted.
+
+## Contracts across the prose↔code seam (no compiler runs here)
+
+<!-- moved in stage 2, 2026-11-22 -->
+
+The single-oracle rule's worst case is the seam where the **producer is a
+SKILL.md** — prose a model follows — and the **consumer is code**. Nothing
+type-checks that, nothing errors, and the failure is silent both ways. Two
+incidents produced the rules below, written up in
+[`testing-doctrine.md`](../../docs/reference/testing-doctrine.md) §prose↔code seam: a
+reader that matched **0 findings in all 7 live sessions** because the SKILL.md
+said `severity` and every consumer read `code`, and a prompt asking for a field
+the response schema forbade outright.
+
+- **Before reading a field out of a model-authored payload**, grep the authoring
+  SKILL.md for the field name. A docstring about "the real production shape" is
+  a claim about mutable state — see verification-discipline §1b.
+
+- **At least one fixture must be derived from a row actually in the store.** A
+  hand-written factory encodes what the reader expects, which is the assumption
+  under test.
+
+- **One exported accessor owns the read.** The duplicate inline predicate in
+  `cross-skill.mjs` is why the drift survived undetected — two spellings, and
+  nothing that could compare them.
+
+- **Name the mismatch distinctly.** "No P0/P1 findings" and "P0/P1 declared but
+  none parsed" must not share a reason string; the second is a shape bug wearing
+  the first's clothes.
+
+- **The worse variant: the prompt asks for a field the RESPONSE SCHEMA forbids** —
+  unrepresentable, not mistyped, and uncatchable from either side alone. Ask it of
+  the EMITTED schema (`z.toJSONSchema(...)` → `properties`/`required`), never of
+  the Zod source: **a prompt that names a field is a claim about a contract you
+  have not checked.** A required field must also be filled by every non-LLM
+  constructor, so adding one is never a one-line change.
