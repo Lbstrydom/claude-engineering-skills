@@ -23,6 +23,14 @@
  * Isolation covers OUTPUTS, not just inputs: every pill runs against a temp copy of the
  * repo, and the real working tree is asserted byte-identical afterwards.
  *
+ * Path-scoped for a branch-tier push only (gate census L-3, approved by Louis 2026-11-22): `npm run check`, `/ship`, every
+ * push to the default branch and the full tier still run every pill. Only the pre-push sandbox, when the tier oracle itself
+ * chose the branch tier, sets `AUDIT_PREPUSH_GATE_SCOPE=path`, and then the gate runs only when the explicit push range
+ * touches what the pills read, DERIVED from the contracts (`poisonPillTriggers`): the runner, every gate script a pill
+ * runs with its import closure, the overlay fixtures, the artifacts a pill tampers with, the contracts directory and the
+ * exemption registry. A skip prints `SKIPPED (path-scoped)` with its reason; any uncertainty runs the gate. The limits
+ * are the ones in `lib/gate-path-scope.mjs` and `db-suites-gate.mjs`; the backstop is the full run on every push to main.
+ *
  * Plan: docs/plans/green-but-unrealized.md (Cluster B, Phase 3).
  *
  * @module scripts/check-gate-poison-pills
@@ -41,6 +49,7 @@ import { findNodeModules } from './lib/node-modules-resolver.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
+import { decideGateScope, importClosure, isCodePath, scopeLine } from './lib/gate-path-scope.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SELF), '..');
@@ -706,6 +715,57 @@ export async function runPillsInParallel(contracts, { concurrency, fork: forkFn 
   return slots.flat();
 }
 
+// ── Path scoping (gate census L-3) ──────────────────────────────────────────
+
+/**
+ * Computed dynamic imports inside the closure that were READ and judged unable to change what a pill proves, each bound to
+ * the exact call count AND the fingerprint of the source lines that were read (see `computedImportFingerprint`), so a file that
+ * gains one or rewrites one is `uncertain` again. A new one is not here, so the gate runs.
+ */
+export const ACKNOWLEDGED_COMPUTED_IMPORTS = Object.freeze({
+  'scripts/lib/test-tier.mjs': { calls: 1, fingerprint: 'f30f00b5b523', reason: 'the words "dynamic import" in comments and messages, no dynamic import call' },
+  'scripts/lib/anthropic-client.mjs': { calls: 1, fingerprint: '3d87d161e646', reason: 'optional provider SDK packages (bare specifiers, so package.json is the input, and it is one)' },
+  'install.mjs': { calls: 1, fingerprint: 'be7abfda9f2a', targets: ['scripts/lib/install/legacy-surfaces.mjs'], reason: 'loads scripts/lib/install/legacy-surfaces.mjs through a path.join of literal segments; the target is followed' },
+  'scripts/lib/sync-isolation-verify.mjs': { calls: 1, fingerprint: 'bd83a782dd43', reason: 'imports the consumer-sync verification target; a sync tool no pill executes' },
+  'scripts/lib/store/population-ambient.mjs': { calls: 1, fingerprint: '09fccb1ce039', reason: 'sourceOnly(rel) loads sibling store modules named at its own call sites' },
+  'scripts/sync-to-repos.mjs': { calls: 1, fingerprint: 'd6768e049235', reason: 'the word in a log message, no dynamic import call' },
+});
+
+/**
+ * What `gates:poison` reads, DERIVED from the contracts: the runner itself, the shared scoping code, every gate script a
+ * pill runs (with its import closure and the repo paths it names), the overlay fixtures and the artifacts a pill tampers
+ * with, the contracts directory and the exemption registry. `package.json` and the lockfile come from `decideGateScope`.
+ * A push touching none of these cannot change what any pill proves.
+ *
+ * @param {{files: Set<string>, symlinks?: Set<string>, read: (p: string) => string|null}} tree
+ * @param {{contracts?: object[]}} [o]
+ */
+export function poisonPillTriggers(tree, { contracts = loadContracts() } = {}) {
+  const entries = new Set();
+  const data = new Set(['scripts/gate-contracts/_exemptions.json']);
+  for (const c of contracts) {
+    const pill = c.poisonPill ?? {};
+    // EVERY code path in argv, not the first non-flag token: a node option that takes a value (`--conditions x`) or a loader
+    // script put before the gate would otherwise be taken for the gate and the real gate dropped from the set.
+    for (const a of pill.argv ?? []) {
+      // `--import=./x.mjs` carries its script after the `=`; a bare token is itself a candidate.
+      const candidate = a.startsWith('-') ? a.split('=').slice(1).join('=') : a;
+      if (candidate && isCodePath(candidate)) entries.add(candidate.replace(/^\.\//, ''));
+    }
+    for (const [dest, fixture] of Object.entries(pill.overlay ?? {})) { data.add(dest); data.add(fixture); }
+    for (const dest of Object.keys(pill.mutate ?? {})) data.add(dest);
+  }
+  const runner = 'scripts/check-gate-poison-pills.mjs';
+  const { files, uncertain, blind } = importClosure({
+    roots: [runner, 'scripts/lib/gate-path-scope.mjs', ...entries],
+    literalFrom: [runner, ...entries],
+    acknowledgedComputed: ACKNOWLEDGED_COMPUTED_IMPORTS,
+    tree,
+  });
+  for (const d of data) files.add(d);
+  return { files, prefixes: ['scripts/gate-contracts/'], uncertain, blind };
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 const KNOWN_FLAGS = ['--selfcheck-relocation', WORKER_FLAG];
@@ -730,6 +790,12 @@ async function main() {
   // Branch before any of the parent's own work — a worker that re-ran the
   // reconciliation would pay for it ten times and report it ten times.
   if (process.argv.includes(WORKER_FLAG)) { await runPillWorker(); return; }
+
+  // Path-scoping (census L-3): only for an oracle-confirmed branch-tier push from the pre-push sandbox; every uncertainty runs
+  // the gate in full, and a skip is printed with its reason. See lib/gate-path-scope.mjs.
+  const scope = decideGateScope({ gate: 'gates:poison', env: process.env, cwd: REPO_ROOT, triggers: poisonPillTriggers });
+  process.stderr.write(scopeLine('gates:poison', scope));
+  if (!scope.run) return;
 
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8'));
   let gates;
