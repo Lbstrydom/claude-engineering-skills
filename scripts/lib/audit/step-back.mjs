@@ -26,7 +26,6 @@ import { z } from 'zod';
 import { resolveAndClassify, formatSkipLog } from '../sensitive-paths.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
 import { parseImports, resolveSpecifier, RESOLVABLE_EXTENSIONS } from '../module-graph.mjs';
-import { normalizePath } from '../file-io.mjs';
 import { defaultTopicOf } from './round-signals.mjs';
 
 export const STEP_BACK_VERSION = 1;
@@ -92,18 +91,15 @@ const posix = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '');
 /**
  * A finding's files as paths to OPEN: original case, forward slashes. `findingFiles` lower-cases (it is a MATCHING key,
  * `normalizePath`), and opening that on a case-sensitive filesystem fails: on Linux every cited file with an upper-case letter
- * was classified resolution-failed and silently dropped from the pack (CI #445). De-duplicated by the matching key; the first
- * display form wins.
+ * was classified resolution-failed and silently dropped from the pack (CI #445). De-duplicated by the EXACT path (case
+ * preserved): `src/Foo.mjs` and `src/foo.mjs` can be two tracked files on a case-sensitive filesystem, so a case-folded key
+ * would drop one (follow-up audit H2/M1/M2).
  */
 export function findingOpenPaths(f) {
   const raw = [...(Array.isArray(f?.affectedFiles) ? f.affectedFiles : []), f?._primaryFile || f?.section || ''];
-  const byKey = new Map();
-  for (const x of raw) {
-    if (typeof x !== 'string' || x === '') continue;
-    const key = normalizePath(x);
-    if (key && !byKey.has(key)) byKey.set(key, posix(x));
-  }
-  return [...byKey.values()];
+  const out = new Set();
+  for (const x of raw) if (typeof x === 'string' && x !== '') out.add(posix(x));
+  return [...out];
 }
 
 /** Every file path the findings cite, in its original case (sorted). */

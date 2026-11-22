@@ -117,6 +117,11 @@ test('a cited file with upper-case letters is opened in its ORIGINAL case, so it
   assert.equal(pack.skipped.some((s) => /mixedcase/i.test(s.path)), false, 'and it is not reported as excluded');
 });
 
+test('findingOpenPaths keeps two paths that differ only in case (distinct files on a case-sensitive filesystem)', async () => {
+  const { findingOpenPaths } = await import('../scripts/lib/audit/step-back.mjs');
+  assert.deepEqual(findingOpenPaths({ affectedFiles: ['src/Foo.mjs', 'src/foo.mjs', 'src\\Foo.mjs'], _primaryFile: 'src/Foo.mjs' }), ['src/Foo.mjs', 'src/foo.mjs']);
+});
+
 test('R3-M1: truncation is reported INSIDE the pack as a short <omitted> section', async () => {
   const { args } = bigRepo();
   const pack = await buildStepBackPack({ ...args, limits: { perFileChars: 60_000, totalChars: 40_000, maxImporterScan: 5000, maxArchNeighbours: 8 } });
