@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { sandboxTierSupport, runTieredChecks } from '../scripts/lib/prepush-tier.mjs';
+import { sandboxTierSupport, runTieredChecks, staticGateNames, runTimedStaticGates } from '../scripts/lib/prepush-tier.mjs';
 import { parseSummary } from '../scripts/lib/test-tier.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -206,5 +206,60 @@ describe('runTieredChecks', () => {
   it('a spawn error is thrown for the caller (a sandbox that cannot run is not a pass)', () => {
     const run = () => ({ status: null, error: new Error('ENOENT') });
     assert.throws(() => go(harness(), { run }), /could not run checks: ENOENT/);
+  });
+});
+
+describe('timed static gates (census F9): observation only, never a verdict input', () => {
+  const PKG = JSON.stringify({ scripts: { 'check:static': 'npm run a:gate && npm run b:check && npm run c:gate' } });
+
+  it('staticGateNames: a plain npm-run chain yields its names; anything else yields null (caller keeps `npm run check:static`)', () => {
+    assert.deepEqual(staticGateNames(() => PKG), ['a:gate', 'b:check', 'c:gate']);
+    assert.equal(staticGateNames(() => null), null);
+    assert.equal(staticGateNames(() => '{ not json'), null);
+    assert.equal(staticGateNames(() => JSON.stringify({ scripts: { 'check:static': 'npm run a && node x.mjs' } })), null);
+    // npm runs pre/post lifecycle scripts around `npm run check:static`; per-gate runs would skip them, so keep the script (audit H1/M5)
+    for (const hook of ['precheck:static', 'postcheck:static']) {
+      assert.equal(staticGateNames(() => JSON.stringify({ scripts: { 'check:static': 'npm run a', [hook]: 'node x.mjs' } })), null, hook);
+    }
+  });
+
+  it('runs each gate in order, prints a time per gate and one closing line naming the slowest', () => {
+    const logs = [];
+    let t = 0;
+    const costs = { 'a:gate': 2000, 'b:check': 9000, 'c:gate': 5000 };
+    let cur;
+    const r = runTimedStaticGates({
+      names: ['a:gate', 'b:check', 'c:gate'], log: (l) => logs.push(l), clock: () => t,
+      run: (_k, args) => { cur = args[1]; t += costs[cur]; return { status: 0 }; },
+    });
+    assert.equal(r.status, 0);
+    assert.deepEqual(logs.slice(0, 3), ['  gate-time/v1 a:gate 2s', '  gate-time/v1 b:check 9s', '  gate-time/v1 c:gate 5s']);
+    assert.equal(logs[3], '  gate-time/v1 static total=16s gates=3/3 slowest: b:check 9s, c:gate 5s, a:gate 2s');
+  });
+
+  it('stops at the first failing gate with ITS status, exactly like the && chain (control: later gates never run)', () => {
+    const ran = [];
+    const r = runTimedStaticGates({
+      names: ['a:gate', 'b:check', 'c:gate'], log: () => {},
+      run: (_k, args) => { ran.push(args[1]); return { status: args[1] === 'b:check' ? 3 : 0 }; },
+    });
+    assert.equal(r.status, 3);
+    assert.deepEqual(ran, ['a:gate', 'b:check']);
+  });
+
+  it('runTieredChecks uses the per-gate path when package.json is a plain chain, and the unchanged script otherwise', () => {
+    const h = harness({ files: { 'package.json': PKG } });
+    go(h);
+    assert.deepEqual(names(h).slice(0, 3), ['npm run a:gate', 'npm run b:check', 'npm run c:gate']);
+    const h2 = harness();
+    go(h2);
+    assert.equal(names(h2)[0], 'npm run check:static');
+  });
+
+  it('a failing timed gate stops before the oracle and tests, like before', () => {
+    const h = harness({ files: { 'package.json': PKG }, statuses: { 'run b:check': 1 } });
+    const r = go(h);
+    assert.equal(r.status, 1);
+    assert.deepEqual(names(h), ['npm run a:gate', 'npm run b:check']);
   });
 });
