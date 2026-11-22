@@ -76,11 +76,12 @@ export function adviseForMissingMigrations({ missing, dir, command, retired = []
     };
   }
   if (isSyncedMigrationsDir(dir)) {
+    // Provenance is UNKNOWN here (no receipt evidence either way), so the command is conditional, never a bare instruction.
     return {
       orphaned, live, advisesMigrate: true,
-      advice: `Run: ${command}\n`
-        + `Caution: ${dir} is a synced copy. If any file listed above was RETIRED upstream, do not apply it: re-run the consumer sync `
-        + 'first (it removes unedited retired migrations and reports edited ones) and check the list again.',
+      advice: `${dir} is a synced copy and nothing here proves these files are still shipped upstream. If any of them was RETIRED `
+        + 'upstream, do NOT apply it: re-run the consumer sync first (it removes unedited retired migrations and reports edited ones) '
+        + `and check this list again. Only if every listed file is still shipped upstream, run: ${command}`,
     };
   }
   return { orphaned, live, advisesMigrate: true, advice: `Run: ${command}` };

@@ -17,7 +17,8 @@ import { spawnSync } from 'node:child_process';
 
 import { listShippableMigrations } from '../scripts/lib/migration-ownership.mjs';
 import { syncMigrationsReport, describeUntrackedMigrations } from '../scripts/lib/sync-inventory.mjs';
-import { planGarbageCollection, renderGcReport, retiredForReceipt } from '../scripts/lib/sync-gc.mjs';
+import { hashConsumerFile } from '../scripts/lib/sync-consumer-io.mjs';
+import { planGarbageCollection, renderGcReport, retiredForReceipt, executeGarbageCollection } from '../scripts/lib/sync-gc.mjs';
 import { adviseForMissingMigrations, readRetiredMigrationNames } from '../scripts/lib/db/orphaned-migrations.mjs';
 import { decideSchemaPrecondition } from '../scripts/lib/audit/schema-precondition.mjs';
 
@@ -199,8 +200,9 @@ describe('the "store behind this revision" refusal never advises --migrate for a
   it('unclassified file in a synced copy keeps the command but adds the retirement caution', () => {
     const a = adviseForMissingMigrations({ missing: ['030_new.sql'], dir, command: CMD, retired: [] });
     assert.equal(a.advisesMigrate, true);
-    assert.match(a.advice, /^Run: /);
+    assert.doesNotMatch(a.advice, /^Run:/m, 'unknown provenance: the command is conditional, never a bare instruction');
     assert.match(a.advice, /RETIRED upstream/);
+    assert.match(a.advice, /Only if every listed file is still shipped upstream, run: /);
   });
 
   it('reads the orphan set from the latest sync receipt, and only for a synced copy', () => {
@@ -246,5 +248,33 @@ describe('the receipt records every retired path that may still be on disk', () 
       gcResult: { failed: [] }, retiredHeld: [], gcSkipped: true,
     });
     assert.deepEqual(r, ['.audit-loop/migrations/a.sql', '.audit-loop/migrations/b.sql']);
+  });
+});
+
+describe('plan -> execute on a real consumer tree', () => {
+  it('removes the unedited retired migration from disk and keeps the edited and the override-declared ones', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-gc-'));
+    try {
+      const dir = path.join(root, '.audit-loop', 'migrations');
+      fs.mkdirSync(dir, { recursive: true });
+      const sha = (t) => hashConsumerFile(root, `.audit-loop/migrations/${t}`);
+      const names = ['unedited.sql', 'edited.sql', 'declared.sql'];
+      const prior = {};
+      for (const n of names) {
+        fs.writeFileSync(path.join(dir, n), `-- ${n}\n`);
+        prior[`.audit-loop/migrations/${n}`] = sha(n).hash; // what the sync recorded when it wrote them
+      }
+      fs.appendFileSync(path.join(dir, 'edited.sql'), '-- consumer edit\n');
+      const probe = (rel) => hashConsumerFile(root, rel);
+      const plan = planGarbageCollection({
+        priorFiles: prior, intendedDests: new Set(), toolingDir: 'scripts/.claude-skills', exists: () => true, probe,
+        retirePrefixes: ['.audit-loop/migrations/'], isDeclaredDivergence: (k) => k.endsWith('declared.sql'),
+      });
+      const res = executeGarbageCollection({ root, deletions: plan.deletions, expectHash: Object.fromEntries(plan.deletions.map((k) => [k, plan.probedHash[k]])) });
+      assert.deepEqual(res.deleted, ['.audit-loop/migrations/unedited.sql']);
+      assert.deepEqual(fs.readdirSync(dir).sort(), ['declared.sql', 'edited.sql']);
+      assert.deepEqual(retiredForReceipt({ gcPlan: plan, gcResult: res, retiredHeld: [...plan.divergedHeld, ...plan.declaredHeld], gcSkipped: false }),
+        ['.audit-loop/migrations/declared.sql', '.audit-loop/migrations/edited.sql']);
+    } finally { fs.rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
