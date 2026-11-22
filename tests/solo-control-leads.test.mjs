@@ -41,6 +41,10 @@ describe('H4/H22 — a re-paid cell is additive in the budget (spendId)', () => 
     assert.equal(credits[0].spendId, 'a');
     assert.equal(budgetVerdict([paid, ...credits], 10), null, '$6 counted once, not $12');
   });
+  test('control (R6 H1): a cell recorded ok/conformance-miss with null usage and null cost is UNMEASURED, never free; only a usage-less provider-error is free', () => {
+    for (const state of ['ok', 'conformance-miss']) assert.equal(budgetVerdict([row({ costUsd: null, pricingVersion: null, usage: null, state, spendId: 'q' })], 100)?.reason, 'unmeasured');
+    assert.equal(budgetVerdict([row({ costUsd: null, pricingVersion: null, usage: null, state: 'provider-error', spendId: 'q' })], 100), null);
+  });
   test('a billed-but-unpriced first attempt stays unmeasured after a priced rerun (never read as zero)', () => {
     const v = budgetVerdict([row({ spendId: 'a', costUsd: null, pricingVersion: null }), row({ spendId: 'b', costUsd: 1 })], 100);
     assert.equal(v?.reason, 'unmeasured');
