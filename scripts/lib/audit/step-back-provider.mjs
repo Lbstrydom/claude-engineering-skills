@@ -54,7 +54,8 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         const truncated = r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens';
         // Any other non-success response is an INSTRUMENT failure, never parsed as a model decision.
         let failure = null;
-        if (r.status === 'incomplete' && !truncated) failure = `OpenAI incomplete: ${r.incomplete_details?.reason ?? 'unknown reason'}`;
+        if (!r.status) failure = 'no-completion-state: OpenAI response carries no status';
+        else if (r.status === 'incomplete' && !truncated) failure = `OpenAI incomplete: ${r.incomplete_details?.reason ?? 'unknown reason'}`;
         else if (r.status && r.status !== 'completed' && r.status !== 'incomplete') failure = `OpenAI status ${r.status}${r.error?.message ? `: ${r.error.message}` : ''}`;
         return { text: r.output_text ?? '', truncated, failure, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
       },
@@ -95,7 +96,8 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
       let failure = null;
       if (r.promptFeedback?.blockReason) failure = `Gemini blocked the prompt: ${r.promptFeedback.blockReason}`;
       else if (!r.candidates?.length) failure = 'Gemini returned an empty candidate list';
-      else if (fin !== undefined && fin !== 'STOP' && fin !== 'MAX_TOKENS') failure = `Gemini finishReason ${fin}`;
+      else if (fin === undefined || fin === null) failure = 'no-completion-state: Gemini candidate carries no finishReason';
+      else if (fin !== 'STOP' && fin !== 'MAX_TOKENS') failure = `Gemini finishReason ${fin}`;
       return { text: r.text ?? '', truncated, failure, usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, usageMissing: u.usageMissing } };
     },
   };

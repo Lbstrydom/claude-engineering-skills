@@ -59,6 +59,7 @@ export function upperBoundUsd({ modelId, inputChars, outputCeilingTokens = STEP_
   return (inputTokens * rate.input + outputCeilingTokens * rate.output) / 1_000_000;
 }
 
+export const AUTH_CONFIG_STATUSES = Object.freeze([401, 403, 404]);
 export const OVERRUN_FACTOR = 1.25;
 export const BOUND_NOTE = 'chars/2 is a PREFLIGHT estimate of tokens, not an upper bound; the hard stop is enforced on METERED actuals after each call.';
 export const REPLAY_ARMS = Object.freeze(['none', 'same', 'different', 'higher']);
@@ -171,6 +172,7 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
     const emit = (c) => { calls.push(c); deps.onRecord?.({ type: 'call', ...c }); };
     // A measured overrun raises the remaining bounds: never below 1.25x the largest MEASURED call of the same arm so far.
     const bound = Math.max(row.upperBoundUsd, OVERRUN_FACTOR * (maxMeasured[row.arm] || 0));
+    if (stopped?.abort) { emit({ ...meta, status: 'skipped-aborted', action: null, costUsd: 0, spendSource: 'none' }); continue; }
     if (stopped || spent + bound > maxUsd) {
       stopped ||= { reason: 'max-usd', detail: `spent $${spent.toFixed(4)} + upper bound $${bound.toFixed(4)} would exceed the $${maxUsd} cap`, before: `PR #${row.pr} R${row.checkpoint} ${row.arm}` };
       emit({ ...meta, status: 'skipped-budget', action: null, costUsd: 0, spendSource: 'none' });
@@ -178,7 +180,8 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
     }
     const prov = providers[row.arm];
     const record = initialStepBackRecord({ round: row.checkpoint, signals: { anyFires: true, unmeasured: [] } });
-    const { record: out, usage, truncated = false, failure = null } = await runStepBack({ record, pack: item.pack, provider: prov.call, model: prov.model });
+    const { record: out, usage, truncated = false, failure: reported = null, thrown = null } = await runStepBack({ record, pack: item.pack, provider: prov.call, model: prov.model });
+    const failure = reported ?? (thrown ? `provider threw: ${thrown.message} (status ${thrown.status ?? 'none'}, code ${thrown.code ?? 'none'})` : null);
     const exact = usage && !usage.usageMissing && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
       ? estimateCostUsd({ modelId: prov.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }) : null;
     // No usable usage (absent, unpriced model, or an error after the provider may have processed the call): charge the bound.
@@ -188,9 +191,14 @@ export async function runReplay({ dataset, arms, maxUsd, dryRun = false, deps = 
     emit({
       ...meta, status: failure ? 'provider-failure' : truncated ? 'truncated' : out.state === 'step-back-valid' ? 'ok' : out.state === 'step-back-invalid' ? 'invalid' : 'unavailable',
       action: out.output?.action ?? null, output: out.output ?? null, raw: out.state === 'step-back-invalid' ? out.raw : undefined,
-      error: failure ?? out.error ?? out.reason ?? null, truncated, failure, usage: usage ?? null,
+      error: failure ?? out.error ?? out.reason ?? null, truncated, failure, httpStatus: thrown?.status ?? null, errorCode: thrown?.code ?? null, usage: usage ?? null,
       inputTokens: usage?.usageMissing ? null : (usage?.input_tokens ?? null), outputTokens: usage?.usageMissing ? null : (usage?.output_tokens ?? null), costUsd: cost, spendSource: exact == null ? 'upper-bound' : 'usage',
     });
+    // 401/403 (auth/permission) and 404 (model not found) hit every planned call the same way: ABORT, never keep charging estimates.
+    if (thrown && AUTH_CONFIG_STATUSES.includes(Number(thrown.status)) && !stopped) {
+      stopped = { reason: `provider-auth-or-config: ${row.arm} ${thrown.status}`, detail: thrown.message, after: `PR #${row.pr} R${row.checkpoint} ${row.arm}`, abort: true };
+      deps.onRecord?.({ type: 'stopped', ...stopped });
+    }
     // The cap is checked on METERED actuals too: a final call that overruns still stops the run (exit 5).
     if (spent > maxUsd && !stopped) {
       stopped = { reason: 'over-cap-after-call', detail: `spent $${spent.toFixed(4)} exceeds the $${maxUsd} cap after PR #${row.pr} R${row.checkpoint} ${row.arm}`, after: `PR #${row.pr} R${row.checkpoint} ${row.arm}` };
@@ -217,10 +225,10 @@ export function readResultsJsonl(text) {
     }
     if (r.type === 'plan') { plan = r.plan; maxUsd = r.maxUsd; arms = r.arms; inputs = r.inputs ?? null; } else if (r.type === 'call') calls.push(r);
     else if (r.type === 'unmeasured') unmeasured[r.arm] = r.reason;
-    else if (r.type === 'stopped') stoppedRec = { reason: r.reason, detail: r.detail, after: r.after };
+    else if (r.type === 'stopped') stoppedRec = { reason: r.reason, detail: r.detail, after: r.after, abort: r.abort === true };
   }
   const stoppedCall = calls.find((c) => c.status === 'skipped-budget');
-  return { plan, calls, maxUsd, arms, inputs, unmeasured, tornFinalRecord, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : stoppedRec };
+  return { plan, calls, maxUsd, arms, inputs, unmeasured, tornFinalRecord, spentUsd: calls.reduce((s, c) => s + (c.costUsd || 0), 0), stopped: stoppedRec ?? (stoppedCall ? { reason: 'max-usd', before: `PR #${stoppedCall.pr} R${stoppedCall.checkpoint} ${stoppedCall.arm}` } : null) };
 }
 
 const emptyCost = () => ({ totalUsd: 0, measuredUsd: 0, estimatedUsd: 0, callsWithMissingUsage: 0, basis: 'none', inputTokens: 0, outputTokens: 0, calls: 0, valid: 0, costPerEarlyStop: null, costPerFalseStop: null, costPerValidDecision: null, perCheckpoint: [] });

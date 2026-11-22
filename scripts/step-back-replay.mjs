@@ -189,6 +189,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   if (out) writeJson(out, { version: 1, dataset: datasetPath, results: resultsPath, arms, maxUsd, spentUsd: parsed.spentUsd, stopped: res.stopped, unrecoverable: res.unrecoverable, unmeasured: res.unmeasured, models: modelsOf(parsed), score });
   console.log(argv.includes('--json') ? JSON.stringify({ spentUsd: parsed.spentUsd, stopped: res.stopped, score }, null, 2)
     : `step-back-replay: spent $${parsed.spentUsd.toFixed(4)} of $${maxUsd}${res.stopped ? ` - STOPPED (${res.stopped.reason})` : ''} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}\n${renderScoreTable(score, modelsOf(parsed))}`);
+  if (res.stopped?.abort) return 1; // provider auth/config failure: the run was aborted, not budget-stopped
   return res.stopped ? EXIT_BUDGET_STOP : 0;
 }
 

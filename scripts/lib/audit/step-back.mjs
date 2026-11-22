@@ -311,7 +311,9 @@ export async function runStepBack({ record, pack, provider, model = null }) {
   if (typeof provider !== 'function') return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: 'no provider route' }), usage: null };
   let res;
   try { res = await provider({ system: STEP_BACK_SYSTEM_PROMPT, user: pack.text, model }); } catch (err) {
-    return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: String(err?.message || err).slice(0, 200) }), usage: null };
+    // Keep the HTTP status and error code: the replay aborts the whole run on an auth/config failure.
+    const thrown = { status: err?.status ?? err?.response?.status ?? null, code: err?.code ?? null, message: String(err?.message || err).slice(0, 200) };
+    return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: thrown.message }), usage: null, thrown };
   }
   // Any non-success provider response (block, refusal, odd finish) is an instrument failure: never parsed as a decision.
   if (res?.failure) return { record: applyStepBackOutcome(record, { kind: 'unavailable', reason: String(res.failure).slice(0, 200) }), usage: res?.usage ?? null, failure: String(res.failure) };
