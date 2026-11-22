@@ -66,6 +66,7 @@ import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolv
 import { createSnapshot, removeSnapshot, gitWithLockRetry } from './lib/prepush-snapshot.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import { runTieredChecks, sandboxTierSupport } from './lib/prepush-tier.mjs';
+import { applyGateScope, scopeFromOracle } from './lib/gate-path-scope.mjs';
 import { resolveMainRoot } from './lib/pinned-worktree/paths.mjs';
 import {
   PRESERVED_EVIDENCE_FILE,
@@ -620,6 +621,21 @@ function main() {
     const run = (kind, args, opts = {}) => (kind === 'npm'
       ? spawnSync(NPM, args, { cwd: sandbox, stdio: 'inherit', shell: IS_WIN, env })
       : spawnSync(process.execPath, args, { cwd: sandbox, stdio: opts.capture ? ['ignore', 'pipe', 'inherit'] : 'inherit', env, encoding: 'utf8' }));
+    // Path-scoped slow gates (db:suites:gate, gates:poison; gate census L-2/L-3): ONLY for a branch-tier push that does not
+    // update the default branch and has an explicit range. Everything else (a push to main, the full tier, an unreadable
+    // tier list, no base) leaves the variable unset, and unset means every gate runs in full.
+    const scopeEnvelope = path.join(os.tmpdir(), `ces-scope-${shortSha}-${process.pid}.json`);
+    const scoping = scopeFromOracle({
+      base, tierRequest, pushesDefault: process.argv.includes('--pushes-default'), listText: readText('.test-tiers.json'),
+      head: headSha, run, readText, envelopePath: scopeEnvelope,
+    });
+    try { fs.rmSync(scopeEnvelope, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
+    applyGateScope(env, scoping); // clears an inherited value first
+    if (scoping.scoped) {
+      log('  slow gates (db:suites:gate, gates:poison) are path-scoped for this branch-tier push; a skip prints its reason');
+    } else {
+      log(`  slow gates run in full: ${scoping.reason}`);
+    }
     envelopeFile = path.join(os.tmpdir(), `ces-tier-${shortSha}-${process.pid}.json`);
     const tiered = runTieredChecks({
       head: headSha,
