@@ -307,8 +307,13 @@
       "id": "generated-skills-copy-never-hand-edited",
       "trigger": {
         "paths": [
-          ".claude/skills/**",
           "scripts/regenerate-skill-copies.mjs"
+        ],
+        "unpairedPaths": [
+          {
+            "path": ".claude/skills/",
+            "source": "skills/"
+          }
         ]
       },
       "check": ".claude/skills/ is generated from skills/: edit skills/<name>/, then regenerate. AGENTS.md: \"`.claude/skills/<name>/` is the generated copy — run `npm run skills:regenerate` and **never hand-edit it**.\"",
@@ -325,7 +330,6 @@
       "id": "skill-reference-summary-byte-match",
       "trigger": {
         "paths": [
-          "docs/audit/shared-references/**",
           "scripts/sync-shared-audit-refs.mjs"
         ],
         "patterns": [
@@ -422,9 +426,27 @@
       "id": "skill-markdown-size-ratchet",
       "trigger": {
         "paths": [
-          "skills/**/*.md",
-          "docs/audit/shared-references/*.md",
-          ".skill-size-baseline.json"
+          "docs/audit/shared-references/browser-tool-detection.md",
+          "docs/audit/shared-references/gemini-gate.md",
+          "docs/audit/shared-references/verification-discipline.md",
+          "skills/audit-code/SKILL.md",
+          "skills/audit-code/references/debt-capture.md",
+          "skills/audit-plan/SKILL.md",
+          "skills/brainstorm/SKILL.md",
+          "skills/click-test/SKILL.md",
+          "skills/click-test/references/dom-scanner.md",
+          "skills/cycle/SKILL.md",
+          "skills/explain/SKILL.md",
+          "skills/fleet/SKILL.md",
+          "skills/investigate/SKILL.md",
+          "skills/nav-audit/SKILL.md",
+          "skills/persona-test/SKILL.md",
+          "skills/plan/SKILL.md",
+          "skills/ship/SKILL.md",
+          "skills/ship/references/pre-ship-gate-queries.md",
+          "skills/ux-lock/SKILL.md",
+          ".skill-size-baseline.json",
+          "scripts/skill-size-ratchet.mjs"
         ]
       },
       "check": "Skill markdown over 12,000 chars may not grow; move detail to references/. AGENTS.md: \"**Skill markdown may not grow.** `npm run skills:size:gate` ratchets every `skills/**/*.md` (and the canonical shared references, never the generated copies) in characters against `.skill-size-baseline.json`.\"",

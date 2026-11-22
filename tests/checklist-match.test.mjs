@@ -150,6 +150,49 @@ describe('post-edit mode (--diff <base>)', () => {
     assert.equal(ChecklistFileSchema.safeParse({ version: 1, entries: [{ ...scoped, trigger: { paths: ['a'], patternPaths: ['b'] }, check: 'c', incident: 'i', control: { path: 'a', text: 't' } }] }).success, false, 'patternPaths without patterns is refused');
   });
 
+  test('unpairedPaths fires on a generated copy changed WITHOUT its source, and is silent on a regeneration', () => {
+    const copy = entry('copy', { unpairedPaths: [{ path: '.claude/skills/', source: 'skills/' }] });
+    const rec = (p) => ({ path: p, oldPath: null, status: 'modified', added: ['x'], removed: [] });
+    const fire = (paths) => matchEntries({ entries: [copy], mode: 'diff', diffFiles: paths.map(rec) });
+    const alone = fire(['.claude/skills/ship/SKILL.md']);
+    assert.equal(alone.length, 1, 'a hand-edited copy fires');
+    assert.match(alone[0].evidence[0], /without skills\/ship\/SKILL\.md/);
+    assert.equal(fire(['skills/ship/SKILL.md', '.claude/skills/ship/SKILL.md']).length, 0, 'a regeneration (copy + source) is silent');
+    assert.equal(fire(['skills/ship/SKILL.md']).length, 0, 'a source edit alone is silent');
+    assert.equal(fire(['skills/cycle/SKILL.md', '.claude/skills/ship/SKILL.md']).length, 1, 'pairing is per file: another skill\'s source does not pair it');
+    // A regeneration makes the SAME change: a copy edited beside a different source change, or modified while its source was
+    // deleted, is still a hand-edit.
+    const diff = (recs) => matchEntries({ entries: [copy], mode: 'diff', diffFiles: recs });
+    const r = (p, added, status = 'modified', removed = []) => ({ path: p, oldPath: null, status, added, removed });
+    assert.equal(diff([r('skills/ship/SKILL.md', ['a']), r('.claude/skills/ship/SKILL.md', ['a\r'])]).length, 0, 'same lines (EOL-folded) = regeneration');
+    const extra = diff([r('skills/ship/SKILL.md', ['a']), r('.claude/skills/ship/SKILL.md', ['a', 'hand-added'])]);
+    assert.equal(extra.length, 1, 'a copy carrying an extra line beside its source edit is a hand-edit');
+    assert.match(extra[0].evidence[0], /differs from the change to skills\/ship\/SKILL\.md/);
+    assert.equal(diff([r('skills/ship/SKILL.md', [], 'deleted', ['a']), r('.claude/skills/ship/SKILL.md', ['b'], 'modified', ['a'])]).length, 1, 'copy modified while its source was deleted');
+    assert.equal(diff([r('skills/ship/SKILL.md', [], 'deleted', ['a']), r('.claude/skills/ship/SKILL.md', [], 'deleted', ['a'])]).length, 0, 'both deleted = regeneration');
+    // WHERE matters too: the same line changed in a different place is not the regeneration (hunk ranges come from the parser).
+    const at = (p, hunk) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n${hunk}\n-old\n+new\n`;
+    const parsed = (h1, h2) => diff(parseUnifiedDiff(at('skills/ship/SKILL.md', h1) + at('.claude/skills/ship/SKILL.md', h2)));
+    assert.equal(parsed('@@ -3 +3 @@', '@@ -3 +3 @@').length, 0, 'same change, same place');
+    assert.equal(parsed('@@ -3 +3 @@', '@@ -40 +40 @@').length, 1, 'same lines changed at a different place');
+    // A copy renamed OUT of the copy tree, its source untouched, is a changed copy.
+    const moved = { path: 'notes/SKILL.md', oldPath: '.claude/skills/ship/SKILL.md', status: 'renamed', added: [], removed: [] };
+    assert.equal(diff([moved]).length, 1, 'the old side of a rename is examined');
+    // Renames pair only on the SAME destination: a regenerated rename moves copy and source alike.
+    const ren = (from, to) => ({ path: to, oldPath: from, status: 'renamed', added: [], removed: [] });
+    assert.equal(diff([ren('skills/a/x.md', 'skills/a/y.md'), ren('.claude/skills/a/x.md', '.claude/skills/a/y.md')]).length, 0, 'same rename on both sides');
+    const split = diff([ren('skills/a/x.md', 'skills/a/y.md'), ren('.claude/skills/a/x.md', '.claude/skills/a/z.md')]);
+    assert.equal(split.length, 1, 'copy renamed to a different destination');
+    assert.ok(split[0].evidence.some((e) => e.includes('.claude/skills/a/z.md (without skills/a/z.md)')));
+    // Files mode (the pre-edit step) uses the same pairing over the planned paths.
+    assert.equal(matchEntries({ entries: [copy], mode: 'files', files: ['.claude\\skills\\ship\\SKILL.md'] }).length, 1);
+    assert.equal(matchEntries({ entries: [copy], mode: 'files', files: ['skills/ship/SKILL.md', '.claude/skills/ship/SKILL.md'] }).length, 0);
+    const parse = (trigger) => ChecklistFileSchema.safeParse({ version: 1, entries: [{ ...copy, trigger }] }).success;
+    assert.equal(parse({ unpairedPaths: [{ path: '.claude/skills/', source: 'skills/' }] }), true, 'unpairedPaths alone is a trigger');
+    assert.equal(parse({ unpairedPaths: [{ path: '.claude/skills', source: 'skills/' }] }), false, 'a prefix must end in /');
+    assert.equal(parse({ unpairedPaths: [{ path: '.claude/skills/' }] }), false, 'a pair needs its source');
+  });
+
   test('an unresolvable base is a structured failure, never "no matches", and records nothing', () => {
     const dir = makeRepo({ 'a.mjs': 'x\n' });
     const log = path.join(dir, 'fires.jsonl');

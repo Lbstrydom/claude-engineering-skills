@@ -1,6 +1,6 @@
 # Checklist pilot, 2026-11 (verification-lessons plan, Phase 5)
 
-Status: **FAIL on thresholds (iii) held-out noise and the kernel-size target (v2). A redesigned v3 is built and FROZEN; its confirmation run on PRs merged after the freeze is a later task. Cluster F does not run.** AGENTS.md was not edited: every moved sentence exists in both AGENTS.md and the checklist. See section Decision.
+Status: **FAIL on thresholds (iii) held-out noise and the kernel-size target (v2). A redesigned v3 was built, then superseded before any confirmation run by v4 (section Redesign v4), which is now the FROZEN instrument; its confirmation run on PRs merged after the v4 freeze lands is a later task. Cluster F does not run.** AGENTS.md was not edited: every moved sentence exists in both AGENTS.md and the checklist. See section Decision.
 
 <!-- population: not-store-derived — every figure here is measured from git history (the first-parent PR squash commits of the pinned tip) and from this repository's own files; no audit-store query is involved -->
 
@@ -12,14 +12,15 @@ npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4e
 npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 30 --checklist docs/research/checklist-pilot-2026-11-v1-checklist.json --json   # v1, held-out window
 npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --checklist docs/research/checklist-pilot-2026-11-v2-checklist.json --json   # v2, pilot window  (the committed v2 as measured)
 npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 30 --checklist docs/research/checklist-pilot-2026-11-v2-checklist.json --json   # v2, held-out window (the confirmation figure)
-npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --json                     # v3 = the committed .audit-loop/checklist.json
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --checklist docs/research/checklist-pilot-2026-11-v3-checklist.json --json   # v3, frozen copy
+npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0  --json                     # v4 = the committed .audit-loop/checklist.json (add --skip 30 for the held-out window)
 npm run checklist:pilot -- --incidents --json   # the commits that earned each entry
 npm run checklist:pilot -- --controls  --json   # per-entry control / negative verdicts
 npm run checklist:pilot -- --kernel    --json   # kernel size estimate
 npm run checklist:pilot -- --verify-frozen      # sha256 of checklist, matcher and scoring code vs the pinned constants
 ```
 
-Checklist sha256 (CRLF folded to LF): v1 `a328f88f964f2758c3b0d085b284aca013c31e15c21c963499d1dcf9f25a58da`, v2 `cbc40e19d1786c9367b95aee081e7018db8036bdacf21412d997787718949fed`, v3 `8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d`. The v1 and v2 numbers in this document were measured with exactly these two frozen files; the v2 file is byte-identical to what was committed when they were measured.
+Checklist sha256 (CRLF folded to LF): v1 `a328f88f964f2758c3b0d085b284aca013c31e15c21c963499d1dcf9f25a58da`, v2 `cbc40e19d1786c9367b95aee081e7018db8036bdacf21412d997787718949fed`, v3 `8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d` (frozen copy: `docs/research/checklist-pilot-2026-11-v3-checklist.json`), v4 `7f574f3fa1f0f1e0232be8e1497ec805d63181db2cdc7e0b8d041e963dd37f04` (the committed file). The v1 and v2 numbers in this document were measured with exactly these two frozen files; the v2 file is byte-identical to what was committed when they were measured.
 
 Per-entry evidence (the `pass` rows a Cluster F test would require): `docs/research/checklist-pilot-2026-11.json`. Frozen v1 entries: `docs/research/checklist-pilot-2026-11-v1-checklist.json`. The committed `.audit-loop/checklist.json` is generated (`npm run checklist:gen`, checked by `checklist:gen:check` in `check:static`).
 
@@ -76,7 +77,7 @@ plan). The schema support for that spelling stays, unused, with its tests.
 - **Known stale references (left alone on purpose: re-extraction costs paid calls).** `.requirements/ledger.json` assertions that still say `statedIn` may be only SKILL.md or AGENTS.md: the entries at lines 60127 ("Every executable gate's stated text must occur verbatim in its approved statedIn file..."), 133894 ("...may cite only its owning skills/<skill>/SKILL.md or AGENTS.md as statedIn, while an executable CLI gate may cite only AGENTS.md") and 135625 ("...cite only the owning skill SKILL.md or AGENTS.md as statedIn..."). `requirements:map:check` compares the map to the ledger and stays green; the ledger is simply behind the code until the next extraction.
 - AGENTS.md's own line "26 sentences here are quoted character-for-character by gate contracts" is now stale (26 of 27 moved); Cluster F owns that edit.
 
-The trigger text above is generated from the CURRENT (v3) `.audit-loop/checklist.json`; the v1/v2 triggers it replaced are in the frozen v1/v2 files.
+The trigger text above is the v3 trigger set; v4 changed three skills-surface triggers (section Redesign v4 below). The v1/v2/v3 triggers are in the frozen v1/v2/v3 files.
 
 ## Method
 
@@ -170,17 +171,48 @@ The v2 held-out failure (max 14) was eight to nine entries firing on the same `s
 
 v3 on the old data also keeps: controls 39/39, the supplementary incident replay 13/13, the in-window incident on #436 firing, and kernel remaining 49373 to 61111 chars. The first run that counts is the confirmation below.
 
+## Redesign (v4): skills-surface triggers keyed on the change that makes each entry relevant
+
+v3 still fired three skills-surface entries on ANY skill edit by path. Each trigger is now derived from what its entry protects against. Noise rule, observe-only and the end date are unchanged.
+
+| Entry | v3 trigger | v4 trigger | Why |
+|---|---|---|---|
+| `generated-skills-copy-never-hand-edited` | any `.claude/skills/**` path | `unpairedPaths: .claude/skills/ -> skills/` (plus the regenerator) | The mistake is a copy changed WITHOUT its source. A regeneration ships the copy beside its source edit and used to fire this on every skill PR. New trigger key `unpairedPaths` (schema + matcher): fires on a changed path under the copy prefix whose counterpart under the source prefix is not also changed (`--files`, by path) or does not carry the SAME change (`--diff`: same kind, same hunk ranges and the same added and removed lines, EOL-folded; both sides of a rename are examined), so a copy hand-edited beside a different source edit still fires. |
+| `skill-markdown-size-ratchet` | `skills/**/*.md`, `docs/audit/shared-references/*.md` | the files listed in `.skill-size-baseline.json` (read by the generator, never restated), plus the baseline and `scripts/skill-size-ratchet.mjs` | Only a file already over the limit can grow past its baseline. Cost: `checklist:gen:check` now fails when the baseline changes until the checklist is regenerated (5 baseline commits since 2026-10-01). |
+| `skill-reference-summary-byte-match` | `docs/audit/shared-references/**` path + summary/index-row patterns | the patterns (and the sync script) only | A body edit of a shared reference cannot break the byte-match; a changed `summary:` line or reference-index row can, and the patterns already catch those in all three places. |
+
+**Measured on the same two windows (seen data, descriptive, not a confirmation)**, `npm run checklist:pilot -- --replay --tip 9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6 --skip 0|30 --json` with each frozen file:
+
+| Entries fired per PR, median / max | v2 | v3 | **v4** |
+|---|---|---|---|
+| Pilot window #410-#442 | 2.5 / 10 | 2.5 / 9 | **2 / 9** |
+| Held-out window #380-#409 | 2 / 14 | 2 / 10 | **1 / 9** |
+
+Checks per PR equal entries fired in every column (nothing merged). v4 distribution: pilot 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 7, 9; held-out 0 x10, 1 x6, 2 x8, 3, 3, 5, 6, 6, 9. Also kept on v4: controls 39/39, incident replay 13/13, the in-window incident (#436) fires.
+
+**Lost fires, v3 to v4: 22 across 14 PRs, none a true fire.**
+
+- `generated-skills-copy-never-hand-edited`, 14 PRs (#442, #441, #433, #419, #411, #400, #399, #398, #396, #395, #394, #391, #385, #382): every one changed the copy WITH its source (v4 stays silent on all of them, so no copy changed alone). Regenerations, not hand-edits.
+- `skill-markdown-size-ratchet`, 7 PRs (#442, #433, #419, #399, #394, #391, #382): no changed skill markdown outside the baseline ended above 12,000 chars. **Nearest miss**: #442 grew `skills/fleet/references/coordination.md` 11,969 to 11,976 chars, 24 under the limit. A file crossing the limit from below is no longer flagged by the checklist (the `skills:size:gate` still fails it at push); that is the stated blind spot.
+- `skill-reference-summary-byte-match`, #385: a body edit of `docs/audit/shared-references/gemini-gate.md` with no `summary:` or index-row change.
+
+**Blind spots accepted in v4 (round-1 audit, M1 and M11, lowered to LOW in deliberation):**
+
+- `skill-reference-summary-byte-match` no longer fires at the pre-edit `--files` step for a planned shared-reference edit: patterns run only on a diff, and before the edit nothing can tell a summary change from a body change. It still fires at `--diff` on a changed `summary:` line or index row, and `skills:check` fails a mismatch at push.
+- `skill-markdown-size-ratchet` does not fire on a file under 12,000 chars that an edit grows past the limit (a diff carries no file sizes). `skills:size:gate` fails that crossing at push.
+
 ## Freeze
 
 The instrument is frozen at this commit. Anything that decides a figure is pinned by sha256 (CRLF folded to LF) in `scripts/lib/checklist/frozen.mjs`; `npm run checklist:pilot -- --verify-frozen` reports any difference and `--replay --confirmation` refuses to run unless there is none (`tests/checklist-frozen.test.mjs`).
 
 | Part | File | sha256 |
 |---|---|---|
-| Checklist | `.audit-loop/checklist.json` | `8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d` |
-| Matcher | `scripts/lib/checklist/match.mjs` | `511fa697e45809de56200354d1cc87b30198392919918c83aefe85d11bd9eb21` |
+| Checklist | `.audit-loop/checklist.json` | `7f574f3fa1f0f1e0232be8e1497ec805d63181db2cdc7e0b8d041e963dd37f04` |
+| Matcher | `scripts/lib/checklist/match.mjs` | `fc00e14d59be335017c17609e0254520188adbef037483735dcfe17785016aca` |
 | Scoring code | `scripts/lib/checklist/pilot.mjs` | `c758c13a21c6b582dafde08c9e0249657cf7bdfcb08720118ef47cc20d615b39` |
+| Schema (added in v4: it decides how an entry is loaded) | `scripts/lib/checklist/schema.mjs` | `3661d2bd4ec556cdc31874617a33aa87fde89aa5de705e32222f0ab4deb64035` |
 
-**Instrument change recorded before the re-test (round-2 audit fixes, same day):** the matcher (`match.mjs`) and the scoring code (`pilot.mjs`) changed after the first freeze; the checklist did not. Matcher: rename paths decoded like headers, code-point-safe path decoding, a hunk that disagrees with its `@@` counts is refused, containment by path segment. Scoring: relative `outDir` resolved against the repo, `--confirmation` verifies the checklist it was given. Frozen hashes before and after: checklist unchanged (`8a6555dd12b0`), matcher `7b58d81d5507` to `1cb66a51aa50`, scoring `4f3b957b1e60` to `42880cd8725c`. **Round 3 (same day, before any confirmation run):** the matcher pins its own `git diff` to `a/` `b/` headers and refuses any other prefix in a supplied diff, refuses a malformed hunk header, and reports a binary record or a NUL-bearing untracked file as INCOMPLETE; the scoring code pins the same prefixes in its replay diffs and records an INCOMPLETE PR on its row instead of aborting. Hashes after round 3: checklist unchanged (`8a6555dd12b0`), matcher `6528b057e49c`, scoring `b79b4d7d4d84`. **Final gate (same day, before any confirmation run):** an empty replay window reports null statistics, `controlRows` cleans its temp dir in a finally, and diff-mode symbol matching judges added lines by the new path and removed lines by the old one. Hashes after the final gate: checklist unchanged (`8a6555dd12b0`), matcher `a3f81ab17d62`, scoring `d8fd1c36eb13`. **Bounded batch (full-branch audit, same day, before any confirmation run):** an INCOMPLETE PR is excluded from the noise statistics and from never-fired and listed as `incompletePrs`; a patch cut off after its headers is refused while mode-only, pure-rename, binary and empty-file records stay valid; a custom checklist path is explicit; the replay driver refuses a `--confirmation` window that overlaps the seen windows (PR ranges recorded in `frozen.mjs` as `SEEN_WINDOWS`: pilot #410-#442, held-out #380-#409) or a tip that is not a full hex sha, and records the window it used. Hashes after this batch: checklist unchanged (`8a6555dd12b0`), matcher `511fa697e458`, scoring `c758c13a21c6`. No confirmation window had been run, so nothing was invalidated.
+**Instrument change recorded before the re-test (round-2 audit fixes, same day):** the matcher (`match.mjs`) and the scoring code (`pilot.mjs`) changed after the first freeze; the checklist did not. Matcher: rename paths decoded like headers, code-point-safe path decoding, a hunk that disagrees with its `@@` counts is refused, containment by path segment. Scoring: relative `outDir` resolved against the repo, `--confirmation` verifies the checklist it was given. Frozen hashes before and after: checklist unchanged (`8a6555dd12b0`), matcher `7b58d81d5507` to `1cb66a51aa50`, scoring `4f3b957b1e60` to `42880cd8725c`. **Round 3 (same day, before any confirmation run):** the matcher pins its own `git diff` to `a/` `b/` headers and refuses any other prefix in a supplied diff, refuses a malformed hunk header, and reports a binary record or a NUL-bearing untracked file as INCOMPLETE; the scoring code pins the same prefixes in its replay diffs and records an INCOMPLETE PR on its row instead of aborting. Hashes after round 3: checklist unchanged (`8a6555dd12b0`), matcher `6528b057e49c`, scoring `b79b4d7d4d84`. **Final gate (same day, before any confirmation run):** an empty replay window reports null statistics, `controlRows` cleans its temp dir in a finally, and diff-mode symbol matching judges added lines by the new path and removed lines by the old one. Hashes after the final gate: checklist unchanged (`8a6555dd12b0`), matcher `a3f81ab17d62`, scoring `d8fd1c36eb13`. **Bounded batch (full-branch audit, same day, before any confirmation run):** an INCOMPLETE PR is excluded from the noise statistics and from never-fired and listed as `incompletePrs`; a patch cut off after its headers is refused while mode-only, pure-rename, binary and empty-file records stay valid; a custom checklist path is explicit; the replay driver refuses a `--confirmation` window that overlaps the seen windows (PR ranges recorded in `frozen.mjs` as `SEEN_WINDOWS`: pilot #410-#442, held-out #380-#409) or a tip that is not a full hex sha, and records the window it used. Hashes after this batch: checklist unchanged (`8a6555dd12b0`), matcher `511fa697e458`, scoring `c758c13a21c6`. No confirmation window had been run, so nothing was invalidated. **v4 redesign (same day, before any confirmation run):** the checklist and the matcher changed (section Redesign v4); scoring unchanged. Hashes before and after: checklist `8a6555dd12b0` to `7f574f3fa1f0`, matcher `511fa697e458` to `fc00e14d59be`, scoring unchanged (`c758c13a21c6`), schema newly pinned (`3661d2bd4ec5`). The confirmation window starts after THIS freeze lands on main.
 
 **Confirmation (a later task, not run here):** replay the PRs merged AFTER the freeze lands on main, with `--confirmation`, and judge median <= 5 and max <= 12 on both entries fired and checks per PR. Editing any of the three ends the freeze: update the constants and this table together and start a new confirmation window after the new freeze.
 

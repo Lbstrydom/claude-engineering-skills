@@ -29,6 +29,13 @@ function loadGates(repoRoot) {
   return out;
 }
 
+/** The skill markdown files the size ratchet already pins (over the limit), sorted: the files that may not grow. An empty
+ *  list is valid (every file shrank under the limit); the baseline and the ratchet stay in the trigger either way. */
+function oversizedSkillFiles(repoRoot) {
+  const j = JSON.parse(fs.readFileSync(path.join(repoRoot, '.skill-size-baseline.json'), 'utf8'));
+  return Object.keys(j.files ?? {}).sort();
+}
+
 /** @param {string} repoRoot @returns {string} the exact text of `.audit-loop/checklist.json` */
 export function buildChecklistText(repoRoot) {
   const census = loadGates(repoRoot);
@@ -135,13 +142,16 @@ gated('generated-artifact-requirements-map', 'requirements-map-check', {
   incident: NOINC('requirements:map:check'),
   control: { path: '.requirements/ledger.json', text: '      "status": "active",' } });
 gated('generated-skills-copy-never-hand-edited', 'skills-check-detects-hand-edited', {
-  trigger: { paths: ['.claude/skills/**', 'scripts/regenerate-skill-copies.mjs'] },
+  // v4: the mistake is a copy changed WITHOUT its source. A regenerated copy (the right move) ships beside its source edit and
+  // used to fire this on every skill PR.
+  trigger: { paths: ['scripts/regenerate-skill-copies.mjs'], unpairedPaths: [{ path: '.claude/skills/', source: 'skills/' }] },
   lead: '.claude/skills/ is generated from skills/: edit skills/<name>/, then regenerate.',
   context: 'AGENTS.md: "`.claude/skills/<name>/` is the @@ and **never hand-edit it**."',
   incident: NOINC('skills:check'),
   control: { path: '.claude/skills/ship/SKILL.md', text: 'Hand-edited line in the generated copy.' } });
 gated('skill-reference-summary-byte-match', 'skills-check-detects-shared-reference-drift', {
-  trigger: { paths: ['docs/audit/shared-references/**', 'scripts/sync-shared-audit-refs.mjs'], patterns: ['^summary:', '^\\| `references/'] },
+  // v4: a body edit of a shared reference cannot break the byte-match; a changed `summary:` line or index row can (the patterns).
+  trigger: { paths: ['scripts/sync-shared-audit-refs.mjs'], patterns: ['^summary:', '^\\| `references/'] },
   lead: "A reference file's `summary:` frontmatter must byte-match its parent SKILL.md reference-index row; edit the canonical shared reference, never a synced copy.",
   context: 'AGENTS.md: "@@ the parent SKILL.md\'s reference-index row, enforced by `npm run skills:check`".',
   incident: NOINC('skills:check'),
@@ -165,7 +175,9 @@ gated('synced-skill-content-reachable-refs', 'skills-consumer-refs-gate', {
   incident: 'Consumer-reported shape (5): synced skill text named an npm alias or docs/ file that did not exist in the consumer.',
   control: { path: 'skills/ship/SKILL.md', text: 'Run `npm run some:repo-only:alias` first.' } });
 gated('skill-markdown-size-ratchet', 'skills-size-ratchet', {
-  trigger: { paths: ['skills/**/*.md', 'docs/audit/shared-references/*.md', '.skill-size-baseline.json'] },
+  // v4: only a file already over the limit can grow past its baseline, so the trigger is the baseline's own file list (read
+  // from the committed baseline, never restated), plus the baseline and the ratchet.
+  trigger: { paths: [...oversizedSkillFiles(repoRoot), '.skill-size-baseline.json', 'scripts/skill-size-ratchet.mjs'] },
   lead: 'Skill markdown over 12,000 chars may not grow; move detail to references/.',
   context: 'AGENTS.md: "**@@.** `npm run skills:size:gate` ratchets every `skills/**/*.md` (and the canonical shared references, never the generated copies) in characters against `.skill-size-baseline.json`."',
   incident: NOINC('skills:size:gate'),
