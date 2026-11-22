@@ -121,6 +121,13 @@ describe('H5/M8 — the retry is a second paid call and is budget-checked', () =
       assert.equal(r.usage === null, expectNull);
     }
   });
+  test('G2 pin: a two-attempt pass whose SECOND reply omits usage is unmeasured (usage null), not half-priced', async () => {
+    let n = 0;
+    const client = { messages: { create: async () => (++n === 1 ? { content: [{ text: 'nope' }], usage: { input_tokens: 10, output_tokens: 5 } } : { content: [{ text: 'nope again' }] }) } };
+    const r = await _internals.runPass(client, 'm', _internals.PASSES[0], 'diff');
+    assert.equal(n, 2);
+    assert.equal(r.usage, null);
+  });
   test('runDeepseekPass: same gate, and the fingerprint seen so far rides along', async () => {
     let calls = 0;
     const client = { chat: { completions: { create: async () => { calls++; return { choices: [{ message: { content: 'nope' } }], usage: { prompt_tokens: 7, completion_tokens: 3 }, system_fingerprint: 'fp1' }; } } } };

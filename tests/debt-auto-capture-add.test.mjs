@@ -97,11 +97,15 @@ describe('debt-auto-capture --add (CLI)', () => {
   });
 
   test('a secret in the detail is redacted by the shared builder and the entry is marked sensitive', () => {
-    const args = [...GOOD]; args[args.indexOf('--detail') + 1] = 'token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD leaked into the ledger row';
+    // Built at runtime: a literal secret-shaped string in this file is scrubbed to a placeholder by the audit egress pipeline,
+    // so every reviewer saw a different test than the one that runs.
+    const rawSecret = ['sk', 'abcdefghijklmnopqrstuvwxyz0123456789ABCD'].join('-');
+    const args = [...GOOD]; args[args.indexOf('--detail') + 1] = `token ${rawSecret} leaked into the ledger row`;
     const r = runCli(args);
     assert.equal(r.status, 0, r.stderr);
     const [e] = ledgerEntries();
-    assert.doesNotMatch(e.detailSnapshot, /sk-abcdefghijklmnopqrstuvwxyz/);
+    assert.equal(e.detailSnapshot.includes(rawSecret), false, 'the raw secret must not reach the ledger');
+    assert.ok(e.detailSnapshot.includes('[REDACTED:'), 'and the redaction marker must be there (a vacuous-pass guard: an empty detail would also pass the line above)');
     assert.equal(e.sensitive, true);
   });
 
