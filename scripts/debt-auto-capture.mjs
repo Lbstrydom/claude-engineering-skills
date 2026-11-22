@@ -665,7 +665,8 @@ async function main() {
   if ([args.ledger, args.finalReview, args.add].filter(Boolean).length !== 1) {
     console.error('Error: exactly one of --ledger <path>, --final-review <path> or --add is required');
     usage();
-    process.exit(1);
+    await finishAndExit(1); // usage() writes to stdout: a piped stdout must drain before the exit
+    return;
   }
 
   // --add has no input file; the trail check only needs the directory the debt ledger lives in.
