@@ -653,6 +653,10 @@ export function cmdReady(ctx, flags) {
   // Checks opted into `runIn: ["ready"]` run BEFORE the mark, outside the lock (slow, consumer-owned).
   const gate = readyChecks({ cwd: ctx.cwd, config: ctx.config, session: peek, oid, baseOid: readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null });
   const gateLines = gate.findings.map((f) => `  ${f.level}: ${f.message}`);
+  if (gate.blocks) {
+    const reason = `${gate.blocks} — ${id} was NOT marked ready`;
+    return refused(reason, { checks: gate.results, text: [`REFUSED: ${reason}`, ...gateLines].join('\n') });
+  }
   // Advisory (never blocks): files whose CRLF/LF endings flipped bury the real change (fleet feedback #7).
   const eol = eolFlips(ctx.cwd, readyFacts.base.measure.ok ? readyFacts.base.measure.oid : null, oid);
   // Advice only (`ready` carries no test evidence): a branch that changes shared test files should run the fast tier first.
@@ -664,10 +668,6 @@ export function cmdReady(ctx, flags) {
   // An unmeasured diff is SAID: an empty `touched` must never read as "checked, nothing shared".
   const sharedLine = sharedChecked ? sharedSurfaceLine(shared, ctx.config.sharedSurfaces, ctx.cmd, sharedReach)
     : (ctx.config.sharedSurfaces?.globs?.length === 0 ? null : `note: shared test files were not checked (${baseForShared ? sharedDiff.reason ?? 'the changed files could not be read' : 'base not measured'})`);
-  if (gate.blocks) {
-    const reason = `${gate.blocks} — ${id} was NOT marked ready`;
-    return refused(reason, { checks: gate.results, text: [`REFUSED: ${reason}`, ...gateLines].join('\n') });
-  }
   const tx = transact(ctx.dir, (t) => {
     const cur = t.sessions.find((s) => s.id === id);
     if (!cur || isTerminalState(cur.state)) return { gone: true };

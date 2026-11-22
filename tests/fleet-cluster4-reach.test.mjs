@@ -77,7 +77,7 @@ describe('which tests load the shared files', () => {
     assert.ok(none.includes('static and best-effort'));
     assert.ok(none.includes('the fast tier this repo defines'));
     const found = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: ['tests/x.test.mjs'], unread: 0 });
-    assert.ok(found.includes('all 1 of the 1 test file(s) found loading them: `node --test tests/x.test.mjs`'), found);
+    assert.ok(found.includes('all 1 of the 1 test file(s) found loading them (run from the repository root): `node --test tests/x.test.mjs`'), found);
     assert.ok(found.includes('and the fast tier this repo defines'), 'tests found but no run configured: the generic fast tier is still named');
   });
   it('next carries the complete reach in the obligation evidence', () => {
@@ -97,7 +97,7 @@ describe('which tests load the shared files', () => {
   it('the line names the tests as one quoted command, caps the list with the exact count, and says what it could not read', () => {
     const many = Array.from({ length: REACH_NAME_CAP + 4 }, (_, i) => `tests/t${i}.test.mjs`);
     const line = sharedSurfaceLine(['tests/helpers/a.mjs'], { run: ['npm', 'run', 'fast'] }, 'fleet', { ok: true, tests: many, unread: 2 });
-    assert.ok(line.includes(`the first ${REACH_NAME_CAP} of the ${many.length} test file(s) found loading them: \`node --test `), line);
+    assert.ok(line.includes(`the first ${REACH_NAME_CAP} of the ${many.length} test file(s) found loading them (run from the repository root): \`node --test `), line);
     assert.ok(line.includes(`that command is PARTIAL — all ${many.length} are in the JSON as sharedSurface.tests`));
     assert.ok(line.includes('2 test/source file(s) could not be read'));
     assert.ok(line.includes('and the fast tier `npm run fast`'));
@@ -160,6 +160,13 @@ describe('the reach describes the COMMIT, not the checkout', () => {
     assert.ok(withU.includes('2 uncommitted file(s) were not analysed: the list describes the last COMMIT'), withU);
     const without = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: [], unread: 0 });
     assert.ok(!without.includes('uncommitted'));
+  });
+  it('a repo with more scripts than the bound gets an UNAVAILABLE reach with the reason, never a partial list', async () => {
+    const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const { fx, oid } = setup();
+    const r = testsLoadingAt(fx.repo, oid, ['tests/helpers/shared.mjs'], { maxScripts: 1 });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /scripts is more than the 1 this analysis reads/);
   });
   it('an unknown commit is an unavailable reach with a reason, never an empty result', async () => {
     const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');

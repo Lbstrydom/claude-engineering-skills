@@ -59,7 +59,7 @@ export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null, whe
     if (reach.tests.length) {
       const shown = reach.tests.slice(0, REACH_NAME_CAP);
       const partial = reach.tests.length > shown.length;
-      parts.push(`${partial ? 'the first' : 'all'} ${shown.length} of the ${reach.tests.length} test file(s) found loading them: \`${renderCommand(['node', '--test', ...shown.map((p) => (p.startsWith('-') ? `./${p}` : p))])}\``);
+      parts.push(`${partial ? 'the first' : 'all'} ${shown.length} of the ${reach.tests.length} test file(s) found loading them (run from the repository root): \`${renderCommand(['node', '--test', ...shown.map((p) => (p.startsWith('-') ? `./${p}` : p))])}\``);
       if (partial) caveats.push(`that command is PARTIAL — all ${reach.tests.length} are in ${where}`);
     } else caveats.push('no test file was found that loads them statically, which does not mean none does');
     if (reach.uncommitted) caveats.push(`${reach.uncommitted} uncommitted file(s) were not analysed: the list describes the last COMMIT, so commit first for it to cover them`);
@@ -77,6 +77,9 @@ export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null, whe
 const isScript = (f) => RESOLVABLE_EXTENSIONS.some((e) => e !== '.json' && f.endsWith(e));
 /** The names Node's test runner discovers by default: `*.test.*`, `*-test.*`, `*_test.*`, `test-*.*`, `test.*`. */
 const isTestFile = (f) => isScript(f) && /(?:^|\/)(?:[^/]*[._-]test|test(?:-[^/]*)?)\.[^./]+$/.test(f);
+/** Upper bounds on the analysis: past either, the reach is UNAVAILABLE with the reason (never a silently partial list). */
+export const REACH_MAX_SCRIPTS = 8000;
+export const REACH_BUDGET_MS = 20_000;
 /** Skipped wholesale: vendored trees that are never part of a test's reach. */
 const NOT_SOURCE = /^(node_modules|\.git)\//;
 /** A relative path written as a string literal: `'./x.json'`, `new URL('../fixtures/a.json', import.meta.url)`, `path.join(__dirname, '../x')`. */
@@ -158,17 +161,21 @@ function parseBatch(buf, specs) {
  * @param {string} oid the commit
  * @param {string[]} touched
  */
-export function testsLoadingAt(cwd, oid, touched) {
+export function testsLoadingAt(cwd, oid, touched, { maxScripts = REACH_MAX_SCRIPTS } = {}) {
   const ls = runGit(['ls-tree', '-r', '-z', '--full-tree', '--name-only', oid], cwd, { timeoutMs: 30_000 });
   if (!ls.ok) return { ok: false, reason: `git ls-tree failed (${ls.reason})` };
   const repoFiles = ls.stdout.split('\0').filter(Boolean);
   const wanted = repoFiles.filter((f) => isScript(f) && !NOT_SOURCE.test(f) && !f.includes('\n'));
+  if (wanted.length > maxScripts) return { ok: false, reason: `${wanted.length} scripts is more than the ${maxScripts} this analysis reads` };
   const specs = wanted.map((f) => `${oid}:${f}`);
   const res = spawnSync('git', ['cat-file', '--batch'], {
     cwd, env: { ...sanitizeGitEnv(cwd), GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C' },
-    input: `${specs.join('\n')}\n`, maxBuffer: 512 * 1024 * 1024, timeout: 60_000, stdio: ['pipe', 'pipe', 'pipe'],
+    input: `${specs.join('\n')}\n`, maxBuffer: 256 * 1024 * 1024, timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'],
   });
   if (res.error || res.status !== 0) return { ok: false, reason: `git cat-file --batch failed (${res.error?.message ?? `exit ${res.status}`})` };
   const text = parseBatch(res.stdout, specs);
-  return { ok: true, ...testsLoading(touched, { repoFiles, readFile: (p) => { const t = text.get(`${oid}:${p}`); if (t === undefined) throw new Error('not read'); return t; } }) };
+  const deadline = Date.now() + REACH_BUDGET_MS;
+  const reach = testsLoading(touched, { repoFiles, readFile: (p) => { if (Date.now() > deadline) throw new Error('over the time budget'); const t = text.get(`${oid}:${p}`); if (t === undefined) throw new Error('not read'); return t; } });
+  // Files skipped for lack of time are counted as unread: the caveat then says the list may be incomplete.
+  return { ok: true, ...reach };
 }
