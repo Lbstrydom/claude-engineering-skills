@@ -101,6 +101,22 @@ test('R3-H8: file and plan paths in pack attributes are redacted like bodies', a
   assert.ok(pack.text.includes('<file path="src/[REDACTED'));
 });
 
+test('a cited file with upper-case letters is opened in its ORIGINAL case, so it survives a case-sensitive filesystem (Linux CI, #445)', async () => {
+  const { root, args } = bigRepo();
+  fs.writeFileSync(path.join(root, 'src', 'MixedCase.mjs'), 'export const m = 1;\n');
+  // Simulate a case-sensitive filesystem on any platform: a path whose case differs from the real file does not resolve.
+  const caseSensitive = Object.create(fs);
+  caseSensitive.realpathSync = (p, ...r) => {
+    const real = fs.realpathSync(p, ...r);
+    if (path.basename(real) !== path.basename(String(p))) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+    return real;
+  };
+  const rounds = [{ round: 1, findings: [{ id: 'H9', severity: 'HIGH', category: 'c', section: 's', detail: 'd', _primaryFile: 'src/MixedCase.mjs', affectedFiles: ['src/MixedCase.mjs'] }] }];
+  const pack = await buildStepBackPack({ ...args, rounds, repoFiles: [...args.repoFiles, 'src/MixedCase.mjs'], fsImpl: caseSensitive });
+  assert.ok(pack.text.includes('<file path="src/MixedCase.mjs"'), 'the mixed-case cited file is in the pack');
+  assert.equal(pack.skipped.some((s) => /mixedcase/i.test(s.path)), false, 'and it is not reported as excluded');
+});
+
 test('R3-M1: truncation is reported INSIDE the pack as a short <omitted> section', async () => {
   const { args } = bigRepo();
   const pack = await buildStepBackPack({ ...args, limits: { perFileChars: 60_000, totalChars: 40_000, maxImporterScan: 5000, maxArchNeighbours: 8 } });

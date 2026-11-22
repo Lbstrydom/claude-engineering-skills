@@ -26,7 +26,7 @@ import { z } from 'zod';
 import { resolveAndClassify, formatSkipLog } from '../sensitive-paths.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
 import { parseImports, resolveSpecifier, RESOLVABLE_EXTENSIONS } from '../module-graph.mjs';
-import { findingFiles } from '../concern-identity.mjs';
+import { normalizePath } from '../file-io.mjs';
 import { defaultTopicOf } from './round-signals.mjs';
 
 export const STEP_BACK_VERSION = 1;
@@ -89,10 +89,27 @@ export const isImportScannable = (rel) => RESOLVABLE_EXTENSIONS.some((e) => e !=
 const looksLikePath = (s) => typeof s === 'string' && s.length < 260 && !/\s/.test(s) && /[\w-]\.[A-Za-z0-9]{1,6}$/.test(s);
 const posix = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '');
 
-/** Every file path the findings cite (normalised, sorted). */
+/**
+ * A finding's files as paths to OPEN: original case, forward slashes. `findingFiles` lower-cases (it is a MATCHING key,
+ * `normalizePath`), and opening that on a case-sensitive filesystem fails: on Linux every cited file with an upper-case letter
+ * was classified resolution-failed and silently dropped from the pack (CI #445). De-duplicated by the matching key; the first
+ * display form wins.
+ */
+export function findingOpenPaths(f) {
+  const raw = [...(Array.isArray(f?.affectedFiles) ? f.affectedFiles : []), f?._primaryFile || f?.section || ''];
+  const byKey = new Map();
+  for (const x of raw) {
+    if (typeof x !== 'string' || x === '') continue;
+    const key = normalizePath(x);
+    if (key && !byKey.has(key)) byKey.set(key, posix(x));
+  }
+  return [...byKey.values()];
+}
+
+/** Every file path the findings cite, in its original case (sorted). */
 export function citedFilesOf(rounds) {
   const out = new Set();
-  for (const r of rounds || []) for (const f of r.findings || []) for (const x of findingFiles(f)) if (looksLikePath(x)) out.add(posix(x));
+  for (const r of rounds || []) for (const f of r.findings || []) for (const x of findingOpenPaths(f)) if (looksLikePath(x)) out.add(x);
   return [...out].sort();
 }
 
@@ -188,7 +205,7 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   part('ledger', '<ledger>\n', redact(JSON.stringify(ledgerEntries, null, 1)), '\n</ledger>');
   const roundView = (rounds || []).map((r) => ({
     round: r.round, auditedSha: r.auditedSha ?? null, verdict: r.verdict ?? null,
-    findings: (r.findings || []).map((f) => ({ id: f.id, severity: f.severity, category: f.category, section: f.section, detail: f.detail, topicId: f.topicId ?? topicOf(f), files: [...findingFiles(f)] })),
+    findings: (r.findings || []).map((f) => ({ id: f.id, severity: f.severity, category: f.category, section: f.section, detail: f.detail, topicId: f.topicId ?? topicOf(f), files: findingOpenPaths(f) })),
   }));
   part('rounds', '<rounds>\n', redact(JSON.stringify(roundView, null, 1)), '\n</rounds>');
   for (const rel of cited) addFile(rel, 'cited', 'cited');

@@ -72,6 +72,11 @@ were real.
 
 **Same vs different: undecided on this data.** One arm is non-discriminating; the other is two-thirds unmeasured. No pick is made.
 
+**Known v1 limitation (found after the run, CI #445).** The pack opened cited files by `findingFiles()`'s lower-cased matching
+key. `git show <sha>:<path>` is case-sensitive on every platform, so a cited file with an upper-case letter in its path
+(`AGENTS.md`, `README.md`, …) was excluded from the v1 packs as unreadable, fail-closed: nothing leaked, but the reviewer saw less.
+Most CES paths are lower-case. Fixed in the head that follows this verdict; replay v2 runs with the fix.
+
 ## 5. Consequences for the round policy
 
 - The **deterministic signals** (reopen rate, severity drift, retired) stay as the trigger at rounds 3 and 6; they are what the
