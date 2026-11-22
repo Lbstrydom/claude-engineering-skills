@@ -1,0 +1,1743 @@
+[
+ {
+  "unit": 1,
+  "h2": "Preamble",
+  "chars": 39,
+  "sha256_16": "4f2c9b20771f90af",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 2,
+  "h2": "Preamble",
+  "chars": 1499,
+  "sha256_16": "72346e51f7210243",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 3,
+  "h2": "Preamble",
+  "chars": 3359,
+  "sha256_16": "87d4e637b1a5d438",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 4,
+  "h2": "Preamble",
+  "chars": 4452,
+  "sha256_16": "b516651550000e72",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 5,
+  "h2": "Preamble",
+  "chars": 396,
+  "sha256_16": "87a563deb0fbe224",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 6,
+  "h2": "Preamble",
+  "chars": 935,
+  "sha256_16": "b0dd175596981c23",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 7,
+  "h2": "Preamble",
+  "chars": 1705,
+  "sha256_16": "d8a44d8faeddd302",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 8,
+  "h2": "Project Overview",
+  "chars": 19,
+  "sha256_16": "df72c241224d66eb",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 9,
+  "h2": "Project Overview",
+  "chars": 278,
+  "sha256_16": "e54c995244376faf",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 10,
+  "h2": "Skill Chain",
+  "chars": 14,
+  "sha256_16": "0fda4c9fb5d10da0",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 11,
+  "h2": "Skill Chain",
+  "chars": 599,
+  "sha256_16": "80603d2c536b74d2",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 12,
+  "h2": "Skill Chain",
+  "chars": 216,
+  "sha256_16": "757005bdcee90f59",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 13,
+  "h2": "Skill Chain",
+  "chars": 331,
+  "sha256_16": "5e1aa5b4d003860d",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 14,
+  "h2": "Skill Chain",
+  "chars": 1804,
+  "sha256_16": "05c60d0de364c037",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 15,
+  "h2": "Skill Chain",
+  "chars": 545,
+  "sha256_16": "202cb086c1ec4592",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 16,
+  "h2": "Skill Chain",
+  "chars": 771,
+  "sha256_16": "3e45a43b4b8f8072",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 17,
+  "h2": "Skill Chain",
+  "chars": 750,
+  "sha256_16": "3b2d68ea174ae277",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 18,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 35,
+  "sha256_16": "9393797fa43403ac",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 19,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 431,
+  "sha256_16": "6b9b1aa5c53868d3",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 20,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 1582,
+  "sha256_16": "4dc98dfeb497bb74",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 21,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 998,
+  "sha256_16": "6ec4ed8f314fa716",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 22,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 614,
+  "sha256_16": "8601107d3347f82c",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 23,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 290,
+  "sha256_16": "547fc6733959610f",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 24,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 729,
+  "sha256_16": "804f8e52d22191a4",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 25,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 28,
+  "sha256_16": "1b227232d272ee9c",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 26,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 369,
+  "sha256_16": "01f0b76bb84503f3",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 27,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 518,
+  "sha256_16": "82654681b4a5b80d",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 28,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 49,
+  "sha256_16": "7e56a0a0be89ca89",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 29,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 843,
+  "sha256_16": "bc7017dedba95bbd",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 30,
+  "h2": "Consumer-repo layout (isolation)",
+  "chars": 254,
+  "sha256_16": "4de434813506848c",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 31,
+  "h2": "Browser Tool Setup (persona-test)",
+  "chars": 36,
+  "sha256_16": "f8f601356bfb388d",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 32,
+  "h2": "Browser Tool Setup (persona-test)",
+  "chars": 403,
+  "sha256_16": "c1733c0220017c17",
+  "disposition": "pointer",
+  "stage": "1",
+  "rebased": {
+   "base": "4ba6c280",
+   "unit": 32,
+   "sha256_16": "444ef3248fa3cf80"
+  }
+ },
+ {
+  "unit": 33,
+  "h2": "Mermaid validation (for plan diagrams)",
+  "chars": 41,
+  "sha256_16": "6afe476ff676d5a1",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 34,
+  "h2": "Mermaid validation (for plan diagrams)",
+  "chars": 625,
+  "sha256_16": "2123e9455d88e475",
+  "disposition": "pointer",
+  "stage": "1"
+ },
+ {
+  "unit": 35,
+  "h2": "Mermaid validation (for plan diagrams)",
+  "chars": 3,
+  "sha256_16": "cb3f91d54eee30e5",
+  "disposition": "dossier",
+  "stage": "4"
+ },
+ {
+  "unit": 36,
+  "h2": "Dependencies (CRITICAL — check versions before flagging issues)",
+  "chars": 66,
+  "sha256_16": "a53d2b33387eec9f",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 37,
+  "h2": "Dependencies (CRITICAL — check versions before flagging issues)",
+  "chars": 59,
+  "sha256_16": "55d1ed62715b6467",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 38,
+  "h2": "Dependencies (CRITICAL — check versions before flagging issues)",
+  "chars": 255,
+  "sha256_16": "f848ea103fbb0723",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 39,
+  "h2": "Dependencies (CRITICAL — check versions before flagging issues)",
+  "chars": 211,
+  "sha256_16": "47e15cc3749c35e2",
+  "disposition": "dossier",
+  "stage": "4"
+ },
+ {
+  "unit": 40,
+  "h2": "Dependencies (CRITICAL — check versions before flagging issues)",
+  "chars": 111,
+  "sha256_16": "448ba4cf681233f5",
+  "disposition": "dossier",
+  "stage": "4"
+ },
+ {
+  "unit": 41,
+  "h2": "Dependencies (CRITICAL — check versions before flagging issues)",
+  "chars": 85,
+  "sha256_16": "3ca0a9eedbc556ef",
+  "disposition": "tripwire",
+  "stage": "4"
+ },
+ {
+  "unit": 42,
+  "h2": "Architecture",
+  "chars": 15,
+  "sha256_16": "a7e56472b11bd3c8",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 43,
+  "h2": "Architecture",
+  "chars": 552,
+  "sha256_16": "7c9a14335c921557",
+  "disposition": "pointer",
+  "stage": "4"
+ },
+ {
+  "unit": 44,
+  "h2": "Architecture",
+  "chars": 331,
+  "sha256_16": "a4c25e4c4eb2ebd8",
+  "disposition": "pointer",
+  "stage": "4"
+ },
+ {
+  "unit": 45,
+  "h2": "Architecture",
+  "chars": 11,
+  "sha256_16": "e600c5a3766f90eb",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 46,
+  "h2": "Architecture",
+  "chars": 290,
+  "sha256_16": "001072135b4b47d4",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 47,
+  "h2": "Architecture",
+  "chars": 65,
+  "sha256_16": "479819d2ae02fc48",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 48,
+  "h2": "Architecture",
+  "chars": 469,
+  "sha256_16": "7aa5136637bac128",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 49,
+  "h2": "Architecture",
+  "chars": 505,
+  "sha256_16": "e15703128386c909",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 50,
+  "h2": "Architecture",
+  "chars": 298,
+  "sha256_16": "ee348d49fbd30cf8",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 51,
+  "h2": "Architecture",
+  "chars": 77,
+  "sha256_16": "dfe28aac0d245795",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 52,
+  "h2": "Architecture",
+  "chars": 490,
+  "sha256_16": "c1138df2756ad96d",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 53,
+  "h2": "Architecture",
+  "chars": 764,
+  "sha256_16": "608cc3941c04c2ca",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 54,
+  "h2": "Architecture",
+  "chars": 353,
+  "sha256_16": "289788ac267d4a37",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 55,
+  "h2": "Architecture",
+  "chars": 327,
+  "sha256_16": "70de8998a6d9fa30",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 56,
+  "h2": "Architecture",
+  "chars": 295,
+  "sha256_16": "59e59cc8cc432cd8",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 57,
+  "h2": "Architecture",
+  "chars": 469,
+  "sha256_16": "a8342b0e2b863373",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 58,
+  "h2": "Architecture",
+  "chars": 446,
+  "sha256_16": "6976cc2085a22173",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 59,
+  "h2": "Architecture",
+  "chars": 31,
+  "sha256_16": "941236d1f8261e60",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 60,
+  "h2": "Architecture",
+  "chars": 521,
+  "sha256_16": "6d487809f21a83cc",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 61,
+  "h2": "Architecture",
+  "chars": 73,
+  "sha256_16": "d41f06576a88ff11",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 62,
+  "h2": "Architecture",
+  "chars": 761,
+  "sha256_16": "1ae06745e8d48a00",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 63,
+  "h2": "Model Resolution",
+  "chars": 19,
+  "sha256_16": "36624bb09e9ae775",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 64,
+  "h2": "Model Resolution",
+  "chars": 185,
+  "sha256_16": "cb12bda4a9427caf",
+  "disposition": "dossier",
+  "stage": "1"
+ },
+ {
+  "unit": 65,
+  "h2": "Model Resolution",
+  "chars": 615,
+  "sha256_16": "fe03e31f7fa8cdbe",
+  "disposition": "dossier",
+  "stage": "1"
+ },
+ {
+  "unit": 66,
+  "h2": "Model Resolution",
+  "chars": 33,
+  "sha256_16": "67971bb432ee382e",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 67,
+  "h2": "Model Resolution",
+  "chars": 74,
+  "sha256_16": "10f250cd6189ce09",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 68,
+  "h2": "Model Resolution",
+  "chars": 166,
+  "sha256_16": "cb976852d925a888",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 69,
+  "h2": "Model Resolution",
+  "chars": 85,
+  "sha256_16": "a4f0ac86d762c311",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 70,
+  "h2": "Model Resolution",
+  "chars": 160,
+  "sha256_16": "6897c9d0b2af1693",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 71,
+  "h2": "Model Resolution",
+  "chars": 350,
+  "sha256_16": "28064f9a109e819c",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 72,
+  "h2": "Model Resolution",
+  "chars": 707,
+  "sha256_16": "06c277f91dae5b22",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 73,
+  "h2": "Model Resolution",
+  "chars": 170,
+  "sha256_16": "c481b0b7c601fb69",
+  "disposition": "pointer",
+  "stage": "1"
+ },
+ {
+  "unit": 74,
+  "h2": "Memory-Health Gate",
+  "chars": 21,
+  "sha256_16": "f709c4728eb34523",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 75,
+  "h2": "Memory-Health Gate",
+  "chars": 499,
+  "sha256_16": "5be8ed31aee8dfa0",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 76,
+  "h2": "Learning System (Phase 1)",
+  "chars": 28,
+  "sha256_16": "7f013dc881271700",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 77,
+  "h2": "Learning System (Phase 1)",
+  "chars": 469,
+  "sha256_16": "a1a73741006b82fb",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 78,
+  "h2": "Environment Variables",
+  "chars": 24,
+  "sha256_16": "66baf6a5eea36889",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 79,
+  "h2": "Environment Variables",
+  "chars": 302,
+  "sha256_16": "497335ed77f0de9f",
+  "disposition": "pointer",
+  "stage": "2"
+ },
+ {
+  "unit": 80,
+  "h2": "Environment Variables",
+  "chars": 91,
+  "sha256_16": "6d2b92ddac9af5b0",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 81,
+  "h2": "Environment Variables",
+  "chars": 94,
+  "sha256_16": "97ad1f92be04859f",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 82,
+  "h2": "Environment Variables",
+  "chars": 189,
+  "sha256_16": "465b479216860cd6",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 83,
+  "h2": "Environment Variables",
+  "chars": 103,
+  "sha256_16": "e3b27fe7722f61f8",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 84,
+  "h2": "Environment Variables",
+  "chars": 264,
+  "sha256_16": "2feb7a345aa5cf09",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 85,
+  "h2": "Environment Variables",
+  "chars": 353,
+  "sha256_16": "6445498e1cf91fa0",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 86,
+  "h2": "Environment Variables",
+  "chars": 111,
+  "sha256_16": "cc5cbdf82713434e",
+  "disposition": "dossier",
+  "stage": "2"
+ },
+ {
+  "unit": 87,
+  "h2": "Environment Variables",
+  "chars": 140,
+  "sha256_16": "4481c8268ca27f83",
+  "disposition": "dossier",
+  "stage": "2"
+ },
+ {
+  "unit": 88,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 32,
+  "sha256_16": "ec6850a98769c777",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 89,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 246,
+  "sha256_16": "2996bec5d66572e2",
+  "disposition": "dossier",
+  "stage": "2"
+ },
+ {
+  "unit": 90,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 1041,
+  "sha256_16": "be7f944a8db5f127",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 91,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 198,
+  "sha256_16": "e4d9660b7d23e34e",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 92,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 444,
+  "sha256_16": "8258524c29d25af6",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 93,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 531,
+  "sha256_16": "5715452feca30df4",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 94,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 156,
+  "sha256_16": "b6e75418edab49e3",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 95,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 811,
+  "sha256_16": "6e4fb430b82a1167",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 96,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 486,
+  "sha256_16": "67245723f2a0858b",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 97,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 608,
+  "sha256_16": "4f09c8bae31a0363",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 98,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 695,
+  "sha256_16": "5f3711ca6cf4a72c",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 99,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 501,
+  "sha256_16": "ff3f05a56372582a",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 100,
+  "h2": "Postgres-Parity Store (M1–M4)",
+  "chars": 378,
+  "sha256_16": "f1969bc659fad63f",
+  "disposition": "pointer",
+  "stage": "2"
+ },
+ {
+  "unit": 101,
+  "h2": "Anthropic Backend Routing",
+  "chars": 28,
+  "sha256_16": "f6063fe808b628bc",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 102,
+  "h2": "Anthropic Backend Routing",
+  "chars": 770,
+  "sha256_16": "dae1426f79c082b3",
+  "disposition": "dossier",
+  "stage": "2"
+ },
+ {
+  "unit": 103,
+  "h2": "Anthropic Backend Routing",
+  "chars": 1085,
+  "sha256_16": "347d9aa358f00483",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 104,
+  "h2": "Anthropic Backend Routing",
+  "chars": 25,
+  "sha256_16": "147687eaa2e4508f",
+  "disposition": "heading",
+  "stage": "2"
+ },
+ {
+  "unit": 105,
+  "h2": "Anthropic Backend Routing",
+  "chars": 394,
+  "sha256_16": "9a65737a6b717211",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 106,
+  "h2": "Anthropic Backend Routing",
+  "chars": 146,
+  "sha256_16": "bea16f41ac95b33b",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 107,
+  "h2": "Anthropic Backend Routing",
+  "chars": 671,
+  "sha256_16": "39a5bbf5937c0e78",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 108,
+  "h2": "Anthropic Backend Routing",
+  "chars": 151,
+  "sha256_16": "858d6660304e85d5",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 109,
+  "h2": "Anthropic Backend Routing",
+  "chars": 181,
+  "sha256_16": "2424d4f7d73581e6",
+  "disposition": "pointer",
+  "stage": "2"
+ },
+ {
+  "unit": 110,
+  "h2": "Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP",
+  "chars": 60,
+  "sha256_16": "ab345de8ff958953",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 111,
+  "h2": "Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP",
+  "chars": 361,
+  "sha256_16": "cdb8cf9a1ed5fc79",
+  "disposition": "dossier",
+  "stage": "1"
+ },
+ {
+  "unit": 112,
+  "h2": "Tiered-Recall Audit Pipeline",
+  "chars": 31,
+  "sha256_16": "7cdea3df92fcdb9d",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 113,
+  "h2": "Tiered-Recall Audit Pipeline",
+  "chars": 283,
+  "sha256_16": "8b04ee5529384480",
+  "disposition": "dossier",
+  "stage": "1"
+ },
+ {
+  "unit": 114,
+  "h2": "Tiered-Recall Audit Pipeline",
+  "chars": 234,
+  "sha256_16": "da765d0baa09445b",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 115,
+  "h2": "Tiered-Recall Audit Pipeline",
+  "chars": 282,
+  "sha256_16": "58cb336279af3549",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 116,
+  "h2": "Model Swap-In Evaluation Harness",
+  "chars": 35,
+  "sha256_16": "3944a5f4ff7a51ba",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 117,
+  "h2": "Model Swap-In Evaluation Harness",
+  "chars": 287,
+  "sha256_16": "fcd10931db1bb411",
+  "disposition": "dossier",
+  "stage": "1"
+ },
+ {
+  "unit": 118,
+  "h2": "Model Swap-In Evaluation Harness",
+  "chars": 386,
+  "sha256_16": "fe35e22f65c77ea3",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 119,
+  "h2": "Model Swap-In Evaluation Harness",
+  "chars": 338,
+  "sha256_16": "e70680377db615c8",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 120,
+  "h2": "Model Swap-In Evaluation Harness",
+  "chars": 91,
+  "sha256_16": "38574fb1c649f8ef",
+  "disposition": "pointer",
+  "stage": "1"
+ },
+ {
+  "unit": 121,
+  "h2": "Local Weekly Maintenance Checks (opt-in)",
+  "chars": 43,
+  "sha256_16": "ccd76b6d27f855a0",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 122,
+  "h2": "Local Weekly Maintenance Checks (opt-in)",
+  "chars": 799,
+  "sha256_16": "12eb33527a0e16e1",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 123,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 32,
+  "sha256_16": "eddcea8a203fac0f",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 124,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 522,
+  "sha256_16": "bb3f8da09c9e100c",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 125,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 64,
+  "sha256_16": "85b755d6e7d2ea29",
+  "disposition": "heading",
+  "stage": "1"
+ },
+ {
+  "unit": 126,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 645,
+  "sha256_16": "3d809e46d15df94b",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 127,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 218,
+  "sha256_16": "aa4e30c7701b61cb",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 128,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 235,
+  "sha256_16": "57a603dd12ad1862",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 129,
+  "h2": "Azure AI Foundry Work Profile",
+  "chars": 161,
+  "sha256_16": "167b8d2c8ed408ac",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 130,
+  "h2": "Cross-Skill Data Loop",
+  "chars": 24,
+  "sha256_16": "8008f633c51da113",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 131,
+  "h2": "Cross-Skill Data Loop",
+  "chars": 271,
+  "sha256_16": "c77dc25abd4bfde3",
+  "disposition": "dossier",
+  "stage": "1"
+ },
+ {
+  "unit": 132,
+  "h2": "Cross-Skill Data Loop",
+  "chars": 270,
+  "sha256_16": "89756b957e3b4bac",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 133,
+  "h2": "R2+ Audit Mode (Phase 1)",
+  "chars": 27,
+  "sha256_16": "56b8ee2ff4c8fd11",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 134,
+  "h2": "R2+ Audit Mode (Phase 1)",
+  "chars": 616,
+  "sha256_16": "44949d3e2621db54",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 135,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 58,
+  "sha256_16": "0151ef4e965f01c0",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 136,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 351,
+  "sha256_16": "93823a14a35b7173",
+  "disposition": "dossier",
+  "stage": "2"
+ },
+ {
+  "unit": 137,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 319,
+  "sha256_16": "976a602a303a8e56",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 138,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 181,
+  "sha256_16": "2f0c7e392066548e",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 139,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 342,
+  "sha256_16": "2896f69e99030fa6",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 140,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 214,
+  "sha256_16": "cb19285d1df414d8",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 141,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 170,
+  "sha256_16": "ffa8b34a94c3b5ff",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 142,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 232,
+  "sha256_16": "b4281dca494630c2",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 143,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 438,
+  "sha256_16": "0249a15f1fdf05cf",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 144,
+  "h2": "Architectural Memory — pre-fix consultation (MANDATORY)",
+  "chars": 583,
+  "sha256_16": "98117ae464338005",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 145,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 52,
+  "sha256_16": "db91468f78c10543",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 146,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 190,
+  "sha256_16": "75b0b43bebed5f72",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 147,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 132,
+  "sha256_16": "757f02409ddda793",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 148,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 315,
+  "sha256_16": "43eb90f4e9dbf8d6",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 149,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 370,
+  "sha256_16": "adf0cb6adf687e3c",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 150,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 70,
+  "sha256_16": "98e1fd89b19d3d6e",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 151,
+  "h2": "Security incident memory — mandatory consultation",
+  "chars": 640,
+  "sha256_16": "6bc06a1fdc07e57e",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 152,
+  "h2": "Quick-fix detection — two-layer architecture",
+  "chars": 47,
+  "sha256_16": "aaaea608b52581af",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 153,
+  "h2": "Quick-fix detection — two-layer architecture",
+  "chars": 100,
+  "sha256_16": "c1666fe0f776f91e",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 154,
+  "h2": "Quick-fix detection — two-layer architecture",
+  "chars": 153,
+  "sha256_16": "ddcac76c2f05ce5e",
+  "disposition": "coupled",
+  "stage": "—"
+ },
+ {
+  "unit": 155,
+  "h2": "Quick-fix detection — two-layer architecture",
+  "chars": 1100,
+  "sha256_16": "94f1b5adbf11a396",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 156,
+  "h2": "Where enforcement lives — NOT in a `$PATH` wrapper",
+  "chars": 53,
+  "sha256_16": "1e31364dd13f47ca",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 157,
+  "h2": "Where enforcement lives — NOT in a `$PATH` wrapper",
+  "chars": 468,
+  "sha256_16": "b1e93ee25342d042",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 158,
+  "h2": "Where enforcement lives — NOT in a `$PATH` wrapper",
+  "chars": 688,
+  "sha256_16": "9c845b2dc870ba22",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 159,
+  "h2": "Requirements Layer — de-facto invariant ledger",
+  "chars": 49,
+  "sha256_16": "a247bfe8056eccea",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 160,
+  "h2": "Requirements Layer — de-facto invariant ledger",
+  "chars": 517,
+  "sha256_16": "0e9890008467cce2",
+  "disposition": "dossier",
+  "stage": "2"
+ },
+ {
+  "unit": 161,
+  "h2": "Requirements Layer — de-facto invariant ledger",
+  "chars": 223,
+  "sha256_16": "f63b5e1a02846554",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 162,
+  "h2": "Personal config — keep it out of the public repo",
+  "chars": 51,
+  "sha256_16": "b842df82c8191922",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 163,
+  "h2": "Personal config — keep it out of the public repo",
+  "chars": 413,
+  "sha256_16": "ae81e5f1fbc1864c",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 164,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 54,
+  "sha256_16": "d12df92e9098b7e7",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 165,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 239,
+  "sha256_16": "f01fa956c3e6fd6c",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 166,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 136,
+  "sha256_16": "326c9a75dc6480c9",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 167,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 133,
+  "sha256_16": "29ab4d5d2ce79b20",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 168,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 99,
+  "sha256_16": "4d34e96eeca24b13",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 169,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 174,
+  "sha256_16": "98bb6d1862c4ea96",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 170,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 134,
+  "sha256_16": "8ebe37f923d73296",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 171,
+  "h2": "Scope discipline — pre-existing uncommitted changes",
+  "chars": 126,
+  "sha256_16": "2a7e54ba4e7b0964",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 172,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 63,
+  "sha256_16": "2c83c4c135db29a3",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 173,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 550,
+  "sha256_16": "6ba7b7b920119eb8",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 174,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 225,
+  "sha256_16": "ee69e618ab177aaf",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 175,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 172,
+  "sha256_16": "8eb7eca072caad74",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 176,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 189,
+  "sha256_16": "523a3157be749d56",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 177,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 183,
+  "sha256_16": "e874603a8b3912a8",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 178,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 459,
+  "sha256_16": "d79c134bc8395bb8",
+  "disposition": "tripwire",
+  "stage": "2"
+ },
+ {
+  "unit": 179,
+  "h2": "Contracts across the prose↔code seam (no compiler runs here)",
+  "chars": 339,
+  "sha256_16": "2500dd47783b1590",
+  "disposition": "gate-quoted",
+  "stage": "5*"
+ },
+ {
+  "unit": 180,
+  "h2": "Sensitive paths + VCS contract (canonical locations)",
+  "chars": 55,
+  "sha256_16": "3b44b7425d56f91c",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 181,
+  "h2": "Sensitive paths + VCS contract (canonical locations)",
+  "chars": 286,
+  "sha256_16": "eb353db964917eb5",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 182,
+  "h2": "Sensitive paths + VCS contract (canonical locations)",
+  "chars": 183,
+  "sha256_16": "af7b4e45bed678f1",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 183,
+  "h2": "Sensitive paths + VCS contract (canonical locations)",
+  "chars": 392,
+  "sha256_16": "5d3c05c5a7784a96",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 184,
+  "h2": "Sensitive paths + VCS contract (canonical locations)",
+  "chars": 488,
+  "sha256_16": "96d8a0eda71e42dc",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 185,
+  "h2": "Sensitive paths + VCS contract (canonical locations)",
+  "chars": 160,
+  "sha256_16": "b7df9e9e842e6fbd",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 186,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 40,
+  "sha256_16": "3d5440ed23ea25f3",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 187,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 286,
+  "sha256_16": "4fa0212dc0122607",
+  "disposition": "pointer",
+  "stage": "3"
+ },
+ {
+  "unit": 188,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 353,
+  "sha256_16": "f30d734fd633d333",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 189,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 238,
+  "sha256_16": "c1a8e34a8475cb43",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 190,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 373,
+  "sha256_16": "8669b4380e540fcc",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 191,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 304,
+  "sha256_16": "543b570063f88e93",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 192,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 240,
+  "sha256_16": "4346bb1839b33183",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 193,
+  "h2": "Verification discipline (cross-skill)",
+  "chars": 177,
+  "sha256_16": "ce7c0a8d95b4aac7",
+  "disposition": "tripwire",
+  "stage": "3"
+ },
+ {
+  "unit": 194,
+  "h2": "Commit provenance trailers (`AI-*`)",
+  "chars": 38,
+  "sha256_16": "caaa8347e8e3f512",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 195,
+  "h2": "Commit provenance trailers (`AI-*`)",
+  "chars": 510,
+  "sha256_16": "9c639b63b7bccf45",
+  "disposition": "tripwire",
+  "stage": "1"
+ },
+ {
+  "unit": 196,
+  "h2": "Code Style",
+  "chars": 13,
+  "sha256_16": "16aceb075a990617",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 197,
+  "h2": "Code Style",
+  "chars": 48,
+  "sha256_16": "699bcbb9a3b0d389",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 198,
+  "h2": "Code Style",
+  "chars": 77,
+  "sha256_16": "fcd88bc7f3a5c776",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 199,
+  "h2": "Code Style",
+  "chars": 56,
+  "sha256_16": "3fe03a2398e631ac",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 200,
+  "h2": "Code Style",
+  "chars": 66,
+  "sha256_16": "cf5f6800ef6c6a8a",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 201,
+  "h2": "Code Style",
+  "chars": 67,
+  "sha256_16": "f2ed90d7539649df",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 202,
+  "h2": "Code Style",
+  "chars": 171,
+  "sha256_16": "c3bd544e98bdb155",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 203,
+  "h2": "Do NOT",
+  "chars": 9,
+  "sha256_16": "835dd8bd1bee7979",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 204,
+  "h2": "Do NOT",
+  "chars": 81,
+  "sha256_16": "2156173017d3ba9d",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 205,
+  "h2": "Do NOT",
+  "chars": 50,
+  "sha256_16": "026d2e5974813236",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 206,
+  "h2": "Do NOT",
+  "chars": 76,
+  "sha256_16": "b74201cce364d690",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 207,
+  "h2": "Do NOT",
+  "chars": 85,
+  "sha256_16": "3bc81b76b3bb4980",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 208,
+  "h2": "Do NOT",
+  "chars": 131,
+  "sha256_16": "cb2924cdc0d15662",
+  "disposition": "tripwire",
+  "stage": "—"
+ },
+ {
+  "unit": 209,
+  "h2": "Accepted Technical Debt",
+  "chars": 26,
+  "sha256_16": "17840809da9faa0d",
+  "disposition": "heading",
+  "stage": "—"
+ },
+ {
+  "unit": 210,
+  "h2": "Accepted Technical Debt",
+  "chars": 53,
+  "sha256_16": "45d946ea66926b84",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 211,
+  "h2": "Accepted Technical Debt",
+  "chars": 77,
+  "sha256_16": "1e22c8cff8704c36",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 212,
+  "h2": "Accepted Technical Debt",
+  "chars": 184,
+  "sha256_16": "a50c8d0367ff363a",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 213,
+  "h2": "Accepted Technical Debt",
+  "chars": 152,
+  "sha256_16": "8e35e232cd650bee",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 214,
+  "h2": "Accepted Technical Debt",
+  "chars": 138,
+  "sha256_16": "c0c39e62865a8d45",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 215,
+  "h2": "Accepted Technical Debt",
+  "chars": 241,
+  "sha256_16": "44fe361f379ee210",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 216,
+  "h2": "Accepted Technical Debt",
+  "chars": 352,
+  "sha256_16": "dd492ae38ae0f621",
+  "disposition": "coupled",
+  "stage": "5*"
+ },
+ {
+  "unit": 217,
+  "h2": "Accepted Technical Debt",
+  "chars": 303,
+  "sha256_16": "a1db03d0a8480062",
+  "disposition": "coupled",
+  "stage": "5*"
+ }
+]

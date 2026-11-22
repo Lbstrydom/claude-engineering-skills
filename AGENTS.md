@@ -185,6 +185,8 @@
 > sharing a table or a broader boundary is not sufficient. `/audit-code` (Step 3)
 > and `/audit-plan` (Step 3) enforce this.
 
+> **Moved detail**: text cut from this file lives verbatim in [agents-md-dossiers.md](docs/reference/agents-md-dossiers.md) under the same H2 heading; the stub left here keeps the rule.
+
 ## Project Overview
 
 18 AI-pair-programming skills covering the development quality lifecycle, planning
@@ -379,11 +381,11 @@ Snippet + current set: [consumer-repo-layout.md](docs/reference/consumer-repo-la
 
 ## Browser Tool Setup (persona-test)
 
-`/persona-test` drives a real browser through a declared driver contract (`references/browser-tool-detection.md`, shared with `/click-test`): any driver meeting the capability set works, and the host's built-in browser pane (`mcp__Claude_Browser__*`) is what most sessions actually use (63 of 110 measured; Playwright snapshots 16). **Playwright MCP is the pinned, free, credential-less fallback** (registered in `.mcp.json`). **First-time setup: `npx playwright install chromium`** — without it the server crashes silently and no tools appear. Windows may need an MCP override: [CLAUDE.md](./CLAUDE.md#claude-code-only-notes). BrightData alternative: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
+`/persona-test` drives a real browser through a declared driver contract shared with `/click-test`: the host's built-in browser pane (`mcp__Claude_Browser__*`) is what most sessions use, and **Playwright MCP is the pinned, free, credential-less fallback**. Its first-time setup is `npx playwright install chromium`, or the server crashes silently and no tools appear. Windows override, BrightData: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ## Mermaid validation (for plan diagrams)
 
-**Interactive**: call **`mcp__mermaid__generate_mermaid_diagram`** with `outputType: "mermaid"` to validate without rendering — invalid syntax returns an MCP error with line/column, no API key. **Pre-push**: `npm run plans:lint` (in `check`) scans `docs/plans/*.md` for what the parser accepts but stricter renderers reject — **ERROR `subgraph-as-edge-endpoint`** (anchor the edge to a node *inside* the subgraph) blocks; **WARN `unquoted-special-chars-in-label`** (write `ID["..."]` when a label has `<br/>` or non-ASCII) is advisory. Registration and rule-coverage rationale: [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
+Validate a diagram with `mcp__mermaid__generate_mermaid_diagram` (`outputType: "mermaid"`, no render). `npm run plans:lint` (in `check`) blocks on ERROR `subgraph-as-edge-endpoint`: anchor the edge to a node inside the subgraph. [mcp-tooling.md](docs/runbooks/mcp-tooling.md).
 
 ---
 
@@ -509,60 +511,21 @@ return green without having checked anything?"*
 
 ## Model Resolution
 
-`scripts/lib/model-resolver.mjs` resolves model IDs so config stops going stale
-when providers ship new versions. All model-reading env vars in config.mjs pass
-through `resolveModel()`.
+All model-reading env vars pass through `resolveModel()` ([model-resolver.mjs](scripts/lib/model-resolver.mjs)). **Use a sentinel (`latest-gpt`, `latest-opus`, `latest-pro`, …), never a concrete id in new code.**
+- Never drop `-preview` from a Gemini 3 id unverified (bare `gemini-3-flash` / `gemini-3.1-pro` 404).
+- Never retry a 4xx except 429 (`classifyLlmError`). Rewrapping an LLM error, keep `err.status` and the provider's `error.message`.
+- **OpenRouter**: always send `provider:{require_parameters,sort}` + `reasoning:{effort}`, or runs fail at random.
+- **A model id carries its ROUTE** (`qwen3.8-max` vs `qwen/qwen3.8-max` bill differently): never normalise `source_model`. For the vendor family call `modelFamily`, never a head-of-string helper; a new vendor needs `VENDOR_ALIASES`.
 
-**Sentinels** (preferred in `.env`) — `latest-gpt`, `latest-gpt-mini`,
-`latest-opus`, `latest-sonnet`, `latest-haiku`, plus Google's `latest-pro` /
-`latest-flash` / `latest-flash-lite`. A sentinel picks the newest tier match from
-live-catalog ∪ `STATIC_POOL`; a stale concrete id is remapped with a one-time
-warning; concrete ids pass through. Heavy entry points refresh the catalog and
-re-resolve, so new provider models need no `STATIC_POOL` edit
-(`MODEL_CATALOG_REFRESH=skip` opts out for air-gapped CI; a network failure falls
-back silently). Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
-
-**Anti-patterns (load-bearing):**
-- Do NOT pin concrete model IDs in new code — use a sentinel (`latest-*`).
-- Do NOT drop `-preview` from Gemini 3 IDs unverified — bare `gemini-3-flash` /
-  `gemini-3.1-pro` never shipped (Google 404s). Verify via the `…/v1beta/models` list.
-- Do NOT retry 404 — `classifyLlmError` treats any 4xx (except 429) as non-retryable.
-- When rewrapping an LLM error, surface `err.status` + the real provider
-  `error.message` — don't collapse to `"API error ${status}"` (it names the bad model).
-- **OpenRouter**: one model id → many backends with incompatible ctx limits, picked per request, and reasoning tokens count against `max_tokens`. Unpinned runs fail at random, reading as model flakiness — always send `provider:{require_parameters,sort}` + `reasoning:{effort}`. [experiment-4](docs/research/experiment-4-cheap-final-reviewer-smoke.md)
-- **A model id carries its ROUTE, and the two are never reconciled.** Some models
-  are reached BOTH natively and via OpenRouter (`qwen3.8-max` vs
-  `qwen/qwen3.8-max`); `transportForModel` dispatches on exactly that shape and
-  the routes bill differently, so **never "normalise" `source_model`** — it erases
-  the routing decision and corrupts costing. What must NOT vary by route is the
-  vendor **family**: call `modelFamily`, never a local head-of-string helper —
-  reading the vendor off whichever half of the id was present is how a model
-  grading its own output got recorded as unbiased (`self_family`, fixed
-  2026-08-23). A new vendor needs `VENDOR_ALIASES` too; `npm test` fails until it has it.
-
-→ Per-sentinel table, resolution order, live-catalog mechanics, startup-log
-example, static-pool maintenance:
-[`model-resolution.md`](docs/reference/model-resolution.md).
+→ [model-resolution.md](docs/reference/model-resolution.md).
 
 ## Memory-Health Gate
 
-`scripts/memory-health.mjs`: three trigger metrics deciding whether the flat
-`audit_findings` + fingerprint-dedup design leaks signal a graph memory would
-recover. A weekly AMBER, a metric change, promoting the graph design:
-[`memory-health-gate.md`](docs/reference/memory-health-gate.md).
-**Resident**: a new wave that emits control state needs a
-`control_marker_prefixes` sentinel (matched on the detail-snapshot **prefix**,
-never the category), or the gate reads AMBER forever on its own logging.
+[memory-health-gate.md](docs/reference/memory-health-gate.md). **A new wave that emits control state needs a `control_marker_prefixes` sentinel** (matched on the detail-snapshot prefix, never the category), or the gate reads AMBER forever.
 
 ## Learning System (Phase 1)
 
-Adaptive-learning telemetry across audit decision points → `learning_decisions` +
-`recurring_finding_clusters`. Auto-deferral, `learning:*`, the weekly review,
-replay/promotion:
-[`learning-system.md`](docs/runbooks/learning-system.md). **Resident**:
-`LEARNING_DISABLE=1` kills all live learning + telemetry; telemetry never crashes
-a run (flush failures spill to `.audit/learning-outbox/`); a plan accepts a v1
-limit with `<!-- audit:accept-v1: <glob> :: <reason> -->`.
+[learning-system.md](docs/runbooks/learning-system.md). **`LEARNING_DISABLE=1` kills all learning + telemetry**; telemetry never crashes a run (flush failures spill to `.audit/learning-outbox/`); a plan accepts a v1 limit with `<!-- audit:accept-v1: <glob> :: <reason> -->`.
 
 ## Environment Variables
 
@@ -717,23 +680,12 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
-Opt-in, observation-only 2nd final reviewer (`FINAL_REVIEW_SHADOW`); committed
-default unset, paused locally on cost. Unset ⇒ byte-identical; never gates. Read
-it **before any reviewer/model comparison** (three results that generalise):
-[briefing](docs/research/final-review-shadow-adjudication-briefing.md) ·
-[plan](docs/plans/final-review-shadow-reviewer.md).
+Opt-in 2nd final reviewer (`FINAL_REVIEW_SHADOW`, default unset, never gates). **Read the [briefing](docs/research/final-review-shadow-adjudication-briefing.md) before any reviewer or model comparison.**
 
 ## Tiered-Recall Audit Pipeline
 
-Discovery → Stage 0/1/2 alternative to the GPT 5-pass legacy audit; chooser
-`AUDIT_TIERED_PIPELINE_ENABLED` defaults **off** (production runs legacy).
-Enabling it, its shadow window, Phase 14:
-[`tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md).
-Resident:
-
-- **Execution eligibility is per-call, not env-global** (`allowTiered`): only
-  `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and library
-  callers can never spend. Both must hold before a provider is constructed.
+`AUDIT_TIERED_PIPELINE_ENABLED` defaults **off** ([plan](docs/plans/tiered-recall-audit-pipeline.md)).
+- **Eligibility is per-call** (`allowTiered`): only `openai-audit.mjs`'s `main()` passes it, so tests and library callers never spend. Flag AND eligibility must both hold before a provider is constructed.
 - **"Window met" is epoch-gated, not eyeballed** (2026-07-26, after the 5th false
   green): `comparedRuns` counts only rows the collector stamped with the
   current `TIERED_SHADOW_CONTRACT_EPOCH`; pre-stamp rows are ineligible and the
@@ -741,90 +693,29 @@ Resident:
 
 ## Model Swap-In Evaluation Harness
 
-`scripts/lib/model-eval/` answers "is this new LLM release worth switching to?" for
-the auditor or adjudicator role. Playbook, tiers, recall-ceiling caveat, verdict
-history: [`model-eval-harness.md`](docs/runbooks/model-eval-harness.md). Resident,
-because they bind any measurement work:
-- **A model swap is SYNCHRONOUS, never a background window**: run it when the
-  model ships, adjudicate in the same sitting, verdict → `docs/research/`. Passive
-  collection killed arm-eval and produced five false "window met" reads. Only
-  intervention-over-organic-work earns a shadow; exactly two are open
-  (tiered-pipeline, final-review 2nd gate). **Do not add a sixth collector.**
-- **Evidence counts only if produced under the contract the stopping rule
-  validates**: stamp `contractEpoch` **at the collector** and verify by match.
-  Unstamped ⇒ ineligible, never "assume current"; bump on a meaning-changing fix
-  and re-collect — **never backfill by date**, the relabelling that let the fifth
-  false green through.
-
-→ Design: [`docs/plans/model-swap-eval-harness.md`](docs/plans/model-swap-eval-harness.md).
+[model-eval-harness.md](docs/runbooks/model-eval-harness.md). Binding on any measurement work:
+- **A model swap is SYNCHRONOUS**: run it when the model ships, adjudicate in the same sitting, verdict → `docs/research/`. Only intervention-over-organic-work earns a shadow, and exactly two are open; **do not add a sixth collector.**
+- **Stamp `contractEpoch` at the collector**; unstamped ⇒ ineligible; bump on a meaning-changing fix and re-collect, **never backfill by date**.
 
 ## Local Weekly Maintenance Checks (opt-in)
 
-Default-OFF local replica of the weekly maintenance checks, run from the pre-push
-hook when overdue (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`; `npm run maintenance:status`)
-— in THIS repo the only runner of the four store-backed checks, whose Actions
-crons were deleted 2026-09-13. Enabling it, a stale heartbeat,
-`runner:doctor`/`cadence:doctor`:
-[local-maintenance-checks.md](docs/runbooks/local-maintenance-checks.md) ·
-[workflow-cadence-doctor.md](docs/reference/workflow-cadence-doctor.md).
-**Resident**: a cadence is OBSERVED, never trusted for having been configured, and
-**`ok` means "the run did not fail", not "the thing it measures is current"** — so
-a workflow skip branch emits `::notice title=audit-loop-no-measurement::<reason>`
-(`lib/measurement-marker.mjs`); never grep the job log for it.
+`AUDIT_LOOP_WEEKLY_MAINTENANCE=1` runs the weekly checks from pre-push when overdue: the **only** runner of the four store-backed checks here ([runbook](docs/runbooks/local-maintenance-checks.md); `runner:doctor`, `cadence:doctor`). A cadence is OBSERVED, never trusted for having been configured, and **`ok` means "the run did not fail", not "what it measures is current"**: a skip emits `::notice title=audit-loop-no-measurement::`; never grep the job log for it.
 
 ## Azure AI Foundry Work Profile
 
-The **same** bundle in a corporate Azure tenant (restricted models), env-selected.
-**Opt-in invariant**: the Azure path activates **only** when `AZURE_OPENAI_ENDPOINT`
-is set; without Azure env vars, client construction and resolved models are
-**byte-identical** to the public path. Seams: `createOpenAIClient({purpose})`,
-`embedText()`, `azureConfig` in [config.mjs](scripts/lib/config.mjs). Dossier
-(tenant setup, `AZURE_CLAUDE_ROUTE`, 401/404/429, quota):
-[`azure-work-profile.md`](docs/runbooks/azure-work-profile.md).
-
-**Four invariants that constrain any code reaching a provider**:
-
-- **An availability gate must ask whether a ROUTE exists, not whether a public env
-  var is set.** An `if (!process.env.OPENAI_API_KEY)` guard upstream of an
-  Azure-aware seam is dead code on exactly the installs it was written for (tell: a
-  **failure with zero latency**). Let ONE oracle answer
-  (`lib/provider-availability.mjs`); use **`isClaudeAvailable()`, never
-  `ANTHROPIC_API_KEY`**. An **omitted `azureRoute` ADOPTS the tenant's route**;
-  pass `azureRoute: null` only where an id *means* the public service. Tests
-  spawning such a CLI must scrub `AZURE_*`. Which voices /brainstorm runs is
-  `defaultProviders()`, never a constant.
-- **The deployment is CONSTRUCTOR-level route state, not a body field**: build
-  `AzureOpenAI({endpoint, deployment, apiVersion})`, **never concatenate an
-  operation path**, and never share one client across purposes.
-- **An endpoint and the credential it is addressed with are ONE unit** — pass
-  `azureConfig.claudeRoute` as `createAnthropicClient({azureRoute})`, **never a
-  bare `baseURL`**. Assert on the **emitted request**, not the client config.
-- **A deployment or resource switch is a DIFFERENT vector space** — provenance is
-  `resolveEmbedProfile()`, and `arch:refresh` auto-promotes to a full re-embed.
+[azure-work-profile.md](docs/runbooks/azure-work-profile.md). **Opt-in only**: active only when `AZURE_OPENAI_ENDPOINT` is set; without it, clients and models are byte-identical to the public path. For any code reaching a provider:
+- **An availability gate must ask whether a ROUTE exists, not whether a public env var is set.** An `OPENAI_API_KEY` check upstream of an Azure-aware seam is dead on Azure (tell: a failure with zero latency). One oracle, `lib/provider-availability.mjs`; `isClaudeAvailable()`, never `ANTHROPIC_API_KEY`. An omitted `azureRoute` ADOPTS the tenant's route; pass `azureRoute: null` only where an id means the public service. Tests spawning such a CLI scrub `AZURE_*`; /brainstorm's voices are `defaultProviders()`, never a constant.
+- **The deployment is constructor state** (`AzureOpenAI({endpoint, deployment, apiVersion})`), never a concatenated path or a client shared across purposes.
+- **Endpoint and credential are ONE unit**: `createAnthropicClient({azureRoute})`, never a bare `baseURL`; assert on the emitted request.
+- **A deployment or resource switch is a DIFFERENT vector space**: provenance is `resolveEmbedProfile()`, and `arch:refresh` auto-promotes to a full re-embed.
 
 ## Cross-Skill Data Loop
 
-Migration `20260419120000_cross_skill_data_loop.sql` closes the feedback loop
-between the skills. Catalogue (9 tables, 3 columns, 6 views, the bandit reward
-extension, the `recommend-skills` advisor):
-[`cross-skill-data-loop.md`](docs/reference/cross-skill-data-loop.md).
-
-**Design rule**: all cross-skill writes go through `scripts/cross-skill.mjs`, a
-graceful no-op when the cloud store is off. Never hand-write curl POSTs in a
-SKILL.md for these tables — the CLI handles auth, graceful no-op, git-derived
-commit_sha and error normalisation.
+[cross-skill-data-loop.md](docs/reference/cross-skill-data-loop.md). **All cross-skill writes go through `scripts/cross-skill.mjs`**; never hand-write curl POSTs in a SKILL.md for these tables.
 
 ## R2+ Audit Mode (Phase 1)
 
-`--round >= 2` (with `--ledger`/`--diff`/`--changed`) enables three-layer defence
-against finding churn: rulings injection, R2+ prompts, post-output suppression.
-The **Adjudication Ledger** is two-axis — `adjudicationOutcome` ×
-`remediationState`, written via `writeLedgerEntry()`. Changing suppression, a
-rulings group or the existence gate: read
-[`r2-audit-mode.md`](docs/reference/r2-audit-mode.md) first. Resident: a rulings
-header claims only what its ruling ESTABLISHED, and hard-suppress keys on the
-CONCERN, never on category text — an overstated header or fuzzed category
-suppresses true positives silently.
+`--round >= 2` (with `--ledger`/`--diff`/`--changed`) adds rulings injection and ledger suppression; read [r2-audit-mode.md](docs/reference/r2-audit-mode.md) before changing suppression, a rulings group or the existence gate. A rulings header claims only what its ruling ESTABLISHED, and hard-suppress keys on the CONCERN, never category text, or true positives vanish silently.
 
 ## Architectural Memory — pre-fix consultation (MANDATORY)
 
@@ -878,35 +769,11 @@ became a fix mid-conversation). Trigger verbs, cost, cache and the disable flag:
 
 ## Security incident memory — mandatory consultation
 
-Companion to architectural memory. `/plan` auto-fires
-`get-incident-neighbourhood` in Phase 0.5b — for ad-hoc fixes outside `/plan`,
-consult it by hand before writing security-relevant code:
-
-`node scripts/cross-skill.mjs get-incident-neighbourhood --json` with the same
-`targetPaths` / `intentDescription` shape and `k: 3`.
-
-**When to consult**: any change to auth flows, payment handling, input parsing,
-logs that might carry sensitive data, external API calls with credentials, file
-uploads, or any domain named in a `docs/security-strategy.md` incident. **NOT**:
-UI tweaks, type-only refactors, test fixtures, doc-only or cosmetic edits.
-
-If the response includes incidents with `mitigation-failing` or
-`manual-verification-required` status matching your target paths, address them
-explicitly in the design before proposing code. If `docs/security-strategy.md`
-doesn't exist here, run `/security-strategy bootstrap` once to seed it; `/ship`
-surfaces security-relevant commits in a one-line post-push reminder.
+**Before security-relevant code outside `/plan`** (auth, payments, input parsing, logs with sensitive data, credentialed calls, uploads, a `docs/security-strategy.md` incident domain), run `node scripts/cross-skill.mjs get-incident-neighbourhood --json` (`targetPaths`, `intentDescription`, `k: 3`). Not for UI tweaks, type-only refactors, fixtures or doc edits. Address any `mitigation-failing` or `manual-verification-required` incident on your paths in the design. No `docs/security-strategy.md`? Run `/security-strategy bootstrap` once.
 
 ### Secret pre-write gate + audit trail (back-port from corporate kit)
 
-`npm run security:refresh` gates every parsed incident before it reaches the DB
-([secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs)):
-high-confidence secret shapes **REFUSE** (not indexed, non-zero exit — scrub
-`docs/security-strategy.md` and re-run); low-confidence PII **auto-REDACTs** into
-the stored row, and writes append to `security_strategy_events`. One
-defence-in-depth invariant: the final-pass redactor is the gentle
-`lib/secret-patterns.mjs`, deliberately **NOT** `sanitizer.mjs`, which
-blanket-redacts any 20+ char token and would corrupt incident prose. Full kit:
-[docs/plans/security/](docs/plans/security/).
+`npm run security:refresh` REFUSES a high-confidence secret (scrub `docs/security-strategy.md`, re-run) and auto-redacts PII. The final redactor is `lib/secret-patterns.mjs`, deliberately **NOT** `sanitizer.mjs`, which corrupts incident prose. [Kit](docs/plans/security/).
 
 ## Quick-fix detection — two-layer architecture
 
@@ -915,41 +782,11 @@ beats a silent one.
 
 <!-- host-contract: hook-rule; rule=quickfix-surfaced-before-done; portable=quickfix wave in /audit-code; accelerator=.claude/hooks/quickfix-scan.mjs -->
 
-**The RULE is host-neutral; the hook is Claude-Code-only ACCELERATION** (same
-shape as arch-memory above). *Rule*: a shortcut signature is surfaced to the
-author before the change is called done — satisfied when EITHER layer ran.
-*Portable path (all hosts)*: **Layer 2**, the `quickfix` wave in /audit-code, a
-low-reasoning GPT pass for DESIGN-level shortcuts regex can't see; emits
-`is_quick_fix: true`, gated by the `quickFix == 0` convergence threshold.
-*Accelerator (Claude Code only)*: **Layer 1**,
-`.claude/hooks/quickfix-scan.mjs` — pure-regex on every Edit/Write, emits a
-`<system-reminder>`, NEVER blocks. Two layers because neither covers the other's
-axis: mechanical-at-edit-time vs semantic-at-review-time. **Cadence is NOT
-equivalent** — hook = every edit, wave = once per audit, so on Copilot a shortcut
-is caught later and only in audited changes; say so rather than implying parity.
-Signatures and opt-outs:
-[enforcement-mechanisms.md](docs/reference/enforcement-mechanisms.md)
-§The two accelerators · full spec:
-[`brainstorm-quickfix-v1.md`](docs/plans/brainstorm-quickfix-v1.md) §B.
+**The rule is host-neutral; the hook is Claude-Code-only acceleration.** A shortcut signature is surfaced before the change is called done, by either layer: the `quickfix` wave in /audit-code (all hosts, `quickFix == 0`) or `.claude/hooks/quickfix-scan.mjs` (Claude Code, every edit, never blocks). The cadence differs, so on Copilot say so. [enforcement-mechanisms.md](docs/reference/enforcement-mechanisms.md).
 
 ## Where enforcement lives — NOT in a `$PATH` wrapper
 
-**Enforcement goes into the code that performs the action — host-agnostic and
-fail-closed.** `assertDisposableDbUrl` is the pattern: the destructive suites
-cannot run against a non-loopback DSN because **the code refuses**, on every host,
-with no PATH and no hook. Its limit is the honest part — it covers only actions
-that go through repo code, so a raw-shell gotcha ("never bare `git stash` in a
-shared tree") has no interception point and stays prose on every host.
-
-**A `$PATH`-wrapper layer — a `.bin/` prepended to `PATH` shadowing `git`/`npm` to
-intercept dangerous invocations — was proposed for exactly that gap and REJECTED
-2026-11-15**: machine/shell-global state (the retired-surface shape, §Skill Chain
-invariant 2); `spawnSync('git', …)` resolves through PATH, so the gates' own
-tooling would run through it and a bug in it reads as a clean gate; PATH shadowing
-resolves differently in Git Bash, PowerShell and `cmd`; and it is invisibly
-bypassable, so it is an accelerator at far higher blast radius. The four reasons
-and the forcing question for the next such proposal:
-[`enforcement-mechanisms.md`](docs/reference/enforcement-mechanisms.md).
+**Enforcement goes into the code that performs the action**, host-agnostic and fail-closed (`assertDisposableDbUrl`); a raw-shell gotcha with no repo code in the path stays prose. **A `$PATH` wrapper shadowing `git`/`npm` was REJECTED 2026-11-15**: read the four reasons in [enforcement-mechanisms.md](docs/reference/enforcement-mechanisms.md) before proposing one.
 
 ## Requirements Layer — de-facto invariant ledger
 
@@ -1088,13 +925,7 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 
 ## Commit provenance trailers (`AI-*`)
 
-`/ship` commits carry `AI-*` git trailers (`AI-Skill`/`AI-Models`/`AI-Gate`/…)
-written ONLY by `ship-commit.mjs` and `ship-train.mjs` — **never hand-typed; the
-`AI-*` namespace is reserved.** `AI-Gate` is `passed`/`converged` (verified against
-the store) or `waived`/`not-run` (declared); **`passed` is rare by design** — never
-hand-write `.audit/last-audit-run.json` or reorder a ship to chase it. Reading or
-querying trailers, and gate refusals:
-[`commit-provenance.md`](docs/reference/commit-provenance.md).
+`AI-*` trailers are written ONLY by `ship-commit.mjs` / `ship-train.mjs`; **never hand-type them**. `AI-Gate: passed` is rare by design: never hand-write `.audit/last-audit-run.json` or reorder a ship to chase it. [commit-provenance.md](docs/reference/commit-provenance.md).
 
 ## Code Style
 
