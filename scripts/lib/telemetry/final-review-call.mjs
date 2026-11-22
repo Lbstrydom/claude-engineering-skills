@@ -14,6 +14,25 @@
  */
 import { bindRun, record, drain } from './llm-call-log.mjs';
 import { routeFor } from './llm-call-log.mjs';
+import { costFromUsage } from '../model-pricing.mjs';
+
+/**
+ * USD for one final-review call, priced the way the GPT path prices its aggregate
+ * (`costFromUsage`). Gemini bills thinking tokens at the OUTPUT rate and reports them
+ * separately from `output_tokens`, so they are folded in (same rule as
+ * `tiered-provider-calls.mjs`). Pure. `null` = unmetered or unpriced model, never a
+ * fabricated 0.
+ * @param {object|null|undefined} usage
+ * @param {string} model
+ * @returns {number|null}
+ */
+export function finalReviewCostUsd(usage, model) {
+  if (!usage || typeof usage !== 'object') return null;
+  const out = usage.output_tokens ?? usage.outputTokens;
+  const think = usage.thinking_tokens ?? 0;
+  const priced = { ...usage, input_tokens: usage.input_tokens ?? usage.inputTokens, output_tokens: typeof out === 'number' ? out + (typeof think === 'number' ? think : 0) : out };
+  return costFromUsage(priced, model).totalUsd ?? null;
+}
 
 /**
  * @param {{runId: string|null, repoId?: string|null, model: string, provider: string, usage?: object, latencyMs?: number}} a
@@ -31,9 +50,10 @@ export async function recordFinalReviewCall({ runId, repoId = null, model, provi
         input_tokens: usage?.input_tokens ?? usage?.inputTokens,
         cached_tokens: usage?.cached_tokens ?? usage?.cachedTokens,
         output_tokens: usage?.output_tokens ?? usage?.outputTokens,
-        reasoning_tokens: usage?.reasoning_tokens ?? usage?.reasoningTokens,
+        reasoning_tokens: usage?.reasoning_tokens ?? usage?.reasoningTokens ?? usage?.thinking_tokens,
       },
       latencyMs,
+      costUsd: finalReviewCostUsd(usage, model),
     });
     const log = drain();
     if (!log) return 'skipped';

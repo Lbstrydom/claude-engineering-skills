@@ -34,7 +34,6 @@ This is the list to read when asking "what is in flight?".
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
-| [consumers whose store is private by policy — honest populations, analysis shipped to the data, reports carried by hand](./policy-private-consumer-stores.md) | `Approved` |  |
 | [a telemetry path from a consumer whose store CES cannot reach](./private-store-telemetry-path.md) | `Approved` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
 | [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) | `Approved` | plan audit closed 2026-11-19; implementation waits for the coordinator's go |
@@ -284,6 +283,7 @@ source comments that no docs linter sees — stays valid.
 | [Plan-audit learning parity + AGENTS.md sprawl cap](./plan-audit-parity-and-agents-md-cap.md) | `Complete` |  |
 | [plan_verification_items run_id uuid/text — multi-row owned insert + verify exit honesty](./plan-verification-items-run-id.md) | `Complete` | shipped in #179 (32c83bc4, merged 2026-10-10) |
 | [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
+| [consumers whose store is private by policy — honest populations, analysis shipped to the data, reports carried by hand](./policy-private-consumer-stores.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not built; see §12 "Follow-up retired". No open work… |
 | [Predictive Audit Strategy — Data Loop Completion & Intelligence](./predictive-audit-strategy.md) | `Complete` | shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs`… |
 | [pre-push — a sanctioned lane for `archive/*` refs](./prepush-archive-lane.md) | `Complete` | shipped in #208 (status reconciled against merged PRs 2026-10-25) |

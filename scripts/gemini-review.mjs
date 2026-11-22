@@ -237,7 +237,7 @@ export {
   shouldWarnMissingRunId, canAttemptRunIdRecovery, MISSING_RUN_ID_WARNING, RUN_ID_MARKER_MAX_AGE_MS, recoverRunIdFromMarker,
 } from './lib/final-review/run-id-recovery.mjs';
 import { resolveReviewRunId } from './lib/final-review/run-id-recovery.mjs';
-import { recordFinalReviewCall } from './lib/telemetry/final-review-call.mjs';
+import { recordFinalReviewCall, finalReviewCostUsd } from './lib/telemetry/final-review-call.mjs';
 import { describeFinalGate } from './lib/final-review/gate-label.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
@@ -741,7 +741,8 @@ const gateSegment = (gate) => ` | ${gate.label}${gate.independenceNote ? ` — $
 
 function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile, gateSummary) {
   if (jsonMode || outFile) {
-    const data = { ...result, _model: reviewerModelOf(provider), _provider: provider, _usage: usage };
+    const model = reviewerModelOf(provider);
+    const data = { ...result, _model: model, _provider: provider, _usage: { ...usage, costUsd: finalReviewCostUsd(usage, model) } };
     data._gate = gateOf(provider, data._model);
     if (outFile) {
       const newCount = result.new_findings?.length ?? 0;
