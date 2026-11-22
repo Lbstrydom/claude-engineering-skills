@@ -274,3 +274,36 @@ export function coverageGateExitCode(verdict, config = COVERAGE_DEFAULTS) {
     || verdict?.status === GRAPH_STATUS.UNVERIFIED;
   return bad ? 2 : 0;
 }
+
+/**
+ * How old a coverage measurement may be before the enforcing gate stops trusting it.
+ *
+ * **Why 14 days (derived, not measured).** `arch:refresh` has no scheduler: it runs when a person runs it, and the
+ * weekly maintenance cadence is the only recurring local job (docs/runbooks/local-maintenance-checks.md). Fourteen days
+ * is twice that cadence, so one missed week does not block a push but two do. The measured counter-example for an
+ * unbounded age: the verdict a pre-push read on 2026-11-22 was dated 2026-09-20 (63 days) and a sibling copy 2026-09-28,
+ * while `main` moved by dozens of commits, so "VERIFIED" described a graph that no longer existed.
+ * Tightening is cheap (one constant); loosening it is a policy change and needs its own PR.
+ */
+export const COVERAGE_MAX_AGE_DAYS = 14;
+const DAY_MS = 86_400_000;
+/** A measurement dated this far in the FUTURE is a bad clock or a forged stamp, never "fresh". */
+const FUTURE_SKEW_MS = 5 * 60_000;
+
+/**
+ * Is the envelope's coverage measurement recent enough to judge anything? PURE: `now` is injected.
+ *
+ * Three outcomes, never two: a missing, non-string, unparseable or future-dated `measuredAt` is `unmeasured` (the age is
+ * not KNOWN), which must not read as fresh and must not read as merely stale.
+ *
+ * @param {{measuredAt?: unknown, now?: number, maxAgeDays?: number}} a
+ * @returns {{state: 'fresh'|'stale'|'unmeasured', ageDays: number|null, measuredAt: string|null, maxAgeDays: number}}
+ */
+export function assessMeasurementAge({ measuredAt, now = Date.now(), maxAgeDays = COVERAGE_MAX_AGE_DAYS } = {}) {
+  const ts = typeof measuredAt === 'string' ? Date.parse(measuredAt) : NaN;
+  if (!Number.isFinite(ts) || !Number.isFinite(now)) return { state: 'unmeasured', ageDays: null, measuredAt: null, maxAgeDays };
+  const age = now - ts;
+  if (age < -FUTURE_SKEW_MS) return { state: 'unmeasured', ageDays: null, measuredAt, maxAgeDays };
+  const ageDays = Math.max(0, age) / DAY_MS;
+  return { state: ageDays > maxAgeDays ? 'stale' : 'fresh', ageDays, measuredAt, maxAgeDays };
+}
