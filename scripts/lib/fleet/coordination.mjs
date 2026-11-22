@@ -62,7 +62,9 @@ export function obligationsFor(ctx, id) {
   ];
   const myFiles = [...new Set([...(c?.queried ? c.files : []), ...(u?.queried ? u.files : [])])];
   const sharedNow = sharedSurfaceTouched(myFiles, ctx.config.sharedSurfaces);
-  const sharedReach = sharedNow.length && tip ? testsLoadingAt(ctx.cwd, tip, sharedNow) : null;
+  const sharedReach0 = sharedNow.length && tip ? testsLoadingAt(ctx.cwd, tip, sharedNow) : null;
+  // `next` sees uncommitted files too, but the reach is read from the commit: say so rather than let a missing test read as "none".
+  const sharedReach = sharedReach0?.ok && u?.queried && u.files.length ? { ...sharedReach0, uncommitted: u.files.length } : sharedReach0;
   const result = deriveObligations({
     item, session, advance, myFiles, filesUnknown, hold: facts.hold, directives: readDirectives(ctx.dir), sharedSurfaces: ctx.config.sharedSurfaces, sharedReach, cmd: ctx.cmd, now: ctx.now,
   });

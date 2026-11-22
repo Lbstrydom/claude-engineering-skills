@@ -46,7 +46,8 @@ export function sharedSurfaceTouched(files, cfg) {
  * @param {string[]} touched
  * @param {{run?: string[]|null}} cfg
  * @param {string} [cmd]
- * @param {{ok: boolean, tests?: string[], unread?: number, reason?: string}|null} [reach]
+ * @param {{ok: boolean, tests?: string[], unread?: number, uncommitted?: number, reason?: string}|null} [reach] `uncommitted`: files changed in the
+ *   working tree that the commit-based reach could not see (`next` only; `ready` marks a commit)
  * @param {string} [where] where the COMPLETE test list lives in this caller's JSON (differs between `ready` and `next`)
  */
 export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null, where = 'the JSON as sharedSurface.tests') {
@@ -61,6 +62,7 @@ export function sharedSurfaceLine(touched, cfg, cmd = 'fleet', reach = null, whe
       parts.push(`${partial ? 'the first' : 'all'} ${shown.length} of the ${reach.tests.length} test file(s) found loading them: \`${renderCommand(['node', '--test', ...shown.map((p) => (p.startsWith('-') ? `./${p}` : p))])}\``);
       if (partial) caveats.push(`that command is PARTIAL — all ${reach.tests.length} are in ${where}`);
     } else caveats.push('no test file was found that loads them statically, which does not mean none does');
+    if (reach.uncommitted) caveats.push(`${reach.uncommitted} uncommitted file(s) were not analysed: the list describes the last COMMIT, so commit first for it to cover them`);
     if (reach.unread) caveats.push(`${reach.unread} test/source file(s) could not be read, so the list may be missing some`);
     caveats.push('the list is static and best-effort: a computed import() or a path built at run time is not followed, so run a broader suite when in doubt');
   } else if (reach) caveats.push(`which tests load them could not be worked out (${reach.reason})`);
@@ -157,7 +159,7 @@ function parseBatch(buf, specs) {
  * @param {string[]} touched
  */
 export function testsLoadingAt(cwd, oid, touched) {
-  const ls = runGit(['ls-tree', '-r', '-z', '--name-only', oid], cwd, { timeoutMs: 30_000 });
+  const ls = runGit(['ls-tree', '-r', '-z', '--full-tree', '--name-only', oid], cwd, { timeoutMs: 30_000 });
   if (!ls.ok) return { ok: false, reason: `git ls-tree failed (${ls.reason})` };
   const repoFiles = ls.stdout.split('\0').filter(Boolean);
   const wanted = repoFiles.filter((f) => isScript(f) && !NOT_SOURCE.test(f) && !f.includes('\n'));

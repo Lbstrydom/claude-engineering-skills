@@ -3,6 +3,7 @@
  * and saying so when that (or the changed-file list itself) could not be worked out. See fleet-cluster4.test.mjs.
  */
 import { after, describe, it } from 'node:test';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, makeFleetRepo, runFleet, scrubbedEnv, writeFile } from './helpers/fleet-repo.mjs';
@@ -82,7 +83,7 @@ describe('which tests load the shared files', () => {
   it('next carries the complete reach in the obligation evidence', () => {
     const r = deriveObligations({ item: { id: 's1', branch: 's1', state: 'working', overlaps: [], paths: [] }, session: { id: 's1', state: 'working', paths: [] }, myFiles: ['tests/helpers/x.mjs'], sharedReach: { ok: true, tests: ['tests/a.test.mjs', 'tests/b.test.mjs'], unread: 1 }, cmd: 'fleet', now: NOW });
     const o = r.obligations.find((x) => x.kind === 'shared-surface');
-    assert.deepEqual(o.evidence.reach, { ok: true, tests: ['tests/a.test.mjs', 'tests/b.test.mjs'], unread: 1, reason: null });
+    assert.deepEqual(o.evidence.reach, { ok: true, tests: ['tests/a.test.mjs', 'tests/b.test.mjs'], unread: 1, uncommitted: 0, reason: null });
   });
   it('an unrelated test is not listed (the control), and a shared file nobody loads yields none', () => {
     assert.equal(testsLoading(['tests/helpers/fx.mjs'], io()).tests.includes('tests/unrelated.test.mjs'), false);
@@ -145,6 +146,20 @@ describe('the reach describes the COMMIT, not the checkout', () => {
     assert.deepEqual(r.tests, ['tests/uses.test.mjs'], 'read from the commit, not the disk');
     git(['checkout', '-q', '-b', 'elsewhere'], fx.repo);
     assert.deepEqual(testsLoadingAt(fx.repo, oid, ['tests/helpers/shared.mjs']).tests, ['tests/uses.test.mjs']);
+  });
+  it('works from a SUBDIRECTORY of the repo (the listing is repository-wide, paths are root-relative)', async () => {
+    const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
+    const { fx, oid } = setup();
+    const sub = path.join(fx.repo, 'tests', 'helpers');
+    const r = testsLoadingAt(sub, oid, ['tests/helpers/shared.mjs']);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.tests, ['tests/uses.test.mjs']);
+  });
+  it('says the list describes the COMMIT when uncommitted files exist (next), and not otherwise', () => {
+    const withU = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: [], unread: 0, uncommitted: 2 });
+    assert.ok(withU.includes('2 uncommitted file(s) were not analysed: the list describes the last COMMIT'), withU);
+    const without = sharedSurfaceLine(['tests/helpers/a.mjs'], {}, 'fleet', { ok: true, tests: [], unread: 0 });
+    assert.ok(!without.includes('uncommitted'));
   });
   it('an unknown commit is an unavailable reach with a reason, never an empty result', async () => {
     const { testsLoadingAt } = await import('../scripts/lib/fleet/shared-surface.mjs');
