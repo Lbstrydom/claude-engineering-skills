@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "gate": "checklist:gen:check",
+  "guards": ".audit-loop/checklist.json (Category B): this repo's own checklist is a pure function of scripts/lib/checklist/gen.mjs plus the gate contracts",
+  "gates": [
+    {
+      "id": "checklist-gen-check-detects-a-hand-edit",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "byte-identical (no clocks/shas/network): `.claude/skills/**`",
+      "implementation": "scripts/checklist-gen.mjs",
+      "tests": ["tests/checklist-gen-pilot.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/checklist-gen.mjs", "--check"],
+        "mutate": {
+          ".audit-loop/checklist.json": {
+            "path": "entries.0.incident",
+            "value": "HAND EDIT: an incident the generator never produced"
+          }
+        },
+        "expectExit": 1,
+        "expectStderr": "stale or hand-edited",
+        "why": "A committed checklist carrying a sentence no generator run produced. If --check ever narrowed to a count or an id list, this content edit would pass and the checklist would drift from gen.mjs and the contracts it quotes."
+      }
+    }
+  ]
+}

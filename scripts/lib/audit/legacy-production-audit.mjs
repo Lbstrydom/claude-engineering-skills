@@ -810,7 +810,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   } catch (err) {
     process.stderr.write(`  [requirements] skipped (non-blocking) — ${err.message}\n`);
   }
-  requirementsRubric = withChecklistBlock(requirementsRubric, { targetPaths: reqTargets, diffFile, baseDir: process.cwd() }); // verification-lessons Phase 5: same matcher as scripts/checklist.mjs
+  requirementsRubric = withChecklistBlock(requirementsRubric, { targetPaths: reqTargets, diffFile, baseDir: process.cwd() }, ctx); // verification-lessons Phase 5: same matcher as scripts/checklist.mjs
   // Wrapper: thread the requirements rubric into every pass prompt, and (AUDIT_CANARY=1 only) plant the known-answer canary.
   const roundCanary = createRoundCanary(process.env, { seed: `${round || 1}:${Date.now()}` });
   const passPrompt = (opts) => roundCanary.plant(buildCachePrompt({ ...opts, requirementsRubric }), opts);

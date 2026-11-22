@@ -3,7 +3,7 @@
  * (verification-lessons Phase 5): regeneration is byte-identical, a hand edit or a drifted contract is detected, and the
  * replay / kernel measurements run from a pinned tip.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,9 +13,16 @@ import { sanitizeGitEnv } from '../scripts/lib/git-env-sanitize.mjs';
 import { buildChecklistText } from '../scripts/lib/checklist/gen.mjs';
 import { replayWindow, kernelEstimate } from '../scripts/lib/checklist/pilot.mjs';
 
+// Every temp dir this file makes is removed when it finishes.
+const TMP_DIRS = [];
+function mkTmp(prefix) { const d = fs.mkdtempSync(prefix); TMP_DIRS.push(d); return d; }
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+
 const REPO = path.resolve(import.meta.dirname, '..');
 const read = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
+// Gate contract: checklist-gen-check-detects-a-hand-edit (scripts/gate-contracts/checklist-gen-check.json)
 test('regeneration is byte-identical to the committed .audit-loop/checklist.json', () => {
   assert.equal(buildChecklistText(REPO), read(path.join(REPO, '.audit-loop', 'checklist.json')));
 });
@@ -24,7 +31,7 @@ test('the freshness check passes on the repo and the instrument is seen to fail 
   const ok = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'checklist-gen.mjs'), '--check'], { encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stderr);
   // Negative control: a contract whose `stated` changed makes the regeneration differ (the entry quotes it), so a stale file is detected.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-gen-'));
+  const tmp = mkTmp(path.join(os.tmpdir(), 'checklist-gen-'));
   fs.cpSync(path.join(REPO, 'scripts', 'gate-contracts'), path.join(tmp, 'scripts', 'gate-contracts'), { recursive: true });
   fs.cpSync(path.join(REPO, 'skills', 'audit-code', 'gate-contract.json'), path.join(tmp, 'skills', 'audit-code', 'gate-contract.json'));
   const f = path.join(tmp, 'scripts', 'gate-contracts', 'stdout-flush-gate.json');
@@ -33,14 +40,14 @@ test('the freshness check passes on the repo and the instrument is seen to fail 
 });
 
 test('a prefix that matches no gate is an error, never a silently dropped entry', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-gen-empty-'));
+  const tmp = mkTmp(path.join(os.tmpdir(), 'checklist-gen-empty-'));
   fs.mkdirSync(path.join(tmp, 'scripts', 'gate-contracts'), { recursive: true });
   fs.mkdirSync(path.join(tmp, 'skills'), { recursive: true });
   assert.throws(() => buildChecklistText(tmp), /matches 0 gates/);
 });
 
 test('replayWindow takes PR squash commits first-parent from a pinned tip, honours skip, and counts every entry', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-replay-'));
+  const dir = mkTmp(path.join(os.tmpdir(), 'checklist-replay-'));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: sanitizeGitEnv(dir) });
   git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@x.test'); git('config', 'user.name', 't'); git('config', 'core.autocrlf', 'false');
   fs.mkdirSync(path.join(dir, '.audit-loop'));

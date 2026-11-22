@@ -124,6 +124,8 @@ export async function finalizeRun(data, writeOutcomes) {
 
   // Phase C: surface tool-pre-pass capability state
   mergedResult._toolCapability = toolCapability;
+  // The tripwire checklist could not be evaluated (invalid file, unreadable diff, an unreadable file): said on the round, never silent.
+  if (data.ctx?.checklist === 'unmeasured') mergedResult._checklist = 'unmeasured';
 
   // The per-file coverage ledger. It rides the round JSON so every consumer of the round — the stdout summary,
   // audit-loop, and (verbatim, via the transcript) the final reviewer — sees which changed files were and were

@@ -981,6 +981,7 @@ export const AuditRunResultSchema = z.object({
   // Total passes attempted — the denominator for `_failed_passes`; optional only for results persisted before 2026-09-04.
   _passes_total: z.number().int().nonnegative().optional(),
   // Known-answer canary (lib/audit/canary.mjs): present only when AUDIT_CANARY=1 — absent is "not asked"; only `detected` is evidence.
+  _checklist: z.literal('unmeasured').optional(), // checklist could not be evaluated (lib/checklist/context.mjs); absent = measured or none
   _canary: z.object({ status: z.enum(['detected', 'missed', 'not-planted', 'pass-failed', 'unsupported-pipeline']), planted: z.array(z.string()), detectedIn: z.array(z.string()), missedIn: z.array(z.string()), failedIn: z.array(z.string()), chars: z.number().int().nonnegative(), path: z.string().nullable() }).optional(),
   // Was `z.record(z.string(), z.any()).optional()` — "any key of any type",
   // which declared the opposite of what ExecutionMetaSchema claimed two hundred

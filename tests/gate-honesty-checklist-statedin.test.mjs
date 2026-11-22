@@ -3,17 +3,23 @@
  * plan Phase 5. The closed source-authority policy gains exactly one spelling, and the per-gate check reads `stated` from the
  * ENTRY's `check` text. Each refusal below is a defect class this check exists to catch, seen failing on its own fixture.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { validateCliGateContract, validateGateContract, isApprovedStatedInSource, checklistRefId } from '../scripts/lib/gate-honesty/schema.mjs';
 
+// Every temp dir this file makes is removed when it finishes.
+const TMP_DIRS = [];
+function mkTmp(prefix) { const d = fs.mkdtempSync(prefix); TMP_DIRS.push(d); return d; }
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+
 const STATED = 'An exit that stdout can reach must drain first';
 
 function fixture({ entries, statedIn = '.audit-loop/checklist.json#drain-first', stated = STATED, writeChecklist = true }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gh-checklist-'));
+  const root = mkTmp(path.join(os.tmpdir(), 'gh-checklist-'));
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(root, 'scripts', 'impl.mjs'), '// impl\n');
@@ -57,7 +63,8 @@ test('the sentence missing from the entry\'s check is drift, and says so', () =>
   const { root, contract } = fixture({ entries: [goodEntry({ check: 'Exit through finishAndExit.' })] });
   const r = validateCliGateContract(contract, root);
   assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /not found verbatim in the entry's check text/);
+  // The entry's own strict schema refuses a `stated` its `check` does not carry, before the per-gate comparison is even reached.
+  assert.match(r.errors.join(' '), /must occur verbatim in `check`|not found verbatim in the entry's check text/);
 });
 
 test('an id that does not exist, a missing file, and a malformed file are each their own error', () => {

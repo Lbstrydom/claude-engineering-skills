@@ -3,7 +3,7 @@
  * modes, renames, deletions, untracked files, the zero-match record, an unresolvable base, the CLI's two-step contract, and
  * the audit-side block. Fixtures are throwaway git repos; nothing here touches the real fires log.
  */
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +14,13 @@ import { parseUnifiedDiff, matchEntries, matchChecklist, recordFires, renderChec
 import { ChecklistFileSchema, loadChecklist } from '../scripts/lib/checklist/schema.mjs';
 import { getChecklistContext, withChecklistBlock } from '../scripts/lib/checklist/context.mjs';
 
+// Every temp dir this file makes is removed when it finishes.
+const TMP_DIRS = [];
+function mkTmp(prefix) { const d = fs.mkdtempSync(prefix); TMP_DIRS.push(d); return d; }
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+
+const INJECT = { AUDIT_CHECKLIST_INJECT: '1' };
 const REPO = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(REPO, 'scripts', 'checklist.mjs');
 
@@ -28,7 +35,7 @@ function git(cwd, ...args) {
 }
 
 function makeRepo(files) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-'));
+  const dir = mkTmp(path.join(os.tmpdir(), 'checklist-'));
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 't');
@@ -189,7 +196,7 @@ describe('recordFires', () => {
 
   test('purpose is closed to operational|control|replay|test', () => {
     for (const purpose of ['operational', 'control', 'replay', 'test']) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-log-'));
+      const dir = mkTmp(path.join(os.tmpdir(), 'checklist-log-'));
       assert.equal(recordFires({ logPath: path.join(dir, 'l.jsonl'), runId: 'r', purpose, entriesEvaluated: 1, fired: [] }).recorded, true);
     }
     const bad = recordFires({ logPath: path.join(os.tmpdir(), 'never.jsonl'), runId: 'r', purpose: 'prod', entriesEvaluated: 1, fired: [] });
@@ -295,15 +302,15 @@ describe('/audit-code integration (the <checklist> block)', () => {
     const dir = makeRepo({ 'src/billing/x.mjs': 'x\n' });
     fs.mkdirSync(path.join(dir, '.audit-loop'));
     fs.writeFileSync(path.join(dir, '.audit-loop', 'checklist.json'), JSON.stringify({ version: 1, entries: ALL }));
-    const out = withChecklistBlock('RUBRIC', { targetPaths: ['src/billing/x.mjs'], baseDir: dir });
+    const out = withChecklistBlock('RUBRIC', { targetPaths: ['src/billing/x.mjs'], baseDir: dir }, {}, INJECT);
     assert.ok(out.startsWith('RUBRIC\n\n<checklist>'));
     assert.match(out, /\[by-path\] check by-path/);
     assert.match(out, /<\/checklist>$/);
-    assert.equal(withChecklistBlock('', { targetPaths: ['src/billing/x.mjs'], baseDir: dir }).startsWith('<checklist>'), true);
+    assert.equal(withChecklistBlock('', { targetPaths: ['src/billing/x.mjs'], baseDir: dir }, {}, INJECT).startsWith('<checklist>'), true);
     // nothing fires: unchanged
-    assert.equal(withChecklistBlock('RUBRIC', { targetPaths: ['unrelated.txt'], baseDir: dir }), 'RUBRIC');
+    assert.equal(withChecklistBlock('RUBRIC', { targetPaths: ['unrelated.txt'], baseDir: dir }, {}, INJECT), 'RUBRIC');
     fs.writeFileSync(path.join(dir, '.audit-loop', 'checklist.json'), '{ not json');
-    assert.equal(withChecklistBlock('RUBRIC', { targetPaths: ['src/billing/x.mjs'], baseDir: dir }), 'RUBRIC');
+    assert.equal(withChecklistBlock('RUBRIC', { targetPaths: ['src/billing/x.mjs'], baseDir: dir }, {}, INJECT), 'RUBRIC');
     assert.match(getChecklistContext({ targetPaths: ['x'], baseDir: dir }).warning, /not valid JSON/);
   });
 
@@ -339,7 +346,7 @@ describe('schema', () => {
   });
 
   test('loadChecklist: absent is empty; present-but-broken is an error, never an empty result', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-load-'));
+    const dir = mkTmp(path.join(os.tmpdir(), 'checklist-load-'));
     assert.deepEqual(loadChecklist({ repoRoot: dir }), { ok: true, entries: [], absent: true });
     fs.mkdirSync(path.join(dir, '.audit-loop'));
     fs.writeFileSync(path.join(dir, '.audit-loop', 'checklist.json'), '[]');

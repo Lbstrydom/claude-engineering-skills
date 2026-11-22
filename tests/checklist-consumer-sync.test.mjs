@@ -8,7 +8,7 @@
  * The sync ships an allowlist (entry points + their import closure + named assets), so the property to pin is that nothing
  * names the file, and that the managed gitignore block and the untrack list cannot swallow the consumer's own copy.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,6 +18,12 @@ import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 import { sourceRelToDestRel } from '../scripts/lib/sync-path-map.mjs';
 import { CORE_ENTRY } from '../scripts/lib/sync-entry-lists.mjs';
 import { sanitizeGitEnv } from '../scripts/lib/git-env-sanitize.mjs';
+
+// Every temp dir this file makes is removed when it finishes.
+const TMP_DIRS = [];
+function mkTmp(prefix) { const d = fs.mkdtempSync(prefix); TMP_DIRS.push(d); return d; }
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
 
 const REPO = path.resolve(import.meta.dirname, '..');
 const CHECKLIST = '.audit-loop/checklist.json';
@@ -56,7 +62,7 @@ function arrayLiteral(name) {
 }
 
 test('the managed gitignore block and the untrack list cannot swallow a consumer\'s own checklist', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-ignore-'));
+  const dir = mkTmp(path.join(os.tmpdir(), 'checklist-ignore-'));
   const git = (...a) => spawnSync('git', a, { cwd: dir, encoding: 'utf8', env: sanitizeGitEnv(dir) });
   git('init', '-q');
   for (const name of ['MANAGED_IGNORE_PATTERNS', 'UNTRACK_PATTERNS']) {
@@ -70,7 +76,7 @@ test('the managed gitignore block and the untrack list cannot swallow a consumer
 });
 
 test('a consumer starts with no checklist and the synced CLI reads that as empty, exit 0', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-consumer-'));
+  const dir = mkTmp(path.join(os.tmpdir(), 'checklist-consumer-'));
   execFileSync('git', ['init', '-q'], { cwd: dir, env: sanitizeGitEnv(dir) });
   const r = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'checklist.mjs'), '--files', 'src/a.mjs', '--json', '--no-record'], { cwd: dir, encoding: 'utf8', env: sanitizeGitEnv(dir) });
   assert.equal(r.status, 0, r.stderr);

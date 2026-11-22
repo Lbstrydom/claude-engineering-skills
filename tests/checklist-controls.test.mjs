@@ -9,7 +9,7 @@
  * Also pins the other half of the gate-contract migration: every contract that cites `.audit-loop/checklist.json#<id>` has an
  * entry bound back to it, and no entry claims a contract that does not cite it.
  */
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,13 +19,19 @@ import { loadChecklist } from '../scripts/lib/checklist/schema.mjs';
 import { matchChecklist } from '../scripts/lib/checklist/match.mjs';
 import { checklistRefId } from '../scripts/lib/gate-honesty/schema.mjs';
 
+// Every temp dir this file makes is removed when it finishes.
+const TMP_DIRS = [];
+function mkTmp(prefix) { const d = fs.mkdtempSync(prefix); TMP_DIRS.push(d); return d; }
+after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+
 const REPO = path.resolve(import.meta.dirname, '..');
 const NEUTRAL = 'const x = 1;';
 const loaded = loadChecklist({ repoRoot: REPO });
 
 /** Fire a one-line added diff at `filePath` through the real matcher. */
 function fireOn(entry, filePath, text) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-control-'));
+  const dir = mkTmp(path.join(os.tmpdir(), 'checklist-control-'));
   const patch = path.join(dir, 'c.patch');
   fs.writeFileSync(patch, `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1 @@\n+${text}\n`);
   const r = matchChecklist({ entries: [entry], diffPath: patch, purpose: 'control', cwd: dir, logPath: path.join(dir, 'fires.jsonl'), runId: 'control' });

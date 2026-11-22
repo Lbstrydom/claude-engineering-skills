@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { loadChecklist } from './schema.mjs';
 import { matchChecklist, parseUnifiedDiff } from './match.mjs';
@@ -36,6 +37,9 @@ export const INCIDENT_COMMITS = Object.freeze({
   'tiered-shadow-window-epoch-gated': ['a584540c'],
   'domain-retag-both-directions': ['d5e66d35', 'a146bb7b'],
 });
+
+/** sha256 of the file's bytes with CRLF folded to LF (the checkout's EOL must not change the identity of a frozen file). */
+export function sha256File(abs) { return createHash('sha256').update(fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n')).digest('hex'); }
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 
@@ -61,7 +65,8 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
     .map((l) => { const [sha, date, ...s] = l.split('\t'); const subject = s.join('\t'); return { sha, date, subject, pr: Number(/\(#(\d+)\)$/.exec(subject)[1]) }; });
 
   // A root commit has no parent: diff it against the empty tree rather than fail.
-  const parentOf = (sha) => { try { return git('rev-parse', '--verify', '--quiet', `${sha}^`).trim(); } catch { return '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; } };
+  // Only "no parent" is a root; any other git failure throws (it must not read as a root and diff against the empty tree).
+  const parentOf = (sha) => { const [, parent] = git('rev-list', '--parents', '-n', '1', sha).trim().split(/\s+/); return parent ?? '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; };
   const replay = (sha) => {
     const diff = git('-c', 'core.quotepath=false', 'diff', '--find-renames', '--no-ext-diff', '--no-textconv', '--unified=0', parentOf(sha), sha);
     const patch = path.join(outDir, `${sha.slice(0, 10)}.patch`);
@@ -85,7 +90,7 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
     return { id: e.id, firedOnPrs, firedOnCount: firedOnPrs.length, windowIncidents };
   });
   return {
-    tip: tipSha, skip, count: perPr.length, checklist: checklistFile ?? '.audit-loop/checklist.json', entries: entries.length,
+    tip: tipSha, skip, count: perPr.length, checklist: checklistFile ?? '.audit-loop/checklist.json', checklistSha256: sha256File(path.resolve(repoRoot, checklistFile ?? '.audit-loop/checklist.json')), entries: entries.length,
     window: perPr.length ? { newest: { pr: perPr[0].pr, date: perPr[0].date }, oldest: { pr: perPr.at(-1).pr, date: perPr.at(-1).date } } : null,
     noise: { median: median(counts), max: Math.max(...counts), min: Math.min(...counts), distribution: [...counts].sort((a, b) => a - b), thresholds: { median: 5, max: 12 } },
     perPr, entryRows,
