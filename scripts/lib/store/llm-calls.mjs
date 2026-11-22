@@ -4,7 +4,7 @@
  * (docs/plans/own-model-telemetry-pr3.md decision 4).
  *
  * Idempotent by construction, which is what licenses a spill/replay: call rows are
- * `ON CONFLICT (call_id) DO NOTHING` (deterministic UUIDv5 identity) and the summary
+ * `ON CONFLICT (call_id)` (deterministic UUIDv5 identity; an existing NULL P0/tree column is filled on replay, nothing else is touched) and the summary
  * row is keyed `(audit_run_id, producer, process_nonce)`, one per producing process,
  * so a second producer never overwrites the first's counts. Both land in ONE
  * transaction, so a summary can never claim rows that were not written.
@@ -44,11 +44,18 @@ const TREE_COLS = [['audited_tree', 'text'], ['diff_base_sha', 'text']];
 export function buildInsertCallsSql(cols) {
   const names = cols.map(([n]) => n).join(', ');
   const defs = cols.map(([n, ty]) => `${n} ${ty}`).join(', ');
+  // A replay after a migration must restore what an older-tier insert dropped: for the P0/tree columns an existing NULL is
+  // filled from the replayed value. A replay that has nothing to add updates no row, so it still inserts and updates 0.
+  const fill = cols.map(([n]) => n).filter((n) => [...P0_COLS, ...TREE_COLS].some(([c]) => c === n));
+  const conflict = fill.length
+    ? `DO UPDATE SET ${fill.map((c) => `${c} = COALESCE(llm_call_provenance.${c}, EXCLUDED.${c})`).join(', ')}
+    WHERE ${fill.map((c) => `(llm_call_provenance.${c} IS NULL AND EXCLUDED.${c} IS NOT NULL)`).join(' OR ')}`
+    : 'DO NOTHING';
   return `
   INSERT INTO llm_call_provenance (${names})
   SELECT ${names}
     FROM jsonb_to_recordset($1::jsonb) AS r(${defs})
-  ON CONFLICT (call_id) DO NOTHING`;
+  ON CONFLICT (call_id) ${conflict}`;
 }
 
 const INSERT_CALLS_SQL = buildInsertCallsSql(BASE_COLS);

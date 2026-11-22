@@ -16,7 +16,6 @@ import { bindRun, record, drain } from './llm-call-log.mjs';
 import { routeFor } from './llm-call-log.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
 import { resolveWorkItemId } from '../ledger/work-item.mjs';
-import { gitWorktreeTree } from '../vcs.mjs';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -41,8 +40,12 @@ export function finalReviewCostUsd(usage, model) {
  * @param {{runId: string|null, repoId?: string|null, model: string, provider: string, usage?: object, latencyMs?: number}} a
  * @returns {Promise<'recorded'|'skipped'|'failed'>}
  */
-export function captureReviewedTree(cwd = process.cwd()) {
-  try { const r = gitWorktreeTree(cwd); return r.ok ? r.tree : null; } catch { return null; }
+export function reviewedTreeFromTranscript(transcriptContent) {
+  try {
+    const t = typeof transcriptContent === 'string' ? JSON.parse(transcriptContent) : transcriptContent;
+    const last = Array.isArray(t?.rounds) ? t.rounds[t.rounds.length - 1] : null;
+    return typeof last?._auditedTree === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(last._auditedTree) ? last._auditedTree : null;
+  } catch { return null; }
 }
 
 export async function recordFinalReviewCall({ runId, repoId = null, model, provider, usage, latencyMs, auditedTree = undefined }) {
@@ -50,8 +53,9 @@ export async function recordFinalReviewCall({ runId, repoId = null, model, provi
     if (!runId) return 'skipped';
     // Same per-call identity as the audit producer. The reviewer is its own process, so the tree is read
     // from the working tree it reviewed; no diff base is known here, so it stays null rather than guessed.
-    // The caller passes the tree captured BEFORE the provider request; only a caller that did not (undefined) falls back to reading it now.
-    const tree = auditedTree === undefined ? captureReviewedTree() : auditedTree;
+    // The tree is the one the REVIEW INPUT carries (the transcript's own `_auditedTree`), passed by the caller: never the
+    // working tree at record time, which can have moved since the transcript was built. None given is null.
+    const tree = auditedTree ?? null;
     let branch = null;
     try { branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).toString().trim(); } catch { /* detached or no git: no branch segment, no guess */ }
     if (!bindRun({ runId, repoId, workItemId: resolveWorkItemId({ branch }), producer: 'final-review', auditedTree: tree })) return 'skipped';

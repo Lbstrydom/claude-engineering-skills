@@ -84,7 +84,9 @@ describe('writer column tiers', () => {
     const tree = buildInsertCallsSql([['call_id', 'uuid'], ['audited_tree', 'text'], ['diff_base_sha', 'text']]);
     assert.match(tree, /audited_tree text, diff_base_sha text/);
     assert.doesNotMatch(buildInsertCallsSql([['call_id', 'uuid']]), /audited_tree/);
-    assert.match(tree, /ON CONFLICT \(call_id\) DO NOTHING/);
+    assert.match(tree, /ON CONFLICT \(call_id\) DO UPDATE SET audited_tree = COALESCE\(llm_call_provenance\.audited_tree, EXCLUDED\.audited_tree\)/);
+    assert.match(tree, /WHERE \(llm_call_provenance\.audited_tree IS NULL AND EXCLUDED\.audited_tree IS NOT NULL\)/);
+    assert.match(buildInsertCallsSql([['call_id', 'uuid']]), /ON CONFLICT \(call_id\) DO NOTHING/, 'the base tier has nothing to backfill');
   });
 });
 
@@ -134,5 +136,15 @@ describe('capture-completeness flush-ledger', () => {
   });
   test('it accepts no flags: an unknown flag is refused, never ignored', () => {
     assert.notEqual(run(['flush-ledger', '--days', '3'], { LEARNING_DISABLE: '1' }).status, 0);
+  });
+});
+
+describe('final-review tree comes from the review input', () => {
+  test('the transcript newest round names the tree; anything else is null, never the working tree', async () => {
+    const { reviewedTreeFromTranscript } = await import('../scripts/lib/telemetry/final-review-call.mjs');
+    assert.equal(reviewedTreeFromTranscript(JSON.stringify({ rounds: [{ _auditedTree: BASE }, { _auditedTree: TREE }] })), TREE);
+    assert.equal(reviewedTreeFromTranscript(JSON.stringify({ rounds: [{ _auditedTree: TREE }, {}] })), null);
+    assert.equal(reviewedTreeFromTranscript('not json'), null);
+    assert.equal(reviewedTreeFromTranscript({ rounds: [{ _auditedTree: 'a'.repeat(41) }] }), null);
   });
 });

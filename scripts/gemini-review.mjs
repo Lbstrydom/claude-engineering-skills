@@ -237,7 +237,7 @@ export {
   shouldWarnMissingRunId, canAttemptRunIdRecovery, MISSING_RUN_ID_WARNING, RUN_ID_MARKER_MAX_AGE_MS, recoverRunIdFromMarker,
 } from './lib/final-review/run-id-recovery.mjs';
 import { resolveReviewRunId } from './lib/final-review/run-id-recovery.mjs';
-import { recordFinalReviewCall, finalReviewCostUsd, captureReviewedTree } from './lib/telemetry/final-review-call.mjs';
+import { recordFinalReviewCall, finalReviewCostUsd, reviewedTreeFromTranscript } from './lib/telemetry/final-review-call.mjs';
 import { describeFinalGate } from './lib/final-review/gate-label.mjs';
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
@@ -925,7 +925,7 @@ async function main() {
       return r;
     };
     // --batch: a diff too big for one envelope → disjoint batches, one verdict (final-review/batching.mjs). null → one review.
-    const reviewedTree = captureReviewedTree();   // before the request: the tree the reviewer was given, not the one on disk when it answers
+    const reviewedTree = reviewedTreeFromTranscript(transcriptContent);   // the tree the review input names, not the one on disk
     const batchPlan = batch ? planTranscriptBatches(transcriptContent) : null;
     const { result, usage, latencyMs, transcriptContent: usedTranscript = transcriptContent } = batchPlan
       ? await reviewBatches(batchPlan, reviewOne, { provider, stamp: (res) => stampGateDisposition(res, round) })

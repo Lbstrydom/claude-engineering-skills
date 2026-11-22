@@ -73,6 +73,19 @@ describe('own-model capture P0 (DB integration)', { skip }, () => {
     assert.equal(got.diff_base_sha, null);
   });
 
+  test('a replay after the migration backfills identity an older-tier insert dropped, and touches nothing else', async () => {
+    const r = row(5, { audited_tree: null, diff_base_sha: null, model_resolved: 'first' });
+    await llm.recordLlmCalls(payload([r]));
+    const again = await llm.recordLlmCalls(payload([{ ...r, audited_tree: TREE, diff_base_sha: BASE, model_resolved: 'changed' }]));
+    assert.equal(again.rows, 1, 'the NULL tree is filled');
+    const [got] = await q.many('SELECT audited_tree, diff_base_sha, model_resolved FROM llm_call_provenance WHERE call_id = $1', [r.call_id]);
+    assert.equal(got.audited_tree, TREE);
+    assert.equal(got.diff_base_sha, BASE);
+    assert.equal(got.model_resolved, 'first', 'no other column is overwritten');
+    const third = await llm.recordLlmCalls(payload([{ ...r, audited_tree: 'c'.repeat(40) }]));
+    assert.equal(third.rows, 0, 'a filled column is never overwritten');
+  });
+
   test('the outcome vocabulary is a CHECK: an unknown outcome is refused by the store', async () => {
     const res = await llm.recordLlmCalls(payload([row(4, { attempt_outcome: 'made-up' })]));
     assert.equal(res.ok, false);
