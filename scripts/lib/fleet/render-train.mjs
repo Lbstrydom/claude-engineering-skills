@@ -7,6 +7,7 @@
  */
 import { checkBlocksApproval } from './overlap.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import { printable } from './eol-flips.mjs';
 
 const o12 = (o) => String(o ?? '?').slice(0, 12);
 
@@ -148,7 +149,14 @@ export function renderReconcile(r, cmd = 'fleet') {
 
 /** `land --abandon` result. */
 export function renderAbandon(r) {
-  return r.ok ? `ABANDONED ${r.train.trainId}${r.worktreeRemoved ? ' (worktree removed)' : r.worktreeNote ? ` (worktree: ${r.worktreeNote})` : ''}. Sessions were never touched by the train.` : `REFUSED: ${r.reason}`;
+  if (!r.ok) return `REFUSED: ${r.reason}`;
+  const head = `ABANDONED ${r.train.trainId}${r.worktreeRemoved ? ' (worktree removed)' : r.worktreeNote ? ` (worktree: ${r.worktreeNote})` : ''}. Sessions were never touched by the train.`;
+  const fix = (l) => (l.registered === null && !l.dirExists ? 'could not verify the git registration (git worktree list failed): run `git worktree list`, then `git worktree prune --dry-run -v` and prune if it lists this path'
+    : !l.dirExists ? 'the directory is gone but git still lists it: preview with `git worktree prune --dry-run -v`, then `git worktree prune` (it clears EVERY stale registration, not only this one)'
+    : l.registered === false ? `git no longer lists it, so it is only a directory: inspect it, then delete ${renderCommand([l.path])} yourself`
+      : `inspect it first, then: git worktree remove --force --force ${renderCommand([l.path])} (a locked worktree needs --force twice)`);
+  const left = (r.leftBehind ?? []).map((l) => `LEFT BEHIND: ${l.kind} ${printable(l.path)} (${printable(l.reason)}) — ${fix(l)}`);
+  return [head, ...left].join('\n');
 }
 
 /**

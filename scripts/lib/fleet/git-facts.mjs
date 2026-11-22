@@ -27,6 +27,7 @@ import { resolveBaseFreshness } from '../git-freshness.mjs';
 import { OID_PATTERN, OID_RE, isOid } from './contracts.mjs';
 import { VALID, memoPure } from './oid-cache.mjs';
 import { renderCommand } from './shell-quote.mjs';
+import { retryRemoteRead } from './remote-read.mjs';
 
 const LOCAL_TIMEOUT_MS = 15_000;
 const REMOTE_TIMEOUT_MS = 30_000;
@@ -476,8 +477,8 @@ export function tipSubject(cwd, ref) {
  * @param {string} ref - full ref name
  */
 export function remoteRefOid(cwd, urlOrRemote, ref) {
-  const r = runGit(['ls-remote', urlOrRemote, ref], cwd, { timeoutMs: REMOTE_TIMEOUT_MS });
-  if (!r.ok) return { ok: false, reason: r.reason };
+  const r = retryRemoteRead(() => runGit(['ls-remote', urlOrRemote, ref], cwd, { timeoutMs: REMOTE_TIMEOUT_MS }));
+  if (!r.ok) return { ok: false, reason: r.attempts > 1 ? `${r.reason} (after ${r.attempts} attempts)` : r.reason };
   return { ok: true, oid: parseLsRemote(r.stdout, ref) };
 }
 
