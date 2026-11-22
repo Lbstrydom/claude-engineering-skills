@@ -58,7 +58,7 @@ test('H6/H16: a provider that returns NO usage is charged its upper bound, never
   assert.ok(none.calls[0].costUsd >= 0.12, `charged ${none.calls[0].costUsd}`);
   assert.equal(none.spentUsd, none.calls[0].costUsd);
   const thrown = await runReplay({ dataset: w.dataset, arms: ['same'], maxUsd: 5, deps: { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => { throw new Error('socket closed'); }) } });
-  assert.equal(thrown.calls[0].status, 'unavailable');
+  assert.equal(thrown.calls[0].status, 'provider-failure');
   assert.ok(thrown.calls[0].costUsd >= 0.12 && thrown.spentUsd === thrown.calls[0].costUsd);
   const flagged = await runReplay({ dataset: w.dataset, arms: ['same'], maxUsd: 5, deps: { readExport: () => w.exp, openRevision: w.openRevision, makeProvider: () => provider('gpt-5.5', async () => ({ text: GOOD, usage: { input_tokens: 1, output_tokens: 1, usageMissing: true } })) } });
   assert.equal(flagged.calls[0].spendSource, 'upper-bound');

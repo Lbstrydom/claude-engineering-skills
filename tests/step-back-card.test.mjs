@@ -66,7 +66,7 @@ test('missing round result for the checkpoint is unmeasured, never quiet', async
 });
 
 test('default providers use sentinels and an injected client (never a live call here)', async () => {
-  assert.deepEqual(STEP_BACK_ARM_MODELS, { same: 'latest-gpt', different: 'latest-pro' });
+  assert.deepEqual(STEP_BACK_ARM_MODELS, { same: 'latest-gpt', different: 'latest-pro', higher: 'latest-opus' });
   let seen;
   const p = createStepBackProvider('same', { resolve: (m) => `resolved:${m}`, client: { responses: { create: async (a) => { seen = a; return { output_text: 'x', usage: { input_tokens: 3, output_tokens: 2 } }; } } } });
   assert.equal(p.model, 'resolved:latest-gpt');
