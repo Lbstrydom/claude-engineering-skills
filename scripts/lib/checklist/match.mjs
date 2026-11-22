@@ -278,8 +278,13 @@ export function matchEntries({ entries, mode, files = [], diffFiles = [], readFi
           if (res.some((re) => re.test(body))) note('symbol', f);
         }
       } else {
-        for (const f of diffFiles.filter((d) => CODE_FILE.test(d.path) || (d.oldPath && CODE_FILE.test(d.oldPath)))) {
-          if ([...f.added, ...f.removed].some((l) => res.some((re) => re.test(l)))) note('symbol', f.path);
+        // Added lines belong to the file as it is NOW, removed lines to the file as it WAS: each is judged by its own path's kind,
+        // and the evidence names that path (a code file renamed to a doc, or the reverse, is still seen on the code side).
+        const hits = (lines) => lines.some((l) => res.some((re) => re.test(l)));
+        for (const f of diffFiles) {
+          if (CODE_FILE.test(f.path) && hits(f.added)) note('symbol', f.path);
+          const was = f.oldPath ?? f.path;
+          if (CODE_FILE.test(was) && hits(f.removed)) note('symbol', was);
         }
       }
     }

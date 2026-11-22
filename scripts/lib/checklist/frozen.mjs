@@ -17,8 +17,8 @@ export const FROZEN = Object.freeze({
   frozenOn: '2026-11-22',
   files: Object.freeze({
     checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d' }),
-    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: '6528b057e49c7279224bd9e14e15ad61bfac58c1618659c05775ccb1e0a6ccfb' }),
-    scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'b79b4d7d4d84f1f82a22c508be8b4d23da2baedcbeb1ab460fef1479fd3346f4' }),
+    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: 'a3f81ab17d62716c36e36c4f7f01642c2ff234f188a3080f6cd30f27a2d61365' }),
+    scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'd8fd1c36eb133bc6da0de6927e3630c328fb0b1309ef2973ae95926ced1ad8cd' }),
   }),
 });
 

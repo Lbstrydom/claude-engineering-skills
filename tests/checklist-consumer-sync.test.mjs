@@ -75,7 +75,7 @@ test('the managed gitignore block and the untrack list cannot swallow a consumer
   }
 });
 
-test('a consumer starts with no checklist and the synced CLI reads that as empty, exit 0', () => {
+test('a consumer starts with no checklist and the CLI (run from the SOURCE tree, cwd = a fresh repo) reads that as empty, exit 0; the staged-layout run is in checklist-robustness-r2', () => {
   const dir = mkTmp(path.join(os.tmpdir(), 'checklist-consumer-'));
   execFileSync('git', ['init', '-q'], { cwd: dir, env: sanitizeGitEnv(dir) });
   const r = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'checklist.mjs'), '--files', 'src/a.mjs', '--json', '--no-record'], { cwd: dir, encoding: 'utf8', env: sanitizeGitEnv(dir) });

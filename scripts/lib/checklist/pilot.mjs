@@ -41,6 +41,12 @@ export const INCIDENT_COMMITS = Object.freeze({
 /** sha256 of the file's bytes with CRLF folded to LF (the checkout's EOL must not change the identity of a frozen file). */
 export function sha256File(abs) { return createHash('sha256').update(fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n')).digest('hex'); }
 
+/** Window statistics. An EMPTY window has no median or max: explicit `null`, never `median([])` (NaN) or `Math.max()` (-Infinity). */
+function statsOf(xs) {
+  if (xs.length === 0) return { median: null, max: null, min: null, distribution: [] };
+  return { median: median(xs), max: Math.max(...xs), min: Math.min(...xs), distribution: [...xs].sort((a, b) => a - b) };
+}
+
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 
 /**
@@ -96,9 +102,9 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
   return {
     tip: tipSha, skip, count: perPr.length, checklist: checklistFile ?? '.audit-loop/checklist.json', checklistSha256: sha256File(path.resolve(repoRoot, checklistFile ?? '.audit-loop/checklist.json')), entries: entries.length,
     window: perPr.length ? { newest: { pr: perPr[0].pr, date: perPr[0].date }, oldest: { pr: perPr.at(-1).pr, date: perPr.at(-1).date } } : null,
-    noise: { median: median(counts), max: Math.max(...counts), min: Math.min(...counts), distribution: [...counts].sort((a, b) => a - b), thresholds: { median: 5, max: 12 } },
+    noise: { ...statsOf(counts), thresholds: { median: 5, max: 12 } },
     // "Individual checks a reviewer must perform" per PR: an entry counts `checks` (default 1), so merging entries cannot lower it.
-    checks: { median: median(checkCounts), max: Math.max(...checkCounts), min: Math.min(...checkCounts), distribution: [...checkCounts].sort((a, b) => a - b), thresholds: { median: 5, max: 12 } },
+    checks: { ...statsOf(checkCounts), thresholds: { median: 5, max: 12 } },
     perPr, entryRows,
     incompletePrs: perPr.filter((p) => p.incomplete.length).map((p) => p.pr),
     neverFired: entryRows.filter((e) => e.firedOnCount === 0).map((e) => e.id),
@@ -173,15 +179,19 @@ export function controlRows({ repoRoot, checklistFile }) {
   const loaded = loadChecklist({ repoRoot, file: checklistFile });
   if (!loaded.ok) throw new Error(loaded.error);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'checklist-controls-'));
-  const fire = (entry, filePath, text) => {
-    const patch = path.join(dir, 'c.patch');
-    fs.writeFileSync(patch, `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1 @@\n+${text}\n`);
-    const r = matchChecklist({ entries: [entry], diffPath: patch, purpose: 'control', cwd: repoRoot, logPath: path.join(dir, 'fires.jsonl') });
-    return r.ok && r.fired.length === 1;
-  };
-  return loaded.entries.map((e) => {
-    const controlFires = fire(e, e.control.path, e.control.text);
-    const negativeSilent = e.control.negativePath ? !fire(e, e.control.negativePath, 'const x = 1;') : false;
-    return { id: e.id, controlFires, negativeSilent, verdict: controlFires && negativeSilent ? 'pass' : 'fail' };
-  });
+  try {
+    const fire = (entry, filePath, text) => {
+      const patch = path.join(dir, 'c.patch');
+      fs.writeFileSync(patch, `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n@@ -0,0 +1 @@\n+${text}\n`);
+      const r = matchChecklist({ entries: [entry], diffPath: patch, purpose: 'control', cwd: repoRoot, logPath: path.join(dir, 'fires.jsonl') });
+      return r.ok && r.fired.length === 1;
+    };
+    return loaded.entries.map((e) => {
+      const controlFires = fire(e, e.control.path, e.control.text);
+      const negativeSilent = e.control.negativePath ? !fire(e, e.control.negativePath, 'const x = 1;') : false;
+      return { id: e.id, controlFires, negativeSilent, verdict: controlFires && negativeSilent ? 'pass' : 'fail' };
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
 }
