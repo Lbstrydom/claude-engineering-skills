@@ -89,18 +89,21 @@ export function replayWindow({ repoRoot, tip, skip = 0, count = 30, checklistFil
     const r = replay(w.sha);
     return { ...w, files: r.files, incomplete: r.incomplete, firedCount: r.fired.length, checkCount: r.fired.reduce((n, f) => n + checksOf.get(f.id), 0), fired: r.fired.map((f) => ({ id: f.id, via: f.via })) };
   });
-  const counts = perPr.map((p) => p.firedCount);
-  const checkCounts = perPr.map((p) => p.checkCount);
+  // A PR whose evaluation was INCOMPLETE has only partial fire counts: it is excluded from every statistic and from never-fired, and is
+  // listed on its own (`incompletePrs`), never folded in.
+  const scored = perPr.filter((p) => p.incomplete.length === 0);
+  const counts = scored.map((p) => p.firedCount);
+  const checkCounts = scored.map((p) => p.checkCount);
   const entryRows = entries.map((e) => {
-    const firedOnPrs = perPr.filter((p) => p.fired.some((f) => f.id === e.id)).map((p) => p.pr);
+    const firedOnPrs = scored.filter((p) => p.fired.some((f) => f.id === e.id)).map((p) => p.pr);
     const windowIncidents = (IN_WINDOW_INCIDENTS[e.id] ?? []).map((sha) => {
       const row = perPr.find((p) => p.sha.startsWith(sha));
-      return { sha, pr: row?.pr ?? null, inWindow: !!row, fired: row ? row.fired.some((f) => f.id === e.id) : null };
+      return { sha, pr: row?.pr ?? null, inWindow: !!row, incomplete: !!row?.incomplete.length, fired: row && !row.incomplete.length ? row.fired.some((f) => f.id === e.id) : null };
     });
     return { id: e.id, firedOnPrs, firedOnCount: firedOnPrs.length, windowIncidents };
   });
   return {
-    tip: tipSha, skip, count: perPr.length, checklist: checklistFile ?? '.audit-loop/checklist.json', checklistSha256: sha256File(path.resolve(repoRoot, checklistFile ?? '.audit-loop/checklist.json')), entries: entries.length,
+    tip: tipSha, skip, count: perPr.length, scoredCount: scored.length, checklist: checklistFile ?? '.audit-loop/checklist.json', checklistSha256: sha256File(path.resolve(repoRoot, checklistFile ?? '.audit-loop/checklist.json')), entries: entries.length,
     window: perPr.length ? { newest: { pr: perPr[0].pr, date: perPr[0].date }, oldest: { pr: perPr.at(-1).pr, date: perPr.at(-1).date } } : null,
     noise: { ...statsOf(counts), thresholds: { median: 5, max: 12 } },
     // "Individual checks a reviewer must perform" per PR: an entry counts `checks` (default 1), so merging entries cannot lower it.
@@ -120,7 +123,8 @@ export function incidentReplay({ repoRoot, outDir, checklistFile }) {
     for (const sha of shas) {
       const full = w._git('rev-parse', `${sha}^{commit}`).trim();
       const r = w._replay(full);
-      rows.push({ entry: id, sha, subject: w._git('log', '-1', '--format=%s', full).trim().slice(0, 100), fired: r.fired.some((f) => f.id === id), via: r.fired.find((f) => f.id === id)?.via ?? [], firedCount: r.fired.length });
+      // An incomplete replay of the incident commit is reported as such (fired: null), never as a clean "did not fire".
+      rows.push({ entry: id, sha, subject: w._git('log', '-1', '--format=%s', full).trim().slice(0, 100), incomplete: r.incomplete, fired: r.incomplete.length ? null : r.fired.some((f) => f.id === id), via: r.fired.find((f) => f.id === id)?.via ?? [], firedCount: r.fired.length });
     }
   }
   return rows;

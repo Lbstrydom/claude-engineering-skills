@@ -31,7 +31,6 @@ export function getChecklistContext({ targetPaths = [], diffFile = null, baseDir
   const loaded = loadChecklist({ repoRoot: baseDir });
   if (!loaded.ok) return { ...none, status: 'unmeasured', warning: loaded.error };
   if (loaded.absent) return { ...none, status: 'absent', absent: true };
-  if (loaded.entries.length === 0) return none;
   const result = matchChecklist({
     entries: loaded.entries, files: targetPaths, diffPath: diffFile || undefined, purpose: 'operational', cwd: baseDir, logPath,
   });

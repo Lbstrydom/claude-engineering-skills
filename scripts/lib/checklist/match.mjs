@@ -146,16 +146,28 @@ export function parseUnifiedDiff(text) {
     } else if (cur && line.startsWith('new file mode')) cur.status = 'added';
     else if (cur && line.startsWith('deleted file mode')) cur.status = 'deleted';
     else if (cur && line.startsWith('rename from ')) { cur.oldPath = plainOrQuoted(line.slice('rename from '.length)); cur.status = 'renamed'; } else if (cur && line.startsWith('rename to ')) cur.path = plainOrQuoted(line.slice('rename to '.length));
+    else if (cur && /^(old|new) mode /.test(line)) cur.modeChange = true;
+    else if (cur && line === 'similarity index 100%') cur.rename100 = true;
+    else if (cur && line.startsWith('index ')) cur.indexLine = line;
     else if (cur && /^[+ -]/.test(line)) throw new DiffParseError(`diff body line outside any hunk (extra lines past the @@ counts?): ${JSON.stringify(line.slice(0, 40))}`);
     else if (line.startsWith('@@')) {
       const m = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
       if (!m || !cur) throw new DiffParseError(`malformed hunk header: ${JSON.stringify(line.slice(0, 60))}`); // counts are never defaulted
+      cur.hasHunk = true;
       remOld = Number(m[1] ?? 1);
       remNew = Number(m[2] ?? 1);
     } else if (cur && (line.startsWith('Binary files ') || line === 'GIT binary patch')) cur.binary = true;
   }
   if (remOld > 0 || remNew > 0) throw new DiffParseError('truncated patch: a hunk ends before its @@ counts are met');
-  for (const f of files) { delete f.fromGit; delete f.sawHeaders; }
+  // A record with no hunks is legitimate only in the states git itself writes without one: binary, mode-only, a 100% rename, or an
+  // EMPTY new/deleted file (its blob is e69de29). Anything else changed content, so a patch cut off after its headers is refused.
+  const emptyBlob = (f, side) => /^index (\w+)\.\.(\w+)/.exec(f.indexLine ?? '')?.[side]?.startsWith('e69de29') ?? false;
+  for (const f of files) {
+    if (f.binary || f.hasHunk) continue;
+    const legit = f.modeChange || f.rename100 || (f.fromGit && f.status === 'added' && emptyBlob(f, 2)) || (f.fromGit && f.status === 'deleted' && emptyBlob(f, 1));
+    if (!legit) throw new DiffParseError(`truncated patch: ${f.path} is recorded as changed but has no hunks`);
+  }
+  for (const f of files) { for (const k of ['fromGit', 'sawHeaders', 'hasHunk', 'modeChange', 'rename100', 'indexLine']) delete f[k]; }
   return files;
 }
 

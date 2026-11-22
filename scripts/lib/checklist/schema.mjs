@@ -111,6 +111,8 @@ export function loadChecklist({ repoRoot = process.cwd(), file = CHECKLIST_PATH,
   const abs = path.resolve(repoRoot, file);
   // ENOENT means an empty checklist ONLY for the default path with nothing there at all (lstat: a dangling symlink IS something).
   // A missing explicit path, or a link that points nowhere, is an error, never an empty result.
+  // Any non-default file was ASKED for, so a missing one is an error whether or not the caller said `explicit`.
+  explicit = explicit || file !== CHECKLIST_PATH;
   const state = pathState(repoRoot, file);
   if (state === 'dangling') return { ok: false, error: `${file} is, or sits under, a symlink that points nowhere` };
   if (state === 'error') return { ok: false, error: `${file} could not be inspected` };

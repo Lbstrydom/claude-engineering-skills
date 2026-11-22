@@ -84,7 +84,7 @@ test('--confirmation verifies the checklist it was GIVEN: a custom, non-frozen c
   const r = spawnSync(process.execPath, [PILOT, '--replay', '--confirmation', '--tip', 'HEAD', '--count', '1', '--checklist', custom, '--out-dir', path.join(out, 'o')], { cwd: REPO, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /refused: the instrument is not the frozen one \(checklist differ/);
-  const ok = spawnSync(process.execPath, [PILOT, '--replay', '--confirmation', '--tip', 'HEAD', '--count', '1', '--out-dir', path.join(out, 'o2')], { cwd: REPO, encoding: 'utf8' });
+  const ok = spawnSync(process.execPath, [PILOT, '--replay', '--confirmation', '--tip', execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(), '--skip', String(execFileSync('git', ['log', '--first-parent', '--format=%s', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).split('\n').map((l) => /\(#(\d+)\)$/.exec(l)?.[1]).filter(Boolean).map(Number).findIndex((n) => n < 380)), '--count', '1', '--out-dir', path.join(out, 'o2')], { cwd: REPO, encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stderr);
   assert.equal(spawnSync(process.execPath, [PILOT, '--kernel', '--confirmation'], { cwd: REPO, encoding: 'utf8' }).status, 2, '--confirmation only applies to --replay');
 });
@@ -126,7 +126,12 @@ test('the synced CLI runs from a staged consumer layout (scripts/.claude-skills/
   const consumer = mk('checklist-consumer-layout-');
   git(consumer, 'init', '-q');
   const { files } = getSyncClosure();
-  for (const src of files) {
+  // `scripts/.sync-manifest.json` is in the closure but is GENERATED at sync time and gitignored (Category A): it exists on a developer's
+  // disk and is absent from a clean CI checkout. Anything else missing is a real defect, so the set is asserted, not skipped silently.
+  const GENERATED_AT_SYNC = new Set(['scripts/.sync-manifest.json']);
+  const missing = files.filter((src) => !fs.existsSync(path.join(REPO, src)));
+  assert.deepEqual(missing.filter((m) => !GENERATED_AT_SYNC.has(m)), [], 'only sync-time generated assets may be absent from the source tree');
+  for (const src of files.filter((f) => !missing.includes(f))) {
     const dest = path.join(consumer, sourceRelToDestRel(src));
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(path.join(REPO, src), dest);

@@ -17,10 +17,25 @@ export const FROZEN = Object.freeze({
   frozenOn: '2026-11-22',
   files: Object.freeze({
     checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '8a6555dd12b06cfd53724fcd7c0e6cae6994be461b67f6a14691b0ecf1aea36d' }),
-    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: 'a3f81ab17d62716c36e36c4f7f01642c2ff234f188a3080f6cd30f27a2d61365' }),
-    scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'd8fd1c36eb133bc6da0de6927e3630c328fb0b1309ef2973ae95926ced1ad8cd' }),
+    matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: '511fa697e45809de56200354d1cc87b30198392919918c83aefe85d11bd9eb21' }),
+    scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'c758c13a21c6b582dafde08c9e0249657cf7bdfcb08720118ef47cc20d615b39' }),
   }),
 });
+
+/**
+ * The PR windows already SEEN (the pilot window and the held-out window before it, measured from `tip`). A confirmation must not overlap
+ * them: re-scoring seen PRs confirms nothing. Recorded as PR-number ranges (squash-commit subjects `(#n)`), inclusive.
+ */
+export const SEEN_WINDOWS = Object.freeze({
+  tip: '9865dc651db4fc3f4faa554c5ea1c09c3a4f4ef6',
+  pilot: Object.freeze({ oldest: 410, newest: 442 }),
+  heldOut: Object.freeze({ oldest: 380, newest: 409 }),
+});
+
+/** @returns {number[]} the PRs (of `prs`) that fall inside a window already seen */
+export function seenPrsIn(prs) {
+  return prs.filter((n) => Object.values(SEEN_WINDOWS).some((w) => typeof w === 'object' && n >= w.oldest && n <= w.newest));
+}
 
 const sha = (abs) => createHash('sha256').update(fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
 

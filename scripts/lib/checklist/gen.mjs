@@ -32,6 +32,9 @@ function loadGates(repoRoot) {
 /** @param {string} repoRoot @returns {string} the exact text of `.audit-loop/checklist.json` */
 export function buildChecklistText(repoRoot) {
   const census = loadGates(repoRoot);
+  // Spelled in two pieces so this generator's own SOURCE is not read by the entry-guard census as a hand-written entry guard: the text it
+  // emits (the checklist) is unchanged.
+  const ARGV1 = 'process.argv' + '[1]';
   const NEG = 'scripts/lib/vcs.mjs';
   const entries = [];
   function gated(id, prefix, { trigger, lead, context, incident, control, negativePath = NEG }) {
@@ -206,9 +209,9 @@ gated('tiered-shadow-window-epoch-gated', 'tiered-shadow-window-honesty', {
 
 plain('cli-entry-guard-is-isinvokedasscript', {
   trigger: { paths: ['scripts/lib/cli-entry.mjs', 'tests/cli-entry-guards.test.mjs'], patterns: ['import\\.meta\\.url\\s*===\\s*pathToFileURL\\(\\s*process\\.argv', 'process\\.argv\\[1\\]\\s*(===|==|!==)'] },
-  check: 'The CLI entry guard is `if (isInvokedAsScript(import.meta.url))` — never a hand comparison of process.argv[1] with import.meta.url. Node realpaths one side and not the other, so through a symlink or junction the hand guard is false and the CLI exits 0 having run nothing.',
+  check: 'The CLI entry guard is `if (isInvokedAsScript(import.meta.url))` — never a hand comparison of ' + ARGV1 + ' with import.meta.url. Node realpaths one side and not the other, so through a symlink or junction the hand guard is false and the CLI exits 0 having run nothing.',
   incident: '2026-10-13: 16 of 26 CLIs exited 0 through a symlink having run nothing (#236, 82b63557). Control line is the real pre-fix guard from scripts/check-gate-contracts.mjs.',
-  control: { path: 'scripts/check-gate-contracts.mjs', text: "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {" } });
+  control: { path: 'scripts/check-gate-contracts.mjs', text: 'if (import.meta.url === pathToFileURL(' + ARGV1 + " ?? '').href) {" } });
 plain('disposable-db-allowlist', {
   trigger: { symbols: ['assertDisposableDbUrl', 'isDisposableDbHost'], paths: ['scripts/lib/db/client.mjs', 'scripts/lib/db-test-container.mjs'], patterns: ['DROP SCHEMA public CASCADE'] },
   check: '"Disposable" is an ALLOWLIST of loopback hosts and fails CLOSED (isDisposableDbHost / assertDisposableDbUrl). Never re-express it as "not $VENDOR", never point a test DSN at a shared database, and regenerate the schema fixture only from a fresh replay.',

@@ -24,16 +24,34 @@ import path from 'node:path';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { replayWindow, incidentReplay, kernelEstimate, controlRows } from './lib/checklist/pilot.mjs';
-import { verifyFrozen } from './lib/checklist/frozen.mjs';
+import { verifyFrozen, seenPrsIn } from './lib/checklist/frozen.mjs';
 
 const FLAGS = ['--replay', '--incidents', '--kernel', '--controls', '--verify-frozen', '--confirmation', '--tip', '--skip', '--count', '--checklist', '--out-dir', '--json', '--help', '-h', '--selfcheck-relocation'];
 
 function value(argv, name) {
-  const i = argv.indexOf(name);
-  if (i === -1) return null;
-  const v = argv[i + 1];
-  if (v === undefined || v.startsWith('--')) throw new ArgvError(`checklist-pilot: ${name} requires a value`);
-  return v;
+  // Both spellings: `--flag value` and `--flag=value`. A flag that is present with no usable value is an argv error.
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--') break;
+    if (a === name) {
+      const v = argv[i + 1];
+      if (v === undefined || v === '' || v.startsWith('--')) throw new ArgvError(`checklist-pilot: ${name} requires a value`);
+      return v;
+    }
+    if (a.startsWith(`${name}=`)) {
+      const v = a.slice(name.length + 1);
+      if (v === '') throw new ArgvError(`checklist-pilot: ${name}= requires a value`);
+      return v;
+    }
+  }
+  return null;
+}
+
+function count(argv, name, dflt) {
+  const raw = value(argv, name);
+  if (raw === null) return dflt;
+  if (!/^\d+$/.test(raw)) throw new ArgvError(`checklist-pilot: ${name} must be a non-negative integer, got ${JSON.stringify(raw)}`);
+  return Number(raw);
 }
 
 async function main() {
@@ -60,8 +78,18 @@ async function main() {
     } else if (modes[0] === '--replay') {
       const tip = value(argv, '--tip');
       if (!tip) throw new ArgvError('checklist-pilot: --replay needs --tip <sha> (the window is defined from a pinned commit)');
-      const { _replay, _git, ...rest } = replayWindow({ repoRoot, tip, skip: Number(value(argv, '--skip') ?? 0), count: Number(value(argv, '--count') ?? 30), checklistFile, outDir });
+      const confirmation = argv.includes('--confirmation');
+      // A confirmation window is pinned by an immutable commit: a branch, HEAD or a short sha moves or is ambiguous.
+      if (confirmation && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tip)) throw new ArgvError('checklist-pilot: --confirmation needs --tip as a full 40- or 64-hex commit sha (a moving ref or a short sha is not a pinned window)');
+      const skip = count(argv, '--skip', 0);
+      const size = count(argv, '--count', 30);
+      const { _replay, _git, ...rest } = replayWindow({ repoRoot, tip, skip, count: size, checklistFile, outDir });
       out = rest;
+      if (confirmation) {
+        const seen = seenPrsIn(out.perPr.map((p) => p.pr));
+        if (seen.length) throw new Error(`--confirmation refused: the window overlaps PRs already seen (${seen.join(', ')}; the pilot window and the held-out window are not a confirmation)`);
+        out.confirmation = { tip, skip, count: size, prs: out.perPr.map((p) => p.pr), window: out.window };
+      }
     } else if (modes[0] === '--incidents') {
       out = incidentReplay({ repoRoot, outDir, checklistFile });
     } else if (modes[0] === '--controls') {
