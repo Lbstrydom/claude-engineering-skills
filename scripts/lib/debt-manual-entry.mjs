@@ -23,14 +23,14 @@ export const MANUAL_MIN_RATIONALE = 20;
 export const MANUAL_MIN_DETAIL = 10;
 
 /**
- * The topicId is `m`+8 hex of sha256(category|section|detail), NOT lib/findings.mjs's `semanticId`: this is tech-debt-domain code
+ * The topicId is `m`+16 hex of sha256(JSON [category, section, detail] — unambiguous, case-preserving), NOT lib/findings.mjs's `semanticId`: this is tech-debt-domain code
  * and the findings barrel is not an allowed dependency of that domain (arm-vocabulary-layering). The `m` prefix says so — it does not
  * claim to equal an audit-captured id for the same text — and it is deterministic, so re-adding the same entry updates in place.
  * @param {{severity?: string, category?: string, file?: string, line?: string|number, detail?: string, rationale?: string, principle?: string}} f
  * @returns {{ok: true, entries: object[]} | {ok: false, error: string}}
  */
 export function manualTopicId({ category, section, detail }) {
-  return `m${createHash('sha256').update(`${category}|${section}|${detail}`.trim()).digest('hex').slice(0, 8)}`;
+  return `m${createHash('sha256').update(JSON.stringify([category, section, detail])).digest('hex').slice(0, 16)}`;
 }
 
 export function manualToLedgerEntries(f) {

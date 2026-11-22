@@ -103,7 +103,7 @@ import { loadRecipientPolicy, resolveAndAuthorize } from './lib/solo-control/pol
 import { loadCorpus, entriesEligibleForRecipient } from './lib/solo-control/corpus.mjs';
 import { computeCallId, computeSpendId, appendLedgerRow } from './lib/solo-control/ledger.mjs';
 import { discoverCommits, partitionDiscoveredRows, fetchExternalFindings } from './lib/solo-control/store-queries.mjs';
-import { fingerprintVerdict, retryBudgetVerdict, budgetStopMiss } from './lib/solo-control/cell-guards.mjs';
+import { fingerprintVerdict, retryBudgetVerdict, budgetStopMiss, usageComplete } from './lib/solo-control/cell-guards.mjs';
 import { canonicaliseRemoteUrl } from './lib/repo-identity.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { clampToSchema, parseJsonLoose, REASONING_TIERS, assertReasoningTier } from './lib/solo-control/cold-pass-support.mjs';
@@ -477,7 +477,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null, 
       continue;
     }
     gotReply = true;
-    if (!resp.usage) usageMissing = true;
+    if (!usageComplete(resp.usage, 'input_tokens', 'output_tokens')) usageMissing = true;
     usage = sumUsage(usage, resp.usage || null);
     const text = Array.isArray(resp.content) ? resp.content.map((c) => c.text || '').join('') : '';
     const parsed = clampToSchema(parseJsonLoose(text));
@@ -547,7 +547,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
       continue;
     }
     gotReply = true;
-    if (!resp.usage) usageMissing = true;
+    if (!usageComplete(resp.usage, 'prompt_tokens', 'completion_tokens')) usageMissing = true;
     lastFingerprint = resp.system_fingerprint || null;
     const u = resp.usage || null;
     usage = sumUsage(usage, u ? { input_tokens: u.prompt_tokens ?? 0, output_tokens: u.completion_tokens ?? 0 } : null);

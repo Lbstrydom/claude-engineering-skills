@@ -51,7 +51,7 @@ export const qualifyBatchCluster = (g, shortSha, batchIndex) => ({ ...g, cluster
 
 /** Label coverage: an INVALID label is not a label. */
 export const labelCoverage = ({ dataRows, unlabeled, invalid }) => (dataRows > 0 ? (dataRows - unlabeled - invalid) / dataRows : 0);
-/** A decision computed over an incomplete label set is a directional reading, not a verdict: fold a non-`final` status into
+/** A decision whose status is not `final` (decisionStatusFor: under 90% label coverage, any invalid label, or a HIGH accepted finding without proof) is a directional reading, not a verdict: fold a non-`final` status into
  * `verdictBlocked` so a consumer reading `decision.verdictBlocked` cannot take the verdict while `decisionStatus` beside it says
  * otherwise. Never clears an existing block. */
 export const blockVerdictUnlessFinal = (verdictBlocked, decisionStatus) => (decisionStatus === 'final'

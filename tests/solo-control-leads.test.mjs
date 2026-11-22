@@ -95,6 +95,14 @@ describe('H5/M8 — the retry is a second paid call and is budget-checked', () =
       assert.deepEqual(r.usage, { input_tokens: 20, output_tokens: 10 }, 'both attempts billed in the recorded row (H5\'s "unrecorded" claim is false)');
     }
   });
+  test('partial usage ({prompt_tokens} only) is UNMEASURED (null), not a low price with output 0', async () => {
+    const ok = JSON.stringify({ findings: [], summary: 's' });
+    for (const [usage, expectNull] of [[{ prompt_tokens: 1000 }, true], [{ prompt_tokens: 1000, completion_tokens: 5 }, false]]) {
+      const client = { chat: { completions: { create: async () => ({ choices: [{ message: { content: ok } }], usage, system_fingerprint: 'fp' }) } } };
+      const r = await _internals.runDeepseekPass(client, 'deepseek-flash', _internals.PASSES[0], 'diff');
+      assert.equal(r.usage === null, expectNull);
+    }
+  });
   test('runDeepseekPass: same gate, and the fingerprint seen so far rides along', async () => {
     let calls = 0;
     const client = { chat: { completions: { create: async () => { calls++; return { choices: [{ message: { content: 'nope' } }], usage: { prompt_tokens: 7, completion_tokens: 3 }, system_fingerprint: 'fp1' }; } } } };

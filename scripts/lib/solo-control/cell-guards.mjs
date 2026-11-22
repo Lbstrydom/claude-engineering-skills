@@ -45,6 +45,10 @@ export function retryBudgetVerdict(rows, budgetUsd, usage, resolvedModel, costFn
   return budgetVerdict([...rows, pending], budgetUsd);
 }
 
+/** A reply's usage is MEASURED only when both token counts are present numbers: `{prompt_tokens: 1000}` alone used to read as a
+ * complete usage with output 0, so a partial price was recorded as a real one. Anything less is unmeasured (null), never a low price. */
+export const usageComplete = (u, inKey, outKey) => !!u && Number.isFinite(u[inKey]) && Number.isFinite(u[outKey]);
+
 /** The terminal return of a pass stopped before its retry by the budget gate: the cell is UNMEASURED (never a conformance
  * miss scored against the model), and `usage` keeps whatever the first attempt billed. */
 export const budgetStopMiss = (usage, extra = {}) => ({ findings: [], usage, rawText: null, ...extra, providerError: true, budgetStop: true });
