@@ -69,10 +69,9 @@ export function assessMigrationOwnership({ repoRoot, migrationsDir, spawn = spaw
     const why = r.error ? (r.error.code || r.error.message) : `git exit ${r.status}`;
     return { status: 'unverified', reason: `git could not answer ("git ls-files ${rel}": ${why})` };
   }
-  const tracked = new Set(
-    String(r.stdout || '').split('\0').filter(Boolean).map((p) => path.posix.basename(p.replaceAll('\\', '/'))),
-  );
-  const untracked = onDisk.filter((f) => !tracked.has(f));
+  // Exact repo-relative paths, never basenames: a tracked `migrations/archive/003.sql` must not vouch for an untracked `migrations/003.sql`.
+  const tracked = new Set(String(r.stdout || '').split('\0').filter(Boolean).map((p) => p.replaceAll('\\', '/')));
+  const untracked = onDisk.filter((f) => !tracked.has(`${rel}/${f}`));
   return untracked.length === 0 ? { status: 'tracked' } : { status: 'untracked', untracked };
 }
 

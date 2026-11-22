@@ -51,6 +51,15 @@ describe('assessMigrationOwnership', () => {
     assert.deepEqual(assessMigrationOwnership({ repoRoot: root, migrationsDir: dir }),
       { status: 'untracked', untracked: ['003_reconcile_local_schema_drift.sql'] });
   });
+  it('a tracked file in a subdirectory does not vouch for an untracked same-named root file', () => {
+    const { root, dir } = mkRepo({ untracked: false });
+    fs.mkdirSync(path.join(dir, 'archive'));
+    fs.writeFileSync(path.join(dir, 'archive', '003_x.sql'), 'select 9;');
+    git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.');
+    git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'archive');
+    fs.writeFileSync(path.join(dir, '003_x.sql'), 'select 3;');
+    assert.deepEqual(assessMigrationOwnership({ repoRoot: root, migrationsDir: dir }), { status: 'untracked', untracked: ['003_x.sql'] });
+  });
   it('a fully tracked set is tracked', () => {
     const { root, dir } = mkRepo({ untracked: false });
     assert.deepEqual(assessMigrationOwnership({ repoRoot: root, migrationsDir: dir }), { status: 'tracked' });

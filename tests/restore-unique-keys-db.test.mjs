@@ -86,6 +86,20 @@ describe('restore original unique keys (DB integration)', { skip }, () => {
     });
   });
 
+  test('an identically named index on ANOTHER table is never dropped: refuses instead', async () => {
+    await inRolledBackTx(async (c) => {
+      await drift(c);
+      await c.query('ALTER TABLE prompt_variants DROP CONSTRAINT prompt_variants_pass_variant_model_key');
+      await c.query('CREATE TABLE zz_other (a int)');
+      await c.query('CREATE UNIQUE INDEX prompt_variants_pass_variant_key ON zz_other (a)');
+      await c.query('SAVEPOINT s');
+      await assert.rejects(() => c.query(SQL), /belongs to another table/);
+      await c.query('ROLLBACK TO SAVEPOINT s');
+      const r = await c.query(`SELECT 1 FROM pg_indexes WHERE indexname = 'prompt_variants_pass_variant_key' AND tablename = 'zz_other'`);
+      assert.equal(r.rowCount, 1, 'the unrelated index is untouched');
+    });
+  });
+
   test('duplicates under the original key: refuses with the count and changes nothing', async () => {
     await inRolledBackTx(async (c) => {
       await drift(c);

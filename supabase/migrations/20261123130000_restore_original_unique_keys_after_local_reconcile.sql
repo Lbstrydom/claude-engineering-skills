@@ -29,6 +29,7 @@ DECLARE
   want  TEXT;
   dups  BIGINT;
   cols_arr TEXT[];
+  idx   RECORD;
 BEGIN
   FOR spec IN
     SELECT * FROM (VALUES
@@ -82,12 +83,21 @@ BEGIN
       EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', spec.tbl, cons.conname);
     END LOOP;
 
-    -- A bare unique INDEX squatting on the name (not backed by a constraint) would make ADD CONSTRAINT fail.
-    IF EXISTS (
-      SELECT 1 FROM pg_class i
-       WHERE i.relkind = 'i' AND i.relname = spec.conname
-         AND i.relnamespace = (SELECT relnamespace FROM pg_class WHERE oid = to_regclass(spec.tbl))
-    ) THEN
+    -- A bare index squatting on the name (no constraint behind it) would make ADD CONSTRAINT fail. Drop it ONLY
+    -- when it is a plain unique index on THIS table; an identically named index on another table is not ours.
+    SELECT i.indrelid, i.indisunique INTO idx
+      FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+     WHERE c.relkind = 'i' AND c.relname = spec.conname
+       AND c.relnamespace = (SELECT relnamespace FROM pg_class WHERE oid = to_regclass(spec.tbl));
+    IF FOUND THEN
+      IF idx.indrelid <> to_regclass(spec.tbl) THEN
+        RAISE EXCEPTION 'index % belongs to another table, not %; refusing to touch it. Rename or drop it deliberately, then re-run --migrate.',
+          spec.conname, spec.tbl;
+      END IF;
+      IF NOT idx.indisunique THEN
+        RAISE EXCEPTION 'index % on % is not a unique index; refusing to drop it. Resolve it deliberately, then re-run --migrate.',
+          spec.conname, spec.tbl;
+      END IF;
       EXECUTE format('DROP INDEX %I', spec.conname);
     END IF;
 
