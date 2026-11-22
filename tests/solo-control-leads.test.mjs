@@ -86,6 +86,18 @@ describe('H5/M8 — the retry is a second paid call and is budget-checked', () =
     assert.equal(r.providerError, true);
     assert.equal(r.conformanceMiss, undefined, 'never scored against the model');
     assert.deepEqual(r.usage, { input_tokens: 10, output_tokens: 5 });
+    assert.equal(r.replyWithoutUsage, false);
+  });
+  test('runPass: a nonconforming reply with NO usage + a breached gate flags replyWithoutUsage so the row is recorded unmeasured', async () => {
+    const client = { messages: { create: async () => ({ content: [{ text: 'not json' }] }) } };
+    const r = await _internals.runPass(client, 'm', _internals.PASSES[0], 'diff', { beforeRetry: (u, noUsage) => (noUsage ? { reason: 'unmeasured' } : null) });
+    assert.equal(r.budgetStop, true);
+    assert.equal(r.replyWithoutUsage, true);
+    assert.equal(r.usage, null);
+  });
+  test('the budget reads a usage-less budget-stop row as UNMEASURED (usage {} + null cost), not free', () => {
+    assert.equal(budgetVerdict([row({ costUsd: null, pricingVersion: null, usage: {}, state: 'provider-error', spendId: 'z' })], 100)?.reason, 'unmeasured');
+    assert.equal(budgetVerdict([row({ costUsd: null, pricingVersion: null, usage: null, state: 'provider-error', spendId: 'z' })], 100), null, 'control: nothing came back stays free');
   });
   test('runPass negative control: no gate (or a clear gate) → the retry runs, two calls, conformance miss', async () => {
     for (const beforeRetry of [null, () => null]) {

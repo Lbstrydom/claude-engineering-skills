@@ -690,7 +690,7 @@ async function main() {
   let adjLedger;
   if (args.add) {
     const manual = manualToLedgerEntries(args.manual);
-    if (!manual.ok) { console.error(`Error: ${manual.error}`); process.exit(1); }
+    if (!manual.ok) { console.error(`Error: ${manual.error}`); await finishAndExit(1); return; }
     adjLedger = { entries: manual.entries };
   } else {
     try {

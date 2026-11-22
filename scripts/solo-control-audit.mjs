@@ -229,13 +229,13 @@ function refusedFor(models, root, policy) {
   try { authorizeAll(models, repoIdentityFor(root), policy); return null; } catch (err) { return err.message; }
 }
 
-function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel, recipient, usage, state }) {
+function recordCall({ arm, sharedBy = null, commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel, recipient, usage, state, usageUnknown = false }) { // usageUnknown: a reply CAME BACK billed but reported no usable usage → a usage-bearing, unpriced row (unmeasured), never null
   const callId = computeCallId({ commit, purpose, pass, chunkIndex, repeatIndex, resolvedModel });
-  const priced = usage ? costFromUsage(usage, resolvedModel) : null;
+  const priced = usage && !usageUnknown ? costFromUsage(usage, resolvedModel) : null;
   return appendLedgerRow(CALL_LEDGER_PATH, {
     callId, spendId: computeSpendId(callId), arm, sharedBy, commit, repeat: repeatIndex, chunk: chunkIndex, pass, purpose,
     resolvedModel, recipient,
-    usage: usage ? { input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0, output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0 } : null,
+    usage: usageUnknown ? {} : usage ? { input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0, output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0 } : null,
     costUsd: priced?.priced && !priced.unmeterable ? priced.totalUsd : null,
     pricingVersion: priced?.priced && !priced.unmeterable ? PRICING_VERSION : null,
     state,
@@ -458,7 +458,7 @@ async function runPass(client, model, passName, diff, { reasoningEffort = null, 
   let usageMissing = false; // a reply that reported no usage: the summed usage would be PARTIAL — null (unmeasured) beats a low price
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
-    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage, gotReply && usageMissing)) return budgetStopMiss(usageMissing ? null : usage); // the retry is a SECOND paid call: re-check the budget with the first attempt's cost
+    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage, gotReply && usageMissing)) return budgetStopMiss(usageMissing ? null : usage, { replyWithoutUsage: usageMissing }); // the retry is a SECOND paid call: re-check the budget with the first attempt's cost
     let resp;
     try {
       const params = {
@@ -530,7 +530,7 @@ async function runDeepseekPass(client, model, passName, diff, { reasoningEffort 
   let usageMissing = false;
   let usage = null; // accumulated over BOTH attempts — see sumUsage
   for (let attempt = 1; attempt <= 2; attempt++) {
-    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage, gotReply && usageMissing)) return budgetStopMiss(usageMissing ? null : usage, { systemFingerprint: lastFingerprint });
+    if (attempt === 2 && beforeRetry?.(usageMissing ? null : usage, gotReply && usageMissing)) return budgetStopMiss(usageMissing ? null : usage, { systemFingerprint: lastFingerprint, replyWithoutUsage: usageMissing });
     let resp;
     const messages = [
       { role: 'system', content: system },
@@ -838,7 +838,7 @@ async function cmdRun() {
           }
           recordCall({
             arm: label, commit: sha, purpose: 'pass', pass: passName, chunkIndex, repeatIndex: rep,
-            resolvedModel: model, recipient, usage: r.usage, state: cellState,
+            resolvedModel: model, recipient, usage: r.usage, state: cellState, usageUnknown: !!r.replyWithoutUsage,
           });
           if (r.budgetStop) { budgetHit = budgetBreached(budgetUsd) || { spentUsd: 0, reason: 'unmeasured', unmeasured: 1, complete: false }; break cells; }
           if (cellState !== 'provider-error') findings.push(...r.findings);
