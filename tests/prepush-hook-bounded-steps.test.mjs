@@ -307,12 +307,16 @@ function mergePush(c, { ownCommitAfterRemote }) {
   return { stdin: `refs/heads/feature ${head} refs/heads/feature ${remoteTip}\n`, remoteTip, head };
 }
 
+// The harness cap on one hook run. Every wall-clock claim in this file is "finished before this" (status !== null), never a tighter
+// number: a fixed ms bound is a claim about the machine, and measured 2026-11-22 a hook run is ~12s idle and >40s under load.
+const HOOK_TIMEOUT_MS = 120_000;
+
 function runHook(local, source, stdin, env = {}) {
   const script = path.join(local, '.hook.sh');
   fs.writeFileSync(script, HOOK_BODY);
   const t0 = Date.now();
   const r = spawnSync('bash', [script, 'origin', 'https://example.invalid'], {
-    cwd: local, encoding: 'utf-8', input: stdin, timeout: 120_000,
+    cwd: local, encoding: 'utf-8', input: stdin, timeout: HOOK_TIMEOUT_MS,
     env: { ...process.env, CLAUDE_AUDIT_LOOP_DIR: source, AUDIT_PREPUSH_BLOCK: '', AUDIT_PREPUSH_DISABLE: '', AUDIT_STUB: '', ...env },
   });
   return { ...r, ms: Date.now() - t0, audited: fs.existsSync(path.join(local, 'AUDIT_ARGV')) };
@@ -341,7 +345,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
       assert.match(got.stderr, /step 'code-audit' exceeded its 3s budget \(ran [3-9]s\) - push BLOCKED/);
       assert.match(got.stderr, /machine lease: held by sess-other/);
       assert.match(got.stderr, /code-audit: still running/, 'a slow step says so instead of going quiet');
-      assert.ok(got.ms < 60_000, `bounded: took ${got.ms}ms`);
+      assert.notEqual(got.status, null, `bounded: the hook outlived the ${HOOK_TIMEOUT_MS}ms harness cap`);
       const child = Number(fs.readFileSync(path.join(c.local, 'AUDIT_CHILD_PID'), 'utf8'));
       assert.equal(alive(child), false, 'the audit\'s child must die with it, or the machine keeps burning');
     } finally { rmrf(ws); rmrf(lease); }
@@ -364,7 +368,7 @@ describe('the real hook - bounded, visible, fail-closed', () => {
         const got = runHook(c.local, source, `refs/heads/main ${head} refs/heads/main ${base}\n`, { FLEET_MACHINE_DIR: lease });
         assert.equal(got.status, 0, `holder ${holder}: ${got.stderr}`);
         assert.equal(got.audited, true);
-        assert.ok(got.ms < 30_000, `holder ${holder}: the hook waited ${got.ms}ms`);
+        // A hook that WAITED on the lease would outlive the harness cap (status null, caught above); a wall-clock bound here only measured machine load.
         fs.rmSync(path.join(c.local, 'AUDIT_ARGV'), { recursive: true, maxRetries: 3, retryDelay: 50 });
       }
     } finally { rmrf(ws); rmrf(lease); }
@@ -679,6 +683,10 @@ describe('the real hook - reuse of an audit that already covered this tree, and 
       assert.doesNotMatch(got.stderr, /exactly the tree it audited/);
     } finally { rmrf(ws); }
   });
+  // AUDIT_PREPUSH_STEP_BUDGET_SEC bounds EVERY quick step (no-code, plan-select, audit-scope, ...), not just the stalled one, so it must
+  // clear a node cold-start under load or an earlier step trips first and the test names the wrong step (measured 2026-11-22: 'no-code'
+  // ran 4s under 48 CPU hogs against the old 2s). Idle quick steps take <1s, ~4s at 48 hogs; 15s leaves ~3.7x over that.
+  const STALL_STEP_BUDGET_SEC = 15;
   it('a stalled reuse check is bounded: the push is REFUSED with the runner\'s timeout message visible, the audit never runs', (t) => {
     if (!HAS_BASH) return t.skip('bash is required');
     const ws = tmpDir('hook-reuse-hang-');
@@ -686,9 +694,9 @@ describe('the real hook - reuse of an audit that already covered this tree, and 
       const source = makeSourceRepo(ws);
       stubReuse(source, 'hang');
       const c = buildConsumer(ws);
-      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base, AUDIT_PREPUSH_STEP_BUDGET_SEC: '2', AUDIT_PREPUSH_PROGRESS_SEC: '1' });
+      const got = runHook(c.local, source, stdinOf(pushOf(c)), { ...base, AUDIT_PREPUSH_STEP_BUDGET_SEC: String(STALL_STEP_BUDGET_SEC), AUDIT_PREPUSH_PROGRESS_SEC: '1' });
       assert.equal(got.status, 1, got.stderr);
-      assert.match(got.stderr, /step 'audit-reuse' exceeded its 2s budget/);
+      assert.match(got.stderr, new RegExp(`step 'audit-reuse' exceeded its ${STALL_STEP_BUDGET_SEC}s budget`));
       assert.equal(got.audited, false);
     } finally { rmrf(ws); }
   });
