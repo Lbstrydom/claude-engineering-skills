@@ -109,6 +109,13 @@ Gemini client exists. Sentinels only (`latest-opus`, `latest-pro`), resolved by 
 `unavailable`, which **admits no automatic decision** and falls back to today's human card. The chain is a constant
 (`META_REVIEW_ARM_CHAIN`), not config: no current requirement needs it configurable.
 
+**Independence criterion.** The reviewer's vendor family must differ from the auditor's: `modelFamily(resolveModel(arm
+sentinel)) !== modelFamily(auditorModel)`, where `auditorModel` is the model the audit rounds ran on (`openai-audit.mjs`
+resolves it from `latest-gpt` / `OPENAI_AUDIT_MODEL`; the gate passes it in, and the last round result's recorded model
+wins when present). `modelFamily` is AGENTS.md's one vendor-family oracle. An arm whose family equals the auditor's is
+skipped; if no arm is independent, the result is `unavailable` with reason `no-independent-route` (human path). The
+selected arm, its family and the auditor's family are recorded on the decision.
+
 The `--step-back-arm` flag on the card CLI gains `higher` (already supported by the provider); the manual path stays v1
 whichever arm is chosen.
 
@@ -145,7 +152,10 @@ structural: {action, cause, evidence: [{file, why}] ≥1, proposedFix, reason}
 `admit` must name topics, so a reviewer with nothing to say fails validation instead of buying a round.
 
 The pack is v1's `buildStepBackPack`, unchanged, plus a short header (mode, trigger, round, caps, the round signals,
-`assessCapProductivity`'s line, and the **open-topic inventory**, §2.4) that passes through `redactSecrets`.
+`assessCapProductivity`'s line, and the **open-topic inventory**, §2.4) that passes through `redactSecrets`. The header's
+inventory is a **provider-facing projection of `{topicId, severity}` only** — no path, no detail, no section text. A
+finding's detail and files reach the reviewer only through the pack's existing `rounds` section and `<file>` parts, i.e.
+through the same `buildStepBackPack` path and its rules, never through the header. No new field crosses the egress seam.
 
 **Plan-audit data flow** (one path, no new egress seam). The plan path is `argv[1]`, the same value `gateRoundCap` already
 hands the card (`emitCard`'s `planFile: argv[1]`). `runMetaReview` passes it to `buildStepBackPack({planFile})`, which
@@ -175,14 +185,22 @@ A **stop is honoured only when it is complete and verifiable**:
    stop is downgraded to a proposal;
 3. MEDIUM/LOW items may be any kind; their `settled` claims are still ledger-checked.
 
+A **structural route is honoured only when no open HIGH is left unaccounted**: every HIGH inventory topic must have a
+ledger ruling at an earlier round (the same `settled` check as rule 2, applied by the guard without a reviewer claim). An
+open, never-ruled HIGH → downgraded. A structural verdict does not name topics, so the MEDIUM/LOW inventory it leaves is
+captured as debt with `deferredReason: "meta-review structural: <cause>"`.
+
+**Every loop-ending honoured verdict (stop or structural) captures its inventory as debt** through the same command
+(§2.7), so no finding leaves the loop unaccounted.
+
 | Verdict | Trigger | Honoured when | Honoured effect | Downgraded effect |
 |---|---|---|---|---|
 | admit n | T1 | ≥1 named topic is in the inventory | **L1**: `admittedThrough = min(round − 1 + n, absolute)`; this round and later ones up to it run without `--past-cap`, stamped `pastCapReason: "meta-review <attemptId>: <reason>"` | exit 4, card shows the proposal |
 | admit | T2 | always (the round is inside the cap anyway) | round runs, as today | — |
 | stop | T1 | the stop is complete and verifiable (rules 1–3) | exit 4 with the decision on the card; **L3**: the inventory is captured as debt (§2.7) | exit 4, human card (today) |
 | stop | T2 | **L2**: as T1, **and** `assessCapProductivity(...).stillProductive === false` (measured, not null) | exit 4: the loop stops before the soft cap; L3 debt capture | round runs, as today; the card shows the proposal |
-| structural | T1 | every `evidence.file` is a file the pack showed | exit 4 routed to structural; proposal text recorded | exit 4, human card |
-| structural | T2 | as T1, and the same productivity condition as stop | exit 4 routed to structural | round runs, as today |
+| structural | T1 | every `evidence.file` is a file the pack showed, and no open HIGH is unaccounted | exit 4 routed to structural; proposal recorded; L3 debt capture of the inventory | exit 4, human card |
+| structural | T2 | as T1, and the same productivity condition as stop | exit 4 routed to structural; L3 debt capture | round runs, as today |
 | invalid / unavailable / truncated / provider failure | any | never | — | T1: exit 4, human card. T2: round runs, as today |
 
 The productivity condition on T2 is the replay's lesson made mechanical: a stop while the last round's acceptance is still
@@ -206,9 +224,12 @@ different attempt id, so it gets a fresh decision; returning to the original ide
 Overrides and revokes name the full attempt id, so they bind to that identity only. One
 attempt is one provider call: **no retries** (a 429 or transient error is `unavailable`, the human path), a **120 s
 deadline** (`AbortSignal.timeout`), the pack bounded at `PACK_LIMITS.totalChars` (600,000) and output at
-`STEP_BACK_MAX_OUTPUT_TOKENS` (4,000; Gemini 7,000 incl. thinking). Worst case per session: code T2@4, T1@7, T1@8 = 3
-attempts; plan T1@4, T1@5 = 2. At the measured Opus cost of $0.975 a decision (replay v2 §2.2, `measured`), that is about
-$3 per code audit (`derived`). Concurrent invocations of the same sid and round are unsupported, as for audit rounds
+`STEP_BACK_MAX_OUTPUT_TOKENS` (4,000; Gemini 7,000 incl. thinking). **A persisted per-session budget** bounds spend across identities: the fold counts decision events with `sent: true`
+for the sid; at `META_REVIEW_SESSION_BUDGET` (code 3, plan 2 — one per trigger point of a single identity) no further
+call is made, the decision is recorded `unavailable` with reason `session-budget`, and the human path applies. There is
+no override flag for the budget: past it the human path is today's `--past-cap`, which needs no reviewer. At the
+measured Opus cost of $0.975 a decision (replay v2 §2.2, `measured`), that is about $3 per code audit session at most
+(`derived`); the gate prints `meta-review: attempt N of budget M` before each call. Concurrent invocations of the same sid and round are unsupported, as for audit rounds
 themselves; the attempt id makes a duplicate visible, never a double admission (§2.5).
 
 ### 2.5 Every decision is recorded (#19 observability)
@@ -221,7 +242,7 @@ Two records, one source (`buildMetaDecisionRecord`):
    `{event, attemptId, at, trigger, mode, round, caps, fingerprint, signals, productivity, inventory, pack: {sha256, chars,
    fileCount, excluded, truncationCount}, arm, sentinel, model, usage, costUsd, spendSource, state, verdict, guard:
    {effect, honoured, reason}, admittedThrough}`. **The log stores no finding text**: `inventory` is
-   `[{topicId, findingId, severity}]`, and `--meta-stop` re-reads the finding objects from the round's own result file at
+   `[{topicId, findingId, severity}]`, and `--meta-decision` re-reads the finding objects from the round's own result file at
    capture time (§2.7). The verdict is stored as the reviewer returned it, after `redactSecrets`; the raw text of an
    **invalid** reply is kept the same way (redacted, truncated to 4,000 chars) for diagnosis, as v1 keeps `raw`.
    **Crash-safe append** (`appendMetaEvent`): (1) read the log; if it is non-empty and does not end in `\n`, the tail after
@@ -281,9 +302,9 @@ Every override is an appended `override` / `revoke` event naming the attempt it 
 
 `debt-auto-capture.mjs` states there is one debt writer. An honoured stop does not write debt inside the gate. The gate
 prints the one command, naming the attempt explicitly:
-`node scripts/debt-auto-capture.mjs --meta-stop .audit/<sid>-meta-review.jsonl --decision <attemptId> --run <sid>`.
+`node scripts/debt-auto-capture.mjs --meta-decision .audit/<sid>-meta-review.jsonl --decision <attemptId> --run <sid>`.
 
-`--meta-stop` is a third input beside `--ledger` and `--final-review`. It:
+`--meta-decision` is a third input beside `--ledger` and `--final-review`. It:
 1. folds the log and refuses (exit 1, nothing written) unless `<attemptId>` is an honoured stop that no later override
    reversed, for the same sid as `--run`; a log with two decisions never guesses: `--decision` is required;
 2. takes the candidates from the decision's recorded **inventory** and re-reads each finding object from that round's own
@@ -319,10 +340,10 @@ needs a human before any debt is written).
 | `scripts/lib/audit/step-back-replay.mjs` | import `estimateCostUsd` from the provider, re-export it | no duplicate pricing (#1) |
 | `scripts/lib/audit/meta-review.mjs` (create) | `metaTriggerFor`, `guardMetaDecision`, `runMetaReview`, `buildMetaDecisionRecord`, `readMetaDecisions`, `appendMetaDecision`, `admissionFor`, `recordMetaDecision`, `recordMetaOverride`, `revokeAdmission` | orchestration out of the IO gate (#3) |
 | `scripts/lib/audit/round-cap-gate.mjs` | `gateRoundCap(argv, {metaReview, runMeta})`: T1 in the refusal branch, T2 before the within-cap return, admission carry, override record on `--past-cap` | the one chokepoint every host passes (#1) |
-| `scripts/openai-audit.mjs` | `gateRoundCap(process.argv.slice(2), { metaReview: !argv.includes('--no-meta-review') })`; add `--no-meta-review` to the known flags. **No line growth** (`size:ratchet:gate`) | eligibility from `main()` only |
+| `scripts/openai-audit.mjs` | `gateRoundCap(process.argv.slice(2), { metaReview: !argv.includes('--no-meta-review'), auditorModel })`; add `--no-meta-review` and `--meta-override` (value-taking) to the known flags; the gate reads `--meta-override`'s value with `readFlagValue` (a present flag without a value is refused, as `--past-cap` is). **No line growth** (`size:ratchet:gate`) | eligibility from `main()` only |
 | `scripts/audit-loop.mjs` | forward `--no-meta-review` and `--meta-override` | opt-out reaches the loop |
 | `scripts/audit-structural-card.mjs` | `--step-back-arm higher` (manual path stays v1); print the folded meta-review log for the sid; `--revoke-meta-admission --by --reason` | the operator sees and can revoke decisions |
-| `scripts/debt-auto-capture.mjs` | `--meta-stop <decision file>` input projected onto the ledger-entry shape | one debt writer (§2.7) |
+| `scripts/debt-auto-capture.mjs` | `--meta-decision <decision file>` input projected onto the ledger-entry shape | one debt writer (§2.7) |
 | `docs/audit/shared-references/meta-review.md` (create) | the trigger table, guard table, records, override, opt-out | detail out of SKILL.md (size gate) |
 | `scripts/sync-shared-audit-refs.mjs` | register `meta-review.md` → `audit-plan`, `audit-code`, `cycle` | synced reference |
 | `docs/audit/shared-references/round-cap-and-structural-card.md` | §Round signals: replace "never automatic" with a 3-line pointer to `meta-review.md`; stay ≤ 12,000 chars | the old text becomes false |
@@ -333,7 +354,7 @@ needs a human before any debt is written).
 | `tests/run-tests-env.test.mjs` (create) | the child env carries `AUDIT_META_REVIEW=off` unless set | the isolation default |
 | `tests/sync-shared-audit-refs.test.mjs` (modify) | `meta-review.md` lands in all three skills' `references/` with the generated banner and re-spelled links, and the `.claude/skills/` copies match after `skills:regenerate` | Tier 3 (b): the sync contract, same commit |
 | `tests/step-back-contract.test.mjs` | v2 schema cases | contract |
-| `tests/debt-auto-capture-meta-stop.test.mjs` (create) | `--meta-stop` projection and refusal | one writer |
+| `tests/debt-auto-capture-meta-stop.test.mjs` (create) | `--meta-decision` projection and refusal | one writer |
 
 ### 7b. Implementation Phases
 
@@ -371,7 +392,7 @@ needs a human before any debt is written).
   last round is measured unproductive (< ⅔ acceptance) and every `settled` claim checks against the ledger. A productive
   or unmeasured round is never stopped automatically.
 - **L3 — automatic debt capture on an honoured stop.** Today debt from a stop needs a human approval (`approveStop`).
-  After, the skills run `debt-auto-capture --meta-stop`. Reversible through the debt flow; every entry names the decision.
+  After, the skills run `debt-auto-capture --meta-decision`. Reversible through the debt flow; every entry names the decision.
 
 If Louis approves only some: L2 can be turned off by making T2 record-only (its row in the guard table becomes
 "downgraded always"); L3 by having the skills print, not run, the capture command. Both are one-line changes in the guard
@@ -423,13 +444,18 @@ Unit tests use injected providers only; no test makes a model call.
 | T2 with unmeasured productivity | no ledger | `downgraded` (null is never "not productive") |
 | **Unavailable provider** | chain finds no route; also a provider that throws, truncates, or returns `failure` | no automatic decision, T1 human card exit 4 / T2 round runs; decision recorded `unavailable`, cost per the spend rule (0 only when nothing was sent) |
 | Invalid reply | plain text / `{action:"continue"}` | `invalid`, raw kept, human card |
+| Structural with an open HIGH (negative) | T1/T2 structural, inventory holds a never-ruled HIGH | `downgraded`; with the HIGH ruled earlier → `honoured` and the MEDIUM/LOW captured via `--meta-decision` |
+| Header egress | an inventory finding citing an excluded path with secret-bearing detail | the pack header carries only `{topicId, severity}`; the path and detail are absent from the header |
+| `--meta-override` CLI | spawned `openai-audit.mjs` and `audit-loop.mjs` with `--meta-override "<reason>"`: an eligible T2 stop, and no such decision; a bare flag with no value | eligible → gate passes + `override` event; none → `META_OVERRIDE_UNNEEDED` exit 1; bare → refused |
+| Session budget | four distinct fingerprints at code round 7 | three calls, the fourth recorded `session-budget` with no call |
+| Independence | auditor model in the `anthropic` family; then in `google` | `higher` skipped → `different` chosen; both equal → `unavailable: no-independent-route` |
 | Opt-out | `AUDIT_META_REVIEW=off` and `--no-meta-review` | provider factory never called; behaviour byte-identical to today's card path |
 | Eligibility | `gateRoundCap(argv)` without `metaReview` | provider factory never called |
 | Sdk pin | `createMetaReviewProvider` with `sdkAvailability → false` | falls to `different`; with no Gemini → unavailable; `higher` client built with `{backend:'sdk'}` (assert the emitted request, not config) |
 | **Egress (Tier 3)** | a fixture round cites `.env` and a symlink into a sensitive path | the meta path's pack excludes both and the skip log counts them; the pack text holds no fixture secret (redacted) |
 | Override | `--past-cap` on a round with an honoured stop; `--revoke-meta-admission` | `override` set on the decision; `meta_review_override` recorded |
 | Record shape | every state | the decision has inputs, verdict, model, arm, `costUsd`/`spendSource`; recording failure is reported, never thrown |
-| `--meta-stop` | an honoured stop; a downgraded one; a log with two decisions and no `--decision`; an overridden stop; a candidate whose persist fails | entries built through the shared path with the attempt id; refusals exit 1 writing nothing; the persist failure exits non-zero with `captured N of M` and a `debt-capture` event |
+| `--meta-decision` | an honoured stop; a downgraded one; a log with two decisions and no `--decision`; an overridden stop; a candidate whose persist fails | entries built through the shared path with the attempt id; refusals exit 1 writing nothing; the persist failure exits non-zero with `captured N of M` and a `debt-capture` event |
 
 **Proof plan:** each row above is a red test before its code (the guard rows first); the final report shows the test names
 and counts per file, the `size:ratchet:gate` / `skills:size:gate` outputs, and one decision file produced by a test run.
