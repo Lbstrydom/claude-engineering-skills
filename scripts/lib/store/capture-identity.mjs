@@ -91,8 +91,8 @@ export async function reconcileReusedRunLinkage(existing, { auditSessionId } = {
     if (!sid || !await captureV1Present()) return existing.id;
     const row = await one('SELECT audit_session_id FROM audit_runs WHERE id = $1', [existing.id]);
     if (row?.audit_session_id && row.audit_session_id !== sid) {
-      process.stderr.write(`  [learning] run ${existing.id} is linked to session "${row.audit_session_id}", not "${sid}" - reuse keeps the existing link\n`);
-      return existing.id;
+      process.stderr.write(`  [learning] run ${existing.id} is linked to session "${row.audit_session_id}", not "${sid}" - reuse refused (a mis-threaded run id would attribute this session's telemetry to the other)\n`);
+      return null;
     }
     if (row?.audit_session_id) return existing.id;
     const hasState = await columnExists('audit_runs', 'linkage_state', many, isCloudEnabled);

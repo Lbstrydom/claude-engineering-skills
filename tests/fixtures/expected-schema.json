@@ -15661,7 +15661,7 @@
       "table_name": "audit_runs",
       "trigger_name": "trg_audit_runs_derive_linkage",
       "action_timing": "BEFORE",
-      "events": "INSERT",
+      "events": "INSERT,UPDATE",
       "action_statement": "EXECUTE FUNCTION audit_runs_derive_linkage()"
     },
     {
