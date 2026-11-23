@@ -214,7 +214,7 @@ and then delegates. It owns no file lists.
 | Editor | Reads | Covered by |
 |---|---|---|
 | Claude Code | project `.claude/skills/` | committed here; synced elsewhere |
-| VS Code Copilot 1.109+ | `.claude/skills/` (workspace root) | same |
+| VS Code Copilot 1.109+ | `.claude/skills/` (workspace root; the Copilot runtime reads it, though the VS Code skills page lists only `.github/skills/` and calls its table non-exhaustive, so the harness listing is unconfirmed pending the smoke run) | same |
 | Cursor | `.claude/skills/` | same |
 | Windsurf | `.claude/skills/` | same |
 | Any terminal | n/a | `node scripts/<runner>.mjs` here, `scripts/.claude-skills/<runner>.mjs` in a consumer |

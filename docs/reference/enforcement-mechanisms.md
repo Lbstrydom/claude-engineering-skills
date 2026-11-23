@@ -105,8 +105,10 @@ the consultation already happened, and it is authoritative.
 - Disable: `ARCH_MEMORY_HOOK_DISABLE=1`.
 - Cost: ~$0.0003 + one RPC, disk-cached 24h keyed on
   `(intentDescription, model, dim)`.
-- **Copilot, Cursor and every other host get no hook.** There the
-  `get-neighbourhood` call is run by hand — and so must Claude, when the hook did
+- **Hosts that do not run the hook get none.** The VS Code Copilot harness reads this repo's
+  `.claude/settings.json` hooks (Preview; Claude matcher semantics for PascalCase events), but drops
+  `UserPromptSubmit` command output, so the callout never reaches the model there; Cursor and others
+  run no hook. Where it did not fire, the `get-neighbourhood` call is run by hand — and so must Claude, when the hook did
   not fire because a question turned into a fix mid-conversation.
 
 ### Quick-fix detection — `.claude/hooks/quickfix-scan.mjs`

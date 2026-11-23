@@ -233,8 +233,8 @@ and **never hand-edit it**.
 > indented under `description: |` it is description TEXT, parsed, valid and
 > **inert**. Semantic
 > overlap has no oracle: declare the discriminator in BOTH descriptions (*topic* →
-> `/explain --history`, *claim* → `/investigate`). VS Code reads
-> `.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.
+> `/explain --history`, *claim* → `/investigate`).
+> VS Code Copilot reads root `.mcp.json` directly and only forwards `.vscode/mcp.json` — keep the two mirrored when adding servers.
 
 Every reference file has `summary:` YAML frontmatter that must byte-match the
 parent SKILL.md's reference-index row, enforced by `npm run skills:check`
@@ -725,8 +725,7 @@ is NOT offline: the store is up and this repo has no row — nothing was compare
 ACCELERATION, not cross-agent enforcement.** A
 `> **Architectural-memory consultation**` callout means
 `.claude/hooks/arch-memory-check.sh` fired — treat it as authoritative.
-**Copilot, Cursor and every other host get no hook** — there you run the command
-above by hand, and so must Claude when the hook didn't fire (a question that
+**Hosts without the hook get none** (Cursor; Copilot drops its output) — there you run the command above by hand, and so must Claude when the hook didn't fire (a question that
 became a fix mid-conversation). Hook details:
 [enforcement-mechanisms.md](docs/reference/enforcement-mechanisms.md) §The two accelerators.
 

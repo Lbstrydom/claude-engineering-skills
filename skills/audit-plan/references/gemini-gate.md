@@ -35,7 +35,7 @@ it made this ladder disagree with the auto-selection order documented below.
    `ANTHROPIC_API_KEY`.
 3. else `ANTHROPIC_API_KEY` set → `gemini-review.mjs` auto-falls-back to Claude Opus (no flag needed).
 4. **else no route at all** → do NOT silently skip. Run an **independent adversarial
-   review agent** over the union diff as the gate: spawn a fresh agent (Task/Agent)
+   review agent** over the union diff as the gate: spawn a fresh subagent (the host's delegation tool: `Agent` on Claude Code, `task` on Copilot)
    with the plan + the diff + the accumulated findings and the instruction *"act as
    an independent final reviewer — find what the author and GPT missed; default to
    skepticism."* Record its verdict in the same `APPROVE`/`CONCERNS`/`REJECT` shape
