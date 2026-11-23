@@ -91,7 +91,9 @@ system. What changes:
 | Effect | advisory text | **decides within bounds** (§2.4), every decision recorded (§2.5), a human can override (§2.6) |
 
 `ABSOLUTE_CAP` refusals do not trigger it: there is nothing left to decide. `PAST_CAP_UNNEEDED`, `MODE_CONFLICT` and
-`BAD_ROUND` never reach it.
+`BAD_ROUND` never reach it. **No prior round results for the sid → no meta-review** (nothing to review; the gate behaves
+as today). That also keeps every existing refusal fixture that starts at round 4 with no results (the cap CLI tests, the
+gate-honesty `round-cap-*-refusal` oracles) byte-identical, zero network attempts.
 
 **Eligibility is per call** (the tiered-pipeline pattern, AGENTS.md §Tiered-Recall): `gateRoundCap(argv, {metaReview})`
 defaults `metaReview: false`; only `openai-audit.mjs` `main()` passes `true`. Library and test callers never spend.
@@ -137,20 +139,42 @@ structural: {action, cause, evidence: [{file, why}] ≥1, proposedFix, reason}
 `parseMetaReviewOutput` reuses v1's JSON/fence handling and the known-topic check. There is still no bare `continue`:
 `admit` must name topics, so a reviewer with nothing to say fails validation instead of buying a round.
 
-The pack is v1's `buildStepBackPack`, unchanged, plus a short header (mode, trigger, round, caps, the round signals and
-`assessCapProductivity`'s line) that passes through `redactSecrets`. For a plan audit `citedFilesOf` finds few paths
-(plan findings cite sections), so the pack is mostly plan + ledger + rounds; that is correct for a plan.
+The pack is v1's `buildStepBackPack`, unchanged, plus a short header (mode, trigger, round, caps, the round signals,
+`assessCapProductivity`'s line, and the **open-topic inventory**, §2.4) that passes through `redactSecrets`.
+
+**Plan-audit data flow** (one path, no new egress seam). The plan path is `argv[1]`, the same value `gateRoundCap` already
+hands the card (`emitCard`'s `planFile: argv[1]`). `runMetaReview` passes it to `buildStepBackPack({planFile})`, which
+already classifies it with `resolveAndClassify` and reads it only through `redactSecrets`, and adds it as the `plan`
+section, which is last in `TRUNCATION_ORDER`. Known topics come from the round results and ledger (`pack.topics`, derived
+with the same `topicOf` as the rounds), never from section text, so plan findings that cite sections still have topics.
+For a **plan audit the plan is required evidence**: if the pack reports the plan excluded or unreadable (`notes` carries
+`plan file was excluded or unreadable`) or the `plan` section was truncated, the meta-review is `unavailable` (fail closed
+to the human card) and no model is called. For a code audit the plan is optional, as in v1. `citedFilesOf` finds few paths
+in a plan audit, so its pack is mostly plan, ledger and rounds; that is correct for a plan.
 
 ### 2.4 Decides within bounds: `guardMetaDecision` (pure, deterministic)
 
 A valid verdict is not obeyed as-is. The guard maps it to an effect, and **only the guard** decides whether the effect is
 `honoured` or `downgraded` to a proposal (today's human card, plus the verdict). The guard never raises a cap.
 
+**The open-topic inventory** (the authoritative set a stop must account for): the topics of the last completed round's
+findings, derived with `cap-productivity.mjs`'s `topicOf` (the one derivation `write-ledger-entries` uses), each with its
+severity and finding object. It is computed by the guard from the round results, never taken from the reviewer, and is
+printed in the pack header so the reviewer sees the same list.
+
+A **stop is honoured only when it is complete and verifiable**:
+1. its items cover **every** inventory topic (an omitted topic → downgraded, named in the guard reason);
+2. every **HIGH** inventory topic's item is `kind: settled`, and `settled` is checked against the ledger: the topic has an
+   entry ruled at an earlier round (`resolvedRound < lastRound`) with outcome `accepted`/`dismissed`/`severity_adjusted`.
+   A HIGH that is merely `marginal`, `rigour-chasing` or `false-premise` is a judgement the guard cannot verify, so the
+   stop is downgraded to a proposal;
+3. MEDIUM/LOW items may be any kind; their `settled` claims are still ledger-checked.
+
 | Verdict | Trigger | Honoured when | Honoured effect | Downgraded effect |
 |---|---|---|---|---|
-| admit n | T1 | ≥1 named topic is in the last round's findings | **L1**: `admittedThrough = min(round − 1 + n, absolute)`; this round and later ones up to it run without `--past-cap`, stamped `pastCapReason: "meta-review <decisionId>: <reason>"` | exit 4, card shows the proposal |
+| admit n | T1 | ≥1 named topic is in the inventory | **L1**: `admittedThrough = min(round − 1 + n, absolute)`; this round and later ones up to it run without `--past-cap`, stamped `pastCapReason: "meta-review <attemptId>: <reason>"` | exit 4, card shows the proposal |
 | admit | T2 | always (the round is inside the cap anyway) | round runs, as today | — |
-| stop | T1 | every `settled` item's topic was ruled in the ledger at an earlier round | exit 4 with the decision on the card; **L3**: the remaining findings are captured as debt | exit 4, human card (today) |
+| stop | T1 | the stop is complete and verifiable (rules 1–3) | exit 4 with the decision on the card; **L3**: the inventory is captured as debt (§2.7) | exit 4, human card (today) |
 | stop | T2 | **L2**: as T1, **and** `assessCapProductivity(...).stillProductive === false` (measured, not null) | exit 4: the loop stops before the soft cap; L3 debt capture | round runs, as today; the card shows the proposal |
 | structural | T1 | every `evidence.file` is a file the pack showed | exit 4 routed to structural; proposal text recorded | exit 4, human card |
 | structural | T2 | as T1, and the same productivity condition as stop | exit 4 routed to structural | round runs, as today |
@@ -160,52 +184,93 @@ The productivity condition on T2 is the replay's lesson made mechanical: a stop 
 ≥ ⅔, or unmeasured, is exactly the false stop all three arms made. At T1 the cap already stops the run, so a stop there
 loosens nothing about rounds.
 
-**Admission carries across rounds** through the decision file (`<sid>-meta-review.json`): a later round ≤
-`admittedThrough` passes the gate without re-asking and without `CARD_REQUIRED` (the decision file is the evidence that
-existed at the decision). The next refused round after an admission is exhausted triggers T1 again. Worst case per
-session: code T2@4, T1@7, T1@8 = 3 calls; plan T1@4, T1@5 = 2. At the measured Opus cost of $0.975 a decision
-(replay v2 §2.2, `measured`), that is about $3 per code audit at worst (`derived`).
+**Admission carries across rounds, bound to the audit's identity.** An admission event records an **identity
+fingerprint**: `{mode, planFile (repo-relative, original case), diffBase (the `--diff` value or null), changedSha256 (sha256
+of the sorted `--changed` list or null), sid}` — the arguments that define *which change* is audited, all read from argv
+in the gate. A later round passes without `--past-cap` and without `CARD_REQUIRED` only when (a) it is ≤ `admittedThrough`,
+(b) its fingerprint equals the admission's, and (c) no later override event revoked it. Any mismatch → no admission
+(T1 runs again, a fresh attempt). The ledger is not in the fingerprint: it grows every round by design, and the reviewer's
+decision is about the change, not a ledger snapshot. A malformed or unreadable event log → no admission, the gate prints
+why, and the human path applies (fail closed). **Opt-out wins**: with `--no-meta-review` / `AUDIT_META_REVIEW=off` the gate
+neither calls the reviewer nor reads admissions; a past-cap round then needs a human `--past-cap`, exactly as today.
+
+**Bounded spend.** Each trigger point has a stable **attempt id** `<sid>-r<round>-<T1|T2>`. If the event log already holds
+a decision for that attempt id, the gate reuses it and makes no call (a re-run of the same command is idempotent). One
+attempt is one provider call: **no retries** (a 429 or transient error is `unavailable`, the human path), a **120 s
+deadline** (`AbortSignal.timeout`), the pack bounded at `PACK_LIMITS.totalChars` (600,000) and output at
+`STEP_BACK_MAX_OUTPUT_TOKENS` (4,000; Gemini 7,000 incl. thinking). Worst case per session: code T2@4, T1@7, T1@8 = 3
+attempts; plan T1@4, T1@5 = 2. At the measured Opus cost of $0.975 a decision (replay v2 §2.2, `measured`), that is about
+$3 per code audit (`derived`). Concurrent invocations of the same sid and round are unsupported, as for audit rounds
+themselves; the attempt id makes a duplicate visible, never a double admission (§2.5).
 
 ### 2.5 Every decision is recorded (#19 observability)
 
 Two records, one source (`buildMetaDecisionRecord`):
 
-1. **Decision file** `.audit/<sid>-meta-review.json`, append-only `decisions[]`, written with `atomicWriteFileSync`:
-   `{decisionId, at, trigger, mode, round, caps, signals, productivity, pack: {sha256, chars, files, excluded,
-   truncations}, arm, sentinel, model, usage, costUsd, spendSource, state, verdict, guard: {effect, honoured, reason},
-   admittedThrough, override: null}`. Raw output is kept for an invalid reply (as v1 keeps `raw`).
+1. **Event log** `.audit/<sid>-meta-review.jsonl`, **append-only**: one JSON line per event, written with a single
+   `fs.appendFileSync` of the whole line (never a read-modify-write of an array). Event kinds: `decision`, `override`,
+   `revoke`, `debt-capture`. State (current admission, overrides) is a **fold** over the log, so nothing is ever mutated
+   in place. A `decision` line: `{event, attemptId, at, trigger, mode, round, caps, fingerprint, signals, productivity,
+   inventory, pack: {sha256, chars, files, excluded, truncations}, arm, sentinel, model, usage, costUsd, spendSource,
+   state, verdict, guard: {effect, honoured, reason}, admittedThrough}`; raw output kept for an invalid reply (as v1 keeps
+   `raw`). A torn last line (crash mid-write) is skipped and reported, never fatal; a line that is not JSON elsewhere
+   makes the log malformed (fail closed, §2.4).
+   **Persist before act**: the gate appends the `decision` line and only then admits or stops. If the append fails, the
+   decision is not acted on: the gate prints the failure and takes the human path (T1 exit 4 card, T2 round runs).
 2. **Learning decision** `meta_review_decision` via `recordDecision` + `flush` (the `recordCapStop` path; free-text
-   `decision_type`, **no migration**), keyed `externalId: <sid>-r<round>-meta`, context = the record minus the pack
-   text. Best-effort, never throws, and the gate prints whether it was recorded (`recorded` / the reason).
+   `decision_type`, **no migration**), keyed `externalId: <attemptId>`, context = the decision minus the pack text.
+   Overrides record `meta_review_override` keyed `<attemptId>-override-<n>`. Best-effort, never throws, and the gate
+   prints whether it was recorded. The learning row is observability; the event log is authority.
 
-Cost is metered from provider usage with `estimateCostUsd` (moved from `step-back-replay.mjs` to `step-back-provider.mjs`,
-re-exported for the replay); missing usage is charged its upper bound and marked `spendSource: 'upper-bound'`, never $0.
-An unavailable reviewer is recorded too (`state: 'unavailable'`, the reason, cost 0, `spendSource: 'none'`): a decision
-that did not happen is data.
+**Cost is never under-reported.** Metered from provider usage with `estimateCostUsd` (moved from `step-back-replay.mjs` to
+`step-back-provider.mjs`, re-exported for the replay). Three cases, distinguished by `spendSource`:
+- `usage` — the provider returned both counts;
+- `upper-bound` — a request was sent and usage is missing (a throw after send, a timeout, a truncation without usage): the
+  charge is `estimateCostUsd` at `ceil(pack.chars / 3)` input tokens and the output ceiling — conservative for English
+  and code at ~4 chars a token;
+- `none` — no request was made (no route, opt-out, no prior rounds, plan excluded): cost 0.
+An unavailable reviewer is recorded too: a decision that did not happen is data.
 
 No reader, dashboard or collector is added: the records are what a later synchronous evaluation reads (AGENTS.md
 §Model Swap-In: do not add a collector).
 
 ### 2.6 A human can override
 
-- **A stop or structural** at T1: re-run with `--past-cap "<reason>"`, exactly as today. The gate sees the decision for
-  that round and records the override (`override: {by: 'past-cap', reason}` on the decision, plus a
-  `meta_review_override` learning decision).
-- **An admission**: `node scripts/audit-structural-card.mjs --sid "$SID" --mode code --revoke-meta-admission --by "<name>"`
-  sets `admittedThrough` back to the last completed round and records the override.
-- **Captured debt** (L3): resolved through the existing debt flow; the entries carry `deferredReason: "meta-review stop:
-  <premise>"` and the decision id, so they are findable.
+Every override is an appended `override` / `revoke` event naming the attempt it overrides, the operator (`--by`, else
+`AUDIT_OPERATOR`, else `unknown`) and the reason (≥ 15 characters, the `MIN_PAST_CAP_REASON_CHARS` rule).
+
+- **A T1 stop or structural**: re-run with `--past-cap "<reason>"`, exactly as today (the card is on disk from the
+  refusal). The gate appends an `override` event against that round's T1 attempt.
+- **A T2 stop or structural** (round 4, inside the soft cap, where `--past-cap` is refused as `PAST_CAP_UNNEEDED`): re-run
+  the same round with `--meta-override "<reason>"`. Accepted only when the log holds an honoured T2 stop/structural for
+  this sid, round and fingerprint; otherwise refused (`META_OVERRIDE_UNNEEDED`, exit 1), so it cannot become a general
+  bypass. The gate appends the `override` event, then the round runs; the attempt id is unchanged, so the decision is not
+  re-asked. With opt-out set, `--meta-override` is unneeded and refused the same way. `audit-loop.mjs` forwards it.
+- **An admission**: `node scripts/audit-structural-card.mjs --sid "$SID" --mode code --revoke-meta-admission --by "<name>" --reason "<why>"`
+  appends a `revoke` event; the fold then ends the admission at the last completed round.
+- **Captured debt** (L3): resolved through the existing debt flow; each entry carries `deferredReason: "meta-review stop:
+  <premise>"` and the attempt id.
 - **Opt out entirely**: `--no-meta-review` / `AUDIT_META_REVIEW=off`.
 
 ### 2.7 Debt capture on an honoured stop (L3) — no second debt writer
 
-`debt-auto-capture.mjs` states there is one debt writer. An honoured stop does not write debt inside the gate. It writes
-the stop items onto the decision, and the gate prints the one command:
-`node scripts/debt-auto-capture.mjs --meta-stop .audit/<sid>-meta-review.json --run <sid>`. `--meta-stop` is a third
-input beside `--ledger` and `--final-review`: it projects the honoured stop's items (looked up in the session ledger by
-`topicId`, so the debt entry carries the real finding) onto the ledger-entry shape and flows through the SAME
-build/persist path. It refuses a decision that is not an honoured stop. The skills run that command automatically after an
-honoured stop (this is L3: today a stop needs a human before any debt is written).
+`debt-auto-capture.mjs` states there is one debt writer. An honoured stop does not write debt inside the gate. The gate
+prints the one command, naming the attempt explicitly:
+`node scripts/debt-auto-capture.mjs --meta-stop .audit/<sid>-meta-review.jsonl --decision <attemptId> --run <sid>`.
+
+`--meta-stop` is a third input beside `--ledger` and `--final-review`. It:
+1. folds the log and refuses (exit 1, nothing written) unless `<attemptId>` is an honoured stop that no later override
+   reversed, for the same sid as `--run`; a log with two decisions never guesses: `--decision` is required;
+2. takes the candidates from the decision's recorded **inventory** (the round's own finding objects, so every candidate
+   has its real finding, whether or not the ledger has an entry for it), joined to the stop item for its premise;
+3. projects each onto the ledger-entry shape (the `--final-review` projection's pattern) and flows through the SAME
+   build/persist path;
+4. reports `captured N of M`; any candidate it could not build or persist makes the run exit non-zero, and it appends a
+   `debt-capture` event with the counts either way.
+
+The skills run that command after an honoured stop and report it. A non-zero exit there is an **incomplete handoff**: the
+skill says so in its report with the counts and the command to re-run, never "stopped clean" (this is L3: today a stop
+needs a human before any debt is written).
 
 ## 3–5. (frontend sections — not applicable, backend scope)
 
@@ -228,7 +293,7 @@ honoured stop (this is L3: today a stop needs a human before any debt is written
 | `scripts/lib/audit/meta-review.mjs` (create) | `metaTriggerFor`, `guardMetaDecision`, `runMetaReview`, `buildMetaDecisionRecord`, `readMetaDecisions`, `appendMetaDecision`, `admissionFor`, `recordMetaDecision`, `recordMetaOverride`, `revokeAdmission` | orchestration out of the IO gate (#3) |
 | `scripts/lib/audit/round-cap-gate.mjs` | `gateRoundCap(argv, {metaReview, runMeta})`: T1 in the refusal branch, T2 before the within-cap return, admission carry, override record on `--past-cap` | the one chokepoint every host passes (#1) |
 | `scripts/openai-audit.mjs` | `gateRoundCap(process.argv.slice(2), { metaReview: !argv.includes('--no-meta-review') })`; add `--no-meta-review` to the known flags. **No line growth** (`size:ratchet:gate`) | eligibility from `main()` only |
-| `scripts/audit-loop.mjs` | forward `--no-meta-review` | opt-out reaches the loop |
+| `scripts/audit-loop.mjs` | forward `--no-meta-review` and `--meta-override` | opt-out reaches the loop |
 | `scripts/audit-structural-card.mjs` | `--step-back-arm higher`; `--step-back` uses the v2 charter; `--revoke-meta-admission --by` | manual path = same system |
 | `scripts/lib/audit/step-back-card.mjs` | `buildCheckpointSection` uses the v2 runner when the arm is the meta chain | one runner |
 | `scripts/debt-auto-capture.mjs` | `--meta-stop <decision file>` input projected onto the ledger-entry shape | one debt writer (§2.7) |
@@ -236,8 +301,11 @@ honoured stop (this is L3: today a stop needs a human before any debt is written
 | `scripts/sync-shared-audit-refs.mjs` | register `meta-review.md` → `audit-plan`, `audit-code`, `cycle` | synced reference |
 | `docs/audit/shared-references/round-cap-and-structural-card.md` | §Round signals: replace "never automatic" with a 3-line pointer to `meta-review.md`; stay ≤ 12,000 chars | the old text becomes false |
 | `skills/audit-plan/SKILL.md`, `skills/audit-code/SKILL.md`, `skills/cycle/SKILL.md` | rewrite the cap paragraph: exit 4 now may carry a meta decision; what to do for admit / stop / structural / unavailable; reference row for `meta-review.md`. **No net growth** (`skills:size:gate`) | operators follow the new path |
+| `scripts/run-tests.mjs` | child env defaults `AUDIT_META_REVIEW=off` (an explicit value is kept) | suite-wide isolation (§8) |
 | `tests/meta-review.test.mjs` (create) | §9 | Tier 3 + controls |
-| `tests/audit-round-cap-cli.test.mjs`, `tests/audit-loop-round-cap.test.mjs` | spawn with `AUDIT_META_REVIEW=off`; one case asserting the opt-out path | no spend from tests |
+| `tests/audit-round-cap-cli.test.mjs` | one spawned case with prior round results and meta ON under the no-network preload: exactly the reviewer's request is attempted, refused, recorded `unavailable` + `upper-bound`, exit 4 card; and the same with `--no-meta-review`: zero attempts | eligibility is real, opt-out is real |
+| `tests/run-tests-env.test.mjs` (create) | the child env carries `AUDIT_META_REVIEW=off` unless set | the isolation default |
+| `tests/sync-shared-audit-refs.test.mjs` (modify) | `meta-review.md` lands in all three skills' `references/` with the generated banner and re-spelled links, and the `.claude/skills/` copies match after `skills:regenerate` | Tier 3 (b): the sync contract, same commit |
 | `tests/step-back-contract.test.mjs` | v2 schema cases | contract |
 | `tests/debt-auto-capture-meta-stop.test.mjs` (create) | `--meta-stop` projection and refusal | one writer |
 
@@ -254,12 +322,12 @@ honoured stop (this is L3: today a stop needs a human before any debt is written
 (modify), `scripts/openai-audit.mjs` (modify), `scripts/audit-loop.mjs` (modify), `scripts/audit-structural-card.mjs`
 (modify), `scripts/lib/audit/step-back-card.mjs` (modify), `scripts/debt-auto-capture.mjs` (modify),
 `tests/audit-round-cap-cli.test.mjs` (modify), `tests/audit-loop-round-cap.test.mjs` (modify),
-`tests/debt-auto-capture-meta-stop.test.mjs` (create).
+`tests/debt-auto-capture-meta-stop.test.mjs` (create), `scripts/run-tests.mjs` (modify), `tests/run-tests-env.test.mjs` (create).
 
 **Phase 4 — Prose**: the shared reference, the sync registry, the three SKILL.md files. Files:
 `docs/audit/shared-references/meta-review.md` (create), `docs/audit/shared-references/round-cap-and-structural-card.md`
 (modify), `scripts/sync-shared-audit-refs.mjs` (modify), `skills/audit-plan/SKILL.md` (modify),
-`skills/audit-code/SKILL.md` (modify), `skills/cycle/SKILL.md` (modify).
+`skills/audit-code/SKILL.md` (modify), `skills/cycle/SKILL.md` (modify), `tests/sync-shared-audit-refs.test.mjs` (modify).
 
 **Close-out (not a phase)**: `node scripts/sync-shared-audit-refs.mjs`, `npm run skills:regenerate`,
 `npm run skills:check`, `npm run skills:size:gate`, `npm run size:ratchet:gate`, `npm run help:readonly:gate`,
@@ -287,9 +355,14 @@ and the prose; the PR offers them.
 
 - **Spend inside a refusal.** The gate promised a refused round makes no audit-inference requests; T1 now makes one
   reviewer call. Stated in the gate's docstring and the reference; bounded at 2–3 calls per session (§2.4).
-- **Tests spending.** Eligibility is per call; CLI tests that spawn `openai-audit.mjs` at the cap set
-  `AUDIT_META_REVIEW=off`. A test asserts that, with the opt-out, the gate never constructs a provider (an injected
-  provider factory that throws if called).
+- **Tests spending.** 83 files under `tests/` name `openai-audit.mjs` (`Grep`, 2026-11-23), too many to opt out one by
+  one. Three layers, each sufficient on its own for the common case: (1) **eligibility** — only `main()` passes
+  `metaReview: true`, so in-process callers never reach a provider; (2) **no prior rounds → no meta-review**, so a spawned
+  CLI at a fresh sid (every existing cap fixture) is unchanged; (3) **suite-wide default** — `scripts/run-tests.mjs`
+  sets `AUDIT_META_REVIEW=off` in the child env unless the variable is already set, so `npm test` and the pre-push tiers
+  never call the reviewer; dotenv does not override an existing variable, so a repo `.env` cannot re-enable it. The one
+  test that exercises the enabled path sets it explicitly and runs under the no-network preload. A test asserts the
+  injected provider factory is never called with the opt-out (a factory that throws if called).
 - **An Opus key on the machine means real calls from real audits.** That is the intent. The cost is recorded per call.
 - **The reviewer stops too eagerly** (the replay's finding). That is what the guard bounds; the records measure it.
 - **Deferred:** a reader/report over `meta_review_decision` rows (no current consumer; the first evaluation is
@@ -301,8 +374,18 @@ Unit tests use injected providers only; no test makes a model call.
 
 | Behaviour | Oracle | Pass condition |
 |---|---|---|
-| **Stops a rigour-chasing round** (positive) | T1, provider returns `stop` with `kind: settled` on a topic the fixture ledger ruled in round 2 | `honoured`, gate exit 4, decision recorded with `costUsd`, the printed debt command names the decision file |
-| Settled claim false (negative) | same, topic never ruled | `downgraded`, human card |
+| **Stops a rigour-chasing round** (positive) | T1, inventory = one HIGH ruled in round 2 + two MEDIUM; `stop` covers all three, HIGH `settled`, MEDIUMs `rigour-chasing` | `honoured`, gate exit 4, decision recorded with `costUsd`, the printed debt command names the log and `--decision <attemptId>` |
+| Settled claim false (negative) | same, the HIGH never ruled | `downgraded`, human card |
+| Stop omits a topic (negative) | inventory of 3, stop names 2 | `downgraded`, the reason names the omitted topic |
+| HIGH judged only `marginal` (negative) | stop covers all, HIGH `kind: marginal` | `downgraded` |
+| Admission identity | admit at round 4, then round 5 with a different `--diff` / plan path / changed set | round 5 not admitted (T1 runs again); same identity → admitted |
+| Malformed / torn log | a non-JSON middle line; a torn last line | malformed → no admission, human path; torn last line skipped and reported |
+| Idempotent attempt | the same T1 command run twice | provider called once; second run reuses the decision |
+| Persist before act | the append throws | no admission, no stop; human path; reason printed |
+| T2 override | honoured T2 stop, then `--meta-override "<reason>"`; and `--meta-override` with no such decision | round runs + `override` event; the second refused `META_OVERRIDE_UNNEEDED` |
+| Opt-out ignores admissions | admission on disk, `AUDIT_META_REVIEW=off`, round 5 without `--past-cap` | refused exit 4 as today |
+| Plan required for plan audits | plan path classified sensitive / missing / truncated | `unavailable`, no provider call, `spendSource: none` |
+| Spend accounting | provider throws after send; timeout; truncation without usage | `upper-bound` charge from `pack.chars`; never 0 |
 | **Admits a defect round** (positive) | T1 round 4 plan, `admit {rounds:1, topics:[open topic]}` | gate returns `ok`, `pastCapReason` starts `meta-review`, `admittedThrough: 4`; round 5 refused again → T1 again |
 | Admit clipped to absolute | code round 7, `admit {rounds:2}` | `admittedThrough: 8`, never 9 |
 | Admit of an unknown/closed topic (negative) | topic not in last round | `downgraded` |
@@ -319,7 +402,7 @@ Unit tests use injected providers only; no test makes a model call.
 | **Egress (Tier 3)** | a fixture round cites `.env` and a symlink into a sensitive path | the meta path's pack excludes both and the skip log counts them; the pack text holds no fixture secret (redacted) |
 | Override | `--past-cap` on a round with an honoured stop; `--revoke-meta-admission` | `override` set on the decision; `meta_review_override` recorded |
 | Record shape | every state | the decision has inputs, verdict, model, arm, `costUsd`/`spendSource`; recording failure is reported, never thrown |
-| `--meta-stop` | an honoured stop decision; a downgraded one | entries built through the shared path with the decision id; the downgraded one refused |
+| `--meta-stop` | an honoured stop; a downgraded one; a log with two decisions and no `--decision`; an overridden stop; a candidate whose persist fails | entries built through the shared path with the attempt id; refusals exit 1 writing nothing; the persist failure exits non-zero with `captured N of M` and a `debt-capture` event |
 
 **Proof plan:** each row above is a red test before its code (the guard rows first); the final report shows the test names
 and counts per file, the `size:ratchet:gate` / `skills:size:gate` outputs, and one decision file produced by a test run.
