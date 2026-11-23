@@ -564,7 +564,7 @@ async function main() {
   assertRepoRoot(import.meta.url);
   // Round cap: BEFORE the catalog refresh, sync check, brief or any provider — a refused round makes no inference request
   // and writes no --out file or gate evidence (docs/plans/audit-round-cap-structural-or-stop.md §2.1).
-  const roundGate = await gateRoundCap(process.argv.slice(2));
+  const roundGate = await gateRoundCap(process.argv.slice(2), { metaReview: true, auditorModel: MODEL });   // meta-review: main() is the one eligible caller
   if (!roundGate.ok) { process.exitCode = roundGate.exitCode; return; }
   const { roundCap, round } = roundGate;   // `round`: the strictly parsed --round (1 when absent); R2+ enables suppression, diff annotation, impact scoping
   // Live-catalog refresh: populate session cache so providers' newest

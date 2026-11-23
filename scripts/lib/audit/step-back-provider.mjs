@@ -61,8 +61,10 @@ function usageOf(inTok, outTok) {
  * @param {{client?: object, resolve?: Function, createClient?: Function, sdkAvailability?: () => {available: boolean, error: string|null}}} [seams]
  * @returns {{model: string, sentinel: string, call: Function, outputCeilingTokens: number, unmeasuredReason?: string}}
  */
-export function createStepBackProvider(arm = 'same', { client = null, resolve = resolveModel, createClient = createAnthropicClient, sdkAvailability = () => claudeAvailability('sdk'), timeoutMs = null } = {}) {
+export function createStepBackProvider(arm = 'same', { client = null, resolve = resolveModel, createClient = createAnthropicClient, sdkAvailability = () => claudeAvailability('sdk'), timeoutMs = null, maxRetries = null } = {}) {
   const signal = () => (Number.isInteger(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
+  // Per-request options: a deadline, and (for the meta-review) NO SDK-internal retries — one attempt is one call.
+  const reqOpts = () => ({ signal: signal(), ...(Number.isInteger(maxRetries) ? { maxRetries } : {}) });
   const sentinel = STEP_BACK_ARM_MODELS[arm];
   if (!sentinel) throw new Error(`createStepBackProvider: unknown arm "${arm}" (same|different|higher)`);
   const model = resolve(sentinel);
@@ -72,7 +74,7 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
       call: ({ system, user }) => sending(async (markSent) => {
         const c = client || await (await import('../openai-client.mjs')).createOpenAIClient({ purpose: 'gpt' });
         markSent();
-        const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS }, { signal: signal() });
+        const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS }, reqOpts());
         const truncated = r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens';
         // Any other non-success response is an INSTRUMENT failure, never parsed as a model decision.
         let failure = null;
@@ -96,7 +98,7 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
       call: ({ system, user }) => sending(async (markSent) => {
         const c = client || await createClient({ backend: 'sdk' });
         markSent();
-        const r = await c.messages.create({ model, max_tokens: STEP_BACK_MAX_OUTPUT_TOKENS, system, messages: [{ role: 'user', content: user }] }, { signal: signal() });
+        const r = await c.messages.create({ model, max_tokens: STEP_BACK_MAX_OUTPUT_TOKENS, system, messages: [{ role: 'user', content: user }] }, reqOpts());
         const text = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
         const truncated = r.stop_reason === 'max_tokens';
         const failure = truncated || r.stop_reason === 'end_turn' ? null : `Anthropic stop_reason ${r.stop_reason ?? 'absent'} (not end_turn)`;
@@ -145,7 +147,7 @@ export const META_REVIEW_TIMEOUT_MS = 120_000;
  */
 export function createMetaReviewProvider({ auditorModel = null } = {}, {
   family = modelFamily, resolve = resolveModel, geminiAvailability = () => resolveProviderAvailability('gemini'),
-  factory = (arm) => createStepBackProvider(arm, { timeoutMs: META_REVIEW_TIMEOUT_MS }),
+  factory = (arm) => createStepBackProvider(arm, { timeoutMs: META_REVIEW_TIMEOUT_MS, maxRetries: 0 }),
 } = {}) {
   const auditorFamily = auditorModel ? family(auditorModel) : null;
   // Independence cannot be verified against an auditor whose vendor is unknown: no automatic reviewer (fail closed).

@@ -535,10 +535,11 @@ describe('reviewer selection', () => {
     const created = []; const requests = [];
     const p = createStepBackProvider('higher', { resolve: () => 'claude-opus-5-5', sdkAvailability: () => ({ available: true, error: null }),
       createClient: async (opts) => { created.push(opts); return { messages: { create: async (body, o) => { requests.push({ body, o }); return { content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }; } } }; },
-      timeoutMs: 5000 });
+      timeoutMs: 5000, maxRetries: 0 });
     const out = await p.call({ system: 'S', user: 'U' });
     assert.deepEqual(created, [{ backend: 'sdk' }]);
     assert.equal(requests[0].body.system, 'S'); assert.ok(requests[0].o.signal, 'a deadline is attached');
+    assert.equal(requests[0].o.maxRetries, 0, 'REGRESSION (spawned CLI): the SDK retried 3 times; one attempt is one call');
     assert.equal(out.sent, true);
     const none = createStepBackProvider('higher', { resolve: () => 'claude-opus-5-5', sdkAvailability: () => ({ available: false, error: null }) });
     assert.ok(none.unmeasuredReason);

@@ -40,11 +40,11 @@ after(() => {
 });
 
 /** Spawn the CLI; resolve on exit, or kill early once `until` matches stderr (the gate has passed). */
-function run(args, { until = null, timeoutMs = 60_000 } = {}) {
+function run(args, { until = null, timeoutMs = 60_000, extraEnv = {} } = {}) {
   const netLog = path.join(tmp, `net-${seq++}.log`);
   fs.writeFileSync(netLog, '');
   return new Promise((resolve) => {
-    const env = { ...process.env, AUDIT_DB_URL: '', NO_NET_LOG: netLog, MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip', CI: '1' };
+    const env = { ...process.env, AUDIT_DB_URL: '', NO_NET_LOG: netLog, MODEL_CATALOG_REFRESH: 'skip', AUDIT_TOOL_VERSION_CHECK: 'skip', CI: '1', ...extraEnv };
     // Scrub what this process passes on. (The child's own .env loading is not under the test's control; the no-network
     // preload is what makes a credential unusable, and its positive control below proves it.)
     for (const k of Object.keys(env)) if (/^(OPENAI|GEMINI|ANTHROPIC|OPENROUTER|AZURE)_|API_KEY$/.test(k)) delete env[k];
@@ -98,6 +98,33 @@ describe('plan audit round cap (spawned CLI)', () => {
     const second = await run(args, { until: /\[round-cap\] past cap/ });
     assert.equal(second.killedEarly, true, `the gate should pass on the second run:\n${second.stderr}`);
     assert.match(second.stderr, /\[round-cap\] past cap: plan round 4 \(soft 3, absolute 5\)/);
+  });
+
+  const seedRound3 = (sid) => {
+    fs.mkdirSync(AUDIT_DIR, { recursive: true });
+    fs.writeFileSync(path.join(AUDIT_DIR, `${sid}-r3-result.json`), JSON.stringify({ round: 3, findings: [{ id: 'H1', severity: 'HIGH', category: 'Unsafe stop guard', section: '§2', detail: 'd', _pass: 'plan' }] }));
+  };
+
+  it('META-REVIEW ON with prior rounds: the reviewer is attempted at most once (refused by the preload, or no route), recorded, and the refusal stands', async () => {
+    const sid = newSid('audit-plan');
+    seedRound3(sid);
+    const r = await run(['plan', PLAN, '--mode', 'plan', '--round', '4', '--out', path.join(AUDIT_DIR, `${sid}-r4-result.json`)], { extraEnv: { AUDIT_META_REVIEW: 'on', AUDIT_CARD_NO_ARCH: '1' }, timeoutMs: 120_000 });
+    assert.equal(r.code, 4, r.stderr);
+    assert.match(r.stderr, /\[PAST_CAP_REQUIRED\]/, 'an unavailable reviewer leaves the refusal exactly as it was');
+    assert.ok(r.attempts.length <= 1, `at most the one reviewer request: ${r.attempts.join(' | ')}`);
+    const log = fs.readFileSync(path.join(AUDIT_DIR, `${sid}-meta-review.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const decision = log.find((e) => e.event === 'decision');
+    assert.equal(decision?.state, 'unavailable', r.stderr);
+    assert.equal(decision.trigger, 'T1');
+  });
+
+  it('META-REVIEW opted out with --no-meta-review: zero attempts and no decision log, even with prior rounds', async () => {
+    const sid = newSid('audit-plan');
+    seedRound3(sid);
+    const r = await run(['plan', PLAN, '--mode', 'plan', '--round', '4', '--no-meta-review', '--out', path.join(AUDIT_DIR, `${sid}-r4-result.json`)], { extraEnv: { AUDIT_META_REVIEW: 'on' } });
+    assert.equal(r.code, 4, r.stderr);
+    assert.deepEqual(r.attempts, []);
+    assert.equal(fs.existsSync(path.join(AUDIT_DIR, `${sid}-meta-review.jsonl`)), false);
   });
 
   it('round 6 is past the absolute cap whatever the reason: exit 4 ABSOLUTE_CAP', async () => {

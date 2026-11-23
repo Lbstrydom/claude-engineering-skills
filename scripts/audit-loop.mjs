@@ -178,6 +178,8 @@ function parseArgs(argv) {
     switch (argv[i]) {
       case '--max-rounds': i++; break;   // parsed strictly in main() by parseRoundFlag
       case '--past-cap': args.pastCap = argv[++i] ?? ''; break;
+      case '--no-meta-review': args.noMetaReview = true; break;
+      case '--meta-override': args.metaOverride = argv[++i] ?? ''; break;
       case '--skip-gemini': args.skipGemini = true; break;
       case '--scope': args.scope = argv[++i]; break;
       case '--base': args.base = argv[++i]; break;
@@ -326,6 +328,9 @@ async function main() {
     if (args.noTools) auditArgs.push('--no-tools');
     if (args.strictLint) auditArgs.push('--strict-lint');
     if (args.pastCap && capsForMode && round > capsForMode.soft) auditArgs.push('--past-cap', args.pastCap);
+    if (args.noMetaReview) auditArgs.push('--no-meta-review');
+    // --meta-override answers ONE honoured early stop (code round 4), so it is forwarded only to that round.
+    if (args.metaOverride != null && round === 4) auditArgs.push('--meta-override', args.metaOverride);
 
     // Step 2 — Run audit
     banner(`ROUND ${round} — GPT-5.4 Audit`);
