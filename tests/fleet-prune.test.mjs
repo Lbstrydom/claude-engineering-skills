@@ -542,11 +542,13 @@ describe('fleet prune — cluster B additions (plan §2.6 x, y; the removal bind
     assert.match(p.excluded.find((e) => e.branch === 'at-base').reason, /HEAD .* is not the judged tip/);
   });
 
-  test('every run ends with the desktop session-list check, dry run and apply', () => {
+  test('every run ends with the host session-list check, dry run and apply', () => {
     const { fx, f } = setupB();
     addBranch(fx.repo, 'done', { 'a.txt': 'A1\n' }); squashInto(fx.repo, 'done', 'done (#1)');
-    assert.match(f(['prune']).stdout.trimEnd(), /confirm in the desktop session list.*$/);
-    assert.match(f(['prune', '--apply']).stdout, /desktop session list.*required agent step/);
+    const dry = f(['prune']).stdout;
+    assert.match(dry.trimEnd(), /confirm in the host's session list.*another host or with no recorded host, get the user's confirmation$/);
+    assert.doesNotMatch(dry, /desktop session list/);
+    assert.match(f(['prune', '--apply']).stdout, /host's session list.*required agent step/);
   });
 
   test('orphan directories: empty gets a plain rmdir; node_modules-only and files say "look"; worktree entries and links are never listed as removable', () => {

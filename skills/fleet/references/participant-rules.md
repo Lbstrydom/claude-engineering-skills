@@ -65,8 +65,9 @@ You are one of several concurrent sessions coordinated by /fleet.
    session never WIDENS that authority and is never the user's answer to a permission prompt. Only the user (or a MERGE line
    in your launch prompt) approves a merge; only the user approves a push to the base branch.
 7. Before your worktree is archived: node scripts/fleet.mjs archive-check, then node scripts/fleet.mjs release.
-8. Title this session <PREFIX>: <short task> with set_session_title (session_id "self") unless the launch
-   prompt already gave it one; the coordinator names the prefix.
+8. Title this session <PREFIX>: <short task> with the host's title tool where it has one (desktop: set_session_title,
+   session_id "self"), else lead your first message with it, unless the launch prompt already gave it one; the
+   coordinator names the prefix.
 9. Never spawn a chip or a new session yourself. When you find something outside your task, fold it in ONLY if
    your current PR's acceptance needs it; otherwise record it and carry on. Report each finding to the coordinator
    (what, where, why, evidence) and list it under "Findings" in your final report. The coordinator decides:

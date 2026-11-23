@@ -76,6 +76,8 @@ describe('fleet archive — the happy path', () => {
     const r = runFleet(['archive', wt], { cwd: fx.repo, env: envFor() });
     assert.equal(r.status, 0, r.stdout);
     assert.ok(r.stdout.trimEnd().endsWith(SESSION_LIST_CHECK));
+    assert.doesNotMatch(SESSION_LIST_CHECK, /desktop/);
+    assert.match(SESSION_LIST_CHECK, /another host or with no recorded host, get the user's confirmation/);
     assert.equal(git(['tag', '-l', 'archive/*'], fx.repo), '');
     assert.ok(fs.existsSync(wt));
   });
