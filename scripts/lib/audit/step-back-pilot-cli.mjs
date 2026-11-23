@@ -419,7 +419,10 @@ export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
   const unlabelled = Object.keys(key.items).filter((w) => !labelsById.has(w));
   const hidden = new Map(Object.entries(novelty.byFinding).filter(([, v]) => isCovered(v)).map(([k, v]) => [k, isSuppressed(v)]));
   // The worksheet key must describe THESE findings: a stale or hand-made key cannot claim audit coverage.
-  const suppressedNow = new Set([...hidden].filter(([, h]) => h).map(([k]) => k));
+  // Same population as the worksheet: findings of VALID pairs only (an invalid pair is excluded from the decision and never shown).
+  const badPair = new Set(rows.filter((r) => r.valid !== true).map((r) => `${r.pointId}#${r.rep}`));
+  const inPairs = new Set(rows.filter((r) => r.valid === true && !badPair.has(`${r.pointId}#${r.rep}`)).flatMap((r) => (Array.isArray(r.findings) ? r.findings.filter((f) => mediumPlus(f)).map((f) => f.key) : [])));
+  const suppressedNow = new Set([...hidden].filter(([k, h]) => h && inPairs.has(k)).map(([k]) => k));
   const rowKeys = new Set(rows.flatMap((r) => (Array.isArray(r.findings) ? r.findings.map((f) => f.key) : [])));
   const auditedKeys = Object.values(key.items).filter((it) => it.hidden).map((it) => it.key);
   if (Object.values(key.items).some((it) => !rowKeys.has(it.key)) || auditedKeys.some((k) => !suppressedNow.has(k)) || key.audit.hidden !== suppressedNow.size) throw new Error('the worksheet key does not match the results and novelty files (stale or wrong key); rebuild the worksheet');

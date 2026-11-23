@@ -225,3 +225,16 @@ test('A2 final gate G1: the worksheet carries only findings of VALID pairs', () 
   assert.equal(buildWorksheet({ rows: [mk('META', true), mk('CONTINUE', true)], novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment }).counts.shown, 2);
   assert.equal(buildWorksheet({ rows: [mk('META', false), mk('CONTINUE', true)], novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment }).counts.shown, 0, 'an invalid META run excludes its valid CONTINUE partner too');
 });
+
+test('A2 final gate R2 G1: a legitimate key still scores when the results also hold an invalid pair with hidden findings', () => {
+  const amendment = readAmendment(AMENDMENT);
+  const J = (n) => ({ novel: n, notJudged: false, flags: [] });
+  const run = (pointId, arm, valid, keys) => ({ runId: `${pointId}${arm}`, pointId, arm, rep: 0, mode: 'code', valid, costUsd: 1, stopRun: false, findings: keys.map((k) => ({ key: k, severity: 'HIGH', file: 'a.mjs', lines: [1, 1], text: 't', affectedFiles: [] })) });
+  const rows = [run('p1', 'META', true, ['m1']), run('p1', 'CONTINUE', true, ['c1']), run('p2', 'META', false, ['m2']), run('p2', 'CONTINUE', true, ['c2'])]; // p2 is an invalid pair
+  const nv = { stamps: { opus: {}, pro: {} }, incomplete: false, byFinding: Object.fromEntries(['m1', 'c1', 'm2', 'c2'].map((k) => [k, { opus: J(false), pro: J(false) }])) }; // all hidden
+  const ds = { points: [{ pointId: 'p1', repo: 'r', checkpoint: 1 }, { pointId: 'p2', repo: 'r', checkpoint: 1 }] }; const snaps = { p1: { rounds: [], ledgerEntries: [] }, p2: { rounds: [], ledgerEntries: [] } };
+  const { key } = buildWorksheet({ rows, novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment });
+  assert.equal(key.audit.hidden, 2, 'only the valid pair\'s two hidden findings');
+  const labels = new Map(Object.keys(key.items).map((w) => [w, 'KNOWN']));
+  assert.doesNotThrow(() => scorePilot({ rows, novelty: nv, key, labelsById: labels, plannedPairs: 2 }));
+});
