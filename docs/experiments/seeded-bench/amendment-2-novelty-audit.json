@@ -7,18 +7,30 @@
   "calibrationEvidence": {
     "verdict": "inconclusive",
     "report": "calibration-report.json (judge run metered $2.2286 of the $10 slice)",
-    "labelledPairs": { "same": 46, "partial": 16, "different": 138 },
-    "recallChecks": { "none": 49, "named": 11 },
+    "labelledPairs": {
+      "same": 46,
+      "partial": 16,
+      "different": 138
+    },
+    "recallChecks": {
+      "none": 49,
+      "named": 11
+    },
     "note": "Precision on the 80-pair prevalence sample was 6/8 (95% Wilson 0.41-0.93); only 6 of 80 random pairs are same, so 0.90 could not be shown either way. The original v1 verdict stays INCONCLUSIVE and is never rewritten."
   },
   "suppression": "both-judges-same",
-  "judges": { "opus": "latest-opus (sdk-pinned)", "pro": "latest-pro" },
+  "judges": {
+    "opus": "latest-opus (sdk-pinned)",
+    "pro": "latest-pro"
+  },
   "audit": {
     "sample": 80,
+    "stratifiedByArm": true,
     "upperBoundMax": 0.15,
     "confidence": 0.95,
-    "method": "one-sided Clopper-Pearson upper bound on (hidden findings the human does not call KNOWN) / (hidden findings audited)",
-    "passesWhenFalseSuppressionsAtMost": 6,
+    "method": "one-sided Clopper-Pearson upper bound on (hidden findings the human does not call KNOWN) / (hidden findings audited), for EACH arm (about 40 audited per arm) and pooled",
+    "passesWhenFalseSuppressionsAtMostPerArm": 2,
+    "passesWhenFalseSuppressionsAtMostPooled": 6,
     "fallback": "label-all-hidden"
   },
   "unchanged": [

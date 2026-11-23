@@ -20,6 +20,7 @@
  * @module scripts/lib/audit/pilot-novelty-audit
  */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { seededShuffle } from './step-back-pilot-freeze.mjs';
 import { SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
 
@@ -69,6 +70,26 @@ export function pickAuditSample({ suppressedKeys, size, seed }) {
   return seededShuffle(sorted, `${seed}:audit`, (k) => k).slice(0, size).sort();
 }
 
+/** Canonical JSON (sorted keys, no whitespace): the digest must not depend on key order, line endings or indentation. */
+const canon = (o) => (Array.isArray(o) ? `[${o.map(canon).join(',')}]` : o && typeof o === 'object' ? `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canon(o[k])}`).join(',')}}` : JSON.stringify(o));
+export const canonicalSha256 = (o) => crypto.createHash('sha256').update(canon(o)).digest('hex');
+
+/**
+ * The approved content of amendment 2. Any edit to the amendment file changes its digest, so changing a tolerance, a sample size or the approval
+ * is a CODE change that is reviewed and audited, never a quiet file edit. The numeric floors below are the policy minimum even for a digest bump.
+ */
+export const AMENDMENT_2_SHA256 = 'd54e67b4eddcec5a76a4cba127633d7355af21173367ba68d53b443427ced00c';
+export const AMENDMENT_POLICY = Object.freeze({ minSample: 60, minConfidence: 0.95, maxUpperBound: 0.15 });
+
+/** A seeded finding-level sample of the hidden findings, STRATIFIED by arm: `size` is split evenly across the arms present (all of an arm when it has fewer). */
+export function stratifiedAuditSample({ hidden, size, seed }) {
+  const arms = [...new Set(hidden.map((h) => h.arm))].sort();
+  const per = size === 'all' ? 'all' : Math.ceil(size / Math.max(1, arms.length));
+  const out = {};
+  for (const arm of arms) out[arm] = pickAuditSample({ suppressedKeys: hidden.filter((h) => h.arm === arm).map((h) => h.key), size: per, seed: `${seed}:${arm}` });
+  return out;
+}
+
 /** Load and validate the signed amendment. Anything missing makes novelty and scoring refuse to run. */
 export function readAmendment(file, { readText = (p) => fs.readFileSync(p, 'utf8') } = {}) {
   let a; try { a = JSON.parse(readText(file)); } catch (err) { throw new Error(`amendment ${file} unreadable (${err?.message})`); }
@@ -79,6 +100,11 @@ export function readAmendment(file, { readText = (p) => fs.readFileSync(p, 'utf8
   if (!(Number.isInteger(a.audit?.sample) && a.audit.sample > 0)) bad.push('audit.sample must be a positive integer');
   if (!(a.audit?.upperBoundMax > 0 && a.audit.upperBoundMax < 1)) bad.push('audit.upperBoundMax must be in (0,1)');
   if (!(a.audit?.confidence > 0 && a.audit.confidence < 1)) bad.push('audit.confidence must be in (0,1)');
+  if (a.audit?.stratifiedByArm !== true) bad.push('audit.stratifiedByArm must be true');
+  if (a.audit?.sample < AMENDMENT_POLICY.minSample) bad.push(`audit.sample is below the policy minimum ${AMENDMENT_POLICY.minSample}`);
+  if (a.audit?.confidence < AMENDMENT_POLICY.minConfidence) bad.push(`audit.confidence is below the policy minimum ${AMENDMENT_POLICY.minConfidence}`);
+  if (a.audit?.upperBoundMax > AMENDMENT_POLICY.maxUpperBound) bad.push(`audit.upperBoundMax exceeds the policy maximum ${AMENDMENT_POLICY.maxUpperBound}`);
+  if (!bad.length && canonicalSha256(a) !== AMENDMENT_2_SHA256) bad.push('its content digest does not match the approved amendment (a change needs a reviewed code change to AMENDMENT_2_SHA256)');
   if (bad.length) throw new Error(`amendment ${file} is not valid: ${bad.join('; ')}`);
   return a;
 }

@@ -72,13 +72,13 @@ node scripts/step-back-replay.mjs score --pilot meta-ab --dataset C:/tmp/pilot1/
 ```
 
 A finding is **hidden from the human only when BOTH judges (Opus and Gemini) call it `same`** as a prior ledger entry; a judge that fails, is unparseable or
-disagrees sends the finding to the human. The sheet pools every surfaced finding of both arms plus a seeded sample of **80** hidden ones (all of them if fewer),
-shuffled and source-blinded; each shows its three closest earlier ledger entries, and the human decides novelty (`KNOWN` = it restates one). Nothing the rule reads
+disagrees sends the finding to the human. The sheet pools every surfaced finding of both arms plus a seeded sample of **80** hidden ones, stratified by arm (all of an arm's if fewer),
+shuffled and source-blinded; each shows up to ten earlier ledger entries from the same file, and always every entry the judges matched, and the human decides novelty (`KNOWN` = it restates one). Nothing the rule reads
 rests on a judge label. The key file stays with the operator.
 
 **The audit.** Each audited hidden finding the human does not call `KNOWN` is a false suppression. It passes iff the one-sided 95% Clopper–Pearson upper bound of
-false suppressions ÷ audited is ≤ 0.15 (**at most 6 of 80**). If it fails, `score` prints `audit-failed` (exit 1) and reports no decision: rebuild the worksheet with
-`worksheet --audit all` and label every hidden finding. An unlabelled or `UNDETERMINED` shown finding makes the score INCOMPLETE (exit 1).
+false suppressions ÷ audited is ≤ 0.15 for each arm and pooled (**at most 2 of 40 per arm, 6 of 80 pooled**). If it fails, `score` prints `audit-failed` (exit 1) and reports no decision: rebuild the worksheet with
+`worksheet --audit all` into a NEW `--out-dir` (the worksheet command never overwrites a sheet a human may have labelled, and refuses a sampled rebuild after a failed audit) and label every hidden finding. An unlabelled or `UNDETERMINED` shown finding makes the score INCOMPLETE (exit 1).
 
 ## 6. Decision rule (pre-registered; `decideMetaPilot`)
 

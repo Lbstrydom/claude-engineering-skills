@@ -25,7 +25,7 @@ import { drawCalibrationSets, renderWorksheet, joinWorksheetLabels, scoreCalibra
 import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShuffle } from './step-back-pilot-freeze.mjs';
 import { runContinuation, ledgerTargets, restorePointFiles, validateTrigger, resolveScopeBase, sidFor, EXIT_BUDGET_STOP } from './step-back-continuation.mjs';
 import { decideMetaPilot, scoreMetaRuns, SEEDED_BENCH_EPOCH, HUMAN_LABELS } from './meta-pilot-decision.mjs';
-import { isSuppressed, isCovered, auditVerdict, pickAuditSample, readAmendment, maxFalseSuppressions } from './pilot-novelty-audit.mjs';
+import { isSuppressed, isCovered, auditVerdict, stratifiedAuditSample, readAmendment, maxFalseSuppressions } from './pilot-novelty-audit.mjs';
 
 export const PILOT = 'meta-ab';
 const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
@@ -289,6 +289,7 @@ export function assertAmendment({ amendmentPath, calibrationPath, dataset }) {
   const amendment = readAmendment(amendmentPath);
   const rep = readJson(calibrationPath);
   if (rep.datasetHash !== dataset.datasetHash) throw new ArgvError('the calibration report was made from a different dataset');
+  if (!['accept', 'fail', 'inconclusive'].includes(rep.decision) || !Number.isFinite(rep.spentUsd) || !rep.judges?.opus?.stamp || !rep.judges?.pro?.stamp) throw new ArgvError('the calibration report is malformed (it needs a decision, spentUsd and both judge stamps)');
   return { amendment, calibration: rep };
 }
 
@@ -347,10 +348,14 @@ export const WORKSHEET_LABEL_HELP = [
 ];
 
 /** Up to 3 closest prior ledger entries (same file, nearest lines) for the human to compare a finding against. */
-export function candidateEntries({ finding, snapshot, checkpoint, limit = 3 }) {
+export function candidateEntries({ finding, snapshot, checkpoint, limit = 10, judgeMatches = [] }) {
   const targets = ledgerTargets(snapshot, { upToRound: checkpoint });
   const f = { id: finding.key, file: finding.file, files: finding.affectedFiles?.length ? finding.affectedFiles : undefined, lines: finding.lines, severity: finding.severity, text: finding.text };
-  return filterCandidates([f], targets).sort((a, b) => (a.lineDistance ?? 1e9) - (b.lineDistance ?? 1e9) || String(a.xId).localeCompare(String(b.xId))).slice(0, limit).map((c) => c.x);
+  const ranked = filterCandidates([f], targets).sort((a, b) => (a.lineDistance ?? 1e9) - (b.lineDistance ?? 1e9) || String(a.xId).localeCompare(String(b.xId))).map((c) => c.x);
+  const must = judgeMatches.map((id) => ranked.find((x) => String(x.id) === String(id)) ?? targets.find((x) => String(x.id) === String(id))).filter(Boolean); // what the judges matched is always shown
+  const rest = ranked.filter((x) => !must.includes(x));
+  const shown = [...must, ...rest].slice(0, Math.max(limit, must.length));
+  return { shown, more: Math.max(0, ranked.length + must.filter((m) => !ranked.includes(m)).length - shown.length) };
 }
 
 /**
@@ -367,20 +372,22 @@ export function buildWorksheet({ rows, novelty, seed, dataset, snapshots, amendm
     byKey.set(f.key, item);
     if (isSuppressed(nv)) hiddenKeys.push(f.key); else shown.push(item);
   }
-  const sample = pickAuditSample({ suppressedKeys: hiddenKeys, size: auditAll ? 'all' : amendment.audit.sample, seed });
-  const sampled = new Set(sample);
+  const bySample = stratifiedAuditSample({ hidden: hiddenKeys.map((k) => ({ key: k, arm: byKey.get(k).arm })), size: auditAll ? 'all' : amendment.audit.sample, seed });
+  const sample = Object.values(bySample).flat();
+  const byArm = Object.fromEntries(Object.entries(bySample).map(([arm, ks]) => [arm, { hidden: hiddenKeys.filter((k) => byKey.get(k).arm === arm).length, sampled: ks.length }]));
   const items = [...shown.map((it) => ({ ...it, audited: false })), ...sample.map((k) => ({ ...byKey.get(k), audited: true }))];
   const shuffled = seededShuffle(items, `${seed}:worksheet`, (x) => x.key);
-  const key = { version: 2, epoch: SEEDED_BENCH_EPOCH, seed, audit: { hidden: hiddenKeys.length, sampled: sample.length, all: auditAll || sample.length === hiddenKeys.length /* every hidden finding labelled: the audit is moot */, sample: amendment.audit.sample, upperBoundMax: amendment.audit.upperBoundMax, confidence: amendment.audit.confidence }, items: {} };
+  const key = { version: 2, epoch: SEEDED_BENCH_EPOCH, seed, audit: { hidden: hiddenKeys.length, sampled: sample.length, byArm, all: auditAll || sample.length === hiddenKeys.length /* every hidden finding labelled: the audit is moot */, sample: amendment.audit.sample, upperBoundMax: amendment.audit.upperBoundMax, confidence: amendment.audit.confidence }, items: {} };
   const md = ['# Pilot 1 adjudication worksheet (blind to arm)', '',
     'For each finding write ONE label after `Label:`. Compare it with the closest earlier ledger entries listed under it:', '',
     ...WORKSHEET_LABEL_HELP, '', 'Judge opinions, arm and run are hidden on purpose. Some findings here were already ruled `known` by the judges; judge them exactly like the rest.', ''];
   shuffled.forEach((it, i) => {
     const id = `W${String(i + 1).padStart(3, '0')}`;
     key.items[id] = { key: it.key, arm: it.arm, runId: it.runId, hidden: it.audited, judges: it.judges };
-    const cands = candidateEntries({ finding: it.f, snapshot: snapshots[it.point.pointId], checkpoint: it.point.checkpoint });
+    const sameOf = [it.judges.opus?.sameOf, it.judges.pro?.sameOf].flat().filter(Boolean);
+    const { shown: cands, more } = candidateEntries({ finding: it.f, snapshot: snapshots[it.point.pointId], checkpoint: it.point.checkpoint, judgeMatches: sameOf });
     md.push(`### ${id}`, '', `- repo: ${it.repo} (${it.mode} audit) · file: ${it.f.file ?? '?'}${it.f.lines ? `:${it.f.lines[0]}` : ''} · severity: ${it.f.severity}`, '', String(it.f.text).split('\n').map((l) => `> ${l}`).join('\n'), '',
-      cands.length ? '**Closest earlier ledger entries:**' : '**No earlier ledger entry shares a file with this finding.**', '',
+      cands.length ? `**Closest earlier ledger entries${more ? ` (${more} more share this file and are not shown)` : ''}:**` : '**No earlier ledger entry shares a file with this finding.**', '',
       ...cands.flatMap((c, n) => [`*E${n + 1}* (${c.file ?? '?'}${c.lines ? `:${JSON.stringify(c.lines)}` : ''}, ${c.severity}):`, String(c.text ?? '').trim().split('\n').map((l) => `> ${l}`).join('\n'), '']), 'Label: ', '');
   });
   return { markdown: md.join('\n'), key, counts: { shown: shown.length, hidden: hiddenKeys.length, audited: sample.length } };
@@ -409,17 +416,31 @@ export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
   }
   const unlabelled = Object.keys(key.items).filter((w) => !labelsById.has(w));
   const hidden = new Map(Object.entries(novelty.byFinding).filter(([, v]) => isCovered(v)).map(([k, v]) => [k, isSuppressed(v)]));
+  // The worksheet key must describe THESE findings: a stale or hand-made key cannot claim audit coverage.
+  const suppressedNow = new Set([...hidden].filter(([, h]) => h).map(([k]) => k));
+  const rowKeys = new Set(rows.flatMap((r) => (Array.isArray(r.findings) ? r.findings.map((f) => f.key) : [])));
+  const auditedKeys = Object.values(key.items).filter((it) => it.hidden).map((it) => it.key);
+  if (Object.values(key.items).some((it) => !rowKeys.has(it.key)) || auditedKeys.some((k) => !suppressedNow.has(k)) || key.audit.hidden !== suppressedNow.size) throw new Error('the worksheet key does not match the results and novelty files (stale or wrong key); rebuild the worksheet');
+  if (key.audit.all === true && suppressedNow.size !== auditedKeys.length) throw new Error('the worksheet key claims every hidden finding was labelled, but it lists fewer than the current hidden findings; rebuild the worksheet');
   const s = scoreMetaRuns({ runs: rows, hidden, labels });
+  const verdictOf = (items) => {
+    const lab = items.filter(([wid]) => labelsById.has(wid) && labelsById.get(wid) !== 'UNDETERMINED');
+    const f = lab.filter(([wid]) => labelsById.get(wid) !== 'KNOWN').length;
+    return auditVerdict({ n: lab.length, f, upperBoundMax: key.audit.upperBoundMax, confidence: key.audit.confidence });
+  };
   const audited = Object.entries(key.items).filter(([, it]) => it.hidden);
-  const falseSuppressed = audited.filter(([wid]) => labelsById.has(wid) && labelsById.get(wid) !== 'KNOWN' && labelsById.get(wid) !== 'UNDETERMINED').length;
-  const auditedLabelled = audited.filter(([wid]) => labelsById.has(wid) && labelsById.get(wid) !== 'UNDETERMINED').length;
-  const verdict = auditVerdict({ n: auditedLabelled, f: falseSuppressed, upperBoundMax: key.audit.upperBoundMax, confidence: key.audit.confidence });
+  const pooled = verdictOf(audited);
+  const arms = Object.keys(key.audit.byArm ?? {}).filter((a) => key.audit.byArm[a].hidden > 0);
+  const perArm = Object.fromEntries(arms.map((a) => [a, { ...verdictOf(audited.filter(([, it]) => it.arm === a)), hidden: key.audit.byArm[a].hidden, sampled: key.audit.byArm[a].sampled }]));
+  const auditPass = pooled.pass && Object.values(perArm).every((v) => v.pass);
   const full = key.audit.all === true;
-  const perArm = {}; for (const [wid, it] of audited) { const a = (perArm[it.arm] ||= { audited: 0, falseSuppressed: 0 }); if (labelsById.has(wid)) { a.audited += 1; if (labelsById.get(wid) !== 'KNOWN') a.falseSuppressed += 1; } }
   const base = decideMetaPilot({ runs: s.rows, plannedPairs });
   const incomplete = s.incomplete || unlabelled.length > 0 || novelty.incomplete;
   let decision = base;
   if (incomplete) decision = { ...base, outcome: 'INCOMPLETE', why: `unlabelled ${unlabelled.length}, blocked ${s.blocked.length}, novelty incomplete ${novelty.incomplete}` };
-  else if (!full && !verdict.pass) decision = { ...base, outcome: 'audit-failed', why: `${falseSuppressed} of ${verdict.n} audited hidden findings were not KNOWN (95% upper bound ${verdict.upperBound.toFixed(3)} > ${verdict.upperBoundMax}); the instrument is not trusted: rebuild the worksheet with --audit all and label every hidden finding` };
-  return { decision, rows: s.rows, blocked: s.blocked, unlabelled, audit: { ...verdict, hiddenTotal: key.audit.hidden, all: full, perArm, maxFalseAllowed: maxFalseSuppressions({ n: verdict.n, upperBoundMax: verdict.upperBoundMax, confidence: verdict.confidence }) } };
+  else if (!full && !auditPass) {
+    const worst = Object.entries(perArm).filter(([, v]) => !v.pass).map(([a, v]) => `${a}: ${v.f} of ${v.n} (upper bound ${v.upperBound.toFixed(3)})`);
+    decision = { ...base, outcome: 'audit-failed', why: `false suppressions exceed the pre-registered tolerance (pooled ${pooled.f} of ${pooled.n}, upper bound ${pooled.upperBound.toFixed(3)} vs ${pooled.upperBoundMax}${worst.length ? `; failing arms ${worst.join(', ')}` : ''}); the instrument is not trusted: rebuild the worksheet with --audit all and label every hidden finding` };
+  }
+  return { decision, rows: s.rows, blocked: s.blocked, unlabelled, audit: { ...pooled, hiddenTotal: key.audit.hidden, all: full, perArm, pass: auditPass, maxFalseAllowed: maxFalseSuppressions({ n: pooled.n, upperBoundMax: pooled.upperBoundMax, confidence: pooled.confidence }) } };
 }

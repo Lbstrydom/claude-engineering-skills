@@ -84,8 +84,13 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const rows = readRunRows(resultsPath); const novelty = JSON.parse(fs.readFileSync(`${resultsPath}.novelty.json`, 'utf8'));
   if (novelty.datasetHash !== dataset.datasetHash || novelty.resultsSha256 !== sha256OfFile(resultsPath)) throw new ArgvError('the novelty file does not match this dataset and results file; rerun novelty');
   if (cmd === 'worksheet') {
-    const { markdown, key, counts } = buildWorksheet({ rows, novelty, seed: need('--seed'), dataset, snapshots, amendment, auditAll: flag('--audit') === 'all' });
+    const auditFlag = flag('--audit');
+    if (auditFlag !== undefined && auditFlag !== null && auditFlag !== 'all') throw new ArgvError('--audit accepts only "all" (label every hidden finding)');
+    const statePath = `${resultsPath}.audit-state.json`;
+    if (fs.existsSync(statePath) && JSON.parse(fs.readFileSync(statePath, 'utf8')).outcome === 'audit-failed' && auditFlag !== 'all') throw new ArgvError('the last score was audit-failed: rebuild the worksheet with --audit all (a new --out-dir)');
+    const { markdown, key, counts } = buildWorksheet({ rows, novelty, seed: need('--seed'), dataset, snapshots, amendment, auditAll: auditFlag === 'all' });
     const dir = need('--out-dir'); fs.mkdirSync(dir, { recursive: true });
+    for (const f of ['pilot1-worksheet.md', 'pilot1-worksheet.key.json']) if (fs.existsSync(path.join(dir, f))) throw new ArgvError(`${f} already exists in ${dir}; a human may have labelled it. Use a new --out-dir.`);
     atomicWriteFileSync(path.join(dir, 'pilot1-worksheet.md'), markdown); writeJson(path.join(dir, 'pilot1-worksheet.key.json'), key);
     console.log(`step-back-replay worksheet: ${Object.keys(key.items).length} findings to label (${counts.shown} surfaced + ${counts.audited} of ${counts.hidden} hidden audited) -> ${dir} (the key file stays with the operator, never the labeller)`);
     return 0;
@@ -98,6 +103,7 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });
   writeJson(path.join(dir, 'pilot1-score.json'), res);
+  writeJson(`${resultsPath}.audit-state.json`, { outcome: res.decision.outcome, at: key.seed });
   console.log(`step-back-replay score --pilot meta-ab: ${String(res.decision.outcome).toUpperCase()} (${res.decision.why})`);
   return ['INCOMPLETE', 'audit-failed'].includes(res.decision.outcome) ? 1 : 0; // keep/off/inconclusive/invalid are RESULTS (0); an unfinished score is not
 }

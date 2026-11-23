@@ -160,9 +160,9 @@ describe('runNovelty gate and resumption (amendment 2)', () => {
     const cal = path.join(dir, 'cal.json');
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res }), /--amendment/);
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT }), /--calibration/);
-    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: 'OTHER', judges: stamps }));
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: 'OTHER', spentUsd: 2.2, judges: stamps }));
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT, calibrationPath: cal }), /different dataset/);
-    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash, judges: stamps })); // the v1 verdict stays inconclusive: the amendment does not need it accepted
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash, spentUsd: 2.2, judges: stamps })); // the v1 verdict stays inconclusive: the amendment does not need it accepted
     const badAmend = path.join(dir, 'a.json'); fs.writeFileSync(badAmend, JSON.stringify({ ...JSON.parse(fs.readFileSync(AMENDMENT, 'utf8')), epoch: 'seeded-bench-v1' }));
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: badAmend, calibrationPath: cal }), /epoch/);
 
@@ -208,7 +208,7 @@ test('R7 G2: an interrupted novelty run leaves a checkpoint that reads INCOMPLET
   const res = path.join(dir, 'r.jsonl');
   fs.writeFileSync(res, [{ type: 'header', plannedPairs: 1, datasetHash: dataset.datasetHash }, { type: 'run', pointId: p.pointId, arm: 'CONTINUE', rep: 0, findings: Array.from({ length: 8 }, (_, i) => ({ key: `k${i}`, severity: 'HIGH', file: 'a.mjs', text: 't', affectedFiles: [] })) }].map((r) => JSON.stringify(r)).join('\n') + '\n');
   const cal = path.join(dir, 'cal.json');
-  fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash, judges: { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } } }));
+  fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash, spentUsd: 2.2, judges: { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } } }));
   let n = 0;
   const deps = { createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'm' } }), classifyNovelty: async ({ findings }) => { if (++n === 2) { const e = new Error('cap'); e.code = 'budget-stop'; throw e; } return { perFinding: findings.map((f) => ({ id: f.id, novel: true, flags: [], notJudged: false })) }; } };
   await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT, calibrationPath: cal, deps }), (e) => e.code === 'budget-stop');
