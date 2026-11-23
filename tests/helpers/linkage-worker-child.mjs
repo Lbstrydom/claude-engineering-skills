@@ -8,13 +8,12 @@
  *
  * Args: <repoId> <outPath>
  */
-process.env.AUDIT_DB_URL = process.env.AUDIT_DB_TEST_URL;
-const [repoId, outPath] = process.argv.slice(2);
-const root = new URL('../../', import.meta.url);
-const rf = await import(new URL('scripts/lib/store/runs-findings.mjs', root));
-const { resolveAuditIdentity, runStartIdentity } = await import(new URL('scripts/lib/audit/audit-identity.mjs', root));
-const { closePool } = await import(new URL('scripts/lib/db/client.mjs', root));
+// AUDIT_DB_URL is supplied by the parent's spawn env (the test DSN); static imports, so the gate can see them.
+import * as rf from '../../scripts/lib/store/runs-findings.mjs';
+import { resolveAuditIdentity, runStartIdentity } from '../../scripts/lib/audit/audit-identity.mjs';
+import { closePool } from '../../scripts/lib/db/client.mjs';
 
+const [repoId, outPath] = process.argv.slice(2);
 const identity = resolveAuditIdentity({ outPath });
 const runId = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', runStartIdentity(identity));
 const round = identity.auditRound;
