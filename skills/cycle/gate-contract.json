@@ -340,7 +340,7 @@
       "reason": "Same state-record summary; 'gate' matches the state name `gate-clear`. The stale flip is model-performed bookkeeping, no /cycle exit code."
     },
     {
-      "line": "**4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:",
+      "line": "**4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — mechanical, from the derived scopes:",
       "reason": "Cluster B slim (2026-11-02) of the already-dispositioned 4a line: the measurement moved to references/clustered-execution.md, the rule is unchanged. Same disposition as the original 4a ignoredCandidates entry — /cycle is a thin orchestrator; the convergence predicate is contracted in skills/audit-code/gate-contract.json."
     },
     {
@@ -394,6 +394,10 @@
     {
       "line": "**Author-tier** (telemetry only, never routes) → `references/clustered-execution.md` §Optional author-tier — read when a cluster has `author-tier:`.",
       "reason": "Telemetry pointer: the author-tier hint is observation-only and never routes a model, so there is no gate to bind; the detail lives in references/clustered-execution.md."
+    },
+    {
+      "line": "report; never demote to the dirty-aware default (it widens the range).",
+      "reason": "Continuation of the 3a instruction (validate clusterStartRef with git merge-base --is-ancestor before using it as a diff base): a caller-behaviour step, not a gate /cycle exits on; the rationale is references/clustered-execution.md §3a."
     }
   ]
 }
