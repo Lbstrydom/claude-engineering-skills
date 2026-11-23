@@ -2091,6 +2091,15 @@
           "ordinal_position": 68
         },
         {
+          "column_name": "capture_epoch",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 69
+        },
+        {
           "column_name": "linkage_state",
           "data_type": "text",
           "is_nullable": "YES",
@@ -2107,15 +2116,6 @@
           "is_identity": "NO",
           "identity_generation": null,
           "ordinal_position": 71
-        },
-        {
-          "column_name": "capture_epoch",
-          "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
-          "is_identity": "NO",
-          "identity_generation": null,
-          "ordinal_position": 72
         }
       ]
     },
