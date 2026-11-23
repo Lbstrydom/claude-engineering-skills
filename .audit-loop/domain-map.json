@@ -240,6 +240,11 @@
       "domain": "scripts"
     },
     {
+      "_why": "NARROW RULE above the scripts/check-*.mjs -> install glob, same shape as check-db-suite-enrolment.mjs directly above (2026-11-23). help:readonly:gate is a gate runner, not installation logic; the glob is a naming coincidence. Since it probes every cross-skill registry command and verb (derived from REGISTRY, never hand-listed), it imports scripts/lib/cross-skill/registry.mjs, and filing it under `install` manufactured an undeclared install -> cross-skill-bridge edge (tests/arm-vocabulary-layering.test.mjs). `scripts` is the entry-point domain that already holds the other gate runners.",
+      "pattern": "scripts/check-help-readonly.mjs",
+      "domain": "scripts"
+    },
+    {
       "pattern": "scripts/check-*.mjs",
       "domain": "install"
     },
@@ -649,6 +654,7 @@
       "audit-orchestration",
       "campaign-promotion",
       "claudemd-management",
+      "cross-skill-bridge",
       "findings",
       "fleet",
       "fit-check",

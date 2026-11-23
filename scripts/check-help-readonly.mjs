@@ -103,8 +103,12 @@ export function listSubcommandProbes(root = ROOT) {
  * `--help` must therefore also be ANSWERED: exit 0 and a `Usage:` block on stdout,
  * never the command's own result.
  */
+const USAGE_ONLY = /^Usage: [^\n]*\r?\n(Flags:\r?\n(  --[^\n]*\r?\n)*)?$/;
+
 export function withHandledFinding(result) {
-  if (result.exitCode === 0 && /^Usage:/.test(result.stdout ?? '')) return result;
+  // The WHOLE stdout must be the usage block (`Usage:` line, optional `Flags:` list) — a handler that
+  // prints a usage line and then its result must not pass.
+  if (result.exitCode === 0 && USAGE_ONLY.test(result.stdout ?? '')) return result;
   const detail = `--help not answered with a Usage block (exit ${result.exitCode}): ${String(result.stdout ?? '').slice(0, 80).replace(/\s+/g, ' ')}`;
   return {
     ...result,
@@ -185,7 +189,8 @@ async function main() {
     // A filter that matches nothing must not read as a pass over zero CLIs, and a
     // missing value must not silently fall back to the full census.
     if (!only || only.startsWith('--')) { process.stderr.write('check-help-readonly: --only requires a scripts-relative path\n'); return finishAndExit(2); }
-    probes = probes.filter((p) => p.label === only);
+    // `--only cross-skill.mjs` selects the script AND its subcommand probes (labels `cross-skill.mjs <cmd> [verb]`).
+    probes = probes.filter((p) => p.label === only || p.label.startsWith(`${only} `));
     if (probes.length === 0) { process.stderr.write(`check-help-readonly: --only ${only} matches no CLI in the census\n`); return finishAndExit(2); }
   }
   const files = probes;

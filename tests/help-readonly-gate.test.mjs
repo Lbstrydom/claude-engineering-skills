@@ -262,6 +262,43 @@ describe('cross-skill subcommand --help (2026-11-23: `ledger mint --help` minted
     const nonzero = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 2, stdout: 'Usage: x' });
     assert.deepEqual(nonzero.kinds, ['help-not-handled']);
   });
+  it('the gate rejects a usage line followed by a command result (whole stdout must be usage)', () => {
+    const r = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 0, stdout: 'Usage: node scripts/cross-skill.mjs ledger\n{"ok":true,"work_item_id":"01a"}\n' });
+    assert.deepEqual(r.kinds, ['help-not-handled']);
+    const ok = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 0, stdout: 'Usage: node scripts/cross-skill.mjs ledger [mint]\nFlags:\n  --kind <value>\n  --json\n' });
+    assert.deepEqual(ok.kinds, []);
+  });
+  it('helpRequested: a flag, not a valued flag value, not after `--`', async () => {
+    const { helpRequested } = await import('../scripts/lib/cross-skill/dispatch.mjs');
+    const decls = [{ name: 'note', kind: 'valued' }, { name: 'dry-run', kind: 'boolean' }];
+    assert.equal(helpRequested(['mint', '--help'], decls), true);
+    assert.equal(helpRequested(['--dry-run', '--help'], decls), true);
+    assert.equal(helpRequested(['--note', '--help'], decls), false, 'a valued flag VALUE is data');
+    assert.equal(helpRequested(['--json', '--help'], decls), false, '--json value is data');
+    assert.equal(helpRequested(['a', '--', '--help'], decls), false);
+  });
+  it('dispatch --help never touches the store port, for EVERY registry command and verb', async () => {
+    const { dispatch } = await import('../scripts/lib/cross-skill/dispatch.mjs');
+    const poisoned = new Proxy({}, { get(_t, k) { throw new Error(`store port touched on --help: ${String(k)}`); } });
+    const out = process.stdout.write.bind(process.stdout);
+    let wrote = '';
+    process.stdout.write = (c) => { wrote += c; return true; };
+    try {
+      for (const p of listSubcommandProbes(ROOT)) {
+        wrote = '';
+        const r = await dispatch(['node', 'cross-skill.mjs', ...p.args], { deps: poisoned });
+        assert.equal(r.exitCode, 0, p.label);
+        assert.equal(r.envelope, null, p.label);
+        assert.match(wrote, /^Usage: node scripts\/cross-skill\.mjs /, p.label);
+      }
+    } finally { process.stdout.write = out; }
+  });
+  it('--only <script> selects the script AND its subcommand probes', () => {
+    const out = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'check-help-readonly.mjs'), '--only', 'cross-skill.mjs', '--json'], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const j = JSON.parse(out.stdout);
+    assert.ok(j.probed > 1, `probed ${j.probed}`);
+    assert.equal(out.status, 0);
+  });
   it('ledger mint --help prints usage and mints nothing', () => {
     const out = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'cross-skill.mjs'), 'ledger', 'mint', '--help'], { cwd: ROOT, encoding: 'utf8' });
     assert.equal(out.status, 0);
