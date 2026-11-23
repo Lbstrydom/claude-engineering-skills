@@ -40,6 +40,7 @@ This is the list to read when asking "what is in flight?".
 | [a telemetry path from a consumer whose store CES cannot reach](./private-store-telemetry-path.md) | `Approved` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
 | [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) | `Approved` | plan audit closed 2026-11-19; implementation waits for the coordinator's go |
+| [Seeded-defect benchmark — pilot-first eval of record for the `/audit-code` loop](./seeded-defect-benchmark.md) | `Draft` |  |
 | [Ship-batch per-member outcomes, and rollup landing (PR B)](./ship-batch-member-outcomes.md) | `In Progress` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Ship record catch-up — /ship's RECORD half without its PUSH/MERGE authority](./ship-record-catchup.md) | `In Progress` |  |
