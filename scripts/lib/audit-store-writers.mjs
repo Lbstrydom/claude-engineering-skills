@@ -278,11 +278,15 @@ export function registerAuditStoreWriters() {
   // No key: `audit_pass_stats` is an append-only INSERT with no unique
   // constraint, so a replay would double-count the very telemetry the A/B
   // stopping rules read. `lost`-only is the honest v1.
+  //
+  // LINKAGE GUARD: `audit_pass_stats.round` is NOT NULL DEFAULT 1, so a pass written without a round is silently filed as round 1
+  // (a round-2 pass of a unified run, attributed to round 1). On the audit path a missing or non-positive-integer round is
+  // therefore REFUSED here as a not-applied write (`lost`, counted and surfaced - the writer is keyless), never defaulted.
   registerWriter('audit.passStats', {
     schemaVersion: 1,
-    replay: (payload) => receipt(
-      recordPassStats(payload.runId, payload.passName, payload.stats, payload.round),
-    ),
+    replay: (payload) => (Number.isInteger(payload.round) && payload.round >= 1
+      ? receipt(recordPassStats(payload.runId, payload.passName, payload.stats, payload.round))
+      : { applied: false, rows: 0, reason: 'no-round' }),
   });
 
   // ── audit.suppressionEvents ───────────────────────────────────────────────

@@ -71,6 +71,23 @@ export const LINKAGE_REGISTRY = Object.freeze({
 });
 
 /**
+ * Registered writers that are deliberately NOT linkage-bearing, each with the reason. A writer id appears in
+ * {@link LINKAGE_REGISTRY} or here, never neither (tests/telemetry-linkage.test.mjs pins the union to the registry in
+ * audit-store-writers.mjs in BOTH directions), so a new writer cannot be added without a linkage decision.
+ */
+export const LINKAGE_EXEMPT = Object.freeze({
+  'audit.equivalence': 'links two finding fingerprints; carries no session or round',
+  'audit.convergenceState': 'UPDATE of the run row keyed on run_id; adds no linkage',
+  'audit.diffComplexity': 'UPDATE of the run row keyed on run_id; adds no linkage',
+  'audit.runDiff': 'diff content keyed on the run row; adds no linkage',
+  'audit.suppressionEvents': 'append-only rows keyed by run_id, which is the linkage; no round of their own',
+  'learning.outcome': 'label on a learning decision keyed by decision_key; not an audit-path row',
+  'learning.banditArms': 'run-less bandit snapshot (telemetry)',
+  'learning.fpPatterns': 'run-less false-positive pattern mirror',
+  'debt.entries': 'repo-scoped debt mirror; not a call, pass, finding or event',
+});
+
+/**
  * Resolve the linkage state of a run about to be written.
  *
  * Illegal pairs THROW (a standalone reason alongside a session id contradicts itself; an unknown reason is a typo

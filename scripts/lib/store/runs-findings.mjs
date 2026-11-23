@@ -28,7 +28,7 @@ import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
 import { applyFindingWrite } from './finding-write.mjs';
 import { applyFinalReviewDisposition } from './adjudication-events.mjs';
-import { captureIdentityColumns } from './capture-identity.mjs';
+import { captureIdentityColumns, reconcileReusedRunLinkage } from './capture-identity.mjs';
 import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists, strictColumnExists } from './column-probes.mjs';
 export { _resetClassificationColumnCache, _resetPassStatsRoundColumnCache, _resetRunReadColumnCache } from './column-probes.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
@@ -280,7 +280,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
           process.stderr.write(`  [learning] recordRunStart: run_id ${runId} belongs to a different repo — refusing reuse\n`);
           return null;
         }
-        return existing.id; // reuse — do not re-insert
+        return reconcileReusedRunLinkage(existing, { auditSessionId }); // reuse — do not re-insert; adopt a now-known session
       }
     } catch (err) {
       process.stderr.write(`  [learning] recordRunStart reuse-probe failed: ${err.message}\n`);
@@ -324,7 +324,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
       // reuse a row that raced in for a DIFFERENT repo — that would attach this
       // audit's findings to another repo's run.
       if (existing?.id && repoIdentityMatches(existing.repo_id, repoId)) {
-        return existing.id;
+        return reconcileReusedRunLinkage(existing, { auditSessionId });
       }
     }
     process.stderr.write(`  [learning] recordRunStart failed: ${err.message}\n`);

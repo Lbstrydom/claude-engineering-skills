@@ -7,22 +7,54 @@
 -- Rows written before this migration stay NULL on both columns; the linkage query reports them as
 -- `legacy-unstated`, never as linked. No backfill.
 --
+-- NEW rows can never carry a bare NULL state, even from a writer that predates this migration (a consumer not yet
+-- synced writes to a migrated store): the BEFORE INSERT trigger derives the state from the columns the writer did
+-- supply. The CHECKs then refuse every contradictory pair. `linkage_state IS NULL` stays legal in the CHECK only so
+-- legacy rows remain updatable (recordRunComplete UPDATEs them); the trigger is what keeps new rows out of it.
+--
+-- STANDALONE REASONS below must equal STANDALONE_REASONS in scripts/lib/telemetry/linkage.mjs
+-- (tests/telemetry-linkage.test.mjs pins both directions).
+--
 -- Idempotent. public-only, no schema-qualified names (parity:check-coupling).
 
 ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS linkage_state text;
 ALTER TABLE audit_runs ADD COLUMN IF NOT EXISTS linkage_reason text;
 
+CREATE OR REPLACE FUNCTION audit_runs_derive_linkage() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.linkage_state IS NULL THEN
+    IF NEW.audit_session_id IS NOT NULL THEN
+      NEW.linkage_state := 'linked';
+      NEW.linkage_reason := NULL;
+    ELSE
+      NEW.linkage_state := 'unlinked';
+      NEW.linkage_reason := COALESCE(NEW.linkage_reason, 'undeclared');
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_audit_runs_derive_linkage ON audit_runs;
+CREATE TRIGGER trg_audit_runs_derive_linkage
+  BEFORE INSERT ON audit_runs
+  FOR EACH ROW EXECUTE FUNCTION audit_runs_derive_linkage();
+
 ALTER TABLE audit_runs DROP CONSTRAINT IF EXISTS audit_runs_linkage_state_chk;
 ALTER TABLE audit_runs ADD CONSTRAINT audit_runs_linkage_state_chk
   CHECK (linkage_state IS NULL OR linkage_state IN ('linked', 'unlinked', 'standalone'));
 
--- A linked row must name its session; a standalone row must name its reason. The database refuses the pairs the
--- resolver refuses, so a writer that bypasses the resolver still cannot write a silent NULL as 'linked'.
+-- linked: names a session, carries no reason. standalone: no session, a reason from the closed declared set.
+-- unlinked: no session, a reason saying why (`undeclared`, or `invalid-declaration: ...`).
 ALTER TABLE audit_runs DROP CONSTRAINT IF EXISTS audit_runs_linkage_pair_chk;
 ALTER TABLE audit_runs ADD CONSTRAINT audit_runs_linkage_pair_chk
   CHECK (
     linkage_state IS NULL
-    OR (linkage_state = 'linked' AND audit_session_id IS NOT NULL)
-    OR (linkage_state = 'standalone' AND audit_session_id IS NULL AND linkage_reason IS NOT NULL)
-    OR (linkage_state = 'unlinked' AND audit_session_id IS NULL)
+    OR (linkage_state = 'linked' AND audit_session_id IS NOT NULL AND linkage_reason IS NULL)
+    OR (linkage_state = 'standalone' AND audit_session_id IS NULL
+        AND COALESCE(linkage_reason IN ('manual-single-shot', 'canary', 'model-eval'), false))
+    OR (linkage_state = 'unlinked' AND audit_session_id IS NULL AND linkage_reason IS NOT NULL)
   );

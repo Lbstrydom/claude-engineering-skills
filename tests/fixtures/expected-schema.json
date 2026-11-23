@@ -2115,7 +2115,7 @@
           "column_default": null,
           "is_identity": "NO",
           "identity_generation": null,
-          "ordinal_position": 74
+          "ordinal_position": 72
         }
       ]
     },
@@ -10879,6 +10879,13 @@
       "config": null
     },
     {
+      "function_name": "audit_runs_derive_linkage",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": "search_path=public"
+    },
+    {
       "function_name": "avg",
       "args": "halfvec",
       "return_type": "halfvec",
@@ -12641,7 +12648,7 @@
       "table_name": "audit_runs",
       "constraint_name": "audit_runs_linkage_pair_chk",
       "constraint_type": "CHECK",
-      "definition": "CHECK (((linkage_state IS NULL) OR ((linkage_state = 'linked'::text) AND (audit_session_id IS NOT NULL)) OR ((linkage_state = 'standalone'::text) AND (audit_session_id IS NULL) AND (linkage_reason IS NOT NULL)) OR ((linkage_state = 'unlinked'::text) AND (audit_session_id IS NULL))))"
+      "definition": "CHECK (((linkage_state IS NULL) OR ((linkage_state = 'linked'::text) AND (audit_session_id IS NOT NULL) AND (linkage_reason IS NULL)) OR ((linkage_state = 'standalone'::text) AND (audit_session_id IS NULL) AND COALESCE((linkage_reason = ANY (ARRAY['manual-single-shot'::text, 'canary'::text, 'model-eval'::text])), false)) OR ((linkage_state = 'unlinked'::text) AND (audit_session_id IS NULL) AND (linkage_reason IS NOT NULL))))"
     },
     {
       "table_name": "audit_runs",
@@ -15650,6 +15657,13 @@
     }
   ],
   "triggers": [
+    {
+      "table_name": "audit_runs",
+      "trigger_name": "trg_audit_runs_derive_linkage",
+      "action_timing": "BEFORE",
+      "events": "INSERT",
+      "action_statement": "EXECUTE FUNCTION audit_runs_derive_linkage()"
+    },
     {
       "table_name": "campaign_events",
       "trigger_name": "campaign_events_no_update",
