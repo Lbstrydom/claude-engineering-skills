@@ -372,6 +372,66 @@ describe('renderConsumerMcp — what is left out, and why', () => {
     assert.equal(r.text, null);
     assert.match(r.notes.join(';'), /does not exist/);
   });
+  const withLock = (name, text) => {
+    const tmp = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85'), false);
+    fs.writeFileSync(path.join(tmp, name), text);
+    return tmp;
+  };
+  it('lockfile records are exact: a longer version, a similar name or a comment is not a record (pnpm, yarn, bun)', () => {
+    assert.equal(render(withLock('pnpm-lock.yaml', "packages:\n  '@playwright/mcp@0.0.850':\n    resolution: {}\n")).text, null);
+    assert.equal(render(withLock('pnpm-lock.yaml', "# @playwright/mcp@0.0.85\npackages:\n  'x@playwright/mcp@0.0.85':\n")).text, null);
+    assert.equal(render(withLock('yarn.lock', '"@playwright/mcp@^0.0.850":\n  version "0.0.850"\n')).text, null);
+    assert.equal(render(withLock('yarn.lock', '# @playwright/mcp@0.0.85\n\n"@playwright/mcp@^0.0.85":\n  version "0.0.84"\n')).text, null);
+    assert.equal(render(withLock('bun.lock', '{"packages":{"x":["@playwright/mcp@0.0.850"]}}')).text, null);
+  });
+  it('positive control: the exact record IS accepted in each lockfile format', () => {
+    for (const [f, t] of [
+      ['pnpm-lock.yaml', "packages:\n  '@playwright/mcp@0.0.85':\n    resolution: {}\n"],
+      ['yarn.lock', '"@playwright/mcp@^0.0.85", "@playwright/mcp@0.0.85":\n  version "0.0.85"\n'],
+      ['yarn.lock', '"@playwright/mcp@npm:0.0.85":\n  version: 0.0.85\n'],
+      ['bun.lock', '{"packages":{"@playwright/mcp":["@playwright/mcp@0.0.85"]}}'],
+    ]) assert.notEqual(render(withLock(f, t)).text, null, f);
+  });
+  it('an unversioned or otherwise unresolvable network launcher is left out, never copied as if local', () => {
+    const tmp = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85'));
+    try {
+      const src = JSON.stringify({ mcpServers: {
+        bare: { command: 'npx', args: ['-y', 'some-pkg'] },
+        dlx: { command: 'pnpm', args: ['dlx', 'some-pkg@1.0.0'] },
+        floating: { command: 'npx', args: ['-y', 'some-pkg@latest'] },
+        local: { command: 'node', args: ['node_modules/x/cli.js'] },
+      } });
+      const r = renderConsumerMcp({ sourceText: src, consumerRoot: tmp });
+      assert.deepEqual(r.names, ['local']);
+      assert.equal(r.notes.length, 3);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+  it('a bin that node cannot run is left out; a shebang-node bin without an extension is accepted', () => {
+    const sh = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, { '@playwright/mcp': { version: '0.0.85', bin: { 'playwright-mcp': 'cli' } } });
+    fs.writeFileSync(path.join(sh, 'node_modules', '@playwright', 'mcp', 'cli'), '#!/bin/sh\necho hi\n');
+    const r = render(sh);
+    assert.equal(r.text, null);
+    assert.match(r.notes.join(';'), /not a node script/);
+    const ok = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, { '@playwright/mcp': { version: '0.0.85', bin: { 'playwright-mcp': 'cli' } } });
+    fs.writeFileSync(path.join(ok, 'node_modules', '@playwright', 'mcp', 'cli'), '#!/usr/bin/env node\n');
+    assert.notEqual(render(ok).text, null);
+  });
+  it('a malformed package.json or lockfile is reported as BROKEN, not as an absent declaration', () => {
+    const bad = tmpWith(null, pw('0.0.85'));
+    fs.writeFileSync(path.join(bad, 'package.json'), '{ not json');
+    assert.match(render(bad).notes.join(';'), /package\.json is unreadable/);
+    const badLock = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85'), false);
+    fs.writeFileSync(path.join(badLock, 'package-lock.json'), '{ not json');
+    assert.match(render(badLock).notes.join(';'), /package-lock\.json is unreadable/);
+  });
+  it('planRootMcp returns the stale-entry diagnostics in notes even when the caller passes no logger', () => {
+    const tmp = tmpWith(null, {});
+    try {
+      fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { mermaid: { command: 'npx', args: ['-y', 'mcp-mermaid@0.4.1'] } } }));
+      const plan = planRootMcp({ consumerRoot: tmp, sourceRoot: REPO_ROOT, syncOptIn: [] });
+      assert.ok(plan.notes.some((n) => /stale CES-managed server "mermaid"/.test(n)));
+    } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
   it('no package.json at all: nothing is emitted', () => {
     assert.equal(render(tmpWith(null, pw('0.0.85'))).text, null);
   });

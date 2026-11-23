@@ -28,9 +28,14 @@ export const ROOT_MCP_FEATURE = 'root-mcp-json';
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'];
 
-function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return null; }
+/** `{absent:true}` (ENOENT), `{error}` (unreadable or malformed: a broken file, never read as an absent one) or `{value}`. */
+function readJsonState(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf-8'); } catch (err) { return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? { absent: true } : { error: err.message }; }
+  try { return { value: JSON.parse(text) }; } catch (err) { return { error: `malformed JSON (${err.message})` }; }
 }
+const readJson = (file) => readJsonState(file).value ?? null;
+const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** `["-y", "@scope/pkg@1.2.3", "--flag"]` → `{pkg, rest}`; null when the launcher is not a pinned npx fetch of one package. */
 export function parseNpxLaunch(spec) {
@@ -45,19 +50,44 @@ export function parseNpxLaunch(spec) {
   return { pkg: token.slice(0, at), rest: args.slice(i + 1) };
 }
 
-/** Is exactly `pkg@version` recorded in a lockfile of the consumer? `{ok:true}` or `{ok:false, reason}`. */
+/** Does a yarn.lock (classic or berry) hold an ENTRY for `pkg` whose resolved `version` is exactly `version`? */
+function yarnRecords(text, pkg, version) {
+  const header = new RegExp(`(^|[\\s,"'])${esc(pkg)}@`);
+  return text.split(/\n\s*\n/).some((block) => {
+    const lines = block.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'));
+    return lines.length > 1 && !/^\s/.test(lines[0]) && header.test(lines[0])
+      && lines.slice(1).some((l) => new RegExp(`^\\s+version:?\\s+"?${esc(version)}"?\\s*$`).test(l));
+  });
+}
+
+/** Is exactly `pkg@version` recorded in a lockfile of the consumer? `{ok:true}` or `{ok:false, reason}`; an unreadable lockfile is its own reason. */
 function lockfileRecords(consumerRoot, pkg, version) {
-  const npmLock = ['package-lock.json', 'npm-shrinkwrap.json'].map((f) => readJson(path.join(consumerRoot, f))).find(Boolean);
-  if (npmLock) {
-    const v = npmLock.packages?.[`node_modules/${pkg}`]?.version ?? npmLock.dependencies?.[pkg]?.version;
-    return v === version ? { ok: true } : { ok: false, reason: `package-lock.json does not record ${pkg}@${version}` };
+  for (const f of ['package-lock.json', 'npm-shrinkwrap.json']) {
+    const st = readJsonState(path.join(consumerRoot, f));
+    if (st.absent) continue;
+    if (st.error) return { ok: false, reason: `${f} is unreadable: ${st.error}` };
+    const v = st.value.packages?.[`node_modules/${pkg}`]?.version ?? st.value.dependencies?.[pkg]?.version;
+    return v === version ? { ok: true } : { ok: false, reason: `${f} does not record ${pkg}@${version}` };
   }
   for (const f of ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock']) {
     let text;
-    try { text = fs.readFileSync(path.join(consumerRoot, f), 'utf-8'); } catch { continue; }
-    return text.includes(`${pkg}@${version}`) || text.includes(`${pkg}/${version}`) ? { ok: true } : { ok: false, reason: `${f} does not record ${pkg}@${version}` };
+    try { text = fs.readFileSync(path.join(consumerRoot, f), 'utf-8'); } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') continue;
+      return { ok: false, reason: `${f} is unreadable: ${err.message}` };
+    }
+    const spec = `${esc(pkg)}@${esc(version)}`;
+    const found = f === 'yarn.lock' ? yarnRecords(text, pkg, version)
+      : f === 'pnpm-lock.yaml' ? new RegExp(`^\\s*['"]?/?(${spec}|${esc(pkg)}/${esc(version)})(\\(.*\\))?(_[^:'"]*)?['"]?:\\s*$`, 'm').test(text)
+        : new RegExp(`"${spec}"`).test(text);
+    return found ? { ok: true } : { ok: false, reason: `${f} does not record ${pkg}@${version}` };
   }
   return { ok: false, reason: 'no lockfile records it' };
+}
+
+/** A bin that `node <file>` can run: a .js/.mjs/.cjs file, or one whose shebang names node. */
+function isNodeScript(file) {
+  if (/\.(?:[cm]?js)$/i.test(file)) return true;
+  try { return /^#!.*\bnode\b/.test(fs.readFileSync(file, 'utf-8').split('\n', 1)[0]); } catch { return false; }
 }
 
 /** The launcher path of an installed package from its own `bin` field, or a reason string. */
@@ -87,22 +117,33 @@ function binPathOf(pkg, installed) {
 export function renderConsumerMcp({ sourceText, consumerRoot }) {
   const doc = JSON.parse(sourceText);
   const rootKey = doc.mcpServers ? 'mcpServers' : 'servers';
-  const pkgJson = readJson(path.join(consumerRoot, 'package.json'));
+  const pkgState = readJsonState(path.join(consumerRoot, 'package.json'));
+  const pkgJson = pkgState.value ?? null;
   const out = {};
-  const notes = [];
+  const notes = pkgState.error ? [`package.json is unreadable (${pkgState.error}); no package can be shown to be pinned`] : [];
   for (const [name, spec] of Object.entries(doc[rootKey] ?? {})) {
     const launch = parseNpxLaunch(spec);
-    if (!launch) { out[name] = spec; continue; }   // already a local launcher: not ours to rewrite
+    if (!launch) {
+      // Only a launcher POSITIVELY known to be local passes through; any other network launcher (an unversioned npx, a dlx, a
+      // floating spec) is left out, never copied on the assumption that it is local.
+      if (classifyLaunchSpec(spec) === 'pinned') { out[name] = spec; continue; }
+      notes.push(`${name} left out: its launcher is not a local path and not a pinned npx form the sync can resolve`);
+      continue;
+    }
     const pin = DEP_FIELDS.map((f) => pkgJson?.[f]?.[launch.pkg]).find((v) => typeof v === 'string');
     if (pin === undefined) { notes.push(`${name} left out: ${launch.pkg} is not declared in package.json`); continue; }
     if (!EXACT_VERSION.test(pin)) { notes.push(`${name} left out: ${launch.pkg} is declared as "${pin}", not an exact version`); continue; }
-    const installed = readJson(path.join(consumerRoot, 'node_modules', ...launch.pkg.split('/'), 'package.json'));
+    const instState = readJsonState(path.join(consumerRoot, 'node_modules', ...launch.pkg.split('/'), 'package.json'));
+    if (instState.error) { notes.push(`${name} left out: the installed ${launch.pkg}/package.json is unreadable (${instState.error})`); continue; }
+    const installed = instState.value;
     if (installed?.version !== pin) { notes.push(`${name} left out: ${launch.pkg}@${pin} is not installed (run the package install first)`); continue; }
     const lock = lockfileRecords(consumerRoot, launch.pkg, pin);
     if (!lock.ok) { notes.push(`${name} left out: ${launch.pkg}@${pin} is not locked (${lock.reason})`); continue; }
     const bin = binPathOf(launch.pkg, installed);
     if (!bin.path) { notes.push(`${name} left out: ${launch.pkg} ${bin.reason}`); continue; }
-    if (!fs.existsSync(path.join(consumerRoot, ...bin.path.split('/')))) { notes.push(`${name} left out: ${bin.path} does not exist`); continue; }
+    const binAbs = path.join(consumerRoot, ...bin.path.split('/'));
+    if (!fs.existsSync(binAbs)) { notes.push(`${name} left out: ${bin.path} does not exist`); continue; }
+    if (!isNodeScript(binAbs)) { notes.push(`${name} left out: ${bin.path} is not a node script (\`node\` would not run it)`); continue; }
     out[name] = { ...spec, command: 'node', args: [bin.path, ...launch.rest] };
   }
   const names = Object.keys(out).sort();
@@ -143,11 +184,10 @@ export function planRootMcp({ consumerRoot, sourceRoot, syncOptIn, log = () => {
   // A file no longer shipped (an opted-out consumer's root `.mcp.json`) is the consumer's own from now on: out of the prior
   // manifest so it is not garbage-collected, and out of the new one so gate 10 reads `not-applicable`, never a stale entry.
   const finish = (omit, rest) => {
-    const lines = [...(rest.notes ?? [])];
-    lines.push(...staleManagedEntries(consumerRoot, managed, rest.names ?? []));
+    const lines = [...(rest.notes ?? []), ...staleManagedEntries(consumerRoot, managed, rest.names ?? [])];
     for (const n of lines) log(n);
     return {
-      optedIn, omit, names: [], notes: [], textFor: () => null, ...rest,
+      optedIn, omit, names: [], textFor: () => null, ...rest, notes: lines,
       /** The consumer entry with the unshipped source paths removed from its file list. */
       scope: (repo) => ({ ...repo, files: repo.files.filter((f) => !omit.has(f)) }),
       dropOmitted: (files) => Object.fromEntries(Object.entries(files).filter(([k]) => !omit.has(k))),
