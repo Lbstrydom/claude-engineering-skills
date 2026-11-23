@@ -1,0 +1,68 @@
+name: static-gates
+
+# `npm run check:static:ci`: the repo's static gates on every PR to main, so a push that skipped the local pre-push hook
+# (`--no-verify` after a preflight) cannot land two red gates, as #483 did on 2026-11-23 (fixed by #487).
+#
+# SANDBOX HONESTY (AGENTS.md): a gate that needs a gitignored or store-backed input must not go green in a clean checkout
+# having read nothing. The two such gates (`arch:coverage-gate`, `upstream:reconcile:gate`) are NOT in `check:static:ci`;
+# they are declared, with reasons, in .ci-static-local-only.json, and tests/check-static-ci-parity.test.mjs fails if a
+# `check:static` gate is in neither list. They keep running in the local pre-push hook.
+#
+# The diff-scoped gates refuse to infer a range (AUDIT_PUSH_RANGE_REQUIRED=1, as in the pre-push sandbox), so the range is
+# given explicitly: the PR base..head, or the pushed before..after on main. Standard runner, no artifacts, no cache, a
+# superseded run is cancelled (tests/workflow-runner-labels.test.mjs).
+
+on:
+  pull_request:
+    # `edited` fires on a base-branch change (a retarget onto main), which the default types would not re-validate.
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+concurrency:
+  # PR runs cover base..head, so a superseding push to the PR loses nothing: one group per ref, superseded runs cancelled.
+  # A push to main covers only before..after, and a group keeps just ONE pending run, so a shared group would drop a
+  # middle push's range unchecked: every push run gets its own group (the run id) and is never cancelled.
+  group: static-gates-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  static-gates:
+    name: static-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Git identity for throwaway test repos
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+
+      - run: npm ci
+
+      # Reconciles check:static with check:static:ci + .ci-static-local-only.json, so a new gate cannot be left out of CI unnoticed.
+      - name: Parity of the CI gate set
+        run: node --test tests/check-static-ci-parity.test.mjs
+
+      - name: Static gates (check:static:ci)
+        env:
+          AUDIT_PUSH_RANGE_REQUIRED: '1'
+          AUDIT_PUSH_RANGE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AUDIT_PUSH_RANGE_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # A base the clone cannot resolve must fail the job, never fall through to an inferred range.
+          git cat-file -e "$AUDIT_PUSH_RANGE_BASE^{commit}" || git fetch --no-tags origin "$AUDIT_PUSH_RANGE_BASE"
+          git cat-file -e "$AUDIT_PUSH_RANGE_HEAD^{commit}" || git fetch --no-tags origin "$AUDIT_PUSH_RANGE_HEAD"
+          npm run check:static:ci
