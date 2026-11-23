@@ -411,6 +411,10 @@ export const SYNC_ISOLATION_ENTRY = [
   // That is the exact trap the CLI_SMOKE_SET note further up records happening
   // for months. Its own closure is `sync-path-map.mjs`, already listed.
   'scripts/lib/sync-overrides.mjs',
+  // Gate 10 (consumer-side MCP parity) and the pure oracle it and `sync-manifest.mjs` import. Hand-maintained list: omitting
+  // either ships a verifier that dies on MODULE_NOT_FOUND in every consumer.
+  'scripts/lib/sync-mcp-parity-gate.mjs',
+  'scripts/lib/mcp-parity.mjs',
 ];
 
 /**

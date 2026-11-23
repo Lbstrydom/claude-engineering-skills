@@ -25,7 +25,7 @@ import {
 } from './lib/consumer-repos.mjs';
 import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
-  findUndeliveredEntries, patchManifestWithExtraHashes,
+  findUndeliveredEntries, patchManifestWithExtraHashes, readSourceManagedServers,
 } from './lib/sync-manifest.mjs';
 import { buildOwnedSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './lib/sync-owned-sidecar.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -58,7 +58,6 @@ import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { planGarbageCollection, executeGarbageCollection, renderGcReport, retiredForReceipt, selectManifestBases, countCitations, carriedForFailedDeletions, mayStillExist, SYNC_RUN_ARTIFACTS } from './lib/sync-gc.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
-import { managedServerNames } from './lib/mcp-parity.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { retireLegacyCopilotBlock } from './lib/sync-legacy-copilot-block.mjs';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
@@ -241,14 +240,6 @@ const BANNER_MARKER = Array.isArray(BANNER_BODY) ? BANNER_BODY[0] : String(BANNE
 const QUIET_LEGACY_CHECK = ARGV.flags.quietLegacyCheck;
 
 const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
-
-/** The server names the source's root `.mcp.json` ships; null when unreadable (then the manifest omits the field and gate 10 reports UNMEASURED, never a clean pass). */
-function sourceMcpManagedServers() {
-  try {
-    const names = managedServerNames(JSON.parse(fs.readFileSync(path.join(SOURCE_ROOT, '.mcp.json'), 'utf-8')));
-    return names.length > 0 ? names : null;
-  } catch { return null; }
-}
 
 // ANSI colours
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -1526,10 +1517,8 @@ async function main() {
         const consumerManifest = buildConsumerManifest({
           generatedAt: new Date().toISOString(),
           repo: 'Lbstrydom/claude-engineering-skills',
-          sourceGitMeta,
+          sourceGitMeta, mcpManagedServers: repo.files.includes('.mcp.json') ? readSourceManagedServers(SOURCE_ROOT) : null,
           files: consumerFileMap,
-          // Consumer-side MCP parity (gate 10) judges only the servers we ship; the names come from the source file.
-          mcpManagedServers: repo.files.includes('.mcp.json') ? sourceMcpManagedServers() : null,
           // null (git unavailable) propagates as "not determined" rather than
           // collapsing to clean — `.some()` on a null set would be exactly the
           // silent false-negative this field exists to remove.

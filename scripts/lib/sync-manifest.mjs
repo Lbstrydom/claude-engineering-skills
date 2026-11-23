@@ -26,6 +26,7 @@ import https from 'node:https';
 import { execSync } from 'node:child_process';
 import { z } from 'zod';
 import { atomicWriteFileSync } from './file-io.mjs';
+import { managedServerNames } from './mcp-parity.mjs';
 
 const DEFAULT_UPSTREAM_URL =
   'https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main/scripts/.sync-manifest.json';
@@ -343,6 +344,14 @@ export function findUndeliveredEntries(fileMap, { exists }) {
     if (!exists(rel)) out.push(rel);
   }
   return out.sort();
+}
+
+/** The server names the source's root `.mcp.json` ships; null when unreadable (the manifest then omits the field and gate 10 reports UNMEASURED, never a clean pass). */
+export function readSourceManagedServers(sourceRoot) {
+  try {
+    const names = managedServerNames(JSON.parse(fs.readFileSync(path.join(sourceRoot, '.mcp.json'), 'utf-8')));
+    return names.length > 0 ? names : null;
+  } catch { return null; }
 }
 
 export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files, sourceDirty = null, mcpManagedServers = null }) {
