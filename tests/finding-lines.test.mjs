@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const {
@@ -296,7 +297,7 @@ describe('snapshot contract + resolver + identity, against a real temp git repo'
 
 describe('historical positive control (needs the real commits)', () => {
   it('66b91739..c2d62f6b scripts/lib/llm-budget.mjs: a quote from a line INSIDE a real post-image hunk anchors and counts as a reopenRate hit; one outside does not', (t) => {
-    const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const rev = (r) => { try { return execFileSync('git', ['rev-parse', '--verify', '--quiet', r + '^{commit}'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return null; } };
     const base = rev('66b91739'); const head = rev('c2d62f6b');
     if (!base || !head) {
