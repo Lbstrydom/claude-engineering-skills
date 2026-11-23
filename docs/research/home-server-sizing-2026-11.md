@@ -1,5 +1,7 @@
 # Self-hosted CI inventory, cloud-runner comparison and home-server sizing
 
+<!-- population: not-store-derived — measured from GitHub Actions run history (gh run/job timestamps) and vendor price pages, not from the audit store -->
+
 Date 2026-11-23. Window: jobs in runs created 2026-10-24 → 2026-11-23 (30 days). Every figure is labelled
 **measured** (a command's output), **derived** (arithmetic on measured figures), **expected** (a judgement or
 vendor claim, not observed here) or **estimate** (a price, dated, with its source).
