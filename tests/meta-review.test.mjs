@@ -446,6 +446,22 @@ describe('R4 pivot: one lock, one resolver', () => {
   });
 });
 
+describe('R5 fix', () => {
+  test('REGRESSION (R5 M1): a confirmed pre-send failure releases its reservation; the retry runs and the budget is not consumed', async () => {
+    const before = await run({}, deps({ prov: provider(stopAll(), { throwErr: Object.assign(new Error('no key'), { sent: false }) }) }));
+    assert.equal(before.decision.sent, false);
+    const fold = foldMetaLog(readMetaLog(metaLogPath(dir, 'audit-plan-1-1')).events);
+    assert.equal(fold.sentCount, 0, 'nothing was sent, nothing charged'); assert.equal(fold.reserved.size, 0, 'not in flight');
+    const p = provider(stopAll());
+    const retry = await run({}, deps({ prov: p }));
+    assert.equal(p.calls.length, 1); assert.equal(retry.effect, 'stop');
+  });
+  test('a reserve with no decision stays in flight and charged (crash mid-call is conservative)', () => {
+    const fold = foldMetaLog([{ event: 'reserve', attemptId: 'a' }]);
+    assert.equal(fold.sentCount, 1); assert.equal(fold.reserved.has('a'), true);
+  });
+});
+
 describe('overrides', () => {
   test('an override reverses an honoured loop-end; a revoke ends an admission', async () => {
     const r = await run({}, deps({ prov: provider(stopAll()) }));

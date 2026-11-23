@@ -158,16 +158,19 @@ export function appendMetaEvent(file, event, { fsImpl = fs } = {}) {
 
 /**
  * Fold the log into state. The FIRST decision per attempt id wins (a concurrent duplicate is counted, never a second
- * admission). `sentCount` counts decisions whose request was sent, the session budget's measure.
+ * admission). Each `reserve` charges the budget (`sentCount`) and opens the attempt; the next decision for that attempt
+ * closes it, and a decision recorded `sent: false` (a confirmed pre-send failure) also RELEASES the charge. A reserve
+ * with no decision after it stays open (`reserved`): in flight, or a crash mid-call, counted conservatively.
  */
 export function foldMetaLog(events) {
   const decisions = new Map();
   const overridden = new Map();
-  const reserved = new Set();
+  const open = new Map();
   let sentCount = 0; let duplicates = 0; let captures = 0;
   for (const e of events || []) {
-    if (e?.event === 'reserve') { sentCount++; reserved.add(e.attemptId); }
+    if (e?.event === 'reserve') { sentCount++; open.set(e.attemptId, (open.get(e.attemptId) || 0) + 1); }
     else if (e?.event === 'decision') {
+      if ((open.get(e.attemptId) || 0) > 0) { open.set(e.attemptId, open.get(e.attemptId) - 1); if (e.sent === false) sentCount--; }
       const prev = decisions.get(e.attemptId);
       // A decision made before anything was sent (no route, budget, plan excluded) is RETRYABLE: a later one replaces it.
       if (!prev || isRetryable(prev)) decisions.set(e.attemptId, e); else duplicates++;
@@ -176,6 +179,7 @@ export function foldMetaLog(events) {
       overridden.get(e.attemptId).push(e);
     } else if (e?.event === 'debt-capture') captures++;
   }
+  const reserved = new Set([...open].filter(([, n]) => n > 0).map(([a]) => a));
   return { decisions, overridden, reserved, sentCount, duplicates, captures };
 }
 
