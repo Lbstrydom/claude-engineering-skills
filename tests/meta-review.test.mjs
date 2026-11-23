@@ -321,6 +321,13 @@ describe('runMetaReview — the positive and negative controls', () => {
     assert.match(ev[0].signals[0].reason, /cite no lines/);
     assert.equal(foldMetaLog(readMetaLog(metaLogPath(dir, 'audit-code-eval')).events).decisions.size, 0, 'an evaluation is not a decision');
   });
+  test('T2 evaluation: a computation that THROWS is recorded as failed (redacted), not as a quiet no-fire', async () => {
+    const d = { ...deps({ prov: provider(stopAll()) }), computeSignals: () => { throw new Error('boom token=sk-abcdefghijklmnopqrstuvwxyz0123456789'); } };
+    const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-eval3', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, d);
+    assert.match(r.reason, /could not be computed/); assert.match(r.lines.join('\n'), /COMPUTATION FAILED/);
+    const ev = readMetaLog(metaLogPath(dir, 'audit-code-eval3')).events.find((e) => e.event === 'evaluation');
+    assert.equal(ev.failed, true); assert.doesNotMatch(JSON.stringify(ev), /sk-abcdefghijklmnop/);
+  });
   test('T2 evaluation: a log that cannot be written is reported, never thrown, and the round still runs', async () => {
     const base = deps({ prov: provider(stopAll()), append: () => ({ ok: false, reason: 'disk full' }) });
     const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-eval2', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, base);

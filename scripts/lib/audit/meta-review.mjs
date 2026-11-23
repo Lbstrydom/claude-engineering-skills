@@ -331,10 +331,10 @@ export const META_EVALUATION_TYPE = 'meta_review_evaluation';
  */
 export async function recordT2Evaluation({ file, attemptId, sid, round, lastRound, signals, perSignal, now }, deps = {}) {
   try {
-    const ev = { event: 'evaluation', trigger: 'T2', attemptId, sid: sid ?? null, round, checkpoint: lastRound, at: now, anyFires: false, fired: signals?.fired ?? [], unmeasured: signals?.unmeasured ?? [], signals: perSignal };
+    const ev = { event: 'evaluation', trigger: 'T2', attemptId, sid: sid ?? null, round, checkpoint: lastRound, at: now, anyFires: false, failed: !!signals?.failed, fired: signals?.fired ?? [], unmeasured: (signals?.unmeasured ?? []).map((u) => red(String(u)).slice(0, 200)), signals: perSignal };
     const out = (deps.append || appendMetaEvent)(file, ev);
     if (!out.ok) return { logged: false, reason: out.reason };
-    const rec = await recordMetaLearning({ decisionType: META_EVALUATION_TYPE, externalId: `${attemptId}-eval`, context: { trigger: 'T2', checkpoint: lastRound, anyFires: false, signals: perSignal.map((s) => ({ name: s.name, measured: s.measured, fires: s.fires })) }, choice: { chose: 'not-run' } }, deps);
+    const rec = await recordMetaLearning({ decisionType: META_EVALUATION_TYPE, externalId: `${attemptId}-eval`, context: { trigger: 'T2', checkpoint: lastRound, anyFires: false, failed: !!signals?.failed, signals: perSignal.map((s) => ({ name: s.name, measured: s.measured, fires: s.fires })) }, choice: { chose: 'not-run' } }, deps);
     return { logged: true, learningRecorded: rec.recorded, reason: rec.reason };
   } catch (err) { return { logged: false, reason: String(err?.message || err).slice(0, 200) }; }
 }
@@ -469,13 +469,14 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
       signals = { fired: Object.entries(s.signals || {}).filter(([, v]) => v?.fires).map(([k]) => k).sort(), unmeasured: s.unmeasured || [], anyFires: !!s.anyFires };
       perSignal = Object.entries(s.signals || {}).map(([name, v]) => ({ name, measured: !!v?.measured, fires: !!v?.fires, value: typeof v?.value === 'number' ? v.value : null, reason: red(String(v?.reason ?? '')).slice(0, 200) }));
       signalsLine = renderRoundSignals(s).replace(/\s+/g, ' ').slice(0, 400);
-    } catch (err) { signals = { fired: [], unmeasured: [`signals failed (${String(err?.message || err).slice(0, 80)})`], anyFires: false }; }
+    } catch (err) { signals = { fired: [], unmeasured: [`signals failed (${red(String(err?.message || err)).slice(0, 80)})`], anyFires: false, failed: true }; }
   }
   if (trigger === 'T2' && !signals?.anyFires) {
     // Observability: a T2 evaluation that does not fire used to leave NO trace. Record it (best-effort) with each signal's state.
     const evalRec = await recordT2Evaluation({ file, attemptId, sid, round, lastRound, signals, perSignal, now: (deps.now || (() => new Date().toISOString()))() }, deps);
-    const res = notRun(`round ${lastRound} signals did not fire`);
-    res.lines.push(`  [meta-review] T2 evaluation ${evalRec.logged ? 'logged' : `not logged (${evalRec.reason})`}: ${perSignal.map((s) => `${s.name}=${s.measured ? (s.fires ? 'fires' : 'quiet') : 'unmeasured'}`).join(' ')}`);
+    const res = notRun(signals?.failed ? `round ${lastRound} signals could not be computed` : `round ${lastRound} signals did not fire`);
+    const states = signals?.failed ? `COMPUTATION FAILED ${signals.unmeasured[0]}` : perSignal.map((s) => `${s.name}=${s.measured ? (s.fires ? 'fires' : 'quiet') : 'unmeasured'}`).join(' ');
+    res.lines.push(`  [meta-review] T2 evaluation ${evalRec.logged ? 'logged' : `not logged (${evalRec.reason})`}: ${states}`);
     return res;
   }
 
