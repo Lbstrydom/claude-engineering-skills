@@ -109,6 +109,15 @@ describe('compareMcpSurfaces({managedNames}) — parity over MANAGED servers onl
     const q = mergedPair(JSON.stringify({ mcpServers: { corp: { command: 'x' } } }), null);
     assert.equal(compareMcpSurfaces(q).ok, false);
   });
+  it('a managed server absent from BOTH files fails (filtering alone would read as parity)', () => {
+    const p = mergedPair(null, null);
+    delete p.claude.mcpServers.mermaid;
+    delete p.vscode.servers.mermaid;
+    const r = cmp(p);
+    assert.equal(r.ok, false);
+    assert.deepEqual(r.drifted, ['mermaid']);
+    assert.match(r.diagnostics.join(';'), /absent from both/);
+  });
   it("a managed server missing from one file fails (not the consumer's own)", () => {
     const p = mergedPair(null, null);
     delete p.vscode.servers.mermaid;
@@ -179,6 +188,10 @@ describe('gate 10 + manifest field: real sync, reload through the schema, runGat
 
   it('not-applicable: no .mcp.json in the manifest is green, exit 0; a malformed field is a schema failure', () => withConsumer(({ tmp, gate }) => {
     editJson(manifestPath(tmp), (j) => { delete j.files['.mcp.json']; });
+    // Field kept, file gone: a delivery that did not land is unmeasured, never not-applicable.
+    assert.equal(gate().result, 'unmeasured');
+    assert.notEqual(exitOf(tmp), 0);
+    editJson(manifestPath(tmp), (j) => { delete j.mcpManagedServers; });
     assert.equal(gate().result, 'not-applicable');
     assert.equal(exitOf(tmp), 0);
     editJson(manifestPath(tmp), (j) => { j.mcpManagedServers = ['playwright', 'mermaid']; });   // unsorted

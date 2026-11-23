@@ -29,6 +29,14 @@ export function gate10(consumerRoot, manifest) {
   const VSCODE = '.vscode/mcp.json';
   const files = manifest?.files ?? {};
   if (!(CLAUDE in files)) {
+    // A manifest that names managed servers but not the file they live in is a delivery that did not land, not a legacy
+    // consumer: the sync only writes the field when it ships `.mcp.json`.
+    if (Array.isArray(manifest?.mcpManagedServers) && manifest.mcpManagedServers.length > 0) {
+      return {
+        gate: '10', pass: false, result: 'unmeasured', code: 'MCP_PARITY_UNMEASURED',
+        error: `MCP_PARITY_UNMEASURED: the manifest carries mcpManagedServers but does not list ${CLAUDE}. Re-sync from the current engineering-skills source.`,
+      };
+    }
     return { gate: '10', pass: true, result: 'not-applicable', details: { note: `${CLAUDE} is not in the manifest` } };
   }
   const managed = manifest?.mcpManagedServers;

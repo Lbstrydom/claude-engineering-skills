@@ -285,7 +285,9 @@ export function compareMcpSurfaces({ claude, vscode, exceptions, managedNames } 
 
   const diagnostics = [];
   const drifted = [];
-  const names = [...new Set([...c.servers.keys(), ...v.servers.keys()])].sort();
+  // A managed name must be judged even when NEITHER file has it: filtering alone would let a server deleted from both
+  // read as parity.
+  const names = [...new Set([...c.servers.keys(), ...v.servers.keys(), ...(managedNames ?? [])])].sort();
   let compared = 0;
 
   const presenceExcused = new Set(ex.valid.filter(e => e.kind === 'presence').map(e => e.server));
@@ -298,7 +300,9 @@ export function compareMcpSurfaces({ claude, vscode, exceptions, managedNames } 
     if (!inC || !inV) {
       if (presenceExcused.has(name)) continue;
       drifted.push(name);
-      diagnostics.push(`server "${name}" is present only in ${inC ? 'claude (.mcp.json)' : 'vscode (.vscode/mcp.json)'}`);
+      diagnostics.push(!inC && !inV
+        ? `managed server "${name}" is absent from both files`
+        : `server "${name}" is present only in ${inC ? 'claude (.mcp.json)' : 'vscode (.vscode/mcp.json)'}`);
       continue;
     }
 
