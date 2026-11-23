@@ -79,11 +79,11 @@ export async function captureIdentityColumns({ auditSessionId, auditRound, unifi
 /**
  * A run row REUSED by an explicit run id (a unified audit's later rounds, a coordinator's worker) was written by an earlier
  * process, possibly before any identity was known. Reuse must not leave it silently unlinked while the caller now holds a
- * session: an unlinked/legacy row adopts the supplied session; a row already linked to a DIFFERENT session is left alone and
- * the conflict is named (a wrong session id merges two audits in every query). Never throws; returns the run id.
+ * session: an unlinked/legacy row adopts the supplied session; a row already linked to a DIFFERENT session is REFUSED
+ * (returns null, like the repo-mismatch refusal: a wrong session id merges two audits in every query). Never throws.
  * @param {{id: string, audit_session_id?: string|null, linkage_state?: string|null}} existing
  * @param {{auditSessionId?: string|null}} identity
- * @returns {Promise<string>}
+ * @returns {Promise<string|null>} the run id, or null when reuse is refused
  */
 export async function reconcileReusedRunLinkage(existing, { auditSessionId } = {}) {
   const sid = typeof auditSessionId === 'string' && auditSessionId.trim() ? auditSessionId.trim() : null;
@@ -96,7 +96,15 @@ export async function reconcileReusedRunLinkage(existing, { auditSessionId } = {
     }
     if (row?.audit_session_id) return existing.id;
     const hasState = await columnExists('audit_runs', 'linkage_state', many, isCloudEnabled);
-    await query(`UPDATE audit_runs SET audit_session_id = $2${hasState ? ", linkage_state = 'linked', linkage_reason = NULL" : ''} WHERE id = $1 AND audit_session_id IS NULL`, [existing.id, sid]);
+    // The UPDATE is the arbiter, not the SELECT above: two concurrent reuses can both read NULL, and only one UPDATE matches.
+    const won = await many(`UPDATE audit_runs SET audit_session_id = $2${hasState ? ", linkage_state = 'linked', linkage_reason = NULL" : ''} WHERE id = $1 AND audit_session_id IS NULL RETURNING id`, [existing.id, sid]);
+    if (won.length === 0) {
+      const now = await one('SELECT audit_session_id FROM audit_runs WHERE id = $1', [existing.id]);
+      if (now?.audit_session_id !== sid) {
+        process.stderr.write(`  [learning] run ${existing.id} was linked to "${now?.audit_session_id}" concurrently - reuse refused for "${sid}"\n`);
+        return null;
+      }
+    }
   } catch (err) {
     process.stderr.write(`  [learning] reconcile linkage on reuse of ${existing.id} failed: ${err.message}\n`);
   }

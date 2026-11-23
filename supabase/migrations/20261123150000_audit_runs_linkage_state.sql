@@ -26,7 +26,7 @@ SET search_path = public
 AS $$
 BEGIN
   -- A blank session id is no session: it must not read as linked.
-  IF NEW.audit_session_id IS NOT NULL AND btrim(NEW.audit_session_id) = '' THEN
+  IF NEW.audit_session_id IS NOT NULL AND NEW.audit_session_id ~ '^\s*$' THEN
     NEW.audit_session_id := NULL;
   END IF;
   IF TG_OP = 'UPDATE' THEN
