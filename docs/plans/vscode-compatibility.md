@@ -188,7 +188,7 @@ no codemod is warranted.
 
 | File | Purpose | Key change | Principle |
 |---|---|---|---|
-| `docs/runbooks/vscode-host-smoke.md` (planned) (create) | The per-harness smoke test Louis runs | Steps, capture recipe, the fixture destination, and recording into `hosts.md` | #12 Testability |
+| `docs/runbooks/vscode-host-smoke.md` (create) | The per-harness smoke test Louis runs | Steps, capture recipe, the fixture destination, and recording into `hosts.md` | #12 Testability |
 | `AGENTS.md` (modify) | The MCP line | Copilot harness reads `.mcp.json`; Local reads `.vscode/mcp.json`; keep both mirrored | #5 |
 | `scripts/gate-contracts/mcp-parity-gate.json` (modify) | The verbatim `stated` quote | Re-quote the new sentence | gate honesty |
 | `scripts/lib/checklist/gen.mjs` (modify) | Its checklist context string | Match the new line | #5 |
@@ -258,7 +258,7 @@ extension, and the cloud agent where it applies.
 - *Fleet:* the two-session test from `hosts.md:73-75`.
 - *Results:* the result table and where it is recorded (the `hosts.md` matrix, with harness version and date).
 
-Files: `docs/runbooks/vscode-host-smoke.md` (planned) (create).
+Files: `docs/runbooks/vscode-host-smoke.md` (create).
 
 **Phase 2 — Host-facts refresh.** Rewrite each stale fact with its citation.
 
