@@ -704,3 +704,5 @@ situations — read them only when the trigger applies.
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /audit-code —
+
+Run `npm run docs:synced-links:gate` to check links.
