@@ -18,7 +18,7 @@ import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShu
 import {
   buildArmInvocations, stripMetaFlags, restorePointFiles, validateTrigger, classifyOutcome, sidFor, runContinuation, childEnv, toAuditLedgerEntries, CONTINUATION_PAST_CAP_REASON,
 } from '../scripts/lib/audit/step-back-continuation.mjs';
-import { decideMetaPilot, decideMetaPilotBothJudges, scoreMetaRuns } from '../scripts/lib/audit/meta-pilot-decision.mjs';
+import { decideMetaPilot, scoreMetaRuns } from '../scripts/lib/audit/meta-pilot-decision.mjs';
 
 const T0 = Date.parse('2026-11-01T10:00:00Z');
 const iso = (ms) => new Date(ms).toISOString();
@@ -297,19 +297,15 @@ describe('decideMetaPilot — every row of §2.3', () => {
     const runs = mk(32, (i) => (i < 12 ? { meta: { valid: false }, cont: {} } : { meta: { stopRun: true, costUsd: 9 }, cont: {} }));
     assert.equal(D(runs).branch, 1);
   });
-  test('both judges: a 1-1 split across branches is INCONCLUSIVE; agreement stands; a single judge is not enough', () => {
-    const keep = mk(32, stopsOf(8)); const off = mk(32, (i) => (i < 8 ? { meta: { stopRun: true }, cont: { novelActionableHM: 1, novelActionable: 1 } } : {}));
-    const split = decideMetaPilotBothJudges({ byJudge: { opus: keep, pro: off } });
-    assert.equal(split.outcome, 'inconclusive'); assert.match(split.why, /disagree/);
-    assert.equal(decideMetaPilotBothJudges({ byJudge: { opus: keep, pro: keep } }).outcome, 'keep');
-    assert.equal(decideMetaPilotBothJudges({ byJudge: { opus: keep } }).outcome, 'inconclusive');
-  });
-  test('scoreMetaRuns: only labelled-REAL novel MEDIUM+ findings count; an unlabelled or UNDETERMINED one blocks the score', () => {
-    const runs = [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: [{ key: 'a', severity: 'HIGH' }, { key: 'b', severity: 'MEDIUM' }, { key: 'c', severity: 'LOW' }, { key: 'd', severity: 'MEDIUM' }, { key: 'e', severity: 'MEDIUM' }] }];
-    const novel = new Map([['a', true], ['b', true], ['c', true], ['d', false], ['e', true]]);
-    const labels = new Map([['a', 'REAL'], ['b', 'RIGOUR_CHASING'], ['e', 'UNDETERMINED']]);
-    const s = scoreMetaRuns({ runs, novelByFinding: novel, labels });
-    assert.equal(s.rows[0].novelActionableHM, 1); assert.equal(s.rows[0].noise, 1);
+  test('scoreMetaRuns (amendment 2): the human decides novelty for what it saw; KNOWN is not novel; an audited hidden finding the human calls REAL counts; unaudited hidden is not novel; an unlabelled shown finding blocks', () => {
+    const runs = [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: [
+      { key: 'a', severity: 'HIGH' }, { key: 'b', severity: 'MEDIUM' }, { key: 'c', severity: 'LOW' }, { key: 'd', severity: 'MEDIUM' }, { key: 'e', severity: 'MEDIUM' }, { key: 'f', severity: 'MEDIUM' }, { key: 'g', severity: 'HIGH' }] }];
+    const hidden = new Map([['a', false], ['b', false], ['c', false], ['d', true], ['e', false], ['f', true], ['g', false]]);
+    const labels = new Map([['a', 'REAL'], ['b', 'RIGOUR_CHASING'], ['e', 'UNDETERMINED'], ['f', 'REAL'], ['g', 'KNOWN']]);
+    const s = scoreMetaRuns({ runs, hidden, labels });
+    assert.equal(s.rows[0].novelActionableHM, 2, 'a (shown, REAL) and f (hidden but audited and REAL: a false suppression, counted)');
+    assert.equal(s.rows[0].noise, 1); assert.equal(s.rows[0].known, 1, 'g restates a ledger entry: not novel');
     assert.equal(s.incomplete, true); assert.deepEqual(s.blocked.map((b) => b.key), ['e']);
+    assert.equal(scoreMetaRuns({ runs: [{ ...runs[0], findings: [{ key: 'z', severity: 'HIGH' }] }], hidden: new Map(), labels: new Map() }).blocked[0].reason, 'no-novelty-judgment');
   });
 });

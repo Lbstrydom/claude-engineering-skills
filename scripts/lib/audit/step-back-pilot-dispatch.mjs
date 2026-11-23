@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgvError } from '../cli-io.mjs';
+import { readAmendment } from './pilot-novelty-audit.mjs';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import {
   runFreeze, runContinue, runReconcile, runCalibrateDraw, runCalibrateScore, runNovelty, buildWorksheet, parseWorksheetLabels, scorePilot,
@@ -74,18 +75,19 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const datasetPath = need('--dataset'); const resultsPath = need('--results');
   if (cmd === 'novelty') {
     if (!argv.includes('--confirm-spend')) throw new ArgvError('step-back-replay novelty: judging spends from the pilot ledger; pass --confirm-spend (the hard cap is the ledger\'s, metered per call).');
-    const r = await runNovelty({ datasetPath, resultsPath, calibrationPath: flag('--calibration') });
+    const r = await runNovelty({ datasetPath, resultsPath, calibrationPath: flag('--calibration'), amendmentPath: flag('--amendment') });
     console.log(`step-back-replay novelty: ${Object.keys(r.byFinding).length} findings judged by both judges${r.incomplete ? ' - INCOMPLETE (a pair was not judged; a rerun retries it)' : ''}`);
     return r.incomplete ? 1 : 0;
   }
-  const { dataset } = loadDataset(datasetPath);
+  const { dataset, snapshots } = loadDataset(datasetPath);
+  const amendment = readAmendment(need('--amendment'));
   const rows = readRunRows(resultsPath); const novelty = JSON.parse(fs.readFileSync(`${resultsPath}.novelty.json`, 'utf8'));
   if (novelty.datasetHash !== dataset.datasetHash || novelty.resultsSha256 !== sha256OfFile(resultsPath)) throw new ArgvError('the novelty file does not match this dataset and results file; rerun novelty');
   if (cmd === 'worksheet') {
-    const { markdown, key } = buildWorksheet({ rows, novelty, seed: need('--seed'), dataset });
+    const { markdown, key, counts } = buildWorksheet({ rows, novelty, seed: need('--seed'), dataset, snapshots, amendment, auditAll: flag('--audit') === 'all' });
     const dir = need('--out-dir'); fs.mkdirSync(dir, { recursive: true });
     atomicWriteFileSync(path.join(dir, 'pilot1-worksheet.md'), markdown); writeJson(path.join(dir, 'pilot1-worksheet.key.json'), key);
-    console.log(`step-back-replay worksheet: ${Object.keys(key.items).length} findings to label -> ${dir} (the key file stays with the operator, never the labeller)`);
+    console.log(`step-back-replay worksheet: ${Object.keys(key.items).length} findings to label (${counts.shown} surfaced + ${counts.audited} of ${counts.hidden} hidden audited) -> ${dir} (the key file stays with the operator, never the labeller)`);
     return 0;
   }
   // score --pilot meta-ab
@@ -97,5 +99,5 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });
   writeJson(path.join(dir, 'pilot1-score.json'), res);
   console.log(`step-back-replay score --pilot meta-ab: ${String(res.decision.outcome).toUpperCase()} (${res.decision.why})`);
-  return res.decision.outcome === 'INCOMPLETE' ? 1 : 0; // keep/off/inconclusive/invalid are RESULTS (0); an unfinished score is not
+  return ['INCOMPLETE', 'audit-failed'].includes(res.decision.outcome) ? 1 : 0; // keep/off/inconclusive/invalid are RESULTS (0); an unfinished score is not
 }

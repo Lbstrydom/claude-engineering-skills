@@ -41,18 +41,14 @@ node scripts/step-back-replay.mjs continue --dataset C:/tmp/pilot1/dataset.json 
 Restores every point in a throwaway case tree and checks the gate's computed trigger, the T2 round signal, the plan file and the diff scope.
 A `BAD` row is unrecoverable: re-freeze (new seed = new partition = a deviation to record) before any spend.
 
-## 3. Matcher calibration gate ($10) — before any pilot aggregate
+## 3. Matcher calibration — evidence only (amendment 2)
 
-```powershell
-node scripts/step-back-replay.mjs calibrate-draw --dataset C:/tmp/pilot1/dataset.json --seed seeded-bench-v1-cal --out-dir C:/tmp/pilot1/cal
-# Louis labels C:/tmp/pilot1/cal/calibration-worksheet.md blind (Label: same|partial|different ; Restates: <ids>|none), then:
-node scripts/step-back-replay.mjs calibrate-score --out-dir C:/tmp/pilot1/cal --labels C:/tmp/pilot1/cal/calibration-worksheet.md --max-usd 10 --confirm-spend
-```
-
-Draws from **calibration-set sessions only** (30 points, so the 60-finding filter-recall sample can be met): findings of round *r* against ledger entries first seen before *r* (the "source arm" stratum is the
-audit mode, since the two pilot arms exist only after the pilot runs). Both judges (`latest-opus`, `latest-pro`) are scored against the human labels;
-the Jaccard-0.15 scorer is the negative control. **Accept**: precision ≥ 0.90, recall ≥ 0.85, filter recall ≥ 0.95, per-arm gap ≤ 0.05, ≥ 15 `same`
-pairs per arm, for **both** judges. Below the bar the pilots stop (no fallback to the file/line filter). `inconclusive` = grow the labels.
+The §1.4 calibration ran once (2026-11-23, $2.2286 of $10, pinned to main `f74cc844`) and came back **INCONCLUSIVE**: the 80-pair prevalence sample held 8
+judge-positive pairs (6 correct), all pairs were code audits, and Gemini returned malformed JSON on 4 pairs. That verdict is final for epoch v1 and is never
+rewritten. [Amendment 2](../experiments/seeded-bench/amendment-2-novelty-audit.md) (epoch `seeded-bench-v2`, approved by Louis in chat 2026-11-23) replaces the
+pre-pilot certification with a **pilot-time audit** (§5). Novelty and scoring now refuse to run without the signed amendment
+(`--amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json`) and the calibration report of the same dataset (`--calibration`, whose judge stamps pin
+the judges). `calibrate-draw` and `calibrate-score` stay available for evidence and judge-vs-human agreement; do not re-run them without a new approval.
 
 ## 4. Dress rehearsal ($15) and pilot ($100)
 
@@ -66,24 +62,29 @@ Each point runs META (the production gate, meta-review on) then CONTINUE (`--no-
 A META stop records its debt command and never runs it. The rehearsal asserts every evidence field is non-null (the C5 fill-check) and is
 **discarded** from the pilot.
 
-## 5. Novelty, blind labelling, decision
+## 5. Novelty, blind labelling, audit, decision
 
 ```powershell
-node scripts/step-back-replay.mjs novelty --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl
-node scripts/step-back-replay.mjs worksheet --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --seed seeded-bench-v1-pilot1 --out-dir C:/tmp/pilot1/out
-# Louis labels pilot1-worksheet.md (REAL | RIGOUR_CHASING | NOT_A_DEFECT | WRONG | UNDETERMINED), then:
-node scripts/step-back-replay.mjs score --pilot meta-ab --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --out-dir C:/tmp/pilot1/out --labels C:/tmp/pilot1/out/pilot1-worksheet.md
+node scripts/step-back-replay.mjs novelty --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --calibration C:/tmp/pilot1/cal/calibration-report.json --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json --confirm-spend
+node scripts/step-back-replay.mjs worksheet --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json --seed seeded-bench-v2-pilot1 --out-dir C:/tmp/pilot1/out
+# Louis labels pilot1-worksheet.md (REAL | RIGOUR_CHASING | NOT_A_DEFECT | WRONG | KNOWN | UNDETERMINED), then:
+node scripts/step-back-replay.mjs score --pilot meta-ab --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --out-dir C:/tmp/pilot1/out --labels C:/tmp/pilot1/out/pilot1-worksheet.md --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json
 ```
 
-The sheet pools findings of both arms, shuffled and source-blinded; every novel MEDIUM+ finding (novel under **either** judge) is labelled by a
-human — nothing the rule reads rests on a judge label. The key file stays with the operator, never the labeller. An unlabelled or
-`UNDETERMINED` finding makes the score INCOMPLETE.
+A finding is **hidden from the human only when BOTH judges (Opus and Gemini) call it `same`** as a prior ledger entry; a judge that fails, is unparseable or
+disagrees sends the finding to the human. The sheet pools every surfaced finding of both arms plus a seeded sample of **80** hidden ones (all of them if fewer),
+shuffled and source-blinded; each shows its three closest earlier ledger entries, and the human decides novelty (`KNOWN` = it restates one). Nothing the rule reads
+rests on a judge label. The key file stays with the operator.
+
+**The audit.** Each audited hidden finding the human does not call `KNOWN` is a false suppression. It passes iff the one-sided 95% Clopper–Pearson upper bound of
+false suppressions ÷ audited is ≤ 0.15 (**at most 6 of 80**). If it fails, `score` prints `audit-failed` (exit 1) and reports no decision: rebuild the worksheet with
+`worksheet --audit all` and label every hidden finding. An unlabelled or `UNDETERMINED` shown finding makes the score INCOMPLETE (exit 1).
 
 ## 6. Decision rule (pre-registered; `decideMetaPilot`)
 
 First match wins: **1 invalid** (valid pairs < 24 of 32, or completion < 75% / arm gap > 10 points) · **2 turn off** (cost saved < 0, or |S| ≥ 5 and
 miss rate > 40%) · **3 inconclusive** (|S| < 5) · **4 keep** (miss ≤ 20%, cost saved ≥ 25%, admission yield ≥ 0.8 or undefined) · **5 inconclusive**.
-Both judges must land on the same branch, else inconclusive. A result is **advisory** until a repeat run on a fresh draw lands on the same
+The decision is computed once, on human-labelled counts. A result is **advisory** until a repeat run on a fresh draw lands on the same
 branch (§0.3); a repeat is a new spend approval.
 
 ## 7. Reconciling an indeterminate call
@@ -97,6 +98,7 @@ Never put a backtick in `--evidence` (the shell runs it).
 ## Known limits (stated, not hidden)
 
 - The store era predates the meta-review, so no point has pre-checkpoint meta events to restore; the ledger is reconstructed from store events (the audit's own semantic hash is not stored — the fingerprint stands in, identically for both arms).
+- The v1 calibration gate was inconclusive (amendment 2 records why); the judges are an audited filter, not a certified one.
 - A T2 point whose checkpoint-3 signal is quiet is not a decision point (unrecoverable at validation).
 - One continuation round per point; a META fall-through to the production refusal counts as META not running the round, exactly as production behaves.
 - One human adjudicator (the plan's C4 limit); judge-vs-human agreement is reported, not used.

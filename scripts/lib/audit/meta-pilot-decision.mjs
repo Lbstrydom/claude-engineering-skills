@@ -27,7 +27,7 @@ export const META_PILOT_RULE = Object.freeze({
 });
 
 /** Contract epoch stamped on every evidence row (C9). */
-export const SEEDED_BENCH_EPOCH = 'seeded-bench-v1';
+export const SEEDED_BENCH_EPOCH = 'seeded-bench-v2'; // v2 = amendment 2 (pilot-time novelty audit); v1 data is never mixed in
 
 const sum = (xs) => xs.reduce((s, x) => s + x, 0);
 
@@ -120,46 +120,41 @@ export function decideMetaPilot({ runs, plannedPairs = META_PILOT_RULE.plannedPa
   return out(5, 'inconclusive', 'between the keep and turn-off thresholds');
 }
 
-/**
- * The pilot rides on BOTH judges (§1.4): a decision stands only if the two judges' novelty sets put it on the same branch.
- * @param {{byJudge: Record<string, MetaRun[]>, plannedPairs?: number}} a
- */
-export function decideMetaPilotBothJudges({ byJudge, plannedPairs }) {
-  const per = Object.fromEntries(Object.entries(byJudge).map(([j, runs]) => [j, decideMetaPilot({ runs, plannedPairs })]));
-  const branches = new Set(Object.values(per).map((d) => d.branch));
-  if (Object.keys(per).length < 2) return { outcome: 'inconclusive', branch: 5, why: 'fewer than two judges scored the pilot', perJudge: per };
-  if (branches.size === 1) { const d = Object.values(per)[0]; return { outcome: d.outcome, branch: d.branch, why: d.why, perJudge: per }; }
-  return { outcome: 'inconclusive', branch: 5, why: `the judges disagree on the branch (${Object.entries(per).map(([j, d]) => `${j}: ${d.branch}`).join(', ')})`, perJudge: per };
-}
+/** Human labels. `KNOWN` = the finding restates a prior ledger entry (so it is NOT novel, whatever the judges said). */
+export const HUMAN_LABELS = Object.freeze(['REAL', 'WRONG', 'NOT_A_DEFECT', 'RIGOUR_CHASING', 'UNDETERMINED', 'KNOWN']);
 
 /**
- * Build the per-run rows for ONE judge from raw runs, the judge's novelty verdicts and the human labels.
- * A finding counts toward a run only if it is MEDIUM+, novel under this judge AND labelled REAL by a human. A novel
- * MEDIUM+ finding with no human label, or UNDETERMINED, makes the score INCOMPLETE (returned in `blocked`), never a guess.
+ * Build the per-run rows from raw runs, the HIDDEN set (both judges said `same`) and the human labels.
  *
- * @param {{runs: object[], novelByFinding: Map<string, boolean>, labels: Map<string, string>}} a
- *   `runs[i].findings` = [{key, severity}] with `key` unique across the pilot; `labels.get(key)` in
- *   REAL | WRONG | NOT_A_DEFECT | RIGOUR_CHASING | UNDETERMINED
+ * Novelty is decided by the HUMAN for every finding the human saw: a finding counts toward a run iff it is MEDIUM+, the human
+ * labelled it REAL, and did not call it KNOWN. Findings shown to the human are the judge-surfaced ones (not hidden) plus the
+ * audited sample of the hidden ones. A hidden finding the human never saw is NOT novel (the audit bounds how often that is wrong).
+ * A shown finding with no label, or UNDETERMINED, makes the score INCOMPLETE (`blocked`), never a guess; a missing novelty entry
+ * (`hidden` has no verdict for it) also blocks.
+ *
+ * @param {{runs: object[], hidden: Map<string, boolean>, labels: Map<string, string>}} a
+ *   `hidden.get(key)` true = both judges said same; false = surfaced to the human; undefined = never judged (blocks).
+ *   `runs[i].findings` = [{key, severity}] with `key` unique across the pilot.
  */
-export function scoreMetaRuns({ runs, novelByFinding, labels }) {
+export function scoreMetaRuns({ runs, hidden, labels }) {
   const blocked = [];
   const rows = runs.map((r) => {
-    let hm = 0; let any = 0; let noise = 0;
-    // A valid run must carry a findings collection: a missing one is an incomplete record, not "no findings".
+    let hm = 0; let any = 0; let noise = 0; let known = 0;
     if (r.valid && !Array.isArray(r.findings)) blocked.push({ key: `${r.pointId}/${r.arm}/${r.rep}`, reason: 'valid-run-without-findings' });
     const findings = Array.isArray(r.findings) ? r.findings : []; // a non-array is blocked above and never iterated
     for (const f of findings) {
       const sev = String(f.severity).toUpperCase();
       if (!['HIGH', 'MEDIUM', 'LOW'].includes(sev)) { blocked.push({ key: f.key, reason: `unrecognised-severity:${f.severity}` }); continue; }
       if (sev === 'LOW') continue;
-      const nv = novelByFinding.get(f.key);
-      if (nv === undefined) { blocked.push({ key: f.key, reason: 'no-novelty-judgment' }); continue; } // a missing judgment is NOT 'not novel'
-      if (nv !== true) continue;
+      const h = hidden.get(f.key);
+      if (h === undefined) { blocked.push({ key: f.key, reason: 'no-novelty-judgment' }); continue; } // a missing judgment is NOT 'not novel'
       const label = labels.get(f.key);
-      if (!label || label === 'UNDETERMINED') { blocked.push({ key: f.key, reason: label ?? 'unlabelled' }); continue; }
+      if (h === true && label === undefined) continue; // hidden and not audited: not novel (bounded by the audit)
+      if (label === undefined || label === 'UNDETERMINED') { blocked.push({ key: f.key, reason: label ?? 'unlabelled' }); continue; }
+      if (label === 'KNOWN') { known += 1; continue; }
       if (label === 'REAL') { any += 1; hm += 1; } else if (['WRONG', 'NOT_A_DEFECT', 'RIGOUR_CHASING'].includes(label)) noise += 1; else blocked.push({ key: f.key, reason: `unrecognised-label:${label}` });
     }
-    return { pointId: r.pointId, arm: r.arm, rep: r.rep, valid: r.valid, invalidReason: r.invalidReason ?? null, stopRun: r.stopRun === true, novelActionableHM: hm, novelActionable: any, noise, costUsd: r.costUsd };
+    return { pointId: r.pointId, arm: r.arm, rep: r.rep, valid: r.valid, invalidReason: r.invalidReason ?? null, stopRun: r.stopRun === true, novelActionableHM: hm, novelActionable: any, noise, known, costUsd: r.costUsd };
   });
   return { rows, blocked, incomplete: blocked.length > 0 };
 }
