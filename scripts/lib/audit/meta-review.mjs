@@ -386,7 +386,7 @@ export function reserveUnderSessionLock({ auditDir, sid, file, budget, attemptId
     return out.ok ? { ok: true, sentCount: fold.sentCount + 1 } : { ok: false, reason: out.reason };
   } finally {
     try { fs.closeSync(fd); } catch { /* removed below either way */ }
-    try { fs.rmSync(lock, { force: true }); } catch { /* a leftover lock fails closed next time, by design */ }
+    try { fs.rmSync(lock, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* a leftover lock fails closed next time, by design */ }
   }
 }
 

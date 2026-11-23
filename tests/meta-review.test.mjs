@@ -33,7 +33,7 @@ const stopAll = (highKind = 'settled') => ({ action: 'stop', assessment: A, reas
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'meta-review-')); });
-afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 const planArgv = (round = 4, extra = []) => ['plan', 'docs/plans/x.md', '--mode', 'plan', '--round', String(round), ...extra];
 const codeArgv = (round, extra = []) => ['code', 'docs/plans/x.md', '--round', String(round), ...extra];
@@ -247,7 +247,7 @@ describe('runMetaReview — the positive and negative controls', () => {
   test('a provider throw AFTER send is charged an estimate, never 0; BEFORE send costs 0', async () => {
     const after = await run({}, deps({ prov: provider(stopAll(), { throwErr: Object.assign(new Error('socket hang up'), { sent: true }) }) }));
     assert.equal(after.decision.spendSource, 'estimate'); assert.ok(after.decision.costUsd > 0);
-    fs.rmSync(metaLogPath(dir, 'audit-plan-1-1'));
+    fs.rmSync(metaLogPath(dir, 'audit-plan-1-1'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const before = await run({}, deps({ prov: provider(stopAll(), { throwErr: Object.assign(new Error('no key'), { sent: false }) }) }));
     assert.equal(before.decision.spendSource, 'none'); assert.equal(before.decision.costUsd, 0);
   });
@@ -287,7 +287,7 @@ describe('runMetaReview — the positive and negative controls', () => {
     const base = deps({ prov: p });
     const excluded = await run({}, { ...base, buildPack: async () => ({ text: 'P', files: [], notes: ['plan file was excluded or unreadable'], truncations: [], excluded: { sensitive: 1, unreadable: 0 }, topics: [] }) });
     assert.match(excluded.decision.reason, /plan-required-evidence/);
-    fs.rmSync(metaLogPath(dir, 'audit-plan-1-1'));
+    fs.rmSync(metaLogPath(dir, 'audit-plan-1-1'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const cut = await run({}, { ...base, buildPack: async () => ({ text: 'P', files: [], notes: [], truncations: [{ section: 'plan', action: 'truncated' }], excluded: { sensitive: 0, unreadable: 0 }, topics: [] }) });
     assert.match(cut.decision.reason, /truncated/);
     assert.equal(p.calls.length, 0);
@@ -503,7 +503,7 @@ describe('egress (Tier 3)', () => {
       assert.doesNotMatch(sent, /UNIQUE_ENV_MARKER_7731/, 'a sensitive file never leaves');
       assert.doesNotMatch(sent, /sk-proj-abcdef/, 'a secret in a cited file is redacted');
       assert.ok(r.decision.pack.excludedCount >= 1, 'the exclusion is counted');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
   test('the learning projection is an allowlist: no path, detail, premise or raw reply', () => {
     const d = { attemptId: 'a', trigger: 'T1', mode: 'plan', round: 4, caps: CAPS.plan, inventory: [{ topicId: 't', findingId: 'H1', severity: 'HIGH' }],
