@@ -221,16 +221,29 @@ ${worksheetMarkdown}`);
   return { findings: findings.length, ledger: ledger.length, shortfalls: sets.shortfalls, pairs: Object.keys(key.pairs).length, recall: Object.keys(key.filterRecall).length };
 }
 
-/** Parse the filled worksheet: `Label: same` under `### P001`, `Restates: id1, id2` (or `none`) under `### R001`. */
-export function parseCalibrationAnswers(md) {
+/**
+ * Parse the filled worksheet: `Label: same` under `### P001`, `Restates: <ids>` (or `none`) under `### R001`.
+ * Entry ids are arbitrary strings (they carry a timestamp with a space, and a branch name may carry a comma or a backtick),
+ * so with `knownIds` (`{R001: [candidate ids]}` from the key) the answer is MATCHED against that finite list, longest id
+ * first, never split on a delimiter. Whatever is left over is returned as an unknown entry, so a mistyped id is refused
+ * downstream instead of being silently dropped. Without `knownIds` it falls back to splitting on commas.
+ */
+export function parseCalibrationAnswers(md, knownIds = null) {
   const answers = { pairs: {}, filterRecall: {} };
   for (const block of String(md).split(/^### /m).slice(1)) {
     const id = /^([PR]\d+)/.exec(block)?.[1]; if (!id) continue;
-    if (id.startsWith('P')) { const v = /^Label:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim().toLowerCase(); if (v) answers.pairs[id] = v; }
-    else {
-      const v = /^Restates:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim();
-      if (v) answers.filterRecall[id] = /^none$/i.test(v) ? [] : v.split(/[,\s]+/).map((s) => s.replace(/[`]/g, '')).filter(Boolean);
+    if (id.startsWith('P')) { const v = /^Label:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim().toLowerCase(); if (v) answers.pairs[id] = v; continue; }
+    const v = /^Restates:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim();
+    if (!v) continue;
+    if (/^none$/i.test(v)) { answers.filterRecall[id] = []; continue; }
+    const known = knownIds?.[id];
+    if (!known) { answers.filterRecall[id] = v.split(/\s*,\s*/).map((x) => x.trim().replace(/^`|`$/g, '')).filter(Boolean); continue; }
+    let rest = v; const found = [];
+    for (const k of [...known].sort((a, b) => b.length - a.length)) {
+      for (const form of [`\`${k}\``, k]) { while (rest.includes(form)) { found.push(k); rest = rest.replace(form, '\u0000'); } }
     }
+    const leftover = rest.split('\u0000').join(' ').split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean);
+    answers.filterRecall[id] = [...new Set(found), ...leftover];
   }
   return answers;
 }
@@ -239,7 +252,7 @@ export function parseCalibrationAnswers(md) {
 export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) {
   const key = readJson(path.join(dir, 'calibration-key.json'));
   const material = readJson(path.join(dir, 'calibration-material.json'));
-  const answers = parseCalibrationAnswers(fs.readFileSync(labelsFile, 'utf8'));
+  const answers = parseCalibrationAnswers(fs.readFileSync(labelsFile, 'utf8'), Object.fromEntries(Object.entries(key.filterRecall).map(([k, v]) => [k, v.candidateXIds])));
   const short = Object.entries(key.shortfalls ?? {}).filter(([, n]) => n > 0).map(([k, n]) => `${k} short by ${n}`);
   const joined = joinWorksheetLabels({ key, answers, findings: material.findings, ledgerEntries: material.ledger });
   const ledgerFile = path.join(dir, 'calibration.budget.jsonl');
