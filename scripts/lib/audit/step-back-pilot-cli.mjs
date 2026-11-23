@@ -76,10 +76,14 @@ export function runFreeze({ exports, reposFile, seed, out, targets, verifyRepo =
   if (!exports.length || !reposFile || !seed || !out) throw new ArgvError('step-back-replay freeze --pilot meta-ab: --export <csv>, --repos-file, --seed and --out are required.');
   const merged = { runs: [], findings: [], events: [], exportedAt: null };
   const hashes = [];
+  const seen = { runs: new Map(), findings: new Map(), events: new Map() };
+  const add = (kind, rec) => { const prev = seen[kind].get(rec.id); const text = JSON.stringify(rec); if (prev !== undefined) { if (prev !== text) throw new Error(`overlapping exports disagree on ${kind} ${rec.id}`); return; } seen[kind].set(rec.id, text); merged[kind].push(rec); };
   for (const p of exports) {
-    const bytes = fs.readFileSync(p); hashes.push(sha256Hex(bytes));
+    const bytes = fs.readFileSync(p); const h = sha256Hex(bytes);
+    if (hashes.includes(h)) throw new Error(`the export ${p} was supplied twice`);
+    hashes.push(h);
     const e = JSON.parse(bytes);
-    merged.runs.push(...e.runs); merged.findings.push(...e.findings); merged.events.push(...e.events);
+    for (const r of e.runs) add('runs', r); for (const f of e.findings) add('findings', f); for (const ev of e.events) add('events', ev);
     merged.exportedAt = [merged.exportedAt, e.exportedAt].filter(Boolean).sort().pop();
   }
   merged.exportSha256 = sha256Hex(hashes.sort().join('|'));
@@ -159,6 +163,7 @@ export async function runReconcile({ ledger, callId, evidence, costUsd }) {
   return reconcileCall({ file: ledger, callId, evidence, costUsd: Number(costUsd) });
 }
 
+const NOVELTY_CHUNK = 5;
 export const readHeader = (resultsPath) => JSON.parse(fs.readFileSync(resultsPath, 'utf8').split('\n').find(Boolean));
 export const readRunRows = (resultsPath) => fs.readFileSync(resultsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'run');
 
@@ -258,6 +263,7 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
   const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
   const outPath = `${resultsPath}.novelty.json`;
+  if (readHeader(resultsPath).datasetHash !== dataset.datasetHash) throw new ArgvError('the results file was produced from a different dataset');
   const resultsSha = sha256Hex(fs.readFileSync(resultsPath));
   const prior = fs.existsSync(outPath) ? readJson(outPath) : null;
   if (prior && (prior.datasetHash !== dataset.datasetHash || prior.resultsSha256 !== resultsSha)) throw new Error('the novelty file was made from a different dataset or results file; refusing to reuse it');
@@ -277,9 +283,12 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
       // A not-judged entry is RETRYABLE: only a settled judgment is skipped on a rerun.
       const todo = fs_.filter((f) => !out.byFinding[f.key]?.[name] || out.byFinding[f.key][name].notJudged);
       if (!todo.length) continue;
-      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: todo.map((f) => ({ id: f.key, file: f.file, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
+      for (let at = 0; at < todo.length; at += NOVELTY_CHUNK) {
+      const chunk = todo.slice(at, at + NOVELTY_CHUNK);
+      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: chunk.map((f) => ({ id: f.key, file: f.file, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
       for (const pf of r.perFinding) (out.byFinding[pf.id] ||= {})[name] = { novel: pf.novel, flags: pf.flags, sameOf: pf.sameOf ?? null, partialOf: pf.partialOf ?? null, notJudged: pf.notJudged ?? false };
-      writeJson(outPath, out); // after EVERY judge batch: a budget stop or crash keeps what was already paid for
+      writeJson(outPath, out); // after EVERY chunk: a budget stop or crash keeps what was already paid for
+      }
     }
   }
   out.incomplete = Object.values(out.byFinding).some((j) => Object.values(j).some((e) => e.notJudged)); // recomputed from the CURRENT state

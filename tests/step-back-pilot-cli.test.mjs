@@ -120,7 +120,7 @@ describe('runNovelty gate and resumption (R2 H1/M5/M8)', () => {
   const mkResults = (dir, dataset) => {
     const res = path.join(dir, 'r.jsonl');
     const p = dataset.points.find((x) => x.status === 'recoverable');
-    const rows = [{ type: 'header', plannedPairs: 1 }, { type: 'run', pointId: p.pointId, arm: 'CONTINUE', rep: 0, findings: [{ key: 'k1', severity: 'HIGH', file: 'a.mjs', lines: null, text: 't', affectedFiles: [] }] }];
+    const rows = [{ type: 'header', plannedPairs: 1, datasetHash: dataset.datasetHash }, { type: 'run', pointId: p.pointId, arm: 'CONTINUE', rep: 0, findings: [{ key: 'k1', severity: 'HIGH', file: 'a.mjs', lines: null, text: 't', affectedFiles: [] }] }];
     fs.writeFileSync(res, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
     return res;
   };

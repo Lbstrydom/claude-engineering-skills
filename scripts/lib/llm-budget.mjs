@@ -167,13 +167,17 @@ function readEvents(file) {
     if (err.code === 'ENOENT') throw new BudgetStopError('ledger-missing', `ledger ${file} does not exist (initLedger first)`);
     throw err;
   }
-  const lines = text.split('\n').filter((l) => l.trim() !== '');
+  // Tail decided from the ORIGINAL file boundary, never from a blank-filtered list: only text after the last newline can be a torn append.
+  const raw = text.split('\n');
+  const tail = text.endsWith('\n') ? '' : raw.pop();
+  const lines = raw.filter((l) => l.trim() !== '');
+  if (tail && tail.trim() !== '') lines.push(tail);
   const events = [];
   for (let i = 0; i < lines.length; i++) {
     try { events.push(JSON.parse(lines[i])); } catch {
       // Only an UNTERMINATED last fragment is a crash mid-append (a reserve is appended before send, so it never reached the wire).
       // A newline-terminated record that does not parse is corruption: it may have been a real reservation.
-      if (i === lines.length - 1 && !text.endsWith('\n')) break;
+      if (i === lines.length - 1 && tail && tail.trim() !== '') break;
       throw new BudgetStopError('ledger-corrupt', `ledger ${file} line ${i + 1} is not valid JSON`);
     }
   }

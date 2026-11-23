@@ -205,3 +205,24 @@ test('R4 H4: a ruling made after the frame round never leaks into an earlier cal
   assert.doesNotMatch(ledgerTargets(snap, { upToRound: 2 })[0].text, /LATE-RULING/);
   assert.match(ledgerTargets(snap)[0].text, /LATE-RULING/, 'control: the full checkpoint state does carry it');
 });
+
+test('R5 H3: the 24-valid-pair floor is absolute; a small plan cannot scale it down into a keep', () => {
+  const runs = Array.from({ length: 8 }, (_, i) => ['META', 'CONTINUE'].map((arm) => ({ pointId: `p${i}`, rep: 0, arm, valid: true, stopRun: arm === 'META' && i < 5, novelActionable: 0, novelActionableHM: 0, costUsd: arm === 'META' ? 1 : 3 }))).flat();
+  assert.equal(decideMetaPilot({ runs, plannedPairs: 8 }).branch, 1, '8 valid pairs of 8 planned is still below the pre-registered floor of 24');
+});
+
+test('R5 H4: a newline-terminated invalid record followed by blank lines is corruption, not a torn tail', async () => {
+  const dir = tmp(); const file = path.join(dir, 'l.jsonl');
+  try {
+    initLedger({ file, capUsd: 50 });
+    fs.appendFileSync(file, '{"type":"reserve","callId":"x"\n   \n');
+    assert.throws(() => readLedgerSummary(file), /not valid JSON/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+});
+
+test('R5 H6/H7: negative, fractional, missing counts invalidate the dataset; a non-array findings value blocks instead of throwing', () => {
+  const mk = (over) => [{ pointId: 'p', rep: 0, arm: 'META', valid: true, novelActionable: 0, novelActionableHM: 0, costUsd: 1, ...over }, { pointId: 'p', rep: 0, arm: 'CONTINUE', valid: true, novelActionable: 0, novelActionableHM: 0, costUsd: 3 }];
+  for (const bad of [{ novelActionable: -1 }, { novelActionable: 1.5 }, { novelActionableHM: undefined }, { novelActionable: null }]) assert.equal(decideMetaPilot({ runs: mk(bad), plannedPairs: 1 }).branch, 1, JSON.stringify(bad));
+  const s = scoreMetaRuns({ runs: [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: {} }], novelByFinding: new Map(), labels: new Map() });
+  assert.equal(s.incomplete, true);
+});

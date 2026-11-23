@@ -81,7 +81,7 @@ export function findingView(f, runKey, i) {
   const section = String(f.section ?? '');
   const m = /:(\d+)(?:-(\d+))?/.exec(section);
   return {
-    key: `${runKey}:${f.id ?? i}`, id: String(f.id ?? i), severity: String(f.severity ?? '').toUpperCase(),
+    key: `${runKey}:${f._pass ?? ''}:${f.id ?? i}`, id: String(f.id ?? i), severity: String(f.severity ?? '').toUpperCase(),
     file: f._primaryFile ?? f.file ?? (f.affectedFiles?.[0] ?? null), affectedFiles: f.affectedFiles ?? [],
     lines: m ? [Number(m[1]), Number(m[2] ?? m[1])] : null,
     text: [f.category, f.section, f.detail, f.risk, f.recommendation].filter(Boolean).join('\n'),

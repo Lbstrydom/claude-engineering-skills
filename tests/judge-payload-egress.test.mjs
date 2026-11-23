@@ -151,7 +151,7 @@ test('cited code that cannot be resolved is dropped (fail closed), not sent', ()
   assert.ok(!p.user.includes('LEAK_IF_SENT'));
 });
 
-test('a redaction failure fails closed to not-judged', async () => {
+test('a field carrying the redaction-failure marker fails closed to not-judged', async () => {
   const pair = { f: f({ text: 'harmless' }), x: x() };
   // A text the redactor cannot process: force it with a poisoned toString on a non-string field.
   pair.f.severity = { toString() { return '[REDACTED:redaction-failed]'; } };

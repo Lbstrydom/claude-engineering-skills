@@ -67,7 +67,8 @@ export function pairRuns(runs) {
 export function decideMetaPilot({ runs, plannedPairs = META_PILOT_RULE.plannedPairs }) {
   const R = META_PILOT_RULE;
   // Every aggregated figure must be a real number: a null cost sums as 0 and would flatter (or sink) the cost-saved test.
-  const malformed = runs.filter((r) => !(Number.isFinite(r.costUsd) && r.costUsd >= 0) || !Number.isFinite(r.novelActionable ?? 0) || !Number.isFinite(r.novelActionableHM ?? 0));
+  const count = (v) => Number.isInteger(v) && v >= 0;
+  const malformed = runs.filter((r) => !(Number.isFinite(r.costUsd) && r.costUsd >= 0) || !count(r.novelActionable) || !count(r.novelActionableHM));
   if (malformed.length) {
     return { branch: 1, outcome: 'invalid', why: `${malformed.length} run row(s) have a non-numeric or negative cost/count (${malformed.slice(0, 3).map((r) => `${r.pointId}/${r.arm}/${r.rep}`).join(', ')}); the dataset is incomplete`, figures: { malformed: malformed.length }, rule: R };
   }
@@ -104,7 +105,7 @@ export function decideMetaPilot({ runs, plannedPairs = META_PILOT_RULE.plannedPa
   const out = (branch, outcome, why) => ({ branch, outcome, why, figures, rule: R });
 
   // 1. Invalid: never scored on the survivors, because a failure correlated with an arm is a result about the arm.
-  if (valid.length < R.minValidPairs * (plannedPairs / R.plannedPairs) || overall < R.minCompletionOverall || gapPoints > R.maxCompletionGapPoints) {
+  if (valid.length < R.minValidPairs || overall < R.minCompletionOverall || gapPoints > R.maxCompletionGapPoints) {
     return out(1, 'invalid', `valid pairs ${valid.length} of ${plannedPairs} (need ${R.minValidPairs}), completion ${(overall * 100).toFixed(0)}% overall, arm gap ${gapPoints.toFixed(0)} points`);
   }
   // 2. Turn off.
@@ -146,7 +147,8 @@ export function scoreMetaRuns({ runs, novelByFinding, labels }) {
     let hm = 0; let any = 0; let noise = 0;
     // A valid run must carry a findings collection: a missing one is an incomplete record, not "no findings".
     if (r.valid && !Array.isArray(r.findings)) blocked.push({ key: `${r.pointId}/${r.arm}/${r.rep}`, reason: 'valid-run-without-findings' });
-    for (const f of r.findings || []) {
+    const findings = Array.isArray(r.findings) ? r.findings : []; // a non-array is blocked above and never iterated
+    for (const f of findings) {
       const sev = String(f.severity).toUpperCase();
       if (sev !== 'HIGH' && sev !== 'MEDIUM') continue;
       const nv = novelByFinding.get(f.key);

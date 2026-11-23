@@ -32,7 +32,8 @@ import { sanitizeSchemaName, isResponseFormatUnsupported } from '../oss-structur
 import { normalizeGeminiUsage } from '../gemini-usage.mjs';
 import { geminiConfig, finalReviewConfig } from '../config.mjs';
 import { azureThrottle } from '../azure-throttle.mjs';
-import { withBudget, BudgetStopError } from '../llm-budget.mjs';
+// The budget module is imported ONLY when AUDIT_BUDGET_LEDGER is set (its import chain loads the model resolver and local env).
+const budgetSeam = (spec, fn, extract) => (process.env.AUDIT_BUDGET_LEDGER ? import('../llm-budget.mjs').then((m) => m.withBudget(spec, fn, extract)) : fn());
 import { ANTHROPIC_REVIEW_TOOL_NAME, truncateToSchema } from './output-schemas.mjs';
 
 const TIMEOUT_MS = geminiConfig.timeoutMs;
@@ -427,7 +428,7 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     // timeout is recorded as failed-unknown (the provider may still have accepted and billed the request). The
     // reservation bounds the whole envelope (prompts + every schema/extra the adapter may add) and the enforced cap.
     // The deadline covers the WHOLE budgeted operation (reservation included), so a stalled ledger cannot outlast it.
-    const budgeted = withBudget(
+    const budgeted = budgetSeam(
       { seam: 'final-review.callReviewer', provider: BUDGET_PROVIDER_BY_TRANSPORT[transportKind] ?? transportKind, model,
         body: { systemPrompt, userPrompt, jsonSchema, toolSchema, openAiJsonSchema, requestExtras }, outputCap: MAX_OUTPUT_TOKENS },
       () => {
@@ -498,7 +499,7 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     process.stderr.write(`  [${label}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out / ${usage.thinking_tokens} thinking)\n`);
     return { result, usage, latencyMs };
   } catch (err) {
-    if (err instanceof BudgetStopError) throw err; // a budget refusal is never relabelled as a provider failure
+    if (err?.code === 'budget-stop') throw err; // a budget refusal is never relabelled as a provider failure
     const latencyMs = Date.now() - startMs;
     const isAbort = err.name === 'AbortError' || err.message?.toLowerCase().includes('abort') || err.message?.startsWith('Timeout after');
     // Redacted error normalization — surface provider status + message, NEVER
