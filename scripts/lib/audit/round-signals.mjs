@@ -242,6 +242,8 @@ function retiredAt({ round, rounds, select, ledgerEntries, topicOf }) {
   const unruled = [...prevTopics].filter((t) => !ruledTopics.has(t)).length;
   if (unruled > 0) return { unmeasured: `round ${round - 1}: ${unruled} of ${prevTopics.size} topics have no ruling with an adjudicationOutcome (not triaged)` };
   const accepted = ruled.filter((e) => ACCEPTED_OUTCOMES.has(e.adjudicationOutcome));
+  // Nothing accepted in N-1 means nothing was open to retire: "0 retired" is then vacuous (a converged audit would read as stagnant).
+  if (accepted.length === 0) return { unmeasured: `round ${round - 1}: nothing open to retire (no accepted topic)` };
   const closed = accepted.filter((e) => !curTopics.has(e.topicId));
   return { retired: closed.length, closed };
 }

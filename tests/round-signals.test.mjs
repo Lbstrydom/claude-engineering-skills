@@ -136,6 +136,34 @@ test('retired: no ledger / untriaged previous round is unmeasured; git trouble k
   assert.deepEqual([r.measured, r.value, r.retiredUnverified], [true, 1, null]);
 });
 
+test('retired: NOTHING OPEN to retire is unmeasured, never "0 retired, fires" (a converged audit is not stagnant)', () => {
+  // Negative control (the defect, 2026-11-23): rounds 2 and 3 empty, one accepted topic in round 1 -> used to read measured, 0, FIRES.
+  const converged = [
+    { round: 1, auditedSha: S1, findings: [F('t1', 'HIGH', 'a.mjs')] },
+    { round: 2, auditedSha: S2, findings: [] },
+    { round: 3, auditedSha: S3, findings: [] },
+  ];
+  const r = retired({ round: 3, select, rounds: converged, ledgerEntries: [entry('t1', 'accepted')], topicOf, git: fakeGit() });
+  assert.deepEqual([r.measured, r.fires], [false, false]);
+  assert.match(r.reason, /nothing open to retire/);
+  // Only dismissed topics open in the previous round: nothing to retire either.
+  const dismissedOnly = [
+    { round: 1, auditedSha: S1, findings: [F('t1', 'HIGH', 'a.mjs')] },
+    { round: 2, auditedSha: S2, findings: [F('t2', 'HIGH', 'a.mjs')] },
+    { round: 3, auditedSha: S3, findings: [F('t2', 'HIGH', 'a.mjs')] },
+  ];
+  const d = retired({ round: 3, select, rounds: dismissedOnly, ledgerEntries: [entry('t1', 'accepted'), entry('t2', 'dismissed')], topicOf, git: fakeGit() });
+  assert.equal(d.measured, false); assert.match(d.reason, /nothing open to retire/);
+  // Positive control: genuine stagnation (accepted topics open in both previous rounds, none closed) still FIRES.
+  const stuck = [
+    { round: 1, auditedSha: S1, findings: [F('t1', 'HIGH', 'a.mjs')] },
+    { round: 2, auditedSha: S2, findings: [F('t1', 'HIGH', 'a.mjs')] },
+    { round: 3, auditedSha: S3, findings: [F('t1', 'HIGH', 'a.mjs')] },
+  ];
+  const s = retired({ round: 3, select, rounds: stuck, ledgerEntries: [entry('t1', 'accepted')], topicOf, git: fakeGit() });
+  assert.deepEqual([s.measured, s.value, s.previous, s.fires], [true, 0, 0, true]);
+});
+
 test('importanceSelector: tag present -> importance; absent -> severity-proxy (>= MEDIUM only)', () => {
   const a = importanceSelector([[{ importance: 'important', severity: 'LOW' }, { importance: 'nit', severity: 'HIGH' }]]);
   assert.equal(a.importanceSource, 'importance');
