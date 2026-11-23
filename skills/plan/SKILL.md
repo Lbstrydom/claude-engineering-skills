@@ -549,10 +549,10 @@ MCP error carrying the parser's line and column; that error IS the validation.
 
 - **MCP available** → validate each block; fix any reported syntax error
   in place before Phase 7.
-- **MCP not available** → **skip silently and proceed.** The Mermaid MCP
+- **MCP not available** → **skip and proceed, never fail.** The Mermaid MCP
   is an optional convenience, never an install dependency — Mermaid
   renders natively in GitHub and VS Code preview, so an unvalidated block
-  still works for the reader. Do not warn the user about the missing MCP.
+  still works for the reader. Say once, in one line, that it was not validated.
 
 **This does not replace `plans:lint`, and neither replaces the other** (two
 blind spots → `references/authoring-rationale.md` §Phase 6.5 — read when one looks redundant).

@@ -20,6 +20,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { classifyLaunchSpec } from './sync-pin-guard.mjs';
 
 /** The `syncOptIn` feature name that turns the root `.mcp.json` delivery on. */
 export const ROOT_MCP_FEATURE = 'root-mcp-json';
@@ -42,6 +43,21 @@ export function parseNpxLaunch(spec) {
   const at = typeof token === 'string' ? token.lastIndexOf('@') : -1;
   if (at <= 0) return null;
   return { pkg: token.slice(0, at), rest: args.slice(i + 1) };
+}
+
+/** Is exactly `pkg@version` recorded in a lockfile of the consumer? `{ok:true}` or `{ok:false, reason}`. */
+function lockfileRecords(consumerRoot, pkg, version) {
+  const npmLock = ['package-lock.json', 'npm-shrinkwrap.json'].map((f) => readJson(path.join(consumerRoot, f))).find(Boolean);
+  if (npmLock) {
+    const v = npmLock.packages?.[`node_modules/${pkg}`]?.version ?? npmLock.dependencies?.[pkg]?.version;
+    return v === version ? { ok: true } : { ok: false, reason: `package-lock.json does not record ${pkg}@${version}` };
+  }
+  for (const f of ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock']) {
+    let text;
+    try { text = fs.readFileSync(path.join(consumerRoot, f), 'utf-8'); } catch { continue; }
+    return text.includes(`${pkg}@${version}`) || text.includes(`${pkg}/${version}`) ? { ok: true } : { ok: false, reason: `${f} does not record ${pkg}@${version}` };
+  }
+  return { ok: false, reason: 'no lockfile records it' };
 }
 
 /** The launcher path of an installed package from its own `bin` field, or a reason string. */
@@ -82,13 +98,34 @@ export function renderConsumerMcp({ sourceText, consumerRoot }) {
     if (!EXACT_VERSION.test(pin)) { notes.push(`${name} left out: ${launch.pkg} is declared as "${pin}", not an exact version`); continue; }
     const installed = readJson(path.join(consumerRoot, 'node_modules', ...launch.pkg.split('/'), 'package.json'));
     if (installed?.version !== pin) { notes.push(`${name} left out: ${launch.pkg}@${pin} is not installed (run the package install first)`); continue; }
+    const lock = lockfileRecords(consumerRoot, launch.pkg, pin);
+    if (!lock.ok) { notes.push(`${name} left out: ${launch.pkg}@${pin} is not locked (${lock.reason})`); continue; }
     const bin = binPathOf(launch.pkg, installed);
     if (!bin.path) { notes.push(`${name} left out: ${launch.pkg} ${bin.reason}`); continue; }
+    if (!fs.existsSync(path.join(consumerRoot, ...bin.path.split('/')))) { notes.push(`${name} left out: ${bin.path} does not exist`); continue; }
     out[name] = { ...spec, command: 'node', args: [bin.path, ...launch.rest] };
   }
   const names = Object.keys(out).sort();
   if (names.length === 0) return { text: null, names, notes };
   return { text: JSON.stringify({ ...doc, [rootKey]: out }, null, 2) + '\n', names, notes };
+}
+
+/**
+ * CES-managed servers (by name) that the consumer's own config still launches by a network fetch although this sync is not
+ * shipping them (opted out, or the package is no longer pinned): the sync never edits a co-owned file to remove them, so it
+ * REPORTS them. Judged on the resulting files, not on what this run generates.
+ */
+export function staleManagedEntries(consumerRoot, managedNames, shippedNames) {
+  const out = [];
+  for (const [rel, key] of [['.mcp.json', 'mcpServers'], ['.vscode/mcp.json', 'servers']]) {
+    const servers = readJson(path.join(consumerRoot, ...rel.split('/')))?.[key] ?? {};
+    for (const name of managedNames) {
+      if (!shippedNames.includes(name) && Object.hasOwn(servers, name) && classifyLaunchSpec(servers[name]) === 'unpinned') {
+        out.push(`stale CES-managed server "${name}" in ${rel} launches by network fetch; remove it, or pin its package and opt in`);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -102,26 +139,28 @@ export function renderConsumerMcp({ sourceText, consumerRoot }) {
  */
 export function planRootMcp({ consumerRoot, sourceRoot, syncOptIn, log = () => {} }) {
   const optedIn = (syncOptIn ?? []).some((e) => e.feature === ROOT_MCP_FEATURE);
+  const managed = Object.keys(JSON.parse(fs.readFileSync(path.join(sourceRoot, '.mcp.json'), 'utf-8')).mcpServers ?? {});
   // A file no longer shipped (an opted-out consumer's root `.mcp.json`) is the consumer's own from now on: out of the prior
   // manifest so it is not garbage-collected, and out of the new one so gate 10 reads `not-applicable`, never a stale entry.
-  const finish = (omit, rest) => ({
-    optedIn, omit, names: [], notes: [], textFor: () => null, ...rest,
-    /** The consumer entry with the unshipped source paths removed from its file list. */
-    scope: (repo) => ({ ...repo, files: repo.files.filter((f) => !omit.has(f)) }),
-    dropOmitted: (files) => Object.fromEntries(Object.entries(files).filter(([k]) => !omit.has(k))),
-  });
-  if (!optedIn) return finish(new Set(['.mcp.json']));
+  const finish = (omit, rest) => {
+    const lines = [...(rest.notes ?? [])];
+    lines.push(...staleManagedEntries(consumerRoot, managed, rest.names ?? []));
+    for (const n of lines) log(n);
+    return {
+      optedIn, omit, names: [], notes: [], textFor: () => null, ...rest,
+      /** The consumer entry with the unshipped source paths removed from its file list. */
+      scope: (repo) => ({ ...repo, files: repo.files.filter((f) => !omit.has(f)) }),
+      dropOmitted: (files) => Object.fromEntries(Object.entries(files).filter(([k]) => !omit.has(k))),
+    };
+  };
+  if (!optedIn) return finish(new Set(['.mcp.json']), { notes: ['.mcp.json not shipped: not opted in (syncOptIn "root-mcp-json" in .sync-overrides.json)'] });
   const render = (rel) => renderConsumerMcp({ sourceText: fs.readFileSync(path.join(sourceRoot, rel), 'utf-8'), consumerRoot });
   const root = render('.mcp.json');
   const vscode = render('.vscode/mcp.json');
   const notes = root.notes.map((n) => `.mcp.json: ${n}`);
-  for (const n of notes.concat(root.text === null ? ['.mcp.json not shipped: no server is pinned and installed here'] : [])) log(n);
+  if (root.text === null) notes.push('.mcp.json not shipped: no server is pinned, locked and installed here');
   return finish(
     new Set([...(root.text === null ? ['.mcp.json'] : []), ...(vscode.text === null ? ['.vscode/mcp.json'] : [])]),
-    {
-      names: root.names,
-      notes,
-      textFor: (srcRel) => (srcRel === '.mcp.json' ? root.text : srcRel === '.vscode/mcp.json' ? vscode.text : null),
-    },
+    { names: root.names, notes, textFor: (srcRel) => (srcRel === '.mcp.json' ? root.text : srcRel === '.vscode/mcp.json' ? vscode.text : null) },
   );
 }

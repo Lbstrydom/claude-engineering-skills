@@ -35,10 +35,12 @@ const MANAGED = managedServerNames(ours);
 /** An opted-in consumer that pins + has installed @playwright/mcp (and nothing else): only `playwright` is managed there. */
 const PINNED_MANAGED = ['playwright'];
 const OPT_IN = { version: 1, syncOptIn: [{ feature: 'root-mcp-json', reason: 'test consumer pins @playwright/mcp' }] };
-const seedPinnedConsumer = (tmp, { pkg = '@playwright/mcp', version = '0.0.85', bin = { 'playwright-mcp': 'cli.js' }, optIn = true } = {}) => {
+const seedPinnedConsumer = (tmp, { pkg = '@playwright/mcp', version = '0.0.85', bin = { 'playwright-mcp': 'cli.js' }, optIn = true, lock = true } = {}) => {
   fs.mkdirSync(path.join(tmp, 'node_modules', ...pkg.split('/')), { recursive: true });
   fs.writeFileSync(path.join(tmp, 'node_modules', ...pkg.split('/'), 'package.json'), JSON.stringify({ name: pkg, version, bin }));
+  fs.writeFileSync(path.join(tmp, 'node_modules', ...pkg.split('/'), typeof bin === 'string' ? bin : Object.values(bin)[0]), '');
   fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'consumer', devDependencies: { [pkg]: version } }));
+  if (lock) fs.writeFileSync(path.join(tmp, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { [`node_modules/${pkg}`]: { version } } }));
   if (optIn) fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify(OPT_IN));
 };
 
@@ -271,6 +273,9 @@ describe('root .mcp.json is OPT-IN per consumer and never launches by a network 
       seedPinnedConsumer(tmp);
       fs.mkdirSync(path.join(tmp, 'node_modules', 'mcp-mermaid'), { recursive: true });
       fs.writeFileSync(path.join(tmp, 'node_modules', 'mcp-mermaid', 'package.json'), JSON.stringify({ name: 'mcp-mermaid', version: '0.4.1', bin: 'build/index.js' }));
+      fs.mkdirSync(path.join(tmp, 'node_modules', 'mcp-mermaid', 'build'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'node_modules', 'mcp-mermaid', 'build', 'index.js'), '');
+      fs.writeFileSync(path.join(tmp, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/@playwright/mcp': { version: '0.0.85' }, 'node_modules/mcp-mermaid': { version: '0.4.1' } } }));
       fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ devDependencies: { '@playwright/mcp': '0.0.85', 'mcp-mermaid': '0.4.1' } }));
     },
     (tmp) => {
@@ -280,25 +285,52 @@ describe('root .mcp.json is OPT-IN per consumer and never launches by a network 
     },
   ));
 
+  it('every omission is a line in the sync output, including the opt-out itself', () => {
+    withTmp((tmp) => seedPinnedConsumer(tmp, { optIn: false }), (_tmp, out) => assert.match(out, /\.mcp\.json not shipped: not opted in/));
+  });
+
+  it('a stale CES-managed npx entry left in the consumer file is REPORTED, not silently kept or rewritten', () => withTmp(
+    (tmp) => { seedPinnedConsumer(tmp, { optIn: false }); fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { mermaid: { command: 'npx', args: ['-y', 'mcp-mermaid@0.4.1'] } } })); },
+    (tmp, out) => {
+      assert.match(out, /stale CES-managed server "mermaid" in \.mcp\.json launches by network fetch/);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8')).mcpServers.mermaid.command, 'npx', 'reported, never edited');
+    },
+  ));
+
+  it('a consumer that holds .mcp.json in .sync-overrides.json is not overwritten, opted in or out', () => {
+    for (const optIn of [false, true]) {
+      withTmp(
+        (tmp) => {
+          seedPinnedConsumer(tmp, { optIn: false });
+          fs.writeFileSync(path.join(tmp, '.mcp.json'), OWN);
+          fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify({ ...(optIn ? OPT_IN : { version: 1 }), overrides: [{ path: '.mcp.json', reason: 'declined locally' }] }));
+        },
+        (tmp) => assert.equal(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8'), OWN),
+      );
+    }
+  });
+
   it('opted in but nothing pinned: neither MCP file is shipped and gate 10 is not-applicable (never a pass)', () => withTmp(
     (tmp) => fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify(OPT_IN)),
     (tmp, out) => {
       assert.ok(!fs.existsSync(path.join(tmp, '.mcp.json')));
       assert.ok(!fs.existsSync(path.join(tmp, '.vscode', 'mcp.json')));
-      assert.match(out, /\.mcp\.json not shipped/);
+      assert.match(out, /\.mcp\.json not shipped: no server is pinned, locked and installed/);
       assert.equal(gate10(tmp).result, 'not-applicable');
     },
   ));
 });
 
 describe('renderConsumerMcp — what is left out, and why', () => {
-  const tmpWith = (pkgJson, installed) => {
+  const tmpWith = (pkgJson, installed, lock = true) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-render-'));
     if (pkgJson) fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify(pkgJson));
     for (const [name, j] of Object.entries(installed ?? {})) {
       fs.mkdirSync(path.join(tmp, 'node_modules', ...name.split('/')), { recursive: true });
       fs.writeFileSync(path.join(tmp, 'node_modules', ...name.split('/'), 'package.json'), JSON.stringify(j));
+      if (typeof j.bin === 'object' && Object.keys(j.bin).length === 1) fs.writeFileSync(path.join(tmp, 'node_modules', ...name.split('/'), Object.values(j.bin)[0]), '');
     }
+    if (lock) fs.writeFileSync(path.join(tmp, 'package-lock.json'), JSON.stringify({ packages: Object.fromEntries(Object.entries(installed ?? {}).map(([n, j]) => [`node_modules/${n}`, { version: j.version }])) }));
     return tmp;
   };
   const render = (tmp) => { try { return renderConsumerMcp({ sourceText: SRC, consumerRoot: tmp }); } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } };
@@ -322,6 +354,23 @@ describe('renderConsumerMcp — what is left out, and why', () => {
     assert.equal(amb.text, null);
     const esc = render(tmpWith({ dependencies: { '@playwright/mcp': '0.0.85' } }, { '@playwright/mcp': { version: '0.0.85', bin: '../../evil.js' } }));
     assert.equal(esc.text, null);
+  });
+  it('a pin that is installed but absent from the lockfile (or has no lockfile) is not proof: left out', () => {
+    const r = render(tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85'), false));
+    assert.equal(r.text, null);
+    assert.match(r.notes.join(';'), /not locked/);
+  });
+  it('a lockfile that records another version is left out', () => {
+    const tmp = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85'), false);
+    fs.writeFileSync(path.join(tmp, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/@playwright/mcp': { version: '0.0.84' } } }));
+    assert.equal(render(tmp).text, null);
+  });
+  it('a bin file that does not exist on disk is left out', () => {
+    const tmp = tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85'));
+    fs.rmSync(path.join(tmp, 'node_modules', '@playwright', 'mcp', 'cli.js'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    const r = render(tmp);
+    assert.equal(r.text, null);
+    assert.match(r.notes.join(';'), /does not exist/);
   });
   it('no package.json at all: nothing is emitted', () => {
     assert.equal(render(tmpWith(null, pw('0.0.85'))).text, null);
