@@ -329,9 +329,17 @@ export async function appendMetaOverride({ auditDir, sid, attemptId, kind, by, r
   return { ok: true, recorded: rec.recorded, recordReason: rec.reason };
 }
 
+/** A lock whose recorded owner pid no longer exists is stale (the owner crashed). An unreadable or empty owner is NOT stale: fail closed. */
+export function lockOwnerIsGone(lock, { kill = process.kill.bind(process) } = {}) {
+  let pid;
+  try { pid = Number.parseInt(fs.readFileSync(lock, 'utf8'), 10); } catch { return false; }
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  try { kill(pid, 0); return false; } catch (err) { return err?.code === 'ESRCH'; }
+}
+
 /** sha256 of what the guard reads: each round's finding ids/topics/severities and each ledger ruling. Order-insensitive. */
 export function decisionInputsDigest({ rounds, ledgerEntries }) {
-  const r = (rounds || []).map((x) => `${x.round}:${(x.findings || []).map((f) => `${f.id}|${topicOf(f)}|${f.severity}|${f._priorRuling?.topicId ?? ''}`).sort().join(',')}`).sort();
+  const r = (rounds || []).map((x) => `${x.round}:${(x.findings || []).map((f) => JSON.stringify([f.id, topicOf(f), f.severity, f._priorRuling?.topicId ?? '', f.category ?? '', f.section ?? '', f.detail ?? '', [...(f.affectedFiles || [])].sort()])).sort().join(',')}`).sort();
   const l = (ledgerEntries || []).map((e) => `${e.topicId}|${e.adjudicationOutcome}|${e.resolvedRound}`).sort();
   return crypto.createHash('sha256').update(JSON.stringify([r, l])).digest('hex');
 }
@@ -346,8 +354,9 @@ export function reserveUnderSessionLock({ auditDir, sid, file, budget, event, ap
   const lock = path.join(auditDir, `${sid || 'session'}.meta-budget.lock`);
   let fd = null;
   for (let i = 0; i < tries && fd == null; i++) {
-    try { fd = fs.openSync(lock, 'wx'); } catch (err) {
+    try { fd = fs.openSync(lock, 'wx'); fs.writeSync(fd, String(process.pid)); } catch (err) {
       if (err?.code !== 'EEXIST') return { ok: false, reason: `budget lock (${err?.code || err?.message})` };
+      if (lockOwnerIsGone(lock)) { try { fs.rmSync(lock, { force: true }); } catch { /* retried below */ } continue; }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
@@ -357,7 +366,8 @@ export function reserveUnderSessionLock({ auditDir, sid, file, budget, event, ap
     if (log.malformed) return { ok: false, reason: `log malformed (${log.malformed})` };
     const sentCount = foldMetaLog(log.events).sentCount;
     if (sentCount >= budget) return { ok: false, budget: true, sentCount };
-    const out = append(file, event);
+    let out;
+    try { out = append(file, event); } catch (err) { out = { ok: false, reason: String(err?.message || err).slice(0, 200) }; }
     return out.ok ? { ok: true, sentCount: sentCount + 1 } : { ok: false, reason: out.reason };
   } finally {
     try { fs.closeSync(fd); fs.rmSync(lock, { force: true }); } catch { /* a leftover lock fails closed next time */ }
@@ -492,6 +502,12 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const claimPath = path.join(auditDir, `${attemptId}.meta-claim`);
   try { fs.mkdirSync(auditDir, { recursive: true }); fs.closeSync(fs.openSync(claimPath, 'wx')); claimFile = claimPath; } catch (err) {
     return notRun(err?.code === 'EEXIST' ? `attempt ${attemptId} is claimed by another invocation (or a crashed one: delete ${path.basename(claimPath)} after checking); the human path applies` : `could not claim the attempt (${err?.code || err?.message})`);
+  }
+  // Re-read AFTER the claim: an invocation that finished while this one waited has already decided this attempt.
+  const afterClaim = foldMetaLog(readMetaLog(file).events).decisions.get(attemptId);
+  if (afterClaim && !isRetryable(afterClaim)) {
+    releaseClaim();
+    return { ran: true, reused: true, persisted: true, decision: afterClaim, effect: afterClaim.guard.effect, honoured: !!afterClaim.guard.honoured, lines: [`  [meta-review] decided by another invocation while waiting: reusing ${attemptId}`] };
   }
   // The budget check and the reservation run under ONE session-scoped lock, re-reading the log inside it, so two
   // concurrent attempts with different evidence cannot both take the last slot.

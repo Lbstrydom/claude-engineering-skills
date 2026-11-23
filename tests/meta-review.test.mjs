@@ -14,7 +14,7 @@ import { topicOf } from '../scripts/lib/audit/cap-productivity.mjs';
 import {
   runMetaReview, guardMetaDecision, openInventory, ruledBefore, metaTriggerFor, isMetaReviewOptedOut,
   fingerprintOf, attemptIdFor, metaLogPath, readMetaLog, appendMetaEvent, foldMetaLog, admissionFor,
-  honouredLoopEnd, spendOf, projectMetaDecisionForStore, appendMetaOverride, META_REVIEW_SESSION_BUDGET, renderMetaLog, reserveUnderSessionLock,
+  honouredLoopEnd, spendOf, projectMetaDecisionForStore, appendMetaOverride, META_REVIEW_SESSION_BUDGET, renderMetaLog, reserveUnderSessionLock, lockOwnerIsGone,
 } from '../scripts/lib/audit/meta-review.mjs';
 import { buildStepBackPack, parseMetaReviewOutput, MetaReviewSchema } from '../scripts/lib/audit/step-back.mjs';
 import { createMetaReviewProvider, createStepBackProvider } from '../scripts/lib/audit/step-back-provider.mjs';
@@ -378,7 +378,7 @@ describe('R2 fixes', () => {
     assert.equal(second.ok, false); assert.equal(second.budget, true);
   });
   test('a held session lock fails closed (no reservation, no call)', () => {
-    fs.writeFileSync(path.join(dir, 's.meta-budget.lock'), '');
+    fs.writeFileSync(path.join(dir, 's.meta-budget.lock'), String(process.pid));
     const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, tries: 2 });
     assert.equal(r.ok, false); assert.match(r.reason, /held/);
   });
@@ -393,6 +393,42 @@ describe('R2 fixes', () => {
     await appendMetaOverride({ auditDir: dir, sid: 'audit-plan-1-1', attemptId: r.decision.attemptId, kind: 'override', by: 'louis', reason: 'continuing past the cap deliberately', source: 'past-cap' }, { record: () => 'k', flush: async () => {} });
     const again = await run({}, deps({ prov: provider(stopAll()) }));
     assert.equal(again.overridden, true); assert.equal(again.honoured, false); assert.equal(again.effect, 'human-card');
+  });
+});
+
+describe('R3 fixes', () => {
+  test('REGRESSION (R3 M2): a lock left by a dead owner is recovered; a live or unknown owner is not', () => {
+    const lock = path.join(dir, 's.meta-budget.lock');
+    fs.writeFileSync(lock, '999999');
+    assert.equal(lockOwnerIsGone(lock, { kill: () => { throw Object.assign(new Error('no such process'), { code: 'ESRCH' }); } }), true);
+    assert.equal(lockOwnerIsGone(lock, { kill: () => true }), false, 'a live owner keeps its lock');
+    fs.writeFileSync(lock, '');
+    assert.equal(lockOwnerIsGone(lock), false, 'an empty owner fails closed');
+    fs.writeFileSync(lock, '999999');
+    assert.equal(lockOwnerIsGone(lock), true, 'precondition: pid 999999 is not running here (real process.kill → ESRCH)');
+    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, tries: 3 });
+    assert.equal(r.ok, true, 'the stale lock is taken over and the reservation lands');
+  });
+  test('REGRESSION (R3 M1): a throwing appender is a failed reservation, never a rejection', () => {
+    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, append: () => { throw new Error('EIO'); } });
+    assert.equal(r.ok, false); assert.match(r.reason, /EIO/);
+    assert.equal(fs.existsSync(path.join(dir, 's.meta-budget.lock')), false, 'the lock is released');
+  });
+  test('REGRESSION (R3 H1): a changed finding detail at the same round decides afresh', async () => {
+    const p = provider(stopAll());
+    await run({}, deps({ prov: p }));
+    const changed = ROUNDS.map((r) => (r.round === 3 ? { ...r, findings: r.findings.map((x, i) => (i === 1 ? { ...x, detail: 'a different concern entirely' } : x)) } : r));
+    await run({}, deps({ prov: p, rounds: changed }));
+    assert.equal(p.calls.length, 2);
+  });
+  test('REGRESSION (R3 H2): a decision persisted while this invocation waited for the claim is reused, not re-sent', async () => {
+    const p = provider(stopAll());
+    const d = deps({ prov: p });
+    const probe = await run({}, { ...d, selectProvider: () => ({ ok: false, reason: 'probe', skipped: [] }) });
+    const id = probe.decision.attemptId;
+    // Simulate the rival finishing between our first read and our claim: inject its decision at provider selection.
+    const r = await run({}, { ...d, selectProvider: (a) => { appendMetaEvent(metaLogPath(dir, 'audit-plan-1-1'), { event: 'decision', attemptId: id, sent: true, state: 'valid', guard: { effect: 'stop', honoured: true, reasonCode: 'ok', reason: 'rival' } }); return p.select(a); } });
+    assert.equal(r.reused, true); assert.equal(p.calls.length, 0);
   });
 });
 
