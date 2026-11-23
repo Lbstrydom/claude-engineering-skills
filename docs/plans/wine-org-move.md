@@ -69,6 +69,11 @@ Each row was checked on 2026-11-23 against the repo or store named, not from mem
 
 ### 2.1 The CES audit store (read-only queries, store `d5a9d07b91225a93`)
 
+**One store.** WCA's baseline (2026-11-23) confirms that wine's store descriptor reports only `d5a9d07b`. Wine's
+`.env` also carries the legacy `SUPABASE_AUDIT_URL` and its keys. CES runtime persistence reads only
+`AUDIT_DB_URL` (`scripts/lib/db/client.mjs`): the legacy variables are consulted only to fail loudly when
+`AUDIT_DB_URL` is unset, so no wine rows go to that old project. Step 10 therefore runs on one store.
+
 **Identity survives; the name does not.** The store finds wine by `repo_uuid`, and wine **commits**
 `.audit-loop/repo-id`, so the uuid does not depend on the origin URL
 ([repo-identity.mjs](../../scripts/lib/repo-identity.mjs) `resolveRepoIdentity`, step 1). Exactly one
@@ -178,7 +183,7 @@ the **consumer** and name the **source** (`Lbstrydom/claude-engineering-skills`)
 | `package.json` | no `repository`/`homepage`/`bugs` field | none |
 | Dependabot | `.github/dependabot.yml` names no owner | none; re-enable security updates if the setting does not carry (§5) |
 | README badges | none name the slug | none |
-| self-hosted jobs | 9 jobs with `runs-on: self-hosted`; `pg-compat-test` picks its runner at run time | the runner is **repo-registered** (§3) |
+| self-hosted jobs | 8 jobs with `runs-on: self-hosted`, plus `pg-compat-test`, which picks its runner at run time | the runner is **repo-registered** (§3) |
 | runner-status token | a personal access token scoped to wine, used by the runner-health tooling (wine `ci-self-hosted-runner.md`) | a fine-grained token is bound to one resource owner, so a token issued for the user account cannot reach a Creathyst repo: re-issue it with Creathyst as owner (the org may have to approve fine-grained tokens) and re-set the secret. Verify its scope after the move |
 | runbooks | `required-checks-gate.md` names a ruleset **id**; `ci-self-hosted-runner.md` and `deployment-ops.md` name `repos/Lbstrydom/wine-cellar-app` | the id changes if a ruleset is re-created at step 8; text edits in the step 14 canary PR |
 | `release` branch ruleset | being created with wine #1421 | must exist and be in the step 3 baseline before the transfer; it is the production deploy source |
@@ -231,11 +236,11 @@ path below covers going back to repo level.
 The procedure, using GitHub's own runner scripts. The Windows-side keepalive is untouched; the runner's
 Linux service is stopped and restarted around the re-registration:
 
-1. **Capture** (step 3): runner name, its labels (all six, since the nine jobs select on them), the runner
-   version, the service unit name and file, and whether the unit was installed by the runner's own
-   `svc.sh` or written by hand (wine's notes name a custom unit; WCA confirms which).
-2. **Stop** the service (`sudo systemctl stop <unit>`, or `sudo ./svc.sh stop`). If it was installed by
-   `svc.sh`, also `sudo ./svc.sh uninstall`, since that service is bound to the old registration.
+1. **Capture** (step 3): runner name, its labels (all six, since the eight `runs-on: self-hosted` jobs and
+   `pg-compat-test`'s run-time picker select on them), the runner version, and the service unit. Confirmed by
+   WCA's baseline (2026-11-23): a hand-written systemd **user** unit,
+   `~/.config/systemd/user/gh-runner-wine-cellar.service`, with `Linger=yes`, not an `svc.sh` service.
+2. **Stop** the service: `systemctl --user stop gh-runner-wine-cellar` (no sudo, no `svc.sh uninstall`).
 3. **Remove** the repo registration (step 8R): `config.sh remove` with a removal token from
    `POST repos/Creathyst/wine-cellar-app/actions/runners/remove-token` (short-lived, fetched at that moment).
    If the registration did not survive the transfer, there is nothing to remove on GitHub; clear the local
@@ -244,8 +249,7 @@ Linux service is stopped and restarted around the re-registration:
 5. **Register** with a registration token from `POST orgs/Creathyst/actions/runners/registration-token`:
    `config.sh --url https://github.com/Creathyst --token … --name <same> --labels wsl2,docker,playwright
    --runnergroup <group>` (`self-hosted, Linux, X64` are added by the runner itself).
-6. **Start**: `sudo ./svc.sh install && sudo ./svc.sh start` for an `svc.sh` service, or
-   `sudo systemctl start <unit>` for the hand-written one (its unit file did not change).
+6. **Start**: `systemctl --user start gh-runner-wine-cellar` (its unit file does not change).
 7. **Verify**: the org runner list shows it `online` with all six labels and in the group; one labelled job
    (a `runs-on: self-hosted` job that uses docker) runs on it and passes.
 
@@ -333,7 +337,9 @@ coordinator or a wine PR. **CES** = a CES PR. Nothing in this plan is done by th
 
 6. **Freeze** (WCA, then owner). WCA tells every wine worker session to hold (no push, no merge, no tag
    writes); the owner pauses the CES and WCA coordinators' merge authority for the window. Disable the
-   scheduled workflows that step 3 marked as writing and enabled, record which ones were disabled, and wait
+   scheduled workflows that step 3 marked as writing and enabled (WCA's baseline, 2026-11-23:
+   `workflow-cadence` and `benchmark`; `monitor-alert` runs only when a watched run fails, so it stays),
+   record which ones were disabled, and wait
    until `gh run list --status in_progress` and `--status queued` are both empty (cancel any that are not).
    Auto-merge is on for the repo (`allow_auto_merge: true`, `measured`): turn it off for the window, so that
    a queued auto-merge cannot land while the gate is being restored. The freeze holds until step 16.
