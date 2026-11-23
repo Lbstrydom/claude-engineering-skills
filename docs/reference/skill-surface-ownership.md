@@ -317,8 +317,8 @@ has no oracle — declare the discriminator in BOTH descriptions instead (*topic
   skills surface as `/name` slash commands in the SAME namespace as prompt files,
   same-basename shims collided with their own skills (and half pointed at
   non-existent CLIs). **Do not re-introduce a `.github/prompts` generator.**
-- MCP: VS Code reads `.vscode/mcp.json`, **NOT** Claude's `.mcp.json` — keep the
-  two mirrored when adding servers.
+- MCP: VS Code Copilot reads root `.mcp.json` directly and only forwards
+  `.vscode/mcp.json` — keep the two mirrored when adding servers.
 
 ### `--keep-github-skills` removed entirely (2026-07-28)
 

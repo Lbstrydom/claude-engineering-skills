@@ -212,7 +212,7 @@
           "scripts/check-mcp-parity.mjs"
         ]
       },
-      "check": "Adding or changing an MCP server means editing BOTH config files. AGENTS.md: \"VS Code Copilot reads VS Code Copilot reads root `.mcp.json` directly and only forwards `.vscode/mcp.json` — keep the two mirrored when adding servers.\" Claude Code and the default VS Code Copilot harness read .mcp.json; .vscode/mcp.json is only forwarded on the default harness; the parity gate checks both shapes (a Windows `npx` server needs its `-y`).",
+      "check": "Adding or changing an MCP server means editing BOTH config files. AGENTS.md: \"VS Code Copilot reads root `.mcp.json` directly and only forwards `.vscode/mcp.json` — keep the two mirrored when adding servers.\" Claude Code and the default VS Code Copilot harness read .mcp.json; .vscode/mcp.json is only forwarded on the default harness; the parity gate checks both shapes (a Windows `npx` server needs its `-y`).",
       "incident": "The two files had to stay mirrored and nothing enforced it until the parity gate (tests/mcp-parity.test.mjs header).",
       "control": {
         "path": ".mcp.json",
