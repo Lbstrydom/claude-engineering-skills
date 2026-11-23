@@ -64,6 +64,7 @@ export const EOL_PIN_GLOBS = Object.freeze([
   '.claude/hooks/**',
   '.claude/settings.json',
   '.vscode/mcp.json',
+  '.mcp.json',
   'docs/reference/consistency-contract.md',
   LAYOUT_CONSTANTS.MANIFEST_PATH,
   `${LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX}**`,

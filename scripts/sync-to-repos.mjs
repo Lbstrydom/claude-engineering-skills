@@ -25,7 +25,7 @@ import {
 } from './lib/consumer-repos.mjs';
 import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
-  findUndeliveredEntries, patchManifestWithExtraHashes,
+  findUndeliveredEntries, patchManifestWithExtraHashes, readSourceManagedServers,
 } from './lib/sync-manifest.mjs';
 import { buildOwnedSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './lib/sync-owned-sidecar.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -1517,7 +1517,7 @@ async function main() {
         const consumerManifest = buildConsumerManifest({
           generatedAt: new Date().toISOString(),
           repo: 'Lbstrydom/claude-engineering-skills',
-          sourceGitMeta,
+          sourceGitMeta, mcpManagedServers: repo.files.includes('.mcp.json') ? readSourceManagedServers(SOURCE_ROOT) : null,
           files: consumerFileMap,
           // null (git unavailable) propagates as "not determined" rather than
           // collapsing to clean — `.some()` on a null set would be exactly the

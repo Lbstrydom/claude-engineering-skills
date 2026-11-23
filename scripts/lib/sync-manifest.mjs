@@ -26,6 +26,7 @@ import https from 'node:https';
 import { execSync } from 'node:child_process';
 import { z } from 'zod';
 import { atomicWriteFileSync } from './file-io.mjs';
+import { managedServerNames } from './mcp-parity.mjs';
 
 const DEFAULT_UPSTREAM_URL =
   'https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main/scripts/.sync-manifest.json';
@@ -86,6 +87,13 @@ export const SyncManifestSchema = z.object({
   // Optional + defaults to 'legacy' for backwards-compat with manifests
   // published before the field was added. Strict subset of strings.
   layout: z.enum(['legacy', 'isolated']).optional().default('legacy'),
+  // The server names the source's root `.mcp.json` ships (sorted, unique, non-empty): what consumer-side MCP parity
+  // (sync-isolation-verify gate 10) judges. Optional so a manifest published before this field existed still parses;
+  // gate 10 reads absence beside a `.mcp.json` entry as UNMEASURED, never as "no managed servers". Without it here the
+  // non-strict schema would strip the field on every reload.
+  mcpManagedServers: z.array(z.string().min(1)).min(1)
+    .refine((a) => new Set(a).size === a.length && a.every((n, i) => i === 0 || a[i - 1] < n), { message: 'mcpManagedServers must be sorted and unique' })
+    .optional(),
 });
 
 export function hashFile(absPath) {
@@ -338,7 +346,16 @@ export function findUndeliveredEntries(fileMap, { exists }) {
   return out.sort();
 }
 
-export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files, sourceDirty = null }) {
+/** The server names the source's root `.mcp.json` ships; null when unreadable (the manifest then omits the field and gate 10 reports UNMEASURED, never a clean pass). */
+export function readSourceManagedServers(sourceRoot) {
+  try {
+    const names = managedServerNames(JSON.parse(fs.readFileSync(path.join(sourceRoot, '.mcp.json'), 'utf-8')));
+    return names.length > 0 ? names : null;
+  } catch { return null; }
+}
+
+export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files, sourceDirty = null, mcpManagedServers = null }) {
+  const managed = Array.isArray(mcpManagedServers) && mcpManagedServers.length > 0 ? [...new Set(mcpManagedServers)].sort() : null;
   return {
     generatedAt,
     repo: repo || 'Lbstrydom/claude-engineering-skills',
@@ -352,6 +369,7 @@ export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files,
     sourceDirty: typeof sourceDirty === 'boolean' ? sourceDirty : null,
     files,
     layout: 'isolated',
+    ...(managed ? { mcpManagedServers: managed } : {}),
   };
 }
 

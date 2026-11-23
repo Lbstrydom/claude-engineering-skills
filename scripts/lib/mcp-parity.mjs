@@ -256,6 +256,14 @@ function envKeyOf(server, varName) {
   return JSON.stringify([server, varName]);
 }
 
+/** Keep only the named servers of one host's parsed config; an unrecognisable shape passes through so normalisation reports it. */
+function onlyManaged(parsed, host, managed) {
+  const rootKey = ROOT_KEY[host];
+  const map = parsed && typeof parsed === 'object' ? parsed[rootKey] : null;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return parsed;
+  return { [rootKey]: Object.fromEntries(Object.entries(map).filter(([name]) => managed.includes(name))) };
+}
+
 /**
  * Compare two hosts' configs for semantic equivalence.
  *
@@ -265,16 +273,21 @@ function envKeyOf(server, varName) {
  * @returns {{ok: boolean, code: string|null, compared: number, drifted: string[],
  *            exceptionsUsed: object[], diagnostics: string[]}}
  */
-export function compareMcpSurfaces({ claude, vscode, exceptions } = {}) {
-  const c = normalizeMcpConfig(claude, 'claude');
-  const v = normalizeMcpConfig(vscode, 'vscode');
+export function compareMcpSurfaces({ claude, vscode, exceptions, managedNames } = {}) {
+  // `managedNames` (consumer side): judge ONLY the servers the source ships. A server outside the set is the consumer's
+  // own — present in one file only, or carrying a descriptor this oracle does not model, it is never a parity failure.
+  // A managed server must be in both files and equal. Absent (the source-repo gate) ⇒ every server is compared.
+  const c = normalizeMcpConfig(managedNames ? onlyManaged(claude, 'claude', managedNames) : claude, 'claude');
+  const v = normalizeMcpConfig(managedNames ? onlyManaged(vscode, 'vscode', managedNames) : vscode, 'vscode');
   const descriptorDiagnostics = [...c.diagnostics, ...v.diagnostics];
 
   const ex = validateExceptions(exceptions, c.servers, v.servers);
 
   const diagnostics = [];
   const drifted = [];
-  const names = [...new Set([...c.servers.keys(), ...v.servers.keys()])].sort();
+  // A managed name must be judged even when NEITHER file has it: filtering alone would let a server deleted from both
+  // read as parity.
+  const names = [...new Set([...c.servers.keys(), ...v.servers.keys(), ...(managedNames ?? [])])].sort();
   let compared = 0;
 
   const presenceExcused = new Set(ex.valid.filter(e => e.kind === 'presence').map(e => e.server));
@@ -287,7 +300,9 @@ export function compareMcpSurfaces({ claude, vscode, exceptions } = {}) {
     if (!inC || !inV) {
       if (presenceExcused.has(name)) continue;
       drifted.push(name);
-      diagnostics.push(`server "${name}" is present only in ${inC ? 'claude (.mcp.json)' : 'vscode (.vscode/mcp.json)'}`);
+      diagnostics.push(!inC && !inV
+        ? `managed server "${name}" is absent from both files`
+        : `server "${name}" is present only in ${inC ? 'claude (.mcp.json)' : 'vscode (.vscode/mcp.json)'}`);
       continue;
     }
 
@@ -353,3 +368,16 @@ export function compareMcpSurfaces({ claude, vscode, exceptions } = {}) {
     diagnostics: [...descriptorDiagnostics, ...ex.diagnostics, ...diagnostics],
   };
 }
+
+/**
+ * The MANAGED servers: the names this (source) repo ships in its root `.mcp.json`.
+ * A consumer's other servers are its own and are outside parity.
+ *
+ * @param {unknown} sourceClaudeConfig — the parsed source `.mcp.json`
+ * @returns {string[]} sorted server names ([] when the shape is not recognisable)
+ */
+export function managedServerNames(sourceClaudeConfig) {
+  const map = sourceClaudeConfig && typeof sourceClaudeConfig === 'object' ? sourceClaudeConfig[ROOT_KEY.claude] : null;
+  return map && typeof map === 'object' && !Array.isArray(map) ? Object.keys(map).sort() : [];
+}
+

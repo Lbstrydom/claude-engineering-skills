@@ -44,6 +44,7 @@ import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
 import { lintSkillTree } from './skill-frontmatter-layout.mjs';
 import { assertKnownFlags, ArgvError } from './cli-io.mjs';
+import { gate10 } from './sync-mcp-parity-gate.mjs';
 import { detectCheckout } from './checkout-kind.mjs';
 import { isInvokedAsScript } from './cli-entry.mjs';
 
@@ -58,7 +59,7 @@ import { isInvokedAsScript } from './cli-entry.mjs';
 // filters its own exclusion list (gate1 is migration-only, not a health
 // check) from this module's own constant rather than hand-listing gate ids a
 // second time — one more single-oracle application.
-export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8', '9'];
+export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8', '9', '10'];
 // Backlog-triage fix — every flag this CLI's own parseArgs recognizes, fed to
 // the shared assertKnownFlags oracle (the same one reconcile-repo-identity.mjs
 // and friends use) so an unrecognized flag alongside a recognized one is a
@@ -940,7 +941,7 @@ export function runGates(opts) {
 
   const manifestRes = loadConsumerManifest(consumerRoot);
 
-  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8', '9'].includes(g));
+  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8', '9', '10'].includes(g));
   if (needManifest && !manifestRes.ok) {
     return [{ gate: 'preflight', pass: false, error: manifestRes.error }];
   }
@@ -957,8 +958,7 @@ export function runGates(opts) {
       else if (g === '5') results.push(gate5(consumerRoot, manifest));
       else if (g === '6') results.push(gate6(manifest));
       else if (g === '7') results.push(gate7(consumerRoot));
-      else if (g === '8') results.push(gate8(consumerRoot, manifest));
-      else if (g === '9') results.push(gate9(consumerRoot, manifest));
+      else if (g === '8' || g === '9' || g === '10') results.push({ 8: gate8, 9: gate9, 10: gate10 }[g](consumerRoot, manifest));
       else results.push({ gate: g, pass: false, error: `unknown gate: ${g}` });
     } catch (err) {
       results.push({ gate: g, pass: false, error: `gate threw: ${err.message}` });
@@ -980,7 +980,7 @@ function formatText(results) {
   let allPass = true;
   for (const r of results) {
     if (r.pass) {
-      lines.push(`  ✓ gate ${r.gate}`);
+      lines.push(`  ✓ gate ${r.gate}${r.result && r.result !== 'pass' ? ` (${r.result})` : ''}`);
       // A PASS that excused something must say what it excused. Gate 2B skips
       // paths declared in `.sync-overrides.json`, and a bare `✓` would make a
       // standing divergence invisible in the default output — which is the
@@ -1044,6 +1044,6 @@ if (isInvokedAsScript(import.meta.url)) {
 
 export const _internals = {
   CLI_SMOKE_SET, LIB_IMPORT_SET, CMD_SCAN_PATHS, COMMAND_REGEX,
-  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7, gate8, gate9,
+  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7, gate8, gate9, gate10,
   ownedSkillNamesFromManifest, runGates, formatText,
 };

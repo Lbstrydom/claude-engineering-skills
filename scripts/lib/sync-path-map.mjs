@@ -121,6 +121,7 @@ const STAYS_AT_CANONICAL_PATH_PREFIXES = [
 const STAYS_AT_CANONICAL_PATH_EXACT = new Set([
   '.claude/settings.json',
   '.vscode/mcp.json',
+  '.mcp.json',
   LAYOUT_CONSTANTS.MANIFEST_PATH,
 ]);
 

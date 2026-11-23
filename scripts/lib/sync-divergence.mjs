@@ -231,7 +231,7 @@ export function classifyAgainstBase({ baseHash, diskHash }) {
  * ## Why one case still asks the receipt
  *
  * The base is upstream's content only where the outbound bytes are a function
- * of upstream alone. The two co-owned JSON configs (`.vscode/mcp.json`,
+ * of upstream alone. The co-owned JSON configs (`.vscode/mcp.json`, `.mcp.json`,
  * `.claude/settings.json`) are deep-merged with the consumer's own file when it
  * exists, so their base carries the consumer's keys too, and a base comparison
  * would report "upstream moved" for ever on a difference the CONSUMER made —
