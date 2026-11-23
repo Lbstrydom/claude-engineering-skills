@@ -92,8 +92,15 @@ async function linkageCommand(argv, deps = {}) {
     const { isCloudEnabled } = await import('./lib/store/repo.mjs');
     const { queryLinkage } = await import('./lib/telemetry/linkage-queries.mjs');
     const hasState = await columnExists('audit_runs', 'linkage_state', many, isCloudEnabled);
-    const report = await queryLinkage(many, { session, round, hasState });
+    const { withTx, query } = await import('./lib/db/query.mjs');
+    // ONE consistent read: the six statements see the same committed state, so a concurrent write cannot split the report.
+    const snapshot = (fn) => withTx(async () => { await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'); return fn(); });
+    const report = await queryLinkage(many, { session, round, repoId: arg(argv, '--repo') ?? null, hasState, snapshot });
     console.log(JSON.stringify({ mode: 'linkage', hasLinkageState: hasState, ...report }));
+    if (report.ambiguousRepos) process.stderr.write(`own-model-coverage: session "${session}" spans ${report.ambiguousRepos.length} repos - pass --repo <uuid>
+`);
+    else if (!report.roundKnown && report.sessionKnown) process.stderr.write(`own-model-coverage: session "${session}" has no round ${round}
+`);
     if (!report.sessionKnown) process.stderr.write(`own-model-coverage: no runs carry session "${session}" - see unlinkedStoreWide for rows that carry none\n`);
     return report.complete ? 0 : 1;
   } finally { await closePool(); }
@@ -104,9 +111,9 @@ export async function main(argv, deps = {}) {
   const initStore = deps.initStore ?? (async () => (await import('./lib/store/repo.mjs')).initLearningStore());
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   const sub = argv[2];
-  assertKnownFlags(argv.slice(3), ['--static', '--live', '--out', '--config', '--tables', '--all-columns', '--session', '--round'], { cli: 'own-model-coverage', from: 0 });
+  assertKnownFlags(argv.slice(3), ['--static', '--live', '--out', '--config', '--tables', '--all-columns', '--session', '--round', '--repo'], { cli: 'own-model-coverage', from: 0 });
   if (sub === 'linkage') return linkageCommand(argv, deps);
-  if (sub !== 'check' && sub !== 'snapshot') throw new ArgvError('usage: own-model-coverage.mjs check --static|--live | snapshot [--tables a,b --all-columns] --out <file> | linkage --session <id> [--round <n>]');
+  if (sub !== 'check' && sub !== 'snapshot') throw new ArgvError('usage: own-model-coverage.mjs check --static|--live | snapshot [--tables a,b --all-columns] --out <file> | linkage --session <id> [--round <n>] [--repo <uuid>]');
   if (sub === 'check' && argv.includes('--static') && argv.includes('--live')) throw new ArgvError('check takes --static OR --live, not both');
   let config;
   try { config = loadConfig(arg(argv, '--config')); } catch (err) {

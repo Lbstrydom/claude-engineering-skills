@@ -56,9 +56,12 @@ export async function captureIdentityColumns({ auditSessionId, auditRound, unifi
   try {
     link = resolveLinkage({ auditSessionId, auditRound, unifiedRun, standaloneReason });
   } catch (err) {
-    // A bad declaration must not lose the run (`recordRunStart` never throws): record it as unlinked and say why, in the row.
-    process.stderr.write(`  [learning] ${err.message} - run recorded as linkage_state=unlinked\n`);
-    link = { state: 'unlinked', reason: `invalid-declaration: ${err.message}`.slice(0, 200), auditSessionId: null, auditRound: null };
+    // A bad declaration must not lose the run (`recordRunStart` never throws), and must not discard identity the caller DID
+    // supply: resolve again WITHOUT the declaration, so a real session still links. Only a run left with no session is
+    // `unlinked`, and its reason says the declaration was invalid.
+    link = resolveLinkage({ auditSessionId, auditRound, unifiedRun });
+    process.stderr.write(`  [learning] ${err.message} - declaration ignored\n`);
+    if (link.state === 'unlinked') link = { ...link, reason: `invalid-declaration: ${err.message}`.slice(0, 200) };
   }
   if (link.state === 'unlinked' && link.reason === 'undeclared') {
     process.stderr.write('  [learning] no audit session id resolved (pass --session-id or use --out <sid>-r<N>-result.json) - run recorded as linkage_state=unlinked\n');
@@ -71,6 +74,33 @@ export async function captureIdentityColumns({ auditSessionId, auditRound, unifi
     ...(link.auditSessionId && link.auditRound != null ? { audit_round: link.auditRound } : {}),
     ...(hasState ? { linkage_state: link.state, linkage_reason: link.reason } : {}),
   };
+}
+
+/**
+ * A run row REUSED by an explicit run id (a unified audit's later rounds, a coordinator's worker) was written by an earlier
+ * process, possibly before any identity was known. Reuse must not leave it silently unlinked while the caller now holds a
+ * session: an unlinked/legacy row adopts the supplied session; a row already linked to a DIFFERENT session is left alone and
+ * the conflict is named (a wrong session id merges two audits in every query). Never throws; returns the run id.
+ * @param {{id: string, audit_session_id?: string|null, linkage_state?: string|null}} existing
+ * @param {{auditSessionId?: string|null}} identity
+ * @returns {Promise<string>}
+ */
+export async function reconcileReusedRunLinkage(existing, { auditSessionId } = {}) {
+  const sid = typeof auditSessionId === 'string' && auditSessionId.trim() ? auditSessionId.trim() : null;
+  try {
+    if (!sid || !await captureV1Present()) return existing.id;
+    const row = await one('SELECT audit_session_id FROM audit_runs WHERE id = $1', [existing.id]);
+    if (row?.audit_session_id && row.audit_session_id !== sid) {
+      process.stderr.write(`  [learning] run ${existing.id} is linked to session "${row.audit_session_id}", not "${sid}" - reuse keeps the existing link\n`);
+      return existing.id;
+    }
+    if (row?.audit_session_id) return existing.id;
+    const hasState = await columnExists('audit_runs', 'linkage_state', many, isCloudEnabled);
+    await query(`UPDATE audit_runs SET audit_session_id = $2${hasState ? ", linkage_state = 'linked', linkage_reason = NULL" : ''} WHERE id = $1 AND audit_session_id IS NULL`, [existing.id, sid]);
+  } catch (err) {
+    process.stderr.write(`  [learning] reconcile linkage on reuse of ${existing.id} failed: ${err.message}\n`);
+  }
+  return existing.id;
 }
 
 /** Max length of a free-text value written by the capture-v1 writers (rationale, actor). */
