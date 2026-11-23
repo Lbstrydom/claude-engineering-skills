@@ -308,6 +308,31 @@ describe('runMetaReview — the positive and negative controls', () => {
     const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-1-1', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, deps({ prov: p }));
     assert.equal(r.ran, false); assert.match(r.reason, /signals did not fire/); assert.equal(p.calls.length, 0);
   });
+  test('T2 that does not fire is RECORDED with each signal state (measured/unmeasured), and the record never changes a decision', async () => {
+    const p = provider(stopAll());
+    const base = deps({ prov: p });
+    const d = { ...base, computeSignals: () => ({ version: 1, round: 3, anyFires: false, unmeasured: ['reopenRate'], signals: { reopenRate: { measured: false, fires: false, value: null, reason: 'round 3\'s 4 findings cite no lines' }, severityDrift: { measured: true, fires: false, value: 0, reason: 'median 0' } } }) };
+    const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-eval', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, d);
+    assert.equal(r.ran, false); assert.equal(p.calls.length, 0);
+    assert.match(r.lines.join('\n'), /T2 evaluation logged: reopenRate=unmeasured severityDrift=quiet/);
+    const ev = readMetaLog(metaLogPath(dir, 'audit-code-eval')).events.filter((e) => e.event === 'evaluation');
+    assert.equal(ev.length, 1); assert.equal(ev[0].checkpoint, 3); assert.equal(ev[0].anyFires, false);
+    assert.deepEqual(ev[0].signals.map((s) => [s.name, s.measured]), [['reopenRate', false], ['severityDrift', true]]);
+    assert.match(ev[0].signals[0].reason, /cite no lines/);
+    assert.equal(foldMetaLog(readMetaLog(metaLogPath(dir, 'audit-code-eval')).events).decisions.size, 0, 'an evaluation is not a decision');
+  });
+  test('T2 evaluation: a computation that THROWS is recorded as failed (redacted), not as a quiet no-fire', async () => {
+    const d = { ...deps({ prov: provider(stopAll()) }), computeSignals: () => { throw new Error('boom token=sk-abcdefghijklmnopqrstuvwxyz0123456789'); } };
+    const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-eval3', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, d);
+    assert.match(r.reason, /could not be computed/); assert.match(r.lines.join('\n'), /COMPUTATION FAILED/);
+    const ev = readMetaLog(metaLogPath(dir, 'audit-code-eval3')).events.find((e) => e.event === 'evaluation');
+    assert.equal(ev.failed, true); assert.doesNotMatch(JSON.stringify(ev), /sk-abcdefghijklmnop/);
+  });
+  test('T2 evaluation: a log that cannot be written is reported, never thrown, and the round still runs', async () => {
+    const base = deps({ prov: provider(stopAll()), append: () => ({ ok: false, reason: 'disk full' }) });
+    const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-eval2', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, base);
+    assert.equal(r.ran, false); assert.match(r.lines.join('\n'), /not logged \(disk full\)/);
+  });
 });
 
 describe('R1 fixes', () => {
