@@ -40,8 +40,8 @@ none has path claims, a machine lease or landing; CCManager is named only as an 
 
 ## Removing a worktree on mixed hosts
 
-The registry records intent, not liveness, and no host lists every session. Before `archive --apply` or a printed `prune`
-removal, in order: (1) read the registry record for the worktree: a `--host-session` from another host, or none, means you cannot
+The registry records intent, not liveness, and no host lists every session. Before `archive --apply`, `prune --apply` or a printed
+`prune` removal, in order: (1) read the registry record for the worktree: a `--host-session` from another host, or none, means you cannot
 see that session from here; (2) check your own host's session list (role `session-list`), pinned and dormant included: a live
 session on the path stops the removal; (3) for any session you cannot see (an Agents-window session seen from the desktop app, a
 `claude --bg` worker seen from VS Code) the user must confirm in chat that none uses the path; (4) no confirmation, no removal.
