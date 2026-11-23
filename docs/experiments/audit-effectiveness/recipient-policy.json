@@ -27,6 +27,14 @@
       "openrouter",
       "deepseek",
       "alibaba"
+    ],
+    "github.com/Creathyst/wine-cellar-app": [
+      "anthropic",
+      "openai",
+      "gemini",
+      "openrouter",
+      "deepseek",
+      "alibaba"
     ]
   }
 }
