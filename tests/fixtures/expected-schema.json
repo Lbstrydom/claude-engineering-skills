@@ -2091,13 +2091,31 @@
           "ordinal_position": 68
         },
         {
+          "column_name": "linkage_state",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 70
+        },
+        {
+          "column_name": "linkage_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 71
+        },
+        {
           "column_name": "capture_epoch",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "is_identity": "NO",
           "identity_generation": null,
-          "ordinal_position": 69
+          "ordinal_position": 74
         }
       ]
     },
@@ -12618,6 +12636,18 @@
       "constraint_name": "audit_runs_gemini_verdict_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((gemini_verdict = ANY (ARRAY['APPROVE'::text, 'CONCERNS'::text, 'CONCERNS_REMAINING'::text, 'REJECT'::text])))"
+    },
+    {
+      "table_name": "audit_runs",
+      "constraint_name": "audit_runs_linkage_pair_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((linkage_state IS NULL) OR ((linkage_state = 'linked'::text) AND (audit_session_id IS NOT NULL)) OR ((linkage_state = 'standalone'::text) AND (audit_session_id IS NULL) AND (linkage_reason IS NOT NULL)) OR ((linkage_state = 'unlinked'::text) AND (audit_session_id IS NULL))))"
+    },
+    {
+      "table_name": "audit_runs",
+      "constraint_name": "audit_runs_linkage_state_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((linkage_state IS NULL) OR (linkage_state = ANY (ARRAY['linked'::text, 'unlinked'::text, 'standalone'::text]))))"
     },
     {
       "table_name": "audit_runs",

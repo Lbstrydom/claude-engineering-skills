@@ -15,6 +15,7 @@ import { isCloudEnabled } from './repo.mjs';
 import { columnExists } from './column-probes.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
 import { CAPTURE_EPOCH } from '../capture-epoch.mjs';
+import { resolveLinkage } from '../telemetry/linkage.mjs';
 
 /** Bumping this changes the eligible cohort of every capture query (they take the epoch set as a parameter). Defined in the leaf
  *  `lib/capture-epoch.mjs` so `telemetry/capture-queries.mjs` (shared-lib, may not import the store) reads the SAME constant. */
@@ -43,18 +44,32 @@ export async function captureV1Present() {
  *
  * `audit_round` is NULL for a unified run (an explicit `runId`): that one row
  * spans every round of the audit, so no single round describes it.
- * @param {{auditSessionId?: string|null, auditRound?: number|null, unifiedRun?: boolean}} identity
+ * `standaloneReason` declares a run deliberately outside any session (a key of `STANDALONE_REASONS`); a bad or contradictory
+ * declaration is recorded as `unlinked` with the reason, never thrown (the run row must not be lost).
+ * @param {{auditSessionId?: string|null, auditRound?: number|null, unifiedRun?: boolean, standaloneReason?: string|null}} identity
  * @returns {Promise<object>} columns to spread into the INSERT row
  */
-export async function captureIdentityColumns({ auditSessionId, auditRound, unifiedRun = false } = {}) {
+export async function captureIdentityColumns({ auditSessionId, auditRound, unifiedRun = false, standaloneReason = null } = {}) {
   if (!await captureV1Present()) return {};
-  if (!auditSessionId) {
-    process.stderr.write('  [learning] no audit session id resolved (pass --session-id or use --out <sid>-r<N>-result.json) - run stays unlinked\n');
+  // The linkage resolver is the ONE decision: an undeclared missing session is the explicit `unlinked` state, never a bare NULL.
+  let link;
+  try {
+    link = resolveLinkage({ auditSessionId, auditRound, unifiedRun, standaloneReason });
+  } catch (err) {
+    // A bad declaration must not lose the run (`recordRunStart` never throws): record it as unlinked and say why, in the row.
+    process.stderr.write(`  [learning] ${err.message} - run recorded as linkage_state=unlinked\n`);
+    link = { state: 'unlinked', reason: `invalid-declaration: ${err.message}`.slice(0, 200), auditSessionId: null, auditRound: null };
   }
+  if (link.state === 'unlinked' && link.reason === 'undeclared') {
+    process.stderr.write('  [learning] no audit session id resolved (pass --session-id or use --out <sid>-r<N>-result.json) - run recorded as linkage_state=unlinked\n');
+  }
+  // Probed apart from capture_epoch: the linkage columns arrive in a later migration, and an older store keeps working.
+  const hasState = await columnExists('audit_runs', 'linkage_state', many, isCloudEnabled);
   return {
     capture_epoch: CAPTURE_EPOCH,
-    ...(auditSessionId ? { audit_session_id: auditSessionId } : {}),
-    ...(auditSessionId && !unifiedRun && Number.isInteger(auditRound) ? { audit_round: auditRound } : {}),
+    ...(link.auditSessionId ? { audit_session_id: link.auditSessionId } : {}),
+    ...(link.auditSessionId && link.auditRound != null ? { audit_round: link.auditRound } : {}),
+    ...(hasState ? { linkage_state: link.state, linkage_reason: link.reason } : {}),
   };
 }
 
