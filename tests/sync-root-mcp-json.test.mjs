@@ -292,7 +292,7 @@ describe('root .mcp.json is OPT-IN per consumer and never launches by a network 
   it('a stale CES-managed npx entry left in the consumer file is REPORTED, not silently kept or rewritten', () => withTmp(
     (tmp) => { seedPinnedConsumer(tmp, { optIn: false }); fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { mermaid: { command: 'npx', args: ['-y', 'mcp-mermaid@0.4.1'] } } })); },
     (tmp, out) => {
-      assert.match(out, /stale CES-managed server "mermaid" in \.mcp\.json launches by network fetch/);
+      assert.match(out, /stale CES-managed server "mermaid" in \.mcp\.json is no longer shipped/);
       assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8')).mcpServers.mermaid.command, 'npx', 'reported, never edited');
     },
   ));
@@ -404,6 +404,19 @@ describe('renderConsumerMcp — what is left out, and why', () => {
       const r = renderConsumerMcp({ sourceText: src, consumerRoot: tmp });
       assert.deepEqual(r.names, ['local']);
       assert.equal(r.notes.length, 3);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+  it('a lockfile whose JSON is null is a rejection, not a crash', () => {
+    assert.equal(render(withLock('package-lock.json', 'null')).text, null);
+  });
+  it('an opted-in consumer whose package pin was removed has the old node entry REPORTED as stale', () => {
+    const tmp = tmpWith({ devDependencies: {} }, {});
+    try {
+      fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { playwright: { command: 'node', args: ['node_modules/@playwright/mcp/cli.js'] }, corp: { command: 'x' } } }));
+      const plan = planRootMcp({ consumerRoot: tmp, sourceRoot: REPO_ROOT, syncOptIn: OPT_IN.syncOptIn });
+      const stale = plan.notes.filter((n) => /stale CES-managed/.test(n));
+      assert.equal(stale.length, 1);
+      assert.match(stale[0], /"playwright" in \.mcp\.json/);
     } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
   it('a bin that node cannot run is left out; a shebang-node bin without an extension is accepted', () => {

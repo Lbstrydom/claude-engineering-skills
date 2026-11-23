@@ -66,7 +66,7 @@ function lockfileRecords(consumerRoot, pkg, version) {
     const st = readJsonState(path.join(consumerRoot, f));
     if (st.absent) continue;
     if (st.error) return { ok: false, reason: `${f} is unreadable: ${st.error}` };
-    const v = st.value.packages?.[`node_modules/${pkg}`]?.version ?? st.value.dependencies?.[pkg]?.version;
+    const v = st.value?.packages?.[`node_modules/${pkg}`]?.version ?? st.value?.dependencies?.[pkg]?.version;
     return v === version ? { ok: true } : { ok: false, reason: `${f} does not record ${pkg}@${version}` };
   }
   for (const f of ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock']) {
@@ -156,13 +156,13 @@ export function renderConsumerMcp({ sourceText, consumerRoot }) {
  * shipping them (opted out, or the package is no longer pinned): the sync never edits a co-owned file to remove them, so it
  * REPORTS them. Judged on the resulting files, not on what this run generates.
  */
-export function staleManagedEntries(consumerRoot, managedNames, shippedNames) {
+export function staleManagedEntries(consumerRoot, managedNames, shippedNames, optedIn = false) {
   const out = [];
   for (const [rel, key] of [['.mcp.json', 'mcpServers'], ['.vscode/mcp.json', 'servers']]) {
     const servers = readJson(path.join(consumerRoot, ...rel.split('/')))?.[key] ?? {};
     for (const name of managedNames) {
-      if (!shippedNames.includes(name) && Object.hasOwn(servers, name) && classifyLaunchSpec(servers[name]) === 'unpinned') {
-        out.push(`stale CES-managed server "${name}" in ${rel} launches by network fetch; remove it, or pin its package and opt in`);
+      if (!shippedNames.includes(name) && Object.hasOwn(servers, name) && (optedIn || classifyLaunchSpec(servers[name]) === 'unpinned')) {
+        out.push(`stale CES-managed server "${name}" in ${rel} is no longer shipped to this consumer (not opted in, or its package is not pinned, locked and installed); remove it if it is CES-managed`);
       }
     }
   }
@@ -184,7 +184,7 @@ export function planRootMcp({ consumerRoot, sourceRoot, syncOptIn, log = () => {
   // A file no longer shipped (an opted-out consumer's root `.mcp.json`) is the consumer's own from now on: out of the prior
   // manifest so it is not garbage-collected, and out of the new one so gate 10 reads `not-applicable`, never a stale entry.
   const finish = (omit, rest) => {
-    const lines = [...(rest.notes ?? []), ...staleManagedEntries(consumerRoot, managed, rest.names ?? [])];
+    const lines = [...(rest.notes ?? []), ...staleManagedEntries(consumerRoot, managed, rest.names ?? [], optedIn)];
     for (const n of lines) log(n);
     return {
       optedIn, omit, names: [], textFor: () => null, ...rest, notes: lines,
