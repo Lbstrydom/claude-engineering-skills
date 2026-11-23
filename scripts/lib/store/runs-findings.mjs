@@ -257,7 +257,7 @@ function repoIdentityMatches(a, b) {
 // A re-record carrying NULL here must not erase a value an earlier write set (audit-telemetry-capture Decision 3).
 const KEEP_WHEN_NULL = new Set(['source_model', 'stage', 'arm']);
 
-export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag, auditSessionId, auditRound } = {}) {
+export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag, auditSessionId, auditRound, standaloneReason } = {}) {
   if (!await isCloudEnabled()) return null;
   // Run-unification (WS1 §1.2/§1.3b): when the orchestrator threads an explicit
   // `runId`, REUSE the existing audit_runs row so all rounds of one audit share
@@ -306,7 +306,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
     // failure — the graceful-degradation invariant runs the other way.
     ...(experimentTag && await columnExists('audit_runs', 'experiment_tag', many, isCloudEnabled)
       ? { experiment_tag: experimentTag } : {}),
-    ...(await captureIdentityColumns({ auditSessionId, auditRound, unifiedRun: Boolean(runId) })),
+    ...(await captureIdentityColumns({ auditSessionId, auditRound, unifiedRun: Boolean(runId), standaloneReason })),
   };
   try {
     const out = await insertReturning('audit_runs', row, { returning: ['id'] });

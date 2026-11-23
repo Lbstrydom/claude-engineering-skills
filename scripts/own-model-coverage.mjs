@@ -72,13 +72,41 @@ async function snapshotAllColumns(tables) {
   return out;
 }
 
+/**
+ * `linkage --session X [--round N]`: which calls, passes and findings belong to that session/round, and which rows
+ * could not be linked. Read-only. Exit 0 when the session is known and fully placed, 1 when anything is unresolved or
+ * the session is unknown (never an empty success), 3 when the store did not answer.
+ */
+async function linkageCommand(argv, deps = {}) {
+  const session = arg(argv, '--session');
+  if (!session) throw new ArgvError('linkage needs --session <id>');
+  const roundRaw = arg(argv, '--round');
+  const round = roundRaw == null ? null : Number(roundRaw);
+  if (roundRaw != null && !(Number.isInteger(round) && round >= 1)) throw new ArgvError('--round must be a positive integer');
+  const { closePool } = await import('./lib/db/client.mjs');
+  try {
+    const initStore = deps.initStore ?? (async () => (await import('./lib/store/repo.mjs')).initLearningStore());
+    if (!await initStore()) { process.stderr.write('own-model-coverage: no store configured - nothing measured\n'); return 3; }
+    const { many } = await import('./lib/db/query.mjs');
+    const { columnExists } = await import('./lib/store/column-probes.mjs');
+    const { isCloudEnabled } = await import('./lib/store/repo.mjs');
+    const { queryLinkage } = await import('./lib/telemetry/linkage-queries.mjs');
+    const hasState = await columnExists('audit_runs', 'linkage_state', many, isCloudEnabled);
+    const report = await queryLinkage(many, { session, round, hasState });
+    console.log(JSON.stringify({ mode: 'linkage', hasLinkageState: hasState, ...report }));
+    if (!report.sessionKnown) process.stderr.write(`own-model-coverage: no runs carry session "${session}" - see unlinkedStoreWide for rows that carry none\n`);
+    return report.complete ? 0 : 1;
+  } finally { await closePool(); }
+}
+
 export async function main(argv, deps = {}) {
   const measure = deps.measureLive ?? measureLive;
   const initStore = deps.initStore ?? (async () => (await import('./lib/store/repo.mjs')).initLearningStore());
   if (argv.includes('--selfcheck-relocation')) { console.log('OK'); return 0; }
   const sub = argv[2];
-  assertKnownFlags(argv.slice(3), ['--static', '--live', '--out', '--config', '--tables', '--all-columns'], { cli: 'own-model-coverage', from: 0 });
-  if (sub !== 'check' && sub !== 'snapshot') throw new ArgvError('usage: own-model-coverage.mjs check --static|--live | snapshot [--tables a,b --all-columns] --out <file>');
+  assertKnownFlags(argv.slice(3), ['--static', '--live', '--out', '--config', '--tables', '--all-columns', '--session', '--round'], { cli: 'own-model-coverage', from: 0 });
+  if (sub === 'linkage') return linkageCommand(argv, deps);
+  if (sub !== 'check' && sub !== 'snapshot') throw new ArgvError('usage: own-model-coverage.mjs check --static|--live | snapshot [--tables a,b --all-columns] --out <file> | linkage --session <id> [--round <n>]');
   if (sub === 'check' && argv.includes('--static') && argv.includes('--live')) throw new ArgvError('check takes --static OR --live, not both');
   let config;
   try { config = loadConfig(arg(argv, '--config')); } catch (err) {

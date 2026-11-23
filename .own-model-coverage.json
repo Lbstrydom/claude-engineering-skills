@@ -23,6 +23,7 @@
     { "table": "llm_call_provenance", "column": "latency_ms", "since": "2026-10-29", "expectFill": 0.95, "tolerance": 0.05 },
     { "table": "llm_call_provenance", "column": "prompt_hash", "since": "2026-10-29", "where": "audit_producer", "expectFill": 0.95, "tolerance": 0.05 },
     { "table": "audit_runs", "column": "audit_session_id", "since": "2026-10-29", "where": "code_run", "expectFill": 0.9, "tolerance": 0.05 },
+    { "table": "audit_runs", "column": "linkage_state", "since": "2026-11-23", "where": "code_run", "expectFill": 0.99, "tolerance": 0.02 },
     { "table": "audit_runs", "column": "capture_epoch", "since": "2026-10-29", "where": "code_run", "expectFill": 0.9, "tolerance": 0.05 },
     { "table": "audit_findings", "column": "source_model", "since": "2026-10-29", "where": "model_finding", "expectFill": 0.9, "tolerance": 0.05 },
     { "table": "audit_pass_stats", "column": "source_model", "since": "2026-10-29", "where": "model_pass", "expectFill": 0.9, "tolerance": 0.05 },
@@ -40,6 +41,7 @@
   "exempt": [
     { "table": "audit_runs", "column": "accepted_count", "reason": "NOT NULL DEFAULT 0, so a null rate is meaningless, and the value is a LATER aggregate: recordRunStart inserts 0 and refreshRunAdjudicationCounts (run-aggregates.mjs, called from write-code-outcomes after triage) recomputes it from audit_findings.adjudication_outcome. Zero on an un-triaged round is correct. The source of truth for rulings is audit_findings.adjudication_outcome + finding_adjudication_events, never these two columns; training joins those, and audit_runs.labeled marks a run whose counts were refreshed" },
     { "table": "audit_runs", "column": "dismissed_count", "reason": "see accepted_count: a post-triage aggregate over audit_findings.adjudication_outcome, 0 until the round is adjudicated; the source of truth is audit_findings / finding_adjudication_events" },
+    { "table": "audit_runs", "column": "linkage_reason", "reason": "NULL by design on a linked run; set only for unlinked (undeclared) and standalone (declared reason). linkage_state is the covered column" },
     { "table": "audit_runs", "column": "audit_round", "reason": "NULL by design on unified runs (one row spans every round), plan A/B arm runs and bake-off arm runs; a null rate says nothing about capture quality. audit_session_id is the covered linkage column" },
     { "table": "finding_adjudication_events", "column": "adjudicator_model", "reason": "unknowable on pipeline rows: the model is the HOST agent doing triage, which the script cannot observe, and AUDIT_AUTHOR_TIER_HINT is an observation-only tier. Covered only for reviewer rows (where reviewer_event)" },
     { "table": "finding_adjudication_events", "column": "ingested_at", "reason": "added nullable only so the backfill can run; the same migration sets it NOT NULL DEFAULT now(), so it can never be null" },
