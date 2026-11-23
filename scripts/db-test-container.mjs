@@ -101,6 +101,10 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Enrolled 2026-10-25 with migration 20261025120000 (round cap): the run-wide accepted/dismissed recount, its run
   // scoping and the stale-last-writer schedule need real row locks and a real audit_findings table.
   'tests/run-adjudication-counts-db.test.mjs',
+  // Enrolled 2026-11-23 with migration 20261123160000 (persona views join by repo id, docs/plans/wine-org-move.md 2.1): the
+  // rename survival, the backfill, every preflight stop and the old-view control are Postgres-only. Two edits, always: this
+  // list AND postgres-parity.yml.
+  'tests/persona-views-repo-id-join-db.test.mjs',
   // Enrolled 2026-10-26 with migration 20261026120000 (own-model telemetry slice 1): chronology columns, campaign-event survival,
   // the diff writer and default-deny eligibility need a real schema. Two edits, always — this list AND postgres-parity.yml.
   'tests/own-model-telemetry-db.test.mjs',

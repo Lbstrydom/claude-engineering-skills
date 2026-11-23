@@ -115,7 +115,7 @@ mutually exclusive shapes; the owner picks one as D2 before step 1:
   | sessions whose `repo_id` matches no `audit_repos` row (dangling) | > 0 |
   | sessions whose association **changes**: the repo they join today (`s.repo_name = r.name`, exact) differs from the repo they would join under the new predicate (none counts as a repo) | > 0 |
   | sessions with a null `repo_id` whose `repo_name` matches no repo, or more than one | > 0 |
-  | `audit_repos` names held by more than one row | > 0 |
+  | `audit_repos` names held by more than one row **and carried by a persona session** (as built in step 2S: the primary store holds three unreferenced fixture repos named `r`, which can change no association) | > 0 |
 
   The second row compares the **exact** join that exists today, not basenames, so a session named
   `other-owner/wine-cellar-app` whose id points at wine's row is a stop, not a pass.
