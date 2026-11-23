@@ -329,6 +329,9 @@ export function buildSkillFiles() {
 /** Editor config files — MCP server wiring for VSCode Copilot Chat */
 const EDITOR_FILES = [
   '.vscode/mcp.json',
+  // Root MCP wiring: VS Code's default Copilot agent harness reads it (the Local harness reads .vscode/mcp.json).
+  // Co-owned JSON merge like .vscode/mcp.json: a consumer's own servers survive.
+  '.mcp.json',
 ];
 
 /**

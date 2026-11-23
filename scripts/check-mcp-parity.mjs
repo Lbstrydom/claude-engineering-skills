@@ -10,7 +10,10 @@
  * `.vscode/mcp.json` did not. On a machine without the package cached `npx`
  * prompts for install; with no interactive terminal the MCP process never starts
  * and the tools silently never appear. **Both consumer repos were shipping the
- * broken form** — `.vscode/mcp.json` is in the sync bundle, `.mcp.json` is not.
+ * broken form** — `.vscode/mcp.json` was in the sync bundle, `.mcp.json` was not.
+ * (`.mcp.json` now ships too, merged co-owned. This gate stays a SOURCE-repo gate comparing our two
+ * files in full; in a consumer parity is judged on the managed servers only —
+ * `compareManagedMcpSurfaces` in `lib/mcp-parity.mjs`.)
  *
  * Why only the two SOURCE files are compared, with no merge simulation: the
  * consumer write is a deep merge whose LEAF paths (scalars and arrays) our

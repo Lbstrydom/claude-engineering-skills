@@ -353,3 +353,52 @@ export function compareMcpSurfaces({ claude, vscode, exceptions } = {}) {
     diagnostics: [...descriptorDiagnostics, ...ex.diagnostics, ...diagnostics],
   };
 }
+
+/**
+ * The MANAGED servers: the names this (source) repo ships in its root `.mcp.json`.
+ * A consumer's other servers are its own and are outside parity.
+ *
+ * @param {unknown} sourceClaudeConfig — the parsed source `.mcp.json`
+ * @returns {string[]} sorted server names ([] when the shape is not recognisable)
+ */
+export function managedServerNames(sourceClaudeConfig) {
+  const map = sourceClaudeConfig && typeof sourceClaudeConfig === 'object' ? sourceClaudeConfig[ROOT_KEY.claude] : null;
+  return map && typeof map === 'object' && !Array.isArray(map) ? Object.keys(map).sort() : [];
+}
+
+/** Keep only the named servers of one host's parsed config; an unrecognisable shape passes through so normalisation reports it. */
+function onlyManaged(parsed, host, managed) {
+  const rootKey = ROOT_KEY[host];
+  const map = parsed && typeof parsed === 'object' ? parsed[rootKey] : null;
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return parsed;
+  return { [rootKey]: Object.fromEntries(Object.entries(map).filter(([name]) => managed.includes(name))) };
+}
+
+/**
+ * Consumer-side parity: the two merged configs compared on the MANAGED servers
+ * only. A server outside `managed` is the consumer's own — present in one file
+ * only, or carrying a descriptor this oracle does not model, it is never a
+ * parity failure. A managed server must be present in both files and equal,
+ * unless the consumer declared the divergence in `.sync-overrides.json`
+ * (`overriddenPaths` holds the declared paths; either file declared excuses the
+ * managed servers, and the result says so rather than reading as a clean pass).
+ *
+ * @param {object} input
+ * @param {unknown} input.claude — the consumer's parsed `.mcp.json`
+ * @param {unknown} input.vscode — the consumer's parsed `.vscode/mcp.json`
+ * @param {string[]} input.managed — from {@link managedServerNames}
+ * @param {string[]} [input.overriddenPaths]
+ * @returns {ReturnType<typeof compareMcpSurfaces> & {excused: boolean}}
+ */
+export function compareManagedMcpSurfaces({ claude, vscode, managed, overriddenPaths = [] } = {}) {
+  const names = Array.isArray(managed) ? managed : [];
+  const declared = overriddenPaths.some((p) => p === '.mcp.json' || p === '.vscode/mcp.json');
+  const r = compareMcpSurfaces({
+    claude: onlyManaged(claude, 'claude', names),
+    vscode: onlyManaged(vscode, 'vscode', names),
+  });
+  if (declared && r.code === 'mcp/parity-drift') {
+    return { ...r, ok: true, code: null, excused: true };
+  }
+  return { ...r, excused: false };
+}

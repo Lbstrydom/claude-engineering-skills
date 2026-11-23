@@ -102,7 +102,7 @@ describe('the shared-surface JSON set is pinned against the real bundle (audit R
     const files = getSyncClosure().files.map((f) => f.replaceAll('\\', '/')).filter((f) => f.endsWith('.json'));
     assert.ok(files.length >= 7, 'vacuous-pass guard: the bundle carries several JSON files');
     const shared = files.filter(isCoOwnedJsonDest).sort();
-    assert.deepEqual(shared, ['.claude/settings.json', '.vscode/mcp.json', '.windowed-views.json', 'scripts/.sync-manifest.json']);
+    assert.deepEqual(shared, ['.claude/settings.json', '.mcp.json', '.vscode/mcp.json', '.windowed-views.json', 'scripts/.sync-manifest.json']);
   });
 });
 
