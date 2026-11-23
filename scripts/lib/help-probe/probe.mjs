@@ -51,7 +51,7 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
       if (room > 0) stdout += d.slice(0, room);
     }); }
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); child.stdout?.destroy(); }, timeoutMs);
     child.on('close', (exitCode) => {
       clearTimeout(timer);
       const violations = [];

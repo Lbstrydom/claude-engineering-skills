@@ -277,6 +277,13 @@ describe('cross-skill subcommand --help (2026-11-23: `ledger mint --help` minted
     const small = fixture('small.mjs', "process.stdout.write('Usage: x\\n');");
     assert.equal((await probeHelp(small, { cwd: dir, captureStdout: true })).stdoutTruncated, false);
   });
+  it('a timeout completes even when a surviving child holds the captured stdout pipe open', async () => {
+    const f = fixture('orphan.mjs', "import { spawn } from 'node:child_process'; spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 8000)'], { stdio: ['ignore', 'inherit', 'ignore'] }); setTimeout(()=>{}, 60000);");
+    const t0 = Date.now();
+    const r = await probeHelp(f, { cwd: dir, captureStdout: true, timeoutMs: 1500 });
+    assert.equal(r.timedOut, true);
+    assert.ok(Date.now() - t0 < 6000, 'must not wait for the orphan');
+  });
   it('helpRequested: a flag, not a valued flag value, not after `--`', async () => {
     const { helpRequested } = await import('../scripts/lib/cross-skill/dispatch.mjs');
     const decls = [{ name: 'note', kind: 'valued' }, { name: 'dry-run', kind: 'boolean' }];
