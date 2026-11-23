@@ -30,10 +30,14 @@ run, and a unified run (`--run-id`, `audit_round` NULL) spans rounds. The query 
 ## Enforcement (step 2)
 
 * `resolveLinkage` is the one decision. No session and no declaration → `unlinked` (reason `undeclared`), never a
-  bare NULL. A declaration must be a key of `STANDALONE_REASONS` (closed set); an unknown reason or a reason plus a
-  session is an illegal pair — recorded as `unlinked` with `invalid-declaration: …`, never thrown, never lost.
-* Migration `20261123150000` adds `linkage_state`/`linkage_reason` with CHECKs that refuse the same pairs, so a
-  writer bypassing the resolver cannot write `linked` without a session.
+  bare NULL. A declaration must be a key of `STANDALONE_REASONS` (closed set); the resolver THROWS on an unknown reason or a reason plus a session (an illegal pair), and the STORE BOUNDARY
+  (`captureIdentityColumns`) catches it: a real session still links (the declaration is ignored), a run with no session
+  is recorded `unlinked` with `invalid-declaration: …` — never thrown to the caller, never lost.
+* Migration `20261123150000` adds `linkage_state`/`linkage_reason` with CHECKs that refuse the same pairs and a
+  BEFORE INSERT OR UPDATE trigger that derives the state for a writer that supplies none (a consumer not yet synced)
+  and refuses to erase a stamped state, so no new row carries a bare NULL.
+* **Reuse** (`--run-id`): a reused run adopts a now-known session if it had none; a run linked to a DIFFERENT session
+  is refused (`recordRunStart` returns null, like the repo-mismatch refusal).
 * Refuse vs explicit-unlinked per writer: the run row records `unlinked` (a refusal would drop the whole audit's
   record); children without a run id are refused as `skipped`/declined because nothing can attribute them.
 * **Migration required.** Un-migrated stores keep today's behaviour (the column probe skips the new columns); the

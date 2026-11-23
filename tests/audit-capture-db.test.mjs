@@ -867,14 +867,24 @@ describe('telemetry linkage chain (DB integration)', { skip }, () => {
     assert.deepEqual(await row(bare), { audit_session_id: null, audit_round: null, linkage_state: 'unlinked', linkage_reason: 'undeclared' });
   });
 
+  test('a blank session id is no session; an UPDATE cannot erase the state of a stamped row', async () => {
+    const id = crypto.randomUUID();
+    await q.query("INSERT INTO audit_runs (id, repo_id, plan_file, mode, audit_session_id) VALUES ($1, $2, 'x', 'code', '   ')", [id, repoId]);
+    assert.deepEqual(await row(id), { audit_session_id: null, audit_round: null, linkage_state: 'unlinked', linkage_reason: 'undeclared' });
+    const linked = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('upd'), auditRound: 1 });
+    await q.query('UPDATE audit_runs SET linkage_state = NULL, linkage_reason = NULL WHERE id = $1', [linked]);
+    assert.equal((await row(linked)).linkage_state, 'linked', 'the trigger restores the state an UPDATE tried to clear');
+    await assert.rejects(q.query('UPDATE audit_runs SET audit_session_id = NULL WHERE id = $1', [linked]), (e) => e.code === '23514', 'clearing the session of a linked row is refused');
+  });
+
   test('REUSE: a run reused by explicit id adopts a now-known session, and never overwrites a different one', async () => {
     const runId = crypto.randomUUID();
     await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId });
     assert.equal((await row(runId)).linkage_state, 'unlinked');
     await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess('reuse'), auditRound: 2 });
     assert.deepEqual(await row(runId), { audit_session_id: sess('reuse'), audit_round: null, linkage_state: 'linked', linkage_reason: null });
-    await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess('other') });
-    assert.equal((await row(runId)).audit_session_id, sess('reuse'), 'a conflicting session does not overwrite the link');
+    assert.equal(await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess('other') }), null, 'a conflicting session is refused, never silently attributed');
+    assert.equal((await row(runId)).audit_session_id, sess('reuse'), 'and does not overwrite the link');
   });
 
   test('a pass with no round is REFUSED at the audit-path writer (not filed as round 1)', async () => {

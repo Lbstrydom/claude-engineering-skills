@@ -25,6 +25,18 @@ LANGUAGE plpgsql
 SET search_path = public
 AS $$
 BEGIN
+  -- A blank session id is no session: it must not read as linked.
+  IF NEW.audit_session_id IS NOT NULL AND btrim(NEW.audit_session_id) = '' THEN
+    NEW.audit_session_id := NULL;
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    -- An UPDATE may not erase a state the row already carries (a legacy NULL row stays updatable).
+    IF NEW.linkage_state IS NULL AND OLD.linkage_state IS NOT NULL THEN
+      NEW.linkage_state := OLD.linkage_state;
+      NEW.linkage_reason := OLD.linkage_reason;
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.linkage_state IS NULL THEN
     IF NEW.audit_session_id IS NOT NULL THEN
       NEW.linkage_state := 'linked';
@@ -40,7 +52,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_audit_runs_derive_linkage ON audit_runs;
 CREATE TRIGGER trg_audit_runs_derive_linkage
-  BEFORE INSERT ON audit_runs
+  BEFORE INSERT OR UPDATE ON audit_runs
   FOR EACH ROW EXECUTE FUNCTION audit_runs_derive_linkage();
 
 ALTER TABLE audit_runs DROP CONSTRAINT IF EXISTS audit_runs_linkage_state_chk;
