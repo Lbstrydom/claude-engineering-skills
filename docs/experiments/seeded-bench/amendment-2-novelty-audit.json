@@ -1,0 +1,50 @@
+{
+  "amendment": 2,
+  "epoch": "seeded-bench-v2",
+  "supersedes": "seeded-bench-v1, plan section 1.4 matcher calibration gate as a PRE-PILOT accept/reject test",
+  "approvedBy": "Louis (in chat, session CES: Pilot 1 meta step-back A/B)",
+  "approvedAt": "2026-11-23",
+  "calibrationEvidence": {
+    "verdict": "inconclusive",
+    "report": "calibration-report.json (judge run metered $2.2286 of the $10 slice)",
+    "labelledPairs": {
+      "same": 46,
+      "partial": 16,
+      "different": 138
+    },
+    "recallChecks": {
+      "none": 49,
+      "named": 11
+    },
+    "note": "Precision on the 80-pair prevalence sample was 6/8 (95% Wilson 0.41-0.93); only 6 of 80 random pairs are same, so 0.90 could not be shown either way. The original v1 verdict stays INCONCLUSIVE and is never rewritten."
+  },
+  "suppression": "both-judges-same",
+  "judges": {
+    "opus": "latest-opus (sdk-pinned)",
+    "pro": "latest-pro"
+  },
+  "audit": {
+    "sample": 80,
+    "stratifiedByArm": true,
+    "upperBoundMax": 0.15,
+    "confidence": 0.95,
+    "method": "one-sided Clopper-Pearson upper bound on (hidden findings the human does not call KNOWN) / (hidden findings audited), for EACH arm (about 40 audited per arm) and pooled",
+    "passesWhenFalseSuppressionsAtMostPerArm": 2,
+    "passesWhenFalseSuppressionsAtMostPooled": 6,
+    "fallback": "label-all-hidden"
+  },
+  "unchanged": [
+    "the Pilot 1 decision rule (decideMetaPilot, plan section 2.3) and every threshold in it",
+    "the frozen dataset, partition and seeds",
+    "the $125 total / $100 pilot hard caps, metered per call",
+    "human blind labelling of every finding the human is shown"
+  ],
+  "signature": {
+    "signedBy": "Louis",
+    "signedAt": "2026-11-23",
+    "signedWords": "sign the amendment",
+    "context": "Said in the CES chat in answer to: replace the calibration gate with a pilot-time audit, hide a finding only when both judges say same, and record it as a new contract epoch with a deviation entry, keeping the old INCONCLUSIVE verdict on record.",
+    "provenance": "Relayed to this session by the CES coordinator; the session's own user had separately directed the same design (pilot-time audit, both judges, new epoch) in this session earlier on 2026-11-23.",
+    "condition": "Signed before any pilot data exists. Changing a tolerance, sample size or the approval after pilot data exists is not permitted under this signature."
+  }
+}

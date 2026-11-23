@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { freezeMetaPilot } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
+import { readAmendment } from '../scripts/lib/audit/pilot-novelty-audit.mjs';
 import { runCalibrateDraw, runNovelty, runContinue, runFreeze, buildWorksheet, parseWorksheetLabels, parseCalibrationAnswers, scorePilot, snapshotsPathFor, readRunRows, appendDurably } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
 import { reserveCall, settleCall, readLedgerSummary } from '../scripts/lib/llm-budget.mjs';
 
@@ -23,6 +24,7 @@ function exportOf(n) {
   }
   return { runs, findings, events, exportedAt: 'x' };
 }
+const AMENDMENT = path.resolve('docs/experiments/seeded-bench/amendment-2-novelty-audit.json');
 const setup = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-cli-'));
   const exp = path.join(dir, 'e.json'); fs.writeFileSync(exp, JSON.stringify(exportOf(20)));
@@ -76,32 +78,56 @@ describe('continue (paid) under a real ledger', () => {
   });
 });
 
-describe('blind worksheet and scoring', () => {
-  const rows = [
-    { runId: 'p1/CONTINUE/0', pointId: 'p1', arm: 'CONTINUE', rep: 0, mode: 'code', valid: true, costUsd: 2, findings: [{ key: 'p1/CONTINUE/0:H1', severity: 'HIGH', file: 'a.mjs', lines: [3, 3], text: 'secret-arm-free text' }] },
+describe('blind worksheet and scoring (amendment 2)', () => {
+  const amendment = readAmendment(AMENDMENT);
+  const mkRows = (n) => [
+    { runId: 'p1/CONTINUE/0', pointId: 'p1', arm: 'CONTINUE', rep: 0, mode: 'code', valid: true, costUsd: 2, findings: Array.from({ length: n }, (_, i) => ({ key: `p1/CONTINUE/0:H${i}`, severity: 'HIGH', file: 'a.mjs', lines: [3, 3], text: `finding text ${i}`, affectedFiles: [] })) },
     { runId: 'p1/META/0', pointId: 'p1', arm: 'META', rep: 0, mode: 'code', valid: true, stopRun: true, costUsd: 1, findings: [] },
   ];
-  const novelty = { stamps: { opus: {}, pro: {} }, incomplete: false, byFinding: { 'p1/CONTINUE/0:H1': { opus: { novel: true }, pro: { novel: false } } } };
-  const dataset = { points: [{ pointId: 'p1', repo: 'Lbstrydom/wine-cellar-app' }] };
+  const J = (novel, notJudged = false) => ({ novel, notJudged, flags: [] });
+  const dataset = { points: [{ pointId: 'p1', repo: 'Lbstrydom/wine-cellar-app', checkpoint: 3 }] };
+  const snapshots = { p1: { rounds: [{ round: 1, findings: [{ id: 'f1', topicId: 'T', severity: 'HIGH', category: '[backend] x', section: 's', detail: 'EARLIER ENTRY TEXT' }] }], ledgerEntries: [{ topicId: 'T', findingId: 'f1', severity: 'HIGH', category: '[backend] x', affectedFiles: ['a.mjs'], firstSeenRound: 1 }] } };
+  // finding 0: opus novel, pro same (surfaced); 1: both same (hidden); 2: both same (hidden); 3: opus same + pro NOT JUDGED (surfaced)
+  const novelty = { stamps: { opus: {}, pro: {} }, incomplete: false, byFinding: {
+    'p1/CONTINUE/0:H0': { opus: J(true), pro: J(false) }, 'p1/CONTINUE/0:H1': { opus: J(false), pro: J(false) },
+    'p1/CONTINUE/0:H2': { opus: J(false), pro: J(false) }, 'p1/CONTINUE/0:H3': { opus: J(false), pro: J(false, true) } } };
+  const build = (opts = {}) => buildWorksheet({ rows: mkRows(4), novelty, seed: 's', dataset, snapshots, amendment, ...opts });
 
-  test('the sheet hides arm, run and judge verdicts; every finding novel under EITHER judge is on it', () => {
-    const { markdown, key } = buildWorksheet({ rows, novelty, seed: 's', dataset });
-    assert.equal(Object.keys(key.items).length, 1);
-    for (const hidden of ['CONTINUE', 'META', 'p1/', 'opus']) assert.ok(!markdown.includes(hidden), hidden);
-    assert.match(markdown, /### W001/);
+  test('hidden = BOTH judges said same; a failed or disagreeing judge surfaces the finding; arm, run and judge verdicts stay off the sheet', () => {
+    const { markdown, key, counts } = build();
+    assert.deepEqual(counts, { shown: 2, hidden: 2, audited: 2 });
+    assert.equal(Object.keys(key.items).length, 4, 'the 2 surfaced findings plus the 2 hidden ones (fewer than the sample size, so all are audited)');
+    for (const leak of ['CONTINUE', 'META', 'p1/', 'opus', 'audited']) assert.ok(!markdown.includes(leak), leak);
+    assert.match(markdown, /EARLIER ENTRY TEXT/, 'the closest earlier ledger entry is shown for the human to compare');
+    assert.match(markdown, /`KNOWN`/);
   });
-  test('labels parse; an unlabelled item or an UNDETERMINED label makes the score INCOMPLETE, never a guess', () => {
-    const { markdown, key } = buildWorksheet({ rows, novelty, seed: 's', dataset });
+  test('the hidden sample is a seeded probability sample: size is capped, and --audit all labels every hidden finding', () => {
+    const many = { ...novelty, byFinding: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`p1/CONTINUE/0:H${i}`, { opus: J(false), pro: J(false) }])) };
+    const a = buildWorksheet({ rows: mkRows(200), novelty: many, seed: 's', dataset, snapshots, amendment });
+    assert.equal(a.counts.audited, amendment.audit.sample); assert.equal(a.counts.hidden, 200);
+    assert.deepEqual(buildWorksheet({ rows: mkRows(200), novelty: many, seed: 's', dataset, snapshots, amendment }).key.items, a.key.items, 'seeded: reproducible');
+    assert.equal(buildWorksheet({ rows: mkRows(200), novelty: many, seed: 's', dataset, snapshots, amendment, auditAll: true }).counts.audited, 200);
+  });
+  test('labels parse; an unlabelled item or an UNDETERMINED label makes the score INCOMPLETE; when every hidden finding is shown the audit is moot', () => {
+    const { markdown, key } = build();
     assert.equal(parseWorksheetLabels(markdown).size, 0);
-    const filled = markdown.replace('Label: ', 'Label: real');
-    assert.equal(parseWorksheetLabels(filled).get('W001'), 'REAL');
-    const done = scorePilot({ rows, novelty, key, labelsById: parseWorksheetLabels(filled), plannedPairs: 1 });
-    assert.notEqual(done.decision.outcome, 'INCOMPLETE');
-    assert.equal(done.byJudge.opus.find((r) => r.arm === 'CONTINUE').novelActionableHM, 1);
-    assert.equal(done.byJudge.pro.find((r) => r.arm === 'CONTINUE').novelActionableHM, 0, 'novelty is per judge');
-    assert.equal(scorePilot({ rows, novelty, key, labelsById: new Map(), plannedPairs: 1 }).decision.outcome, 'INCOMPLETE');
-    assert.equal(scorePilot({ rows, novelty, key, labelsById: new Map([['W001', 'UNDETERMINED']]), plannedPairs: 1 }).decision.outcome, 'INCOMPLETE');
-    assert.throws(() => scorePilot({ rows, novelty, key, labelsById: new Map([['W001', 'MAYBE']]), plannedPairs: 1 }), /unknown label/);
+    assert.equal(key.audit.all, true, 'only 2 hidden findings: all are shown, so no sampling bound is needed');
+    const all = (label) => new Map(Object.keys(key.items).map((w) => [w, label]));
+    const done = scorePilot({ rows: mkRows(4), novelty, key, labelsById: all('REAL'), plannedPairs: 1 });
+    assert.notEqual(done.decision.outcome, 'INCOMPLETE'); assert.notEqual(done.decision.outcome, 'audit-failed');
+    assert.equal(scorePilot({ rows: mkRows(4), novelty, key, labelsById: new Map(), plannedPairs: 1 }).decision.outcome, 'INCOMPLETE');
+    assert.equal(scorePilot({ rows: mkRows(4), novelty, key, labelsById: new Map([['W001', 'UNDETERMINED']]), plannedPairs: 1 }).decision.outcome, 'INCOMPLETE');
+    assert.throws(() => scorePilot({ rows: mkRows(4), novelty, key, labelsById: new Map([['W001', 'MAYBE']]), plannedPairs: 1 }), /unknown label/);
+  });
+  test('the audit verdict: 80 audited of 200 hidden pass with <= 6 false suppressions and FAIL with 7 (the result is then withheld)', () => {
+    const many = { ...novelty, byFinding: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`p1/CONTINUE/0:H${i}`, { opus: J(false), pro: J(false) }])) };
+    const { key } = buildWorksheet({ rows: mkRows(200), novelty: many, seed: 's', dataset, snapshots, amendment });
+    assert.equal(key.audit.all, false);
+    const labelFirst = (nFalse) => new Map(Object.keys(key.items).map((w, i) => [w, i < nFalse ? 'REAL' : 'KNOWN']));
+    const run = (nFalse) => scorePilot({ rows: mkRows(200), novelty: many, key, labelsById: labelFirst(nFalse), plannedPairs: 1 });
+    assert.equal(run(0).audit.pass, true);
+    assert.equal(run(6).audit.pass, true); assert.notEqual(run(6).decision.outcome, 'audit-failed');
+    assert.equal(run(7).audit.pass, false); assert.equal(run(7).decision.outcome, 'audit-failed'); assert.match(run(7).decision.why, /--audit all/);
   });
   test('calibration answers parse: pair labels and restated-entry lists, `none` meaning []', () => {
     const a = parseCalibrationAnswers('### P001\n\nLabel: Same\n\n### P002\n\nLabel: \n\n### R001\n\nRestates: `x|1`, y\n\n### R002\n\nRestates: none\n');
@@ -116,7 +142,7 @@ test('appendDurably appends whole records', () => {
   assert.ok(typeof freezeMetaPilot === 'function' && typeof readLedgerSummary === 'function');
 });
 
-describe('runNovelty gate and resumption (R2 H1/M5/M8)', () => {
+describe('runNovelty gate and resumption (amendment 2)', () => {
   const mkResults = (dir, dataset) => {
     const res = path.join(dir, 'r.jsonl');
     const p = dataset.points.find((x) => x.status === 'recoverable');
@@ -125,34 +151,35 @@ describe('runNovelty gate and resumption (R2 H1/M5/M8)', () => {
     return res;
   };
   const judgeDeps = (state) => ({ createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'm' } }), classifyNovelty: async ({ findings }) => { state.calls.push(findings.map((f) => f.id)); const notJudged = state.fail; return { perFinding: findings.map((f) => ({ id: f.id, novel: true, flags: [], notJudged })) }; } });
+  const stamps = { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } };
 
-  test('refused without an ACCEPTED calibration of this dataset; with one, a not-judged entry is retried on rerun and a swapped results file is refused', async () => {
+  test('refused without the signed amendment and a calibration report of THIS dataset; a failed judge is retried on rerun; a swapped results file is refused', async () => {
     const dir = setup();
     const dsPath = path.join(dir, 'ds.json'); const dataset = JSON.parse(fs.readFileSync(dsPath, 'utf8'));
     const res = mkResults(dir, dataset);
-    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res }), /--calibration/);
     const cal = path.join(dir, 'cal.json');
-    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash }));
-    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal }), /not accept/);
-    fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: 'OTHER' }));
-    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal }), /different dataset/);
-    const stamps = { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } };
-    fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: dataset.datasetHash, judges: stamps }));
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res }), /--amendment/);
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT }), /--calibration/);
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: 'OTHER', spentUsd: 2.2, judges: stamps }));
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT, calibrationPath: cal }), /different dataset/);
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash, spentUsd: 2.2, judges: stamps })); // the v1 verdict stays inconclusive: the amendment does not need it accepted
+    const badAmend = path.join(dir, 'a.json'); fs.writeFileSync(badAmend, JSON.stringify({ ...JSON.parse(fs.readFileSync(AMENDMENT, 'utf8')), epoch: 'seeded-bench-v1' }));
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: badAmend, calibrationPath: cal }), /epoch/);
 
-    // a judge that resolves differently from the calibrated one is refused
-    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: { createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'DIFFERENT' } }), classifyNovelty: async () => ({ perFinding: [] }) } }), /recalibrate/);
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT, calibrationPath: cal, deps: { createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'DIFFERENT' } }), classifyNovelty: async () => ({ perFinding: [] }) } }), /recalibrate/);
     const state = { calls: [], fail: true };
-    const first = await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
-    assert.equal(first.incomplete, true);
+    const run = () => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT, calibrationPath: cal, deps: judgeDeps(state) });
+    const first = await run();
+    assert.equal(first.incomplete, false, 'a failed judge is NOT incomplete under the amendment: the finding simply goes to the human');
+    assert.equal(first.byFinding.k1.opus.notJudged, true);
     state.fail = false; state.calls.length = 0;
-    const second = await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
+    await run();
     assert.equal(state.calls.length, 2, 'both judges retried the not-judged finding');
-    assert.equal(second.incomplete, false, 'completeness is recomputed from the current state');
     state.calls.length = 0;
-    await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
+    await run();
     assert.equal(state.calls.length, 0, 'settled judgments are not re-paid');
     fs.appendFileSync(res, JSON.stringify({ type: 'run', pointId: 'x', findings: [] }) + '\n');
-    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) }), /different dataset or results file/);
+    await assert.rejects(run, /different dataset or results file/);
   });
 });
 
@@ -181,11 +208,33 @@ test('R7 G2: an interrupted novelty run leaves a checkpoint that reads INCOMPLET
   const res = path.join(dir, 'r.jsonl');
   fs.writeFileSync(res, [{ type: 'header', plannedPairs: 1, datasetHash: dataset.datasetHash }, { type: 'run', pointId: p.pointId, arm: 'CONTINUE', rep: 0, findings: Array.from({ length: 8 }, (_, i) => ({ key: `k${i}`, severity: 'HIGH', file: 'a.mjs', text: 't', affectedFiles: [] })) }].map((r) => JSON.stringify(r)).join('\n') + '\n');
   const cal = path.join(dir, 'cal.json');
-  fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: dataset.datasetHash, judges: { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } } }));
+  fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash, spentUsd: 2.2, judges: { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } } }));
   let n = 0;
   const deps = { createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'm' } }), classifyNovelty: async ({ findings }) => { if (++n === 2) { const e = new Error('cap'); e.code = 'budget-stop'; throw e; } return { perFinding: findings.map((f) => ({ id: f.id, novel: true, flags: [], notJudged: false })) }; } };
-  await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps }), (e) => e.code === 'budget-stop');
+  await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, amendmentPath: AMENDMENT, calibrationPath: cal, deps }), (e) => e.code === 'budget-stop');
   const onDisk = JSON.parse(fs.readFileSync(`${res}.novelty.json`, 'utf8'));
   assert.equal(onDisk.incomplete, true, 'the partial checkpoint is not mistaken for a finished run');
   assert.ok(Object.keys(onDisk.byFinding).length > 0, 'control: the first chunk was kept');
+});
+
+test('A2 final gate G1: the worksheet carries only findings of VALID pairs', () => {
+  const amendment = readAmendment(AMENDMENT);
+  const mk = (arm, valid) => ({ runId: `r${arm}`, pointId: 'p1', arm, rep: 0, mode: 'code', valid, costUsd: 1, findings: [{ key: `${arm}:1`, severity: 'HIGH', file: 'a.mjs', lines: [1, 1], text: 't', affectedFiles: [] }] });
+  const nv = { stamps: {}, byFinding: { 'META:1': { opus: { novel: true }, pro: { novel: true } }, 'CONTINUE:1': { opus: { novel: true }, pro: { novel: true } } } };
+  const ds = { points: [{ pointId: 'p1', repo: 'r', checkpoint: 1 }] }; const snaps = { p1: { rounds: [], ledgerEntries: [] } };
+  assert.equal(buildWorksheet({ rows: [mk('META', true), mk('CONTINUE', true)], novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment }).counts.shown, 2);
+  assert.equal(buildWorksheet({ rows: [mk('META', false), mk('CONTINUE', true)], novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment }).counts.shown, 0, 'an invalid META run excludes its valid CONTINUE partner too');
+});
+
+test('A2 final gate R2 G1: a legitimate key still scores when the results also hold an invalid pair with hidden findings', () => {
+  const amendment = readAmendment(AMENDMENT);
+  const J = (n) => ({ novel: n, notJudged: false, flags: [] });
+  const run = (pointId, arm, valid, keys) => ({ runId: `${pointId}${arm}`, pointId, arm, rep: 0, mode: 'code', valid, costUsd: 1, stopRun: false, findings: keys.map((k) => ({ key: k, severity: 'HIGH', file: 'a.mjs', lines: [1, 1], text: 't', affectedFiles: [] })) });
+  const rows = [run('p1', 'META', true, ['m1']), run('p1', 'CONTINUE', true, ['c1']), run('p2', 'META', false, ['m2']), run('p2', 'CONTINUE', true, ['c2'])]; // p2 is an invalid pair
+  const nv = { stamps: { opus: {}, pro: {} }, incomplete: false, byFinding: Object.fromEntries(['m1', 'c1', 'm2', 'c2'].map((k) => [k, { opus: J(false), pro: J(false) }])) }; // all hidden
+  const ds = { points: [{ pointId: 'p1', repo: 'r', checkpoint: 1 }, { pointId: 'p2', repo: 'r', checkpoint: 1 }] }; const snaps = { p1: { rounds: [], ledgerEntries: [] }, p2: { rounds: [], ledgerEntries: [] } };
+  const { key } = buildWorksheet({ rows, novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment });
+  assert.equal(key.audit.hidden, 2, 'only the valid pair\'s two hidden findings');
+  const labels = new Map(Object.keys(key.items).map((w) => [w, 'KNOWN']));
+  assert.doesNotThrow(() => scorePilot({ rows, novelty: nv, key, labelsById: labels, plannedPairs: 2 }));
 });

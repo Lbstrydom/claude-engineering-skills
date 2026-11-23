@@ -26,9 +26,9 @@ import { withCaseTree } from '../model-eval/case-tree.mjs';
 import { validateAuditRound, META_T2_ROUND } from './round-cap.mjs';
 import { metaTriggerFor, readMetaLog, metaLogPath, foldMetaLog } from './meta-review.mjs';
 import { computeRoundSignals, makeGitRunner } from './round-signals.mjs';
-import { decideMetaPilot, decideMetaPilotBothJudges, scoreMetaRuns, SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
+import { decideMetaPilot, scoreMetaRuns, SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
 
-export { decideMetaPilot, decideMetaPilotBothJudges, scoreMetaRuns, SEEDED_BENCH_EPOCH };
+export { decideMetaPilot, scoreMetaRuns, SEEDED_BENCH_EPOCH };
 
 export const CONTINUATION_PAST_CAP_REASON = 'seeded-bench continuation control';
 export const EXIT_BUDGET_STOP = 5;

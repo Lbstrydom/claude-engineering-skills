@@ -39,11 +39,11 @@ test('H10: a run row with a null/negative cost makes the dataset INVALID, never 
 
 test('H4: a finding with no novelty judgment BLOCKS the score; it is not "not novel"', () => {
   const runs = [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: [{ key: 'a', severity: 'HIGH' }] }];
-  assert.equal(scoreMetaRuns({ runs, novelByFinding: new Map(), labels: new Map() }).incomplete, true);
-  const novelty = { stamps: { opus: {} }, incomplete: false, byFinding: { a: { opus: { novel: true, notJudged: true } } } };
-  const key = { items: {} };
+  assert.equal(scoreMetaRuns({ runs, hidden: new Map(), labels: new Map() }).incomplete, true);
+  const novelty = { stamps: { opus: {} }, incomplete: false, byFinding: { a: { opus: { novel: false, notJudged: false } } } }; // pro never covered it
+  const key = { items: {}, audit: { hidden: 0, sampled: 0, all: false, sample: 80, upperBoundMax: 0.15, confidence: 0.95 } };
   const r = scorePilot({ rows: runs, novelty, key, labelsById: new Map(), plannedPairs: 1 });
-  assert.equal(r.decision.outcome, 'INCOMPLETE', 'a not-judged entry is not a "false" novelty');
+  assert.equal(r.decision.outcome, 'INCOMPLETE', 'a finding one judge never covered has no verdict');
 });
 
 test('H9: two sessions that share a branch name and first timestamp in different repos or modes get distinct ids', () => {
@@ -183,7 +183,7 @@ test('R4 H5: a negative or non-finite line window is rejected, not silently drop
 
 test('R4 H6: a valid run with no findings collection blocks the score instead of scoring as "no findings"', () => {
   const runs = [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1 }];
-  const s = scoreMetaRuns({ runs, novelByFinding: new Map(), labels: new Map() });
+  const s = scoreMetaRuns({ runs, hidden: new Map(), labels: new Map() });
   assert.equal(s.incomplete, true); assert.equal(s.blocked[0].reason, 'valid-run-without-findings');
 });
 
@@ -210,7 +210,7 @@ test('R5 H4: a newline-terminated invalid record followed by blank lines is corr
 test('R5 H6/H7: negative, fractional, missing counts invalidate the dataset; a non-array findings value blocks instead of throwing', () => {
   const mk = (over) => [{ pointId: 'p', rep: 0, arm: 'META', valid: true, novelActionable: 0, novelActionableHM: 0, costUsd: 1, ...over }, { pointId: 'p', rep: 0, arm: 'CONTINUE', valid: true, novelActionable: 0, novelActionableHM: 0, costUsd: 3 }];
   for (const bad of [{ novelActionable: -1 }, { novelActionable: 1.5 }, { novelActionableHM: undefined }, { novelActionable: null }]) assert.equal(decideMetaPilot({ runs: mk(bad), plannedPairs: 1 }).branch, 1, JSON.stringify(bad));
-  const s = scoreMetaRuns({ runs: [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: {} }], novelByFinding: new Map(), labels: new Map() });
+  const s = scoreMetaRuns({ runs: [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: {} }], hidden: new Map(), labels: new Map() });
   assert.equal(s.incomplete, true);
 });
 
@@ -254,4 +254,13 @@ test('R8 G1: an id wrapped in markdown backticks matches as a whole, leaving no 
 Restates: \`${a}\`
 `, { R001: [a] });
   assert.deepEqual(out.filterRecall.R001, [a]);
+});
+
+test('A2 R2 H3: an invalid member of a pair excludes its valid partner from scoring (no blocking on a missing judgment there)', () => {
+  const runs = [
+    { pointId: 'p', arm: 'META', rep: 0, valid: false, invalidReason: 'canary-missed', costUsd: 1, findings: [] },
+    { pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: [{ key: 'x', severity: 'HIGH' }] },
+  ];
+  const s = scoreMetaRuns({ runs, hidden: new Map(), labels: new Map() });
+  assert.equal(s.incomplete, false); assert.equal(s.rows.find((r) => r.arm === 'CONTINUE').valid, true, 'the run record is kept; only its findings are not scored');
 });

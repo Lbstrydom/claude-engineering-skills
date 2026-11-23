@@ -20,14 +20,14 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { withCaseTree } from '../model-eval/case-tree.mjs';
 import { resolveMainRoot, defaultFixtureRoot } from '../pinned-worktree/paths.mjs';
 import { initLedger, readLedgerSummary, reconcileCall, BUDGET_LEDGER_ENV } from '../llm-budget.mjs';
-import { createJudge, judgePairs, classifyNovelty, stampMismatch } from '../model-eval/concern-matcher.mjs';
+import { createJudge, judgePairs, classifyNovelty, stampMismatch, filterCandidates } from '../model-eval/concern-matcher.mjs';
 import { drawCalibrationSets, renderWorksheet, joinWorksheetLabels, scoreCalibration } from '../model-eval/matcher-calibration.mjs';
 import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShuffle } from './step-back-pilot-freeze.mjs';
 import { runContinuation, ledgerTargets, restorePointFiles, validateTrigger, resolveScopeBase, sidFor, EXIT_BUDGET_STOP } from './step-back-continuation.mjs';
-import { decideMetaPilotBothJudges, scoreMetaRuns, SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
+import { decideMetaPilot, scoreMetaRuns, SEEDED_BENCH_EPOCH, HUMAN_LABELS } from './meta-pilot-decision.mjs';
+import { isSuppressed, isCovered, auditVerdict, stratifiedAuditSample, readAmendment, maxFalseSuppressions } from './pilot-novelty-audit.mjs';
 
 export const PILOT = 'meta-ab';
-export const LABELS = Object.freeze(['REAL', 'WRONG', 'NOT_A_DEFECT', 'RIGOUR_CHASING', 'UNDETERMINED']);
 const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); atomicWriteFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
@@ -278,19 +278,25 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
 
 // ── novelty, worksheet, score ────────────────────────────────────────────────────────────────────────
 
-/** No novelty or score without an ACCEPTED matcher calibration of THIS dataset (plan §1.4: below the bar the pilots stop). */
-export function assertCalibrationAccepted({ calibrationPath, dataset }) {
-  if (!calibrationPath) throw new ArgvError('--calibration <calibration-report.json> is required: novelty needs an accepted matcher calibration');
+/**
+ * No novelty or score without the SIGNED amendment (epoch v2) and the calibration report it amends. The calibration need not have
+ * been accepted (it was inconclusive; that is the amendment's premise) but it must be of THIS dataset, and its judge stamps
+ * pin the judges the audit relies on.
+ */
+export function assertAmendment({ amendmentPath, calibrationPath, dataset }) {
+  if (!amendmentPath) throw new ArgvError('--amendment <amendment-2.json> is required: novelty and scoring run under the signed v2 amendment');
+  if (!calibrationPath) throw new ArgvError('--calibration <calibration-report.json> is required (the amended gate\'s evidence and the judge stamps)');
+  const amendment = readAmendment(amendmentPath);
   const rep = readJson(calibrationPath);
-  if (rep.decision !== 'accept') throw new ArgvError(`the matcher calibration decision is "${rep.decision}", not accept; the pilot stops (§1.4)`);
   if (rep.datasetHash !== dataset.datasetHash) throw new ArgvError('the calibration report was made from a different dataset');
-  return rep;
+  if (!['accept', 'fail', 'inconclusive'].includes(rep.decision) || !Number.isFinite(rep.spentUsd) || !rep.judges?.opus?.stamp || !rep.judges?.pro?.stamp) throw new ArgvError('the calibration report is malformed (it needs a decision, spentUsd and both judge stamps)');
+  return { amendment, calibration: rep };
 }
 
 /** Novelty of every MEDIUM+ finding against its point's ledger, by BOTH judges (stamped once; a changed stamp refuses a repeat). */
-export async function runNovelty({ datasetPath, resultsPath, calibrationPath, deps = {} }) {
+export async function runNovelty({ datasetPath, resultsPath, calibrationPath, amendmentPath, deps = {} }) {
   const { dataset, snapshots } = loadDataset(datasetPath);
-  const calibration = assertCalibrationAccepted({ calibrationPath, dataset });
+  const { calibration } = assertAmendment({ amendmentPath, calibrationPath, dataset });
   const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
   const priorEnv = process.env[BUDGET_LEDGER_ENV];
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
@@ -325,34 +331,68 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
       }
     }
   }
-  out.incomplete = Object.values(out.byFinding).some((j) => Object.values(j).some((e) => e.notJudged)); // recomputed from the CURRENT state
+  // A not-judged entry is not incomplete: it sends the finding to the human (it is not hidden). `incomplete` = a finding with a judge missing.
+  out.incomplete = Object.values(out.byFinding).some((j) => !isCovered(j)); // recomputed from the CURRENT state
   writeJson(outPath, out);
   return out;
   } finally { if (priorEnv === undefined) delete process.env[BUDGET_LEDGER_ENV]; else process.env[BUDGET_LEDGER_ENV] = priorEnv; }
 }
 
-/** The pooled, shuffled, SOURCE-BLINDED sheet a human labels. Every finding novel under EITHER judge is labelled (never a judge's say-so). */
-export function buildWorksheet({ rows, novelty, seed, dataset }) {
-  const items = [];
-  for (const row of rows) for (const f of row.findings.filter(mediumPlus)) {
-    const nv = novelty.byFinding[f.key] ?? {};
-    if (Object.values(nv).some((j) => j.novel)) items.push({ key: f.key, f, mode: row.mode, repo: dataset.points.find((p) => p.pointId === row.pointId)?.repo, judges: nv, arm: row.arm, runId: row.runId });
+export const WORKSHEET_LABEL_HELP = [
+  '- `REAL` — a real defect and worth fixing NOW (a round would reasonably be spent on it)',
+  '- `RIGOUR_CHASING` — real but not worth a round',
+  '- `NOT_A_DEFECT` — not a defect in this code',
+  '- `WRONG` — factually wrong about the code',
+  '- `KNOWN` — it restates one of the listed ledger entries, or any other concern already raised earlier in this audit',
+  '- `UNDETERMINED` — cannot tell (this blocks the score until resolved)',
+];
+
+/** Up to 3 closest prior ledger entries (same file, nearest lines) for the human to compare a finding against. */
+export function candidateEntries({ finding, snapshot, checkpoint, limit = 10, judgeMatches = [] }) {
+  const targets = ledgerTargets(snapshot, { upToRound: checkpoint });
+  const f = { id: finding.key, file: finding.file, files: finding.affectedFiles?.length ? finding.affectedFiles : undefined, lines: finding.lines, severity: finding.severity, text: finding.text };
+  const ranked = filterCandidates([f], targets).sort((a, b) => (a.lineDistance ?? 1e9) - (b.lineDistance ?? 1e9) || String(a.xId).localeCompare(String(b.xId))).map((c) => c.x);
+  const must = judgeMatches.map((id) => ranked.find((x) => String(x.id) === String(id)) ?? targets.find((x) => String(x.id) === String(id))).filter(Boolean); // what the judges matched is always shown
+  const rest = ranked.filter((x) => !must.includes(x));
+  const shown = [...must, ...rest].slice(0, Math.max(limit, must.length));
+  return { shown, more: Math.max(0, ranked.length + must.filter((m) => !ranked.includes(m)).length - shown.length) };
+}
+
+/**
+ * The pooled, shuffled, SOURCE-BLINDED sheet a human labels (amendment 2). Shown: every finding NOT hidden by both judges, plus
+ * a seeded probability sample of the hidden ones (`audit.sample`, or all of them when `auditAll`). Each shows its closest
+ * ledger entries so the human decides novelty itself. Hidden-sample items are indistinguishable from the rest.
+ */
+export function buildWorksheet({ rows, novelty, seed, dataset, snapshots, amendment, auditAll = false }) {
+  const shown = []; const hiddenKeys = []; const byKey = new Map();
+  // Only findings of VALID pairs reach the human: an invalid pair is excluded from the decision, so its findings are neither scored nor audited.
+  const badPair = new Set(rows.filter((r) => r.valid !== true).map((r) => `${r.pointId}#${r.rep}`));
+  for (const row of rows) for (const f of (row.valid === true && !badPair.has(`${row.pointId}#${row.rep}`) ? row.findings : []).filter(mediumPlus)) {
+    const nv = novelty.byFinding[f.key]; if (!isCovered(nv)) continue;
+    const point = dataset.points.find((p) => p.pointId === row.pointId);
+    const item = { key: f.key, f, mode: row.mode, repo: point?.repo, judges: nv, arm: row.arm, runId: row.runId, point };
+    byKey.set(f.key, item);
+    if (isSuppressed(nv)) hiddenKeys.push(f.key); else shown.push(item);
   }
+  const bySample = stratifiedAuditSample({ hidden: hiddenKeys.map((k) => ({ key: k, arm: byKey.get(k).arm })), size: auditAll ? 'all' : amendment.audit.sample, seed });
+  const sample = Object.values(bySample).flat();
+  const byArm = Object.fromEntries(Object.entries(bySample).map(([arm, ks]) => [arm, { hidden: hiddenKeys.filter((k) => byKey.get(k).arm === arm).length, sampled: ks.length }]));
+  const items = [...shown.map((it) => ({ ...it, audited: false })), ...sample.map((k) => ({ ...byKey.get(k), audited: true }))];
   const shuffled = seededShuffle(items, `${seed}:worksheet`, (x) => x.key);
-  const key = { version: 1, seed, items: {} };
+  const key = { version: 2, epoch: SEEDED_BENCH_EPOCH, seed, audit: { hidden: hiddenKeys.length, sampled: sample.length, byArm, all: auditAll || sample.length === hiddenKeys.length /* every hidden finding labelled: the audit is moot */, sample: amendment.audit.sample, upperBoundMax: amendment.audit.upperBoundMax, confidence: amendment.audit.confidence }, items: {} };
   const md = ['# Pilot 1 adjudication worksheet (blind to arm)', '',
-    'For each finding write ONE label after `Label:`:', '',
-    '- `REAL` — a real defect and worth fixing NOW (a round would reasonably be spent on it)',
-    '- `RIGOUR_CHASING` — real but not worth a round',
-    '- `NOT_A_DEFECT` — not a defect in this code',
-    '- `WRONG` — factually wrong about the code',
-    '- `UNDETERMINED` — cannot tell (this blocks the score until resolved)', '', 'Judge opinions, arm and run are hidden on purpose.', ''];
+    'For each finding write ONE label after `Label:`. Compare it with the closest earlier ledger entries listed under it:', '',
+    ...WORKSHEET_LABEL_HELP, '', 'Judge opinions, arm and run are hidden on purpose. Some findings here were already ruled `known` by the judges; judge them exactly like the rest.', ''];
   shuffled.forEach((it, i) => {
     const id = `W${String(i + 1).padStart(3, '0')}`;
-    key.items[id] = { key: it.key, arm: it.arm, runId: it.runId, judges: it.judges };
-    md.push(`### ${id}`, '', `- repo: ${it.repo} (${it.mode} audit) · file: ${it.f.file ?? '?'}${it.f.lines ? `:${it.f.lines[0]}` : ''} · severity: ${it.f.severity}`, '', String(it.f.text).split('\n').map((l) => `> ${l}`).join('\n'), '', 'Label: ', '');
+    key.items[id] = { key: it.key, arm: it.arm, runId: it.runId, hidden: it.audited, judges: it.judges };
+    const sameOf = [it.judges.opus?.sameOf, it.judges.pro?.sameOf].flat().filter(Boolean);
+    const { shown: cands, more } = candidateEntries({ finding: it.f, snapshot: snapshots[it.point.pointId], checkpoint: it.point.checkpoint, judgeMatches: sameOf });
+    md.push(`### ${id}`, '', `- repo: ${it.repo} (${it.mode} audit) · file: ${it.f.file ?? '?'}${it.f.lines ? `:${it.f.lines[0]}` : ''} · severity: ${it.f.severity}`, '', String(it.f.text).split('\n').map((l) => `> ${l}`).join('\n'), '',
+      cands.length ? `**Closest earlier ledger entries${more ? ` (${more} more share this file and are not shown)` : ''}:**` : '**No earlier ledger entry shares a file with this finding.**', '',
+      ...cands.flatMap((c, n) => [`*E${n + 1}* (${c.file ?? '?'}${c.lines ? `:${JSON.stringify(c.lines)}` : ''}, ${c.severity}):`, String(c.text ?? '').trim().split('\n').map((l) => `> ${l}`).join('\n'), '']), 'Label: ', '');
   });
-  return { markdown: md.join('\n'), key };
+  return { markdown: md.join('\n'), key, counts: { shown: shown.length, hidden: hiddenKeys.length, audited: sample.length } };
 }
 
 export function parseWorksheetLabels(md) {
@@ -364,22 +404,48 @@ export function parseWorksheetLabels(md) {
   return labels;
 }
 
-/** Score both judges against the human labels and apply the pre-registered rule. */
+/**
+ * Score under amendment 2: the human's labels decide novelty for everything shown; the audit of the hidden sample bounds the
+ * judges' one dangerous error. Outcomes: INCOMPLETE (a label missing/UNDETERMINED, or a finding the novelty step never covered),
+ * `audit-failed` (the upper bound of false suppressions exceeds the amendment's tolerance, so the decision is NOT reported until
+ * ALL hidden findings are labelled: rebuild the worksheet with `--audit all`), else the pre-registered rule's decision.
+ */
 export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
   const labels = new Map();
   for (const [wid, v] of labelsById) {
-    if (!LABELS.includes(v)) throw new Error(`worksheet ${wid}: unknown label "${v}"`);
+    if (!HUMAN_LABELS.includes(v)) throw new Error(`worksheet ${wid}: unknown label "${v}"`);
     if (key.items[wid]) labels.set(key.items[wid].key, v);
   }
   const unlabelled = Object.keys(key.items).filter((w) => !labelsById.has(w));
-  const byJudge = {}; const blocked = {};
-  for (const j of Object.keys(novelty.stamps)) {
-    // A missing or not-judged entry stays ABSENT (a blocked finding), never false: absence of a judgment is not 'not novel'.
-    const novelByFinding = new Map(Object.entries(novelty.byFinding).filter(([, v]) => v[j] && !v[j].notJudged).map(([k, v]) => [k, v[j].novel === true]));
-    const s = scoreMetaRuns({ runs: rows, novelByFinding, labels });
-    byJudge[j] = s.rows; blocked[j] = s.blocked;
+  const hidden = new Map(Object.entries(novelty.byFinding).filter(([, v]) => isCovered(v)).map(([k, v]) => [k, isSuppressed(v)]));
+  // The worksheet key must describe THESE findings: a stale or hand-made key cannot claim audit coverage.
+  // Same population as the worksheet: findings of VALID pairs only (an invalid pair is excluded from the decision and never shown).
+  const badPair = new Set(rows.filter((r) => r.valid !== true).map((r) => `${r.pointId}#${r.rep}`));
+  const inPairs = new Set(rows.filter((r) => r.valid === true && !badPair.has(`${r.pointId}#${r.rep}`)).flatMap((r) => (Array.isArray(r.findings) ? r.findings.filter((f) => mediumPlus(f)).map((f) => f.key) : [])));
+  const suppressedNow = new Set([...hidden].filter(([k, h]) => h && inPairs.has(k)).map(([k]) => k));
+  const rowKeys = new Set(rows.flatMap((r) => (Array.isArray(r.findings) ? r.findings.map((f) => f.key) : [])));
+  const auditedKeys = Object.values(key.items).filter((it) => it.hidden).map((it) => it.key);
+  if (Object.values(key.items).some((it) => !rowKeys.has(it.key)) || auditedKeys.some((k) => !suppressedNow.has(k)) || key.audit.hidden !== suppressedNow.size) throw new Error('the worksheet key does not match the results and novelty files (stale or wrong key); rebuild the worksheet');
+  if (key.audit.all === true && suppressedNow.size !== auditedKeys.length) throw new Error('the worksheet key claims every hidden finding was labelled, but it lists fewer than the current hidden findings; rebuild the worksheet');
+  const s = scoreMetaRuns({ runs: rows, hidden, labels });
+  const verdictOf = (items) => {
+    const lab = items.filter(([wid]) => labelsById.has(wid) && labelsById.get(wid) !== 'UNDETERMINED');
+    const f = lab.filter(([wid]) => labelsById.get(wid) !== 'KNOWN').length;
+    return auditVerdict({ n: lab.length, f, upperBoundMax: key.audit.upperBoundMax, confidence: key.audit.confidence });
+  };
+  const audited = Object.entries(key.items).filter(([, it]) => it.hidden);
+  const pooled = verdictOf(audited);
+  const arms = Object.keys(key.audit.byArm ?? {}).filter((a) => key.audit.byArm[a].hidden > 0);
+  const perArm = Object.fromEntries(arms.map((a) => [a, { ...verdictOf(audited.filter(([, it]) => it.arm === a)), hidden: key.audit.byArm[a].hidden, sampled: key.audit.byArm[a].sampled }]));
+  const auditPass = pooled.pass && Object.values(perArm).every((v) => v.pass);
+  const full = key.audit.all === true;
+  const base = decideMetaPilot({ runs: s.rows, plannedPairs });
+  const incomplete = s.incomplete || unlabelled.length > 0 || novelty.incomplete;
+  let decision = base;
+  if (incomplete) decision = { ...base, outcome: 'INCOMPLETE', why: `unlabelled ${unlabelled.length}, blocked ${s.blocked.length}, novelty incomplete ${novelty.incomplete}` };
+  else if (!full && !auditPass) {
+    const worst = Object.entries(perArm).filter(([, v]) => !v.pass).map(([a, v]) => `${a}: ${v.f} of ${v.n} (upper bound ${v.upperBound.toFixed(3)})`);
+    decision = { ...base, outcome: 'audit-failed', why: `false suppressions exceed the pre-registered tolerance (pooled ${pooled.f} of ${pooled.n}, upper bound ${pooled.upperBound.toFixed(3)} vs ${pooled.upperBoundMax}${worst.length ? `; failing arms ${worst.join(', ')}` : ''}); the instrument is not trusted: rebuild the worksheet with --audit all and label every hidden finding` };
   }
-  const decision = decideMetaPilotBothJudges({ byJudge, plannedPairs });
-  const blockedAny = Object.values(blocked).some((b) => b.length) || unlabelled.length > 0 || novelty.incomplete;
-  return { decision: blockedAny ? { ...decision, outcome: 'INCOMPLETE', why: `unlabelled ${unlabelled.length}, blocked ${JSON.stringify(Object.fromEntries(Object.entries(blocked).map(([j, b]) => [j, b.length])))}, novelty incomplete ${novelty.incomplete}` } : decision, byJudge, blocked, unlabelled };
+  return { decision, rows: s.rows, blocked: s.blocked, unlabelled, audit: { ...pooled, hiddenTotal: key.audit.hidden, all: full, perArm, pass: auditPass, maxFalseAllowed: maxFalseSuppressions({ n: pooled.n, upperBoundMax: pooled.upperBoundMax, confidence: pooled.confidence }) } };
 }
