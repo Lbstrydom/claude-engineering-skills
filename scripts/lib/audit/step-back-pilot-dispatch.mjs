@@ -13,7 +13,7 @@ import { ArgvError } from '../cli-io.mjs';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import {
   runFreeze, runContinue, runReconcile, runCalibrateDraw, runCalibrateScore, runNovelty, buildWorksheet, parseWorksheetLabels, scorePilot,
-  loadDataset, readRunRows,
+  loadDataset, readRunRows, readHeader,
 } from './step-back-pilot-cli.mjs';
 
 export const PILOT_COMMANDS = Object.freeze(['freeze', 'continue', 'reconcile', 'calibrate-draw', 'calibrate-score', 'novelty', 'worksheet', 'score']);
@@ -61,8 +61,8 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const datasetPath = need('--dataset'); const resultsPath = need('--results');
   if (cmd === 'novelty') {
     const r = await runNovelty({ datasetPath, resultsPath });
-    console.log(`step-back-replay novelty: ${Object.keys(r.byFinding).length} findings judged by both judges${r.incomplete ? ' - INCOMPLETE (a pair was not judged)' : ''}`);
-    return 0;
+    console.log(`step-back-replay novelty: ${Object.keys(r.byFinding).length} findings judged by both judges${r.incomplete ? ' - INCOMPLETE (a pair was not judged; a rerun retries it)' : ''}`);
+    return r.incomplete ? 1 : 0;
   }
   const { dataset } = loadDataset(datasetPath);
   const rows = readRunRows(resultsPath); const novelty = JSON.parse(fs.readFileSync(`${resultsPath}.novelty.json`, 'utf8'));
@@ -77,9 +77,10 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const dir = need('--out-dir');
   const key = JSON.parse(fs.readFileSync(path.join(dir, 'pilot1-worksheet.key.json'), 'utf8'));
   const labelsById = parseWorksheetLabels(fs.readFileSync(need('--labels'), 'utf8'));
-  const planned = new Set(rows.map((r) => `${r.pointId}#${r.rep}`)).size;
+  const planned = readHeader(resultsPath).plannedPairs; // the FROZEN schedule, never what happened to be recorded
+  if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });
   writeJson(path.join(dir, 'pilot1-score.json'), res);
   console.log(`step-back-replay score --pilot meta-ab: ${String(res.decision.outcome).toUpperCase()} (${res.decision.why})`);
-  return 0;
+  return res.decision.outcome === 'INCOMPLETE' ? 1 : 0; // keep/off/inconclusive/invalid are RESULTS (0); an unfinished score is not
 }

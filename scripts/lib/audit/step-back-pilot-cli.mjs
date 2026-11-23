@@ -53,12 +53,22 @@ export function assertPinnedFixture(cwd = process.cwd()) {
   const root = defaultFixtureRoot(resolveMainRoot(cwd));
   const rel = path.relative(root, path.resolve(top));
   if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') throw new ArgvError(`a paid run must run from a pinned fixture under ${root} (npm run fixture:create); this tree is ${top}`);
+  const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd, encoding: 'utf8' }).trim();
+  if (dirty) throw new ArgvError(`the fixture has uncommitted changes to tracked files; a pinned run must be at its recorded revision:\n${dirty.slice(0, 300)}`);
   return { top, head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim() };
+}
+
+/** The mapped name must be the clone's own origin (`owner/name`): authorisation binds to the repository, not to a typed label. */
+export function verifyRepoIdentity(r, { git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } = {}) {
+  let url;
+  try { url = git(r.localPath, ['remote', 'get-url', 'origin']); } catch { return { ok: false, reason: `its local clone ${r.localPath} has no readable origin remote` }; }
+  const slug = /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1];
+  return slug && slug.toLowerCase() === String(r.name).toLowerCase() ? { ok: true } : { ok: false, reason: `its clone's origin is ${slug ?? url}` };
 }
 
 // ── freeze ───────────────────────────────────────────────────────────────────────────────────────────
 
-export function runFreeze({ exports, reposFile, seed, out, targets }) {
+export function runFreeze({ exports, reposFile, seed, out, targets, verifyRepo = verifyRepoIdentity }) {
   if (!exports.length || !reposFile || !seed || !out) throw new ArgvError('step-back-replay freeze --pilot meta-ab: --export <csv>, --repos-file, --seed and --out are required.');
   const merged = { runs: [], findings: [], events: [], exportedAt: null };
   const hashes = [];
@@ -69,7 +79,7 @@ export function runFreeze({ exports, reposFile, seed, out, targets }) {
     merged.exportedAt = [merged.exportedAt, e.exportedAt].filter(Boolean).sort().pop();
   }
   merged.exportSha256 = sha256Hex(hashes.sort().join('|'));
-  const { dataset, snapshots } = freezeMetaPilot({ exp: merged, repos: readJson(reposFile), seed, ...(targets ? { targets } : {}) });
+  const { dataset, snapshots } = freezeMetaPilot({ exp: merged, repos: readJson(reposFile), seed, verifyRepo, ...(targets ? { targets } : {}) });
   writeJson(out, dataset); writeJson(snapshotsPathFor(out), snapshots);
   return dataset;
 }
@@ -112,11 +122,11 @@ export async function runContinue({ datasetPath, set, replicates, maxUsd, confir
   if (fs.existsSync(resultsPath)) throw new ArgvError(`--results ${resultsPath} already exists; a paid run never overwrites or appends to it.`);
   fs.mkdirSync(path.dirname(path.resolve(resultsPath)), { recursive: true });
   fs.closeSync(fs.openSync(resultsPath, 'wx'));
-  const ledgerFile = `${resultsPath}.budget.jsonl`;
+  const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`); // absolute: children run with another cwd
   initLedger({ file: ledgerFile, capUsd: maxUsd });
   const spentUsd = () => readLedgerSummary(ledgerFile).spentUsd;
   const append = (rec) => appendDurably(resultsPath, `${JSON.stringify(rec)}\n`);
-  append({ type: 'header', epoch: SEEDED_BENCH_EPOCH, pilot: PILOT, set, replicates, maxUsd, datasetHash: dataset.datasetHash, revision: pin.head, ledger: ledgerFile, points: points.map((p) => p.pointId), startedAt: new Date().toISOString() });
+  append({ type: 'header', epoch: SEEDED_BENCH_EPOCH, pilot: PILOT, set, replicates, plannedPairs: points.length * replicates, maxUsd, datasetHash: dataset.datasetHash, revision: pin.head, ledger: ledgerFile, points: points.map((p) => p.pointId), startedAt: new Date().toISOString() });
   const rows = []; let stopped = null;
   outer: for (let rep = 0; rep < replicates; rep++) {
     for (const point of points) {
@@ -141,6 +151,7 @@ export async function runReconcile({ ledger, callId, evidence, costUsd }) {
   return reconcileCall({ file: ledger, callId, evidence, costUsd: Number(costUsd) });
 }
 
+export const readHeader = (resultsPath) => JSON.parse(fs.readFileSync(resultsPath, 'utf8').split('\n').find(Boolean));
 export const readRunRows = (resultsPath) => fs.readFileSync(resultsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'run');
 
 // ── matcher calibration (§1.4) ───────────────────────────────────────────────────────────────────────
@@ -222,29 +233,32 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
 /** Novelty of every MEDIUM+ finding against its point's ledger, by BOTH judges (stamped once; a changed stamp refuses a repeat). */
 export async function runNovelty({ datasetPath, resultsPath, deps = {} }) {
   const { dataset, snapshots } = loadDataset(datasetPath);
-  const ledgerFile = `${resultsPath}.budget.jsonl`;
+  const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
   const outPath = `${resultsPath}.novelty.json`;
+  const resultsSha = sha256Hex(fs.readFileSync(resultsPath));
   const prior = fs.existsSync(outPath) ? readJson(outPath) : null;
+  if (prior && (prior.datasetHash !== dataset.datasetHash || prior.resultsSha256 !== resultsSha)) throw new Error('the novelty file was made from a different dataset or results file; refusing to reuse it');
   const judges = {};
   for (const [name, sentinel] of [['opus', 'latest-opus'], ['pro', 'latest-pro']]) {
     judges[name] = await (deps.createJudge || createJudge)({ sentinel });
     if (prior && stampMismatch(prior.stamps[name], judges[name].stamp)) throw new Error(`judge "${name}" resolves differently from the frozen stamp; refusing a repeat under a different judge`);
   }
-  const out = prior ?? { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: dataset.datasetHash, stamps: Object.fromEntries(Object.entries(judges).map(([n, j]) => [n, j.stamp])), byFinding: {}, incomplete: false };
+  const out = prior ?? { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: dataset.datasetHash, resultsSha256: resultsSha, stamps: Object.fromEntries(Object.entries(judges).map(([n, j]) => [n, j.stamp])), byFinding: {}, incomplete: false };
   for (const row of readRunRows(resultsPath)) {
     const fs_ = row.findings.filter(mediumPlus);
     if (!fs_.length) continue;
     const snap = snapshots[row.pointId]; const point = dataset.points.find((p) => p.pointId === row.pointId);
     for (const [name, judge] of Object.entries(judges)) {
-      const todo = fs_.filter((f) => !out.byFinding[f.key]?.[name]);
+      // A not-judged entry is RETRYABLE: only a settled judgment is skipped on a rerun.
+      const todo = fs_.filter((f) => !out.byFinding[f.key]?.[name] || out.byFinding[f.key][name].notJudged);
       if (!todo.length) continue;
-      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: todo.map((f) => ({ id: f.key, file: f.file, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
-      if (r.incomplete) out.incomplete = true;
+      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: todo.map((f) => ({ id: f.key, file: f.file, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
       for (const pf of r.perFinding) (out.byFinding[pf.id] ||= {})[name] = { novel: pf.novel, flags: pf.flags, sameOf: pf.sameOf ?? null, partialOf: pf.partialOf ?? null, notJudged: pf.notJudged ?? false };
     }
     writeJson(outPath, out);
   }
+  out.incomplete = Object.values(out.byFinding).some((j) => Object.values(j).some((e) => e.notJudged)); // recomputed from the CURRENT state
   writeJson(outPath, out);
   return out;
 }
@@ -292,7 +306,8 @@ export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
   const unlabelled = Object.keys(key.items).filter((w) => !labelsById.has(w));
   const byJudge = {}; const blocked = {};
   for (const j of Object.keys(novelty.stamps)) {
-    const novelByFinding = new Map(Object.entries(novelty.byFinding).map(([k, v]) => [k, v[j]?.novel === true]));
+    // A missing or not-judged entry stays ABSENT (a blocked finding), never false: absence of a judgment is not 'not novel'.
+    const novelByFinding = new Map(Object.entries(novelty.byFinding).filter(([, v]) => v[j] && !v[j].notJudged).map(([k, v]) => [k, v[j].novel === true]));
     const s = scoreMetaRuns({ runs: rows, novelByFinding, labels });
     byJudge[j] = s.rows; blocked[j] = s.blocked;
   }

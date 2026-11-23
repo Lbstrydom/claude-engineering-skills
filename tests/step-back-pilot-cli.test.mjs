@@ -27,7 +27,7 @@ const setup = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-cli-'));
   const exp = path.join(dir, 'e.json'); fs.writeFileSync(exp, JSON.stringify(exportOf(20)));
   fs.writeFileSync(path.join(dir, 'repos.json'), JSON.stringify({ R: { name: 'Lbstrydom/wine-cellar-app', localPath: dir } }));
-  runFreeze({ exports: [exp], reposFile: path.join(dir, 'repos.json'), seed: 's', out: path.join(dir, 'ds.json') });
+  runFreeze({ exports: [exp], reposFile: path.join(dir, 'repos.json'), seed: 's', out: path.join(dir, 'ds.json'), verifyRepo: () => ({ ok: true }) });
   return dir;
 };
 

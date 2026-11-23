@@ -65,12 +65,23 @@ test('a secret-shaped string is redacted before it leaves, in finding, entry and
     f: f({ text: `fix the key ${SECRET} that is hardcoded`, code: [{ path: 'src/a.js', text: `const k = "${SECRET}";` }] }),
     x: x({ text: `key ${SECRET} committed` }),
   };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jp-root-'));
+  fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/a.js'), 'x');
+  try {
+    const { sent, rc } = await runBoth([pair], { repoRoot: root });
+    for (const body of [...sent.claude, ...sent.gemini]) {
+      assert.ok(!body.includes(SECRET), 'secret reached the request body');
+      assert.match(body, /REDACTED:/);
+    }
+    assert.ok(rc.results[0].redactedCount >= 3, `redacted ${rc.results[0].redactedCount}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+});
+
+test('cited code is dropped when there is NO trusted repoRoot to realpath-check it against (fail closed)', async () => {
+  const pair = { f: f({ text: 'plain text', code: [{ path: 'src/a.js', text: 'CODE-BODY-MARKER' }] }), x: x() };
   const { sent, rc } = await runBoth([pair]);
-  for (const body of [...sent.claude, ...sent.gemini]) {
-    assert.ok(!body.includes(SECRET), 'secret reached the request body');
-    assert.match(body, /REDACTED:/);
-  }
-  assert.ok(rc.results[0].redactedCount >= 3, `redacted ${rc.results[0].redactedCount}`);
+  for (const body of [...sent.claude, ...sent.gemini]) assert.ok(!body.includes('CODE-BODY-MARKER'), 'unchecked code left');
+  assert.equal(rc.results[0].droppedCode, 1);
 });
 
 test('a sensitive path mention fails to leave and the pair is not-judged', async () => {

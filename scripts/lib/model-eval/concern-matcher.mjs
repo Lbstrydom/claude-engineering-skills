@@ -54,8 +54,9 @@ export function fileKey(file) {
 }
 
 function filesOf(item) {
-  const raw = Array.isArray(item?.files) ? item.files : [item?.file];
-  return raw.filter((f) => typeof f === 'string' && f).map(fileKey);
+  // Canonical semantics: the union of `file` and `files` (either, both, or an empty `files` beside a `file`).
+  const raw = [...(Array.isArray(item?.files) ? item.files : []), item?.file];
+  return [...new Set(raw.filter((f) => typeof f === 'string' && f).map(fileKey))];
 }
 
 /**
@@ -134,7 +135,7 @@ export function filterCandidates(findings, xs, { window = DEFAULT_LINE_WINDOW } 
 
 /** Stable pair identity from the two string ids, never from array positions. */
 export function makePairId(fId, xId) {
-  return `${String(fId)}→${String(xId)}`;
+  return JSON.stringify([String(fId), String(xId)]); // structured: no delimiter an id can contain
 }
 
 function cmpStr(a, b) {
@@ -243,7 +244,9 @@ export function prepareJudgePayload(pair, opts = {}) {
     for (const block of Array.isArray(side.code) ? side.code : []) {
       const p = block?.path;
       let drop = typeof p !== 'string' || !p || classifyPath(p) === 'sensitive';
-      if (!drop && opts.repoRoot) {
+      // Cited code is sent ONLY with a trusted repoRoot to realpath-check it against: without one it is dropped (fail closed).
+      if (!drop && !opts.repoRoot) drop = true;
+      if (!drop) {
         // realpath + re-classify; an unresolvable path classifies sensitive (fail closed)
         drop = resolveAndClassify(p, { repoRoot: opts.repoRoot, fs: fsMod }).category === 'sensitive';
       }
@@ -383,6 +386,7 @@ export async function judgePairs({ pairs, judge, repoRoot, fs: fsMod, concurrenc
     try {
       raw = await judge.call({ system: payload.system, user: payload.user });
     } catch (err) {
+      if (err?.code === 'budget-stop' || err?.name === 'BudgetStopError') throw err; // a budget refusal stops the run; never a per-pair verdict
       return { ...base, verdict: NOT_JUDGED, quote: null, reason: `call-failed:${err?.status ?? ''}${err?.message ? ` ${String(err.message).slice(0, 120)}` : ''}`.trim(), ...meta };
     }
     const parsed = VerdictSchema.safeParse(raw);
@@ -394,11 +398,11 @@ export async function judgePairs({ pairs, judge, repoRoot, fs: fsMod, concurrenc
     return { ...base, verdict, quote, reason: null, ...meta };
   };
 
-  let next = 0;
+  let next = 0; let halted = false;
   const workers = Array.from({ length: Math.max(1, Math.min(concurrency, list.length || 1)) }, async () => {
-    while (next < list.length) {
+    while (next < list.length && !halted) {
       const i = next++;
-      results[i] = await one(list[i]);
+      try { results[i] = await one(list[i]); } catch (err) { halted = true; throw err; }
     }
   });
   await Promise.all(workers);

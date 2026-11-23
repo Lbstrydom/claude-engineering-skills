@@ -74,7 +74,7 @@ export function sessionsOf(exp) {
       else { cur = [r]; sessions.push(cur); }
     }
   }
-  return sessions.map((runs) => ({ sessionId: `${runs[0].branch}@${runs[0].created_at}`, repoId: runs[0].repo_id, branch: runs[0].branch, mode: runs[0].mode ?? 'code', runs }));
+  return sessions.map((runs) => ({ sessionId: `${runs[0].repo_id}|${runs[0].mode ?? 'code'}|${runs[0].branch}@${runs[0].created_at}`, repoId: runs[0].repo_id, branch: runs[0].branch, mode: runs[0].mode ?? 'code', runs }));
 }
 
 /**
@@ -87,10 +87,18 @@ export function sessionsOf(exp) {
  * @param {string[]} [a.authorisedRepos]
  * @returns {{dataset: object, snapshots: object}}
  */
-export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, authorisedRepos = AUTHORISED_REPOS }) {
+export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, authorisedRepos = AUTHORISED_REPOS, verifyRepo = () => ({ ok: true }) }) {
   if (!seed) throw new Error('freezeMetaPilot: a seed is required (it is recorded in the dataset)');
+  // Authorisation binds to a VERIFIED repository identity: the caller-supplied name must match the clone's own origin.
+  for (const [id, r] of Object.entries(repos)) {
+    if (!authorisedRepos.includes(r.name)) continue;
+    const v = verifyRepo(r);
+    if (!v.ok) throw new Error(`repo ${id} is mapped to ${r.name} but ${v.reason}; refusing to read it under that authorisation`);
+  }
   const excluded = []; const points = []; const snapshots = {}; const sessionRows = [];
-  for (const s of sessionsOf(exp)) {
+  const allSessions = sessionsOf(exp);
+  const ids = new Set(); for (const s of allSessions) { if (ids.has(s.sessionId)) throw new Error(`duplicate session id ${s.sessionId}`); ids.add(s.sessionId); }
+  for (const s of allSessions) {
     const repo = repos[s.repoId];
     const exclude = (reason) => excluded.push({ sessionId: s.sessionId, repo: repo?.name ?? s.repoId, mode: s.mode, runs: s.runs.length, reason });
     if (!repo || !authorisedRepos.includes(repo.name)) { if (s.runs.length >= 4) exclude(`repo not authorised for a pilot (${repo?.name ?? 'unknown'})`); continue; }

@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { openaiConfig, briefConfig } from './config.mjs';
 import { normalizeGeminiUsage } from './gemini-usage.mjs';
-import { withBudget, BudgetStopError } from './llm-budget.mjs';
+import { withBudget, BudgetStopError, isBudgetActive } from './llm-budget.mjs';
 
 /**
  * Lazily construct + cache a single Gemini (`GoogleGenAI`) client for the
@@ -50,7 +50,8 @@ export async function safeCallGPT(openai, systemPrompt, userPrompt, schema, opti
     };
     const response = await withBudget(
       { seam: 'llm-wrappers.safeCallGPT', provider: 'openai', model, body: request, outputCap: maxOutputTokens },
-      () => openai.responses.parse(request),
+      // Each SDK-internal retry would be a new billed request under one reservation: off while a budget is active.
+      () => openai.responses.parse(request, isBudgetActive() ? { maxRetries: 0 } : undefined),
     );
 
     const parsed = response.output_parsed;

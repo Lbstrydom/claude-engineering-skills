@@ -96,7 +96,7 @@ export function ledgerTargets(snapshot) {
   return snapshot.ledgerEntries.map((e, i) => {
     const f = byId.get(e.findingId) ?? byTopic.get(e.topicId) ?? null;
     return {
-      id: String(e.topicId ?? e.findingId ?? i), file: e.affectedFiles?.[0] ?? f?._primaryFile ?? null, lines: null,
+      id: String(e.topicId ?? e.findingId ?? i), file: e.affectedFiles?.[0] ?? f?._primaryFile ?? null, files: e.affectedFiles?.length ? e.affectedFiles : undefined, lines: null,
       severity: String(e.severity ?? f?.severity ?? '').toUpperCase(),
       text: [e.category, f?.section, f?.detail, e.ruling].filter(Boolean).join('\n'),
     };
@@ -127,9 +127,12 @@ export function toAuditLedgerEntries(snapshot) {
 /** Write the sealed snapshot into `<dir>/.audit` under the fresh sid and verify every byte by reading it back. */
 export function restorePointFiles({ dir, point, snapshot, sid, fsImpl = fs }) {
   const auditDir = path.join(dir, '.audit');
+  // A historical tree may carry a committed symlink at `.audit` (or at a result path): refuse before writing through it.
+  const isLink = (p) => { try { return fsImpl.lstatSync(p).isSymbolicLink(); } catch { return false; } };
+  if (isLink(auditDir)) throw new Error('the tree has a symlink at .audit; refusing to write through it');
   fsImpl.mkdirSync(auditDir, { recursive: true });
   const written = [];
-  const put = (name, obj) => { const p = path.join(auditDir, name); const text = `${JSON.stringify(obj, null, 2)}\n`; fsImpl.writeFileSync(p, text); if (sha256Hex(fsImpl.readFileSync(p)) !== sha256Hex(text)) throw new Error(`restore verification failed for ${name}`); written.push(name); };
+  const put = (name, obj) => { const p = path.join(auditDir, name); if (isLink(p)) throw new Error(`${name} is a symlink in the tree; refusing to write through it`); const text = `${JSON.stringify(obj, null, 2)}\n`; fsImpl.writeFileSync(p, text); if (sha256Hex(fsImpl.readFileSync(p)) !== sha256Hex(text)) throw new Error(`restore verification failed for ${name}`); written.push(name); };
   for (const r of snapshot.rounds) put(`${sid}-r${r.round}-result.json`, { round: r.round, verdict: r.verdict, findings: r.findings, _auditedSha: r.auditedSha, _sid: sid });
   const digest = sha256Hex(JSON.stringify({ rounds: snapshot.rounds, ledgerEntries: snapshot.ledgerEntries }));
   if (digest !== point.snapshotDigest) throw new Error('snapshot digest does not match the frozen point');

@@ -123,10 +123,30 @@ const usdOf = (micro) => micro / MICRO;
 
 // ── Ledger file ──────────────────────────────────────────────────────────────
 
+/**
+ * Drop a torn trailing fragment (a crash mid-append left bytes with no newline) BEFORE appending, so the next record never
+ * glues onto it. Safe: a reserve is appended before its request is sent, so a torn reserve never reached the wire, and a torn
+ * settle/fail leaves its reservation counted (the call stays reserved). Always called under the ledger lock.
+ */
+function repairTornTail(fd) {
+  const size = fs.fstatSync(fd).size;
+  if (size === 0) return;
+  const last = Buffer.alloc(1);
+  fs.readSync(fd, last, 0, 1, size - 1);
+  if (last[0] === 0x0a) return;
+  const chunk = Buffer.alloc(Math.min(size, 65536));
+  const start = size - chunk.length;
+  fs.readSync(fd, chunk, 0, chunk.length, start);
+  const nl = chunk.lastIndexOf(0x0a);
+  if (nl < 0 && start > 0) throw new BudgetStopError('ledger-corrupt', 'ledger tail has no record boundary within 64KiB');
+  fs.ftruncateSync(fd, nl < 0 ? 0 : start + nl + 1);
+}
+
 function appendLine(file, obj) {
-  const fd = fs.openSync(file, 'a');
+  const fd = fs.openSync(file, 'r+');
   try {
-    fs.writeSync(fd, `${JSON.stringify(obj)}\n`);
+    repairTornTail(fd);
+    fs.writeSync(fd, `${JSON.stringify(obj)}\n`, fs.fstatSync(fd).size, 'utf8'); // r+ has no append offset: write at the end explicitly
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);

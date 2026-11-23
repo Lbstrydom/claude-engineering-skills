@@ -189,6 +189,10 @@ export function scoreCalibration({ labelled, judgeVerdicts, filterRecallPairs = 
   const filterRecall = wilson(kept, filterRecallPairs.length);
 
   // ── decision ──
+  // An unjudged, missing or unrecognised verdict is NOT a negative prediction: it leaves the calibration incomplete.
+  const invalid = labelled.filter((r) => { const v = verdicts.get(r.pairId); return v !== NOT_JUDGED && !['same', 'partial', 'different'].includes(v); }).length;
+  if (notJudged > 0) inconclusive.push(`${notJudged}-labelled-pairs-not-judged`);
+  if (invalid > 0) inconclusive.push(`${invalid}-labelled-pairs-with-missing-or-invalid-verdict`);
   const prec = judge.prevalence.precision;
   const rec = judge.prevalence.recall;
   if (rec.n === 0) inconclusive.push('no-same-pairs-in-prevalence-set');
@@ -202,7 +206,9 @@ export function scoreCalibration({ labelled, judgeVerdicts, filterRecallPairs = 
   const armRecalls = arms.map((a) => judge.perArm[a].recall.p).filter((p) => p !== null);
   if (armRecalls.length >= 2) armGap = Math.max(...armRecalls) - Math.min(...armRecalls);
 
-  if (prec.p !== null && prec.p < B.precision) reasons.push(`precision ${prec.p.toFixed(3)} < ${B.precision}`);
+  // Acceptance precision is the prevalence-WEIGHTED one when the draw carries weights (equal to plain precision otherwise).
+  const precP = judge.prevalence.weightedPrecision ?? prec.p;
+  if (precP !== null && precP < B.precision) reasons.push(`precision ${precP.toFixed(3)} < ${B.precision}`);
   if (rec.p !== null && rec.p < B.recall) reasons.push(`recall ${rec.p.toFixed(3)} < ${B.recall}`);
   if (filterRecall.p !== null && filterRecall.p < B.filterRecall) reasons.push(`filter recall ${filterRecall.p.toFixed(3)} < ${B.filterRecall}`);
   if (armGap !== null && armGap > B.armRecallGap) reasons.push(`per-arm recall gap ${armGap.toFixed(3)} > ${B.armRecallGap}`);

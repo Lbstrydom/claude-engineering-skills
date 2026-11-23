@@ -66,6 +66,11 @@ export function pairRuns(runs) {
  */
 export function decideMetaPilot({ runs, plannedPairs = META_PILOT_RULE.plannedPairs }) {
   const R = META_PILOT_RULE;
+  // Every aggregated figure must be a real number: a null cost sums as 0 and would flatter (or sink) the cost-saved test.
+  const malformed = runs.filter((r) => !(Number.isFinite(r.costUsd) && r.costUsd >= 0) || !Number.isFinite(r.novelActionable ?? 0) || !Number.isFinite(r.novelActionableHM ?? 0));
+  if (malformed.length) {
+    return { branch: 1, outcome: 'invalid', why: `${malformed.length} run row(s) have a non-numeric or negative cost/count (${malformed.slice(0, 3).map((r) => `${r.pointId}/${r.arm}/${r.rep}`).join(', ')}); the dataset is incomplete`, figures: { malformed: malformed.length }, rule: R };
+  }
   const pairs = pairRuns(runs);
   const valid = pairs.filter((p) => p.meta.valid && p.cont.valid);
   const completion = (arm) => {
@@ -138,7 +143,9 @@ export function scoreMetaRuns({ runs, novelByFinding, labels }) {
     for (const f of r.findings || []) {
       const sev = String(f.severity).toUpperCase();
       if (sev !== 'HIGH' && sev !== 'MEDIUM') continue;
-      if (novelByFinding.get(f.key) !== true) continue;
+      const nv = novelByFinding.get(f.key);
+      if (nv === undefined) { blocked.push({ key: f.key, reason: 'no-novelty-judgment' }); continue; } // a missing judgment is NOT 'not novel'
+      if (nv !== true) continue;
       const label = labels.get(f.key);
       if (!label || label === 'UNDETERMINED') { blocked.push({ key: f.key, reason: label ?? 'unlabelled' }); continue; }
       if (label === 'REAL') { any += 1; hm += 1; } else noise += 1;
