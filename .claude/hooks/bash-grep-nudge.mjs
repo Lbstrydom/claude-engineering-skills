@@ -92,6 +92,8 @@ function leadingGrepTool(cmd) {
   const out = hostMod
     ? hostMod.formatHookOutput(host, 'PreToolUse', 'deny', reason)
     : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
-  if (out) process.stdout.write(JSON.stringify(out));
-  process.exit(0);
+  // Exit from the write callback: a piped stdout is asynchronous on Windows and an
+  // immediate process.exit() can truncate the envelope.
+  if (out) process.stdout.write(JSON.stringify(out), () => process.exit(0));
+  else process.exit(0);
 })();

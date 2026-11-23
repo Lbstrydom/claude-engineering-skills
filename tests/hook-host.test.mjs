@@ -223,10 +223,16 @@ describe('spawned hook: what the process receives and does', () => {
     it('Claude Edit with a trigger emits the byte-identical systemMessage', () => {
       const r = spawnHook('quickfix-scan.mjs', { tool_name: 'Edit', tool_input: { file_path: 'src/a.mjs', new_string: TRIGGER } }, { env: env() });
       assert.equal(r.status, 0);
-      const out = JSON.parse(r.stdout);
-      assert.deepEqual(Object.keys(out), ['systemMessage']);
-      assert.match(out.systemMessage, /^⚠ Quick-fix patterns matched in src[\\/]a\.mjs:\n {2}• \[medium\] empty-catch\n/);
-      assert.ok(r.stdout.endsWith('}\n'));
+      // Whole-stdout snapshot (pre-change bytes, path separator normalised): exact whitespace and trailing newline.
+      const rel = path.join('src', 'a.mjs');
+      const expected = JSON.stringify({ systemMessage: [
+        `⚠ Quick-fix patterns matched in ${rel}:`,
+        '  • [medium] empty-catch',
+        '    Snippet: "catch {}"',
+        '    Suggest: Empty catch swallows errors silently. Either log + rethrow, fix the underlying cause, or annotate why ignoring is safe.',
+        '(Disable for this line: append // quickfix-hook:ignore | session: QUICKFIX_HOOK_DISABLE=1)',
+      ].join('\n') }) + '\n';
+      assert.equal(r.stdout, expected);
     });
     it('REGRESSION: a path-only Edit exits 0 with no output', () => {
       const r = spawnHook('quickfix-scan.mjs', { tool_name: 'Edit', tool_input: { file_path: 'src/a.mjs' } }, { env: env() });
