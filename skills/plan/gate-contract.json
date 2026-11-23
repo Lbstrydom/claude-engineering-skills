@@ -53,8 +53,11 @@
       "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
     },
     {
-      "line": "server that `.mcp.json` and `.vscode/mcp.json` both register. Pass the block as",
+      "line": "server, where the repo registers it. Pass the block as",
       "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
+    },{
+      "line": "- **MCP not available** → **skip and proceed, never fail.** The Mermaid MCP",
+      "reason": "Phase 6.5 optional-validation prose: when the Mermaid MCP is absent the model skips validation, says so once and proceeds, never failing. It is behaviour the model follows while authoring; /plan has no CLI, so no exit code can assert it, and nothing refuses or blocks (the point is that nothing does). Same class as the neighbouring Phase 6.5 entries."
     },
     {
       "line": "> This gate named `mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram`",

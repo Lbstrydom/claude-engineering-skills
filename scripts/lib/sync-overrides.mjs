@@ -26,6 +26,9 @@
  *   ],
  *   "gitignoreExtra": [
  *     { "pattern": ".audit-loop/cache/", "reason": "runtime cache, not tracked here" }
+ *   ],
+ *   "syncOptIn": [
+ *     { "feature": "root-mcp-json", "reason": "we pin @playwright/mcp and want the root .mcp.json wired to it" }
  *   ]
  * }
  * ```
@@ -66,6 +69,12 @@ import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 
 /** Where the consumer declares its overrides, relative to the consumer root. */
 export const OVERRIDES_PATH = '.sync-overrides.json';
+
+/**
+ * Features a consumer may switch ON (the inverse of an override: a file shipped to some consumers only). Each name is the
+ * contract with `sync-mcp-optin.mjs`; an unknown one is an error, never a silent no-op.
+ */
+export const SYNC_OPT_IN_FEATURES = Object.freeze(['root-mcp-json']);
 
 /** Paths an override may never claim — see the module header. */
 const UNOVERRIDABLE_PREFIXES = [
@@ -153,9 +162,10 @@ export function validateOverrides(raw) {
   const errors = [];
   const overrides = [];
   const gitignoreExtra = [];
+  const syncOptIn = [];
 
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { overrides, gitignoreExtra, errors: [`${OVERRIDES_PATH}: expected a JSON object at the top level`] };
+    return { overrides, gitignoreExtra, syncOptIn, errors: [`${OVERRIDES_PATH}: expected a JSON object at the top level`] };
   }
   if (raw.version !== 1) {
     errors.push(`${OVERRIDES_PATH}: "version" must be 1 (got ${JSON.stringify(raw.version)})`);
@@ -235,7 +245,25 @@ export function validateOverrides(raw) {
     });
   }
 
-  return { overrides, gitignoreExtra, errors };
+  const optIns = raw.syncOptIn ?? [];
+  if (!Array.isArray(optIns)) {
+    errors.push(`${OVERRIDES_PATH}: "syncOptIn" must be an array`);
+  } else {
+    optIns.forEach((entry, i) => {
+      const at = `${OVERRIDES_PATH}: syncOptIn[${i}]`;
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) { errors.push(`${at}: expected an object`); return; }
+      const feature = typeof entry.feature === 'string' ? entry.feature.trim() : '';
+      const reason = typeof entry.reason === 'string' ? entry.reason.trim() : '';
+      if (!SYNC_OPT_IN_FEATURES.includes(feature)) {
+        errors.push(`${at}: unknown feature ${JSON.stringify(entry.feature)} (known: ${SYNC_OPT_IN_FEATURES.join(', ')})`);
+        return;
+      }
+      if (!reason) { errors.push(`${at}: "reason" is required`); return; }
+      syncOptIn.push({ feature, reason });
+    });
+  }
+
+  return { overrides, gitignoreExtra, syncOptIn, errors };
 }
 
 /**
@@ -254,7 +282,7 @@ export function validateOverrides(raw) {
 export function loadOverrides(repoRoot) {
   const abs = path.join(repoRoot, OVERRIDES_PATH);
   if (!fs.existsSync(abs)) {
-    return { present: false, overrides: [], gitignoreExtra: [], errors: [] };
+    return { present: false, overrides: [], gitignoreExtra: [], syncOptIn: [], errors: [] };
   }
   let raw;
   try {
@@ -264,6 +292,7 @@ export function loadOverrides(repoRoot) {
       present: true,
       overrides: [],
       gitignoreExtra: [],
+      syncOptIn: [],
       errors: [`${OVERRIDES_PATH}: unreadable or malformed JSON — ${err.message}`],
     };
   }

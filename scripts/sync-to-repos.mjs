@@ -25,7 +25,7 @@ import {
 } from './lib/consumer-repos.mjs';
 import {
   writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
-  findUndeliveredEntries, patchManifestWithExtraHashes, readSourceManagedServers,
+  findUndeliveredEntries, patchManifestWithExtraHashes,
 } from './lib/sync-manifest.mjs';
 import { buildOwnedSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './lib/sync-owned-sidecar.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -71,6 +71,7 @@ import { lintSkillTree } from './lib/skill-frontmatter-layout.mjs';
 import { resolveEnvValue } from './lib/env-setting.mjs';
 // The bundle inventory has ONE owner (lib/sync-inventory.mjs); this CLI declares no inventory list of its own.
 import { bundleForRepo, versionContractBundle, readSource, realMissingDeps, describeUntrackedMigrations } from './lib/sync-inventory.mjs';
+import { planRootMcp } from './lib/sync-mcp-optin.mjs';
 
 // Ownership comparand only: a source that cannot be read proves nothing, so it maps to null (the destination stays a collision);
 // only ENOENT is silent. Bundle RESOLUTION never does this (lib/sync-inventory.mjs `readSource` throws).
@@ -243,7 +244,6 @@ const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
 
 // ANSI colours
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
-
 
 /**
  * Project a bundle's file list down to the canonical skill-name set that
@@ -765,6 +765,7 @@ async function main() {
       continue;
     }
 
+    const mcpPlan = planRootMcp({ consumerRoot: repo.path, sourceRoot: SOURCE_ROOT, syncOptIn: loadOverrides(repo.path).syncOptIn, log: (n) => console.log(`  ${D}note${X}  ${n}`) }); repo = mcpPlan.scope(repo); // root .mcp.json is opt-in per consumer
     let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
     // Counted, not silent: a non-zero value means two checkouts of this repo
     // disagree on line endings, which is worth knowing even though the sync now
@@ -922,7 +923,7 @@ async function main() {
       }
     } catch { /* corrupt prior manifest — treat as missing */ }
     const priorLayout = priorManifest?.layout || 'legacy';
-    const priorFiles = priorManifest?.files || {};
+    const priorFiles = mcpPlan.dropOmitted(priorManifest?.files || {});
 
     // ── Pre-flight #0: the consumer's own ownership declaration ────────────
     // Read before anything else consults it, and a malformed file ABORTS this
@@ -1105,7 +1106,7 @@ async function main() {
       // loop uses, so a byte-identical orphan is recognised whatever its type); a shared config surface is merged instead.
       const dest = readConsumerFile(repo.path, dstRel);
       const verdict = decideUnmanifested({
-        srcRel, dstRel, destContent: dest.state === 'present' ? dest.content : null, sourceText: readSourceOrNull(srcRel),
+        srcRel, dstRel, destContent: dest.state === 'present' ? dest.content : null, sourceText: mcpPlan.textFor(srcRel) ?? readSourceOrNull(srcRel),
         rewriteConfig, bannerMarker: BANNER_MARKER,
         priorUpstreamMatches: ({ acceptRaw } = {}) => { const h = hashConsumerFile(repo.path, dstRel); return h.state === 'present' ? priorUpstream.matches(srcRel, h.hash.slice('sha256:'.length), { render: priorRenderer(srcRel, dstRel), acceptRaw: acceptRaw !== false }) : null; },
       });
@@ -1202,7 +1203,7 @@ async function main() {
       // applicable. JSON files: merge with existing consumer content first,
       // then rewrite the merged tree. Text files: rewrite directly.
       let srcContent;
-      try { srcContent = fs.readFileSync(srcPath, 'utf-8'); }
+      try { srcContent = mcpPlan.textFor(srcRel) ?? fs.readFileSync(srcPath, 'utf-8'); }
       catch (err) {
         console.log(`  ${R}ERR${X}  ${srcRel}: read failed: ${err.message?.slice(0, 100)}`);
         repoErrors++; totalErrors++; failedWrites.add(dstRel);
@@ -1517,7 +1518,7 @@ async function main() {
         const consumerManifest = buildConsumerManifest({
           generatedAt: new Date().toISOString(),
           repo: 'Lbstrydom/claude-engineering-skills',
-          sourceGitMeta, mcpManagedServers: repo.files.includes('.mcp.json') ? readSourceManagedServers(SOURCE_ROOT) : null,
+          sourceGitMeta, mcpManagedServers: repo.files.includes('.mcp.json') ? mcpPlan.names : null,
           files: consumerFileMap,
           // null (git unavailable) propagates as "not determined" rather than
           // collapsing to clean — `.some()` on a null set would be exactly the
