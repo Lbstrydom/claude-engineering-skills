@@ -93,7 +93,7 @@ export function findingView(f, runKey, i) {
 export function ledgerTargets(snapshot, { upToRound = Infinity } = {}) {
   const byId = new Map(); const byTopic = new Map();
   // Text is resolved ONLY from rounds a reader at `upToRound` could have seen (no later re-raise overrides an earlier concern's text).
-  for (const r of snapshot.rounds) if (r.round <= upToRound) for (const f of r.findings) { byId.set(f.id, f); byTopic.set(f.topicId ?? f._hash, f); }
+  for (const r of snapshot.rounds) if (r.round <= upToRound) for (const f of r.findings) { if (!byId.has(f.id)) byId.set(f.id, f); const t = f.topicId ?? f._hash; if (!byTopic.has(t)) byTopic.set(t, f); } // FIRST raise wins: the concern's original text, not a later re-raise
   return snapshot.ledgerEntries.map((e, i) => {
     const f = byId.get(e.findingId) ?? byTopic.get(e.topicId) ?? null;
     return {

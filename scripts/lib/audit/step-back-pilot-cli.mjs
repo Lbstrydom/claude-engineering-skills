@@ -295,6 +295,7 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
     if (prior && stampMismatch(prior.stamps[name], judges[name].stamp)) throw new Error(`judge "${name}" resolves differently from the frozen stamp; refusing a repeat under a different judge`);
   }
   const out = prior ?? { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: dataset.datasetHash, resultsSha256: resultsSha, stamps: Object.fromEntries(Object.entries(judges).map(([n, j]) => [n, j.stamp])), byFinding: {}, incomplete: false };
+  out.incomplete = true; // every intermediate checkpoint reads INCOMPLETE; only a normal finish clears it (below)
   for (const row of readRunRows(resultsPath)) {
     const fs_ = row.findings.filter(mediumPlus);
     if (!fs_.length) continue;
@@ -305,7 +306,7 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
       if (!todo.length) continue;
       for (let at = 0; at < todo.length; at += NOVELTY_CHUNK) {
       const chunk = todo.slice(at, at + NOVELTY_CHUNK);
-      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: chunk.map((f) => ({ id: f.key, file: f.file, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
+      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: chunk.map((f) => ({ id: f.key, file: f.file, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap, { upToRound: point.checkpoint }), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
       for (const pf of r.perFinding) (out.byFinding[pf.id] ||= {})[name] = { novel: pf.novel, flags: pf.flags, sameOf: pf.sameOf ?? null, partialOf: pf.partialOf ?? null, notJudged: pf.notJudged ?? false };
       writeJson(outPath, out); // after EVERY chunk: a budget stop or crash keeps what was already paid for
       }

@@ -174,3 +174,18 @@ describe('operator-input validation on a REAL frozen dataset (R3 M3/H8, R4 M1/M4
     assert.match(fs.readFileSync(path.join(out, 'calibration-worksheet.md'), 'utf8'), /Label: same/, 'the labelled file is intact');
   });
 });
+
+test('R7 G2: an interrupted novelty run leaves a checkpoint that reads INCOMPLETE', async () => {
+  const dir = setup(); const dsPath = path.join(dir, 'ds.json'); const dataset = JSON.parse(fs.readFileSync(dsPath, 'utf8'));
+  const p = dataset.points.find((x) => x.status === 'recoverable');
+  const res = path.join(dir, 'r.jsonl');
+  fs.writeFileSync(res, [{ type: 'header', plannedPairs: 1, datasetHash: dataset.datasetHash }, { type: 'run', pointId: p.pointId, arm: 'CONTINUE', rep: 0, findings: Array.from({ length: 8 }, (_, i) => ({ key: `k${i}`, severity: 'HIGH', file: 'a.mjs', text: 't', affectedFiles: [] })) }].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const cal = path.join(dir, 'cal.json');
+  fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: dataset.datasetHash, judges: { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } } }));
+  let n = 0;
+  const deps = { createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'm' } }), classifyNovelty: async ({ findings }) => { if (++n === 2) { const e = new Error('cap'); e.code = 'budget-stop'; throw e; } return { perFinding: findings.map((f) => ({ id: f.id, novel: true, flags: [], notJudged: false })) }; } };
+  await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps }), (e) => e.code === 'budget-stop');
+  const onDisk = JSON.parse(fs.readFileSync(`${res}.novelty.json`, 'utf8'));
+  assert.equal(onDisk.incomplete, true, 'the partial checkpoint is not mistaken for a finished run');
+  assert.ok(Object.keys(onDisk.byFinding).length > 0, 'control: the first chunk was kept');
+});
