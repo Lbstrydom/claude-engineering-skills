@@ -99,6 +99,8 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const dir = need('--out-dir');
   const key = JSON.parse(fs.readFileSync(path.join(dir, 'pilot1-worksheet.key.json'), 'utf8'));
   const labelsById = parseWorksheetLabels(fs.readFileSync(need('--labels'), 'utf8'));
+  const statePath = `${resultsPath}.audit-state.json`;
+  if (fs.existsSync(statePath) && JSON.parse(fs.readFileSync(statePath, 'utf8')).outcome === 'audit-failed' && key.audit.all !== true) throw new ArgvError('the last score was audit-failed: score only the --audit all worksheet (a sampled worksheet can no longer be scored)');
   const planned = readHeader(resultsPath).plannedPairs; // the FROZEN schedule, never what happened to be recorded
   if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });

@@ -255,3 +255,12 @@ Restates: \`${a}\`
 `, { R001: [a] });
   assert.deepEqual(out.filterRecall.R001, [a]);
 });
+
+test('A2 R2 H3: an invalid member of a pair excludes its valid partner from scoring (no blocking on a missing judgment there)', () => {
+  const runs = [
+    { pointId: 'p', arm: 'META', rep: 0, valid: false, invalidReason: 'canary-missed', costUsd: 1, findings: [] },
+    { pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: [{ key: 'x', severity: 'HIGH' }] },
+  ];
+  const s = scoreMetaRuns({ runs, hidden: new Map(), labels: new Map() });
+  assert.equal(s.incomplete, false); assert.equal(s.rows.find((r) => r.arm === 'CONTINUE').valid, true, 'the run record is kept; only its findings are not scored');
+});

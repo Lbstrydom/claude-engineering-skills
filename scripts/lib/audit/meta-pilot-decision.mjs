@@ -138,9 +138,11 @@ export const HUMAN_LABELS = Object.freeze(['REAL', 'WRONG', 'NOT_A_DEFECT', 'RIG
  */
 export function scoreMetaRuns({ runs, hidden, labels }) {
   const blocked = [];
+  // A pair counts only when BOTH runs are valid: an invalid member excludes its partner's findings from scoring too.
+  const badPair = new Set(runs.filter((r) => r.valid !== true).map((r) => `${r.pointId}#${r.rep}`));
   const rows = runs.map((r) => {
     let hm = 0; let any = 0; let noise = 0; let known = 0;
-    if (r.valid !== true) return { pointId: r.pointId, arm: r.arm, rep: r.rep, valid: false, invalidReason: r.invalidReason ?? null, stopRun: r.stopRun === true, novelActionableHM: 0, novelActionable: 0, noise: 0, known: 0, costUsd: r.costUsd }; // an invalid pair is excluded from the decision: its findings are never scored or blocking
+    if (r.valid !== true || badPair.has(`${r.pointId}#${r.rep}`)) return { pointId: r.pointId, arm: r.arm, rep: r.rep, valid: r.valid === true, invalidReason: r.invalidReason ?? null, stopRun: r.stopRun === true, novelActionableHM: 0, novelActionable: 0, noise: 0, known: 0, costUsd: r.costUsd }; // an invalid pair is excluded from the decision: its findings are never scored or blocking
     if (!Array.isArray(r.findings)) blocked.push({ key: `${r.pointId}/${r.arm}/${r.rep}`, reason: 'valid-run-without-findings' });
     const findings = Array.isArray(r.findings) ? r.findings : []; // a non-array is blocked above and never iterated
     for (const f of findings) {
