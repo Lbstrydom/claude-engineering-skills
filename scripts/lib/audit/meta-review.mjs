@@ -163,9 +163,10 @@ export function appendMetaEvent(file, event, { fsImpl = fs } = {}) {
 export function foldMetaLog(events) {
   const decisions = new Map();
   const overridden = new Map();
+  const reserved = new Set();
   let sentCount = 0; let duplicates = 0; let captures = 0;
   for (const e of events || []) {
-    if (e?.event === 'reserve') sentCount++;
+    if (e?.event === 'reserve') { sentCount++; reserved.add(e.attemptId); }
     else if (e?.event === 'decision') {
       const prev = decisions.get(e.attemptId);
       // A decision made before anything was sent (no route, budget, plan excluded) is RETRYABLE: a later one replaces it.
@@ -175,7 +176,7 @@ export function foldMetaLog(events) {
       overridden.get(e.attemptId).push(e);
     } else if (e?.event === 'debt-capture') captures++;
   }
-  return { decisions, overridden, sentCount, duplicates, captures };
+  return { decisions, overridden, reserved, sentCount, duplicates, captures };
 }
 
 /** An `unavailable` decision for which no request was sent: nothing was decided, so it is not reused. */
@@ -329,12 +330,16 @@ export async function appendMetaOverride({ auditDir, sid, attemptId, kind, by, r
   return { ok: true, recorded: rec.recorded, recordReason: rec.reason };
 }
 
-/** A lock whose recorded owner pid no longer exists is stale (the owner crashed). An unreadable or empty owner is NOT stale: fail closed. */
-export function lockOwnerIsGone(lock, { kill = process.kill.bind(process) } = {}) {
-  let pid;
-  try { pid = Number.parseInt(fs.readFileSync(lock, 'utf8'), 10); } catch { return false; }
-  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
-  try { kill(pid, 0); return false; } catch (err) { return err?.code === 'ESRCH'; }
+/**
+ * THE one resolver for "is this attempt already decided?". Every read uses it (the first read, the read under the
+ * session lock, the winner check after the append), so an override can never be skipped by one path and honoured by
+ * another. Returns null when nothing actionable exists (no decision, or only a retryable unsent one).
+ */
+export function resolveExisting({ fold, attemptId, human }) {
+  const d = fold.decisions.get(attemptId);
+  if (!d || isRetryable(d)) return null;
+  if (fold.overridden.has(attemptId)) return { ran: true, reused: true, persisted: true, overridden: true, decision: d, effect: human, honoured: false, lines: [`  [meta-review] decision ${attemptId} was overridden by a human: the human path applies`] };
+  return { ran: true, reused: true, persisted: true, decision: d, effect: d.guard.effect, honoured: !!d.guard.honoured, lines: [`  [meta-review] reusing decision ${attemptId}: ${d.guard.effect}${d.guard.honoured ? '' : ' (downgraded)'}`] };
 }
 
 /** sha256 of what the guard reads: each round's finding ids/topics/severities and each ledger ruling. Order-insensitive. */
@@ -345,32 +350,39 @@ export function decisionInputsDigest({ rounds, ledgerEntries }) {
 }
 
 /**
- * Session-scoped budget reservation: take an exclusive lock file, re-read the log, check the budget, append the
- * reserve event, release. A held lock is retried briefly (another reservation is a sub-millisecond append), then
- * fails closed. Synchronous on purpose: no await between the check and the append.
- * @returns {{ok: true, sentCount: number}|{ok: false, budget?: boolean, sentCount?: number, reason?: string}}
+ * The ONE critical section. Under a session-scoped exclusive lock, re-read the log and (1) reuse a decision another
+ * invocation persisted, (2) refuse an attempt another invocation reserved and has not decided (in flight, or crashed
+ * mid-call: fail closed, the human path applies), (3) refuse past the budget, else (4) append the `reserve` event,
+ * which is both the budget charge and the attempt's claim. Synchronous: no await between the check and the append.
+ * A held lock is retried briefly (the section is one read and one append), then fails closed. A lock a crashed process
+ * left behind is never stolen (that race cannot be closed with a lock file); the message names it for a human.
+ * @returns {{ok: true, sentCount: number}|{ok: false, reuse?: object, inFlight?: boolean, budget?: boolean, sentCount?: number, reason?: string}}
  */
-export function reserveUnderSessionLock({ auditDir, sid, file, budget, event, append = appendMetaEvent, tries = 50 }) {
-  const lock = path.join(auditDir, `${sid || 'session'}.meta-budget.lock`);
+export function reserveUnderSessionLock({ auditDir, sid, file, budget, attemptId, human = 'human-card', event, append = appendMetaEvent, tries = 50 }) {
+  const lock = path.join(auditDir, `${sid || 'session'}.meta-review.lock`);
+  try { fs.mkdirSync(auditDir, { recursive: true }); } catch (err) { return { ok: false, reason: `audit dir (${err?.code || err?.message})` }; }
   let fd = null;
   for (let i = 0; i < tries && fd == null; i++) {
-    try { fd = fs.openSync(lock, 'wx'); fs.writeSync(fd, String(process.pid)); } catch (err) {
-      if (err?.code !== 'EEXIST') return { ok: false, reason: `budget lock (${err?.code || err?.message})` };
-      if (lockOwnerIsGone(lock)) { try { fs.rmSync(lock, { force: true }); } catch { /* retried below */ } continue; }
+    try { fd = fs.openSync(lock, 'wx'); } catch (err) {
+      if (err?.code !== 'EEXIST') return { ok: false, reason: `session lock (${err?.code || err?.message})` };
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
-  if (fd == null) return { ok: false, reason: `budget lock ${path.basename(lock)} held (a crashed invocation leaves it: delete it after checking)` };
+  if (fd == null) return { ok: false, reason: `session lock ${path.basename(lock)} is held (if no audit of this session is running, a crashed one left it: delete it)` };
   try {
     const log = readMetaLog(file);
     if (log.malformed) return { ok: false, reason: `log malformed (${log.malformed})` };
-    const sentCount = foldMetaLog(log.events).sentCount;
-    if (sentCount >= budget) return { ok: false, budget: true, sentCount };
+    const fold = foldMetaLog(log.events);
+    const reuse = resolveExisting({ fold, attemptId, human });
+    if (reuse) return { ok: false, reuse };
+    if (fold.reserved.has(attemptId)) return { ok: false, inFlight: true, reason: `attempt ${attemptId} is reserved by another invocation with no decision yet (running, or crashed mid-call)` };
+    if (fold.sentCount >= budget) return { ok: false, budget: true, sentCount: fold.sentCount };
     let out;
     try { out = append(file, event); } catch (err) { out = { ok: false, reason: String(err?.message || err).slice(0, 200) }; }
-    return out.ok ? { ok: true, sentCount: sentCount + 1 } : { ok: false, reason: out.reason };
+    return out.ok ? { ok: true, sentCount: fold.sentCount + 1 } : { ok: false, reason: out.reason };
   } finally {
-    try { fs.closeSync(fd); fs.rmSync(lock, { force: true }); } catch { /* a leftover lock fails closed next time */ }
+    try { fs.closeSync(fd); } catch { /* removed below either way */ }
+    try { fs.rmSync(lock, { force: true }); } catch { /* a leftover lock fails closed next time, by design */ }
   }
 }
 
@@ -426,12 +438,8 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const log = readMetaLog(file);
   if (log.malformed) return notRun(`decision log ${path.basename(file)} is malformed (${log.malformed}); the human path applies`);
   const fold = foldMetaLog(log.events);
-  const existing = fold.decisions.get(attemptId);
-  if (existing && !isRetryable(existing)) {
-    // An overridden decision is never re-applied: the human's call stands (the gate records and honours the override).
-    if (fold.overridden.has(attemptId)) return { ran: true, reused: true, persisted: true, overridden: true, decision: existing, effect: human, honoured: false, lines: [`  [meta-review] decision ${attemptId} was overridden by a human: the human path applies`] };
-    return { ran: true, reused: true, persisted: true, decision: existing, effect: existing.guard.effect, honoured: !!existing.guard.honoured, lines: [`  [meta-review] reusing decision ${attemptId}: ${existing.guard.effect}${existing.guard.honoured ? '' : ' (downgraded)'}`] };
-  }
+  const reused = resolveExisting({ fold, attemptId, human });
+  if (reused) return reused;
 
   // Signals (code audits only) at the checkpoint the trigger reads.
   let signals = null; let signalsLine = null;
@@ -455,13 +463,10 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const finish = async (fields) => {
     const decision = { ...base, ...fields };
     const out = (deps.append || appendMetaEvent)(file, decision);
-    releaseClaim();
-    // Act on the PERSISTED winner: if another invocation's decision for this attempt landed first, that one stands.
+    // Act on the PERSISTED state through the one resolver: a rival's earlier decision, or an override, stands.
     if (out.ok) {
-      const winner = foldMetaLog(readMetaLog(file).events).decisions.get(attemptId);
-      if (winner && winner.eventId !== out.event.eventId && !isRetryable(winner)) {
-        return { ran: true, reused: true, persisted: true, decision: winner, effect: winner.guard.effect, honoured: !!winner.guard.honoured, lines: [`  [meta-review] another invocation decided ${attemptId} first: acting on its decision (${winner.guard.effect})`] };
-      }
+      const now = resolveExisting({ fold: foldMetaLog(readMetaLog(file).events), attemptId, human });
+      if (now && (now.overridden || now.decision.eventId !== out.event.eventId)) return now;
     }
     const lines = [`  [meta-review] ${trigger} ${attemptId}: ${decision.state}${decision.verdict ? ` → ${decision.verdict.action}` : ''} · ${decision.guard.effect}${decision.guard.honoured ? ' (honoured)' : ` (${decision.guard.reasonCode})`} — ${decision.guard.reason}`];
     if (decision.model) lines.push(`  [meta-review] reviewer ${decision.arm} (${decision.model}) · cost $${(decision.costUsd ?? 0).toFixed(4)} (${decision.spendSource})`);
@@ -474,8 +479,6 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
     lines.push(rec.recorded ? `  [meta-review] recorded (${META_DECISION_TYPE})` : `  [meta-review] learning row not recorded (${rec.reason})`);
     return { ran: true, persisted: true, decision, effect: decision.guard.effect, honoured: !!decision.guard.honoured, lines };
   };
-  let claimFile = null;
-  const releaseClaim = () => { if (claimFile) { try { fs.rmSync(claimFile, { force: true }); } catch { /* a stale claim fails closed next time */ } claimFile = null; } };
   const unavailable = (reason, extra = {}) => finish({ state: 'unavailable', reason: red(reason).slice(0, 300), guard: { effect: human, honoured: false, reasonCode: 'unavailable', reason: red(reason).slice(0, 300) }, ...extra });
 
   const budget = META_REVIEW_SESSION_BUDGET[mode];
@@ -497,23 +500,11 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const sel = (deps.selectProvider || createMetaReviewProvider)({ auditorModel });
   if (!sel.ok) return unavailable(`${sel.reason}${sel.skipped?.length ? ` (${sel.skipped.map((s) => `${s.arm}: ${s.reason}`).join('; ')})` : ''}`, { auditorFamily: sel.auditorFamily ?? null });
   const who = { arm: sel.arm, sentinel: sel.provider.sentinel, model: sel.provider.model, reviewerFamily: sel.family, auditorFamily: sel.auditorFamily };
-  // Claim the attempt exclusively, then RESERVE the budget durably, both BEFORE the request is sent: a crash after send
-  // still counts against the budget, and a concurrent invocation cannot send the same attempt.
-  const claimPath = path.join(auditDir, `${attemptId}.meta-claim`);
-  try { fs.mkdirSync(auditDir, { recursive: true }); fs.closeSync(fs.openSync(claimPath, 'wx')); claimFile = claimPath; } catch (err) {
-    return notRun(err?.code === 'EEXIST' ? `attempt ${attemptId} is claimed by another invocation (or a crashed one: delete ${path.basename(claimPath)} after checking); the human path applies` : `could not claim the attempt (${err?.code || err?.message})`);
-  }
-  // Re-read AFTER the claim: an invocation that finished while this one waited has already decided this attempt.
-  const afterClaim = foldMetaLog(readMetaLog(file).events).decisions.get(attemptId);
-  if (afterClaim && !isRetryable(afterClaim)) {
-    releaseClaim();
-    return { ran: true, reused: true, persisted: true, decision: afterClaim, effect: afterClaim.guard.effect, honoured: !!afterClaim.guard.honoured, lines: [`  [meta-review] decided by another invocation while waiting: reusing ${attemptId}`] };
-  }
-  // The budget check and the reservation run under ONE session-scoped lock, re-reading the log inside it, so two
-  // concurrent attempts with different evidence cannot both take the last slot.
-  const reservation = reserveUnderSessionLock({ auditDir, sid, file, budget, event: { event: 'reserve', attemptId, at: base.at, arm: sel.arm }, append: deps.append || appendMetaEvent });
+  // Reserve under the session lock BEFORE the request is sent: the reserve event is the budget charge and the claim,
+  // so a crash after send still counts, and a concurrent invocation can neither send this attempt nor take the last slot.
+  const reservation = reserveUnderSessionLock({ auditDir, sid, file, budget, attemptId, human, event: { event: 'reserve', attemptId, at: base.at, arm: sel.arm }, append: deps.append || appendMetaEvent });
   if (!reservation.ok) {
-    releaseClaim();
+    if (reservation.reuse) return reservation.reuse;
     if (reservation.budget) return unavailable(`session-budget: ${reservation.sentCount} of ${budget} reviewer calls already made for this session`);
     return notRun(`could not reserve the reviewer call (${reservation.reason}); nothing was sent`);
   }

@@ -14,7 +14,7 @@ import { topicOf } from '../scripts/lib/audit/cap-productivity.mjs';
 import {
   runMetaReview, guardMetaDecision, openInventory, ruledBefore, metaTriggerFor, isMetaReviewOptedOut,
   fingerprintOf, attemptIdFor, metaLogPath, readMetaLog, appendMetaEvent, foldMetaLog, admissionFor,
-  honouredLoopEnd, spendOf, projectMetaDecisionForStore, appendMetaOverride, META_REVIEW_SESSION_BUDGET, renderMetaLog, reserveUnderSessionLock, lockOwnerIsGone,
+  honouredLoopEnd, spendOf, projectMetaDecisionForStore, appendMetaOverride, META_REVIEW_SESSION_BUDGET, renderMetaLog, reserveUnderSessionLock, resolveExisting,
 } from '../scripts/lib/audit/meta-review.mjs';
 import { buildStepBackPack, parseMetaReviewOutput, MetaReviewSchema } from '../scripts/lib/audit/step-back.mjs';
 import { createMetaReviewProvider, createStepBackProvider } from '../scripts/lib/audit/step-back-provider.mjs';
@@ -326,13 +326,13 @@ describe('R1 fixes', () => {
     assert.deepEqual(events.map((e) => e.event), ['reserve', 'decision']);
     assert.equal(foldMetaLog(events).sentCount, 1);
   });
-  test('a held claim (another or crashed invocation) → not run, no call', async () => {
+  test('an attempt reserved by another invocation with no decision (in flight / crashed mid-call) → not run, no call', async () => {
     const p = provider(stopAll());
     const d = deps({ prov: p });
     const probe = await run({}, { ...d, selectProvider: () => ({ ok: false, reason: 'probe', skipped: [] }) });
-    fs.writeFileSync(path.join(dir, `${probe.decision.attemptId}.meta-claim`), '');
+    appendMetaEvent(metaLogPath(dir, 'audit-plan-1-1'), { event: 'reserve', attemptId: probe.decision.attemptId });
     const r = await run({}, d);
-    assert.equal(r.ran, false); assert.match(r.reason, /claimed by another invocation/); assert.equal(p.calls.length, 0);
+    assert.equal(r.ran, false); assert.match(r.reason, /reserved by another invocation/); assert.equal(p.calls.length, 0);
   });
   test('a concurrent winner for the same attempt is the decision acted on', async () => {
     const d = deps({ prov: provider(stopAll()) });
@@ -372,15 +372,18 @@ describe('R1 fixes', () => {
 describe('R2 fixes', () => {
   test('REGRESSION (R2 H1): the budget is checked inside a session lock — a slot taken meanwhile is seen', () => {
     const file = metaLogPath(dir, 's');
-    const first = reserveUnderSessionLock({ auditDir: dir, sid: 's', file, budget: 1, event: { event: 'reserve', attemptId: 'a' } });
+    const first = reserveUnderSessionLock({ auditDir: dir, sid: 's', file, budget: 1, attemptId: 'a', event: { event: 'reserve', attemptId: 'a' } });
     assert.equal(first.ok, true);
-    const second = reserveUnderSessionLock({ auditDir: dir, sid: 's', file, budget: 1, event: { event: 'reserve', attemptId: 'b' } });
+    const second = reserveUnderSessionLock({ auditDir: dir, sid: 's', file, budget: 1, attemptId: 'b', event: { event: 'reserve', attemptId: 'b' } });
     assert.equal(second.ok, false); assert.equal(second.budget, true);
   });
-  test('a held session lock fails closed (no reservation, no call)', () => {
-    fs.writeFileSync(path.join(dir, 's.meta-budget.lock'), String(process.pid));
-    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, tries: 2 });
-    assert.equal(r.ok, false); assert.match(r.reason, /held/);
+  test('a held (or crashed-and-left) session lock fails closed and is never stolen', () => {
+    const lock = path.join(dir, 's.meta-review.lock');
+    fs.writeFileSync(lock, '');
+    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, attemptId: 'a', event: { event: 'reserve', attemptId: 'a' }, tries: 2 });
+    assert.equal(r.ok, false); assert.match(r.reason, /is held/);
+    assert.equal(fs.existsSync(lock), true, 'the lock is left for a human, not removed');
+    assert.equal(readMetaLog(metaLogPath(dir, 's')).events.length, 0, 'nothing reserved');
   });
   test('REGRESSION (R2 H2): a changed ledger ruling at the same round decides afresh', async () => {
     const p = provider(stopAll());
@@ -397,22 +400,10 @@ describe('R2 fixes', () => {
 });
 
 describe('R3 fixes', () => {
-  test('REGRESSION (R3 M2): a lock left by a dead owner is recovered; a live or unknown owner is not', () => {
-    const lock = path.join(dir, 's.meta-budget.lock');
-    fs.writeFileSync(lock, '999999');
-    assert.equal(lockOwnerIsGone(lock, { kill: () => { throw Object.assign(new Error('no such process'), { code: 'ESRCH' }); } }), true);
-    assert.equal(lockOwnerIsGone(lock, { kill: () => true }), false, 'a live owner keeps its lock');
-    fs.writeFileSync(lock, '');
-    assert.equal(lockOwnerIsGone(lock), false, 'an empty owner fails closed');
-    fs.writeFileSync(lock, '999999');
-    assert.equal(lockOwnerIsGone(lock), true, 'precondition: pid 999999 is not running here (real process.kill → ESRCH)');
-    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, tries: 3 });
-    assert.equal(r.ok, true, 'the stale lock is taken over and the reservation lands');
-  });
   test('REGRESSION (R3 M1): a throwing appender is a failed reservation, never a rejection', () => {
-    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, append: () => { throw new Error('EIO'); } });
+    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, attemptId: 'a', event: { event: 'reserve', attemptId: 'a' }, append: () => { throw new Error('EIO'); } });
     assert.equal(r.ok, false); assert.match(r.reason, /EIO/);
-    assert.equal(fs.existsSync(path.join(dir, 's.meta-budget.lock')), false, 'the lock is released');
+    assert.equal(fs.existsSync(path.join(dir, 's.meta-review.lock')), false, 'the lock is released');
   });
   test('REGRESSION (R3 H1): a changed finding detail at the same round decides afresh', async () => {
     const p = provider(stopAll());
@@ -429,6 +420,29 @@ describe('R3 fixes', () => {
     // Simulate the rival finishing between our first read and our claim: inject its decision at provider selection.
     const r = await run({}, { ...d, selectProvider: (a) => { appendMetaEvent(metaLogPath(dir, 'audit-plan-1-1'), { event: 'decision', attemptId: id, sent: true, state: 'valid', guard: { effect: 'stop', honoured: true, reasonCode: 'ok', reason: 'rival' } }); return p.select(a); } });
     assert.equal(r.reused, true); assert.equal(p.calls.length, 0);
+  });
+});
+
+describe('R4 pivot: one lock, one resolver', () => {
+  test('REGRESSION (R4 H2): a rival decision that a human then overrode, both landing while this invocation worked, is not applied', async () => {
+    const p = provider(stopAll());
+    const d = deps({ prov: p });
+    const probe = await run({}, { ...d, selectProvider: () => ({ ok: false, reason: 'probe', skipped: [] }) });
+    const id = probe.decision.attemptId; const file = metaLogPath(dir, 'audit-plan-1-1');
+    const r = await run({}, { ...d, selectProvider: (a) => {
+      appendMetaEvent(file, { event: 'decision', attemptId: id, sent: true, state: 'valid', guard: { effect: 'stop', honoured: true, reasonCode: 'ok', reason: 'rival' } });
+      appendMetaEvent(file, { event: 'override', attemptId: id, by: 'louis', reason: 'continuing deliberately' });
+      return p.select(a);
+    } });
+    assert.equal(r.overridden, true); assert.equal(r.effect, 'human-card'); assert.equal(p.calls.length, 0);
+  });
+  test('resolveExisting: none, retryable, overridden, honoured', () => {
+    const fold = (events) => foldMetaLog(events);
+    assert.equal(resolveExisting({ fold: fold([]), attemptId: 'a', human: 'human-card' }), null);
+    assert.equal(resolveExisting({ fold: fold([{ event: 'decision', attemptId: 'a', state: 'unavailable', sent: false, guard: {} }]), attemptId: 'a', human: 'human-card' }), null);
+    const dec = { event: 'decision', attemptId: 'a', state: 'valid', sent: true, guard: { effect: 'stop', honoured: true } };
+    assert.equal(resolveExisting({ fold: fold([dec]), attemptId: 'a', human: 'human-card' }).effect, 'stop');
+    assert.equal(resolveExisting({ fold: fold([dec, { event: 'override', attemptId: 'a' }]), attemptId: 'a', human: 'human-card' }).effect, 'human-card');
   });
 });
 
