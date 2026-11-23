@@ -890,7 +890,7 @@ describe('telemetry linkage chain (DB integration)', { skip }, () => {
     const ok = await durableWrite('audit.passStats', { runId: run, passName: 'backend', round: 2, stats: { raised: 1 } }, { repoRoot: spillRoot });
     assert.equal(ok.outcome, 'written');
     assert.equal((await q.one('SELECT round FROM audit_pass_stats WHERE run_id = $1', [run])).round, 2);
-    fs.rmSync(spillRoot, { recursive: true, force: true });
+    fs.rmSync(spillRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   test('RETRY: a retried round (two rows, one key) stays linked, and a replayed call batch writes once', async () => {
