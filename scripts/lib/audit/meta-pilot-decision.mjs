@@ -144,6 +144,8 @@ export function scoreMetaRuns({ runs, novelByFinding, labels }) {
   const blocked = [];
   const rows = runs.map((r) => {
     let hm = 0; let any = 0; let noise = 0;
+    // A valid run must carry a findings collection: a missing one is an incomplete record, not "no findings".
+    if (r.valid && !Array.isArray(r.findings)) blocked.push({ key: `${r.pointId}/${r.arm}/${r.rep}`, reason: 'valid-run-without-findings' });
     for (const f of r.findings || []) {
       const sev = String(f.severity).toUpperCase();
       if (sev !== 'HIGH' && sev !== 'MEDIUM') continue;

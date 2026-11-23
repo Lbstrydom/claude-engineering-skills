@@ -430,10 +430,14 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     const budgeted = withBudget(
       { seam: 'final-review.callReviewer', provider: BUDGET_PROVIDER_BY_TRANSPORT[transportKind] ?? transportKind, model,
         body: { systemPrompt, userPrompt, jsonSchema, toolSchema, openAiJsonSchema, requestExtras }, outputCap: MAX_OUTPUT_TOKENS },
-      () => Promise.race([
+      () => {
+        // A reservation that stalled past the deadline and then succeeded must not START the request: nothing was sent.
+        if (controller.signal.aborted) throw Object.assign(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s (before the request was sent)`), { budgetNotSent: true });
+        return Promise.race([
         adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal, requestExtras, openAiJsonSchema }),
         timeoutPromise,
-      ]),
+      ]);
+      },
       (r) => ({ usage: r?.usage, modelServed: model }),
     );
     budgeted.catch?.(() => {}); // if the outer deadline wins, the inner settlement/rejection must not be unhandled

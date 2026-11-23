@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { freezeMetaPilot } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
-import { runNovelty, runContinue, runFreeze, buildWorksheet, parseWorksheetLabels, parseCalibrationAnswers, scorePilot, snapshotsPathFor, readRunRows, appendDurably } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
+import { runCalibrateDraw, runNovelty, runContinue, runFreeze, buildWorksheet, parseWorksheetLabels, parseCalibrationAnswers, scorePilot, snapshotsPathFor, readRunRows, appendDurably } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
 import { reserveCall, settleCall, readLedgerSummary } from '../scripts/lib/llm-budget.mjs';
 
 const T0 = Date.parse('2026-11-01T10:00:00Z');
@@ -153,5 +153,24 @@ describe('runNovelty gate and resumption (R2 H1/M5/M8)', () => {
     assert.equal(state.calls.length, 0, 'settled judgments are not re-paid');
     fs.appendFileSync(res, JSON.stringify({ type: 'run', pointId: 'x', findings: [] }) + '\n');
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) }), /different dataset or results file/);
+  });
+});
+
+describe('operator-input validation on a REAL frozen dataset (R3 M3/H8, R4 M1/M4)', () => {
+  test('an unknown --point id is rejected after the dataset loads; a known one is accepted', async () => {
+    const dir = setup(); const dsPath = path.join(dir, 'ds.json');
+    const ds = JSON.parse(fs.readFileSync(dsPath, 'utf8'));
+    const known = ds.points.find((p) => p.set === 'rehearsal').pointId;
+    await assert.rejects(() => runContinue({ datasetPath: dsPath, set: 'rehearsal', replicates: 1, dryRun: true, only: ['no-such-point'], auditScript: 'x', deps: { withTree: async () => ({ ok: true }) } }), /no-such-point, not in the rehearsal set/);
+    const r = await runContinue({ datasetPath: dsPath, set: 'rehearsal', replicates: 1, dryRun: true, only: [known], auditScript: 'x', deps: { withTree: async () => ({ ok: true }) } });
+    assert.equal(r.points.length, 1);
+  });
+  test('calibrate-draw refuses to overwrite a worksheet that already exists (a human may have labelled it)', () => {
+    const dir = setup(); const out = path.join(dir, 'cal');
+    const first = runCalibrateDraw({ datasetPath: path.join(dir, 'ds.json'), seed: 's', outDir: out });
+    assert.ok(first.findings > 0, 'control: the first draw found material');
+    fs.appendFileSync(path.join(out, 'calibration-worksheet.md'), '\nLabel: same\n');
+    assert.throws(() => runCalibrateDraw({ datasetPath: path.join(dir, 'ds.json'), seed: 's', outDir: out }), /already exists/);
+    assert.match(fs.readFileSync(path.join(out, 'calibration-worksheet.md'), 'utf8'), /Label: same/, 'the labelled file is intact');
   });
 });

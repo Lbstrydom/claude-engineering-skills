@@ -99,7 +99,8 @@ export function ledgerTargets(snapshot, { upToRound = Infinity } = {}) {
     return {
       id: String(e.topicId ?? e.findingId ?? i), file: e.affectedFiles?.[0] ?? f?._primaryFile ?? null, files: e.affectedFiles?.length ? e.affectedFiles : undefined, lines: null,
       severity: String(e.severity ?? f?.severity ?? '').toUpperCase(),
-      text: [e.category, f?.section, f?.detail, e.ruling].filter(Boolean).join('\n'),
+      // A ruling is later state unless it was made by `upToRound`: never let it leak into an earlier frame.
+      text: [e.category, f?.section, f?.detail, (e.round ?? 0) <= upToRound ? e.ruling : null].filter(Boolean).join('\n'),
     };
   });
 }

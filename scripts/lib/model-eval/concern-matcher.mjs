@@ -109,6 +109,7 @@ export function lineDistance(a, b) {
  * @returns {Array<{pairId:string,fId:string,xId:string,f:object,x:object,lineDistance:number|null}>}
  */
 export function filterCandidates(findings, xs, { window = DEFAULT_LINE_WINDOW } = {}) {
+  if (!Number.isFinite(window) || window < 0) throw new Error(`filterCandidates: window must be a finite number >= 0 (got ${window})`);
   const byFile = new Map();
   for (const x of xs ?? []) {
     for (const k of new Set(filesOf(x))) {

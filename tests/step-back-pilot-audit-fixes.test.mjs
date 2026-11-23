@@ -179,12 +179,29 @@ test('R3 H3/M2: calibration text comes only from earlier rounds and an overlappi
   assert.equal(m.findings.filter((f) => f.id.endsWith('|f2')).length, 1, 'the shared round-2 finding is one observation, not two');
 });
 
-test('R3 M3: an unknown --point id is an error, not a silent empty plan', async () => {
-  const { runContinue } = await import('../scripts/lib/audit/step-back-pilot-cli.mjs');
-  await assert.rejects(() => runContinue({ datasetPath: '/nonexistent.json', set: 'pilot', replicates: 1, dryRun: true, only: ['nope'], auditScript: 'x' }), /ENOENT|nope/);
+test('R4 H2: the clone origin must be on github.com as well as owner/name', () => {
+  const ok = (url) => verifyRepoIdentity({ name: 'Lbstrydom/wine-cellar-app', localPath: 'x' }, { git: () => url }).ok;
+  assert.equal(ok('https://github.com/Lbstrydom/wine-cellar-app.git'), true);
+  assert.equal(ok('git@github.com:Lbstrydom/wine-cellar-app.git'), true);
+  assert.equal(ok('https://git.corp.example.com/Lbstrydom/wine-cellar-app.git'), false, 'same owner/name on another host');
+  assert.equal(ok('git@gitlab.com:Lbstrydom/wine-cellar-app.git'), false);
 });
 
-test('R3 H8: drawing calibration into a directory that already holds a worksheet is refused (a human may have labelled it)', async () => {
-  const { runCalibrateDraw } = await import('../scripts/lib/audit/step-back-pilot-cli.mjs');
-  assert.equal(typeof runCalibrateDraw, 'function');
+test('R4 H5: a negative or non-finite line window is rejected, not silently dropping every pair', () => {
+  const f = { id: 'f', file: 'a.js', lines: [3, 3], text: 't' }; const x = { id: 'x', file: 'a.js', lines: [3, 3], text: 't' };
+  assert.throws(() => filterCandidates([f], [x], { window: -1 }), /window/);
+  assert.throws(() => filterCandidates([f], [x], { window: NaN }), /window/);
+  assert.equal(filterCandidates([f], [x], { window: 0 }).length, 1);
+});
+
+test('R4 H6: a valid run with no findings collection blocks the score instead of scoring as "no findings"', () => {
+  const runs = [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1 }];
+  const s = scoreMetaRuns({ runs, novelByFinding: new Map(), labels: new Map() });
+  assert.equal(s.incomplete, true); assert.equal(s.blocked[0].reason, 'valid-run-without-findings');
+});
+
+test('R4 H4: a ruling made after the frame round never leaks into an earlier calibration frame', () => {
+  const snap = { rounds: [{ round: 1, findings: [{ id: 'f1', severity: 'HIGH', category: '[backend] x', section: 's', detail: 'd', topicId: 'T' }] }], ledgerEntries: [{ topicId: 'T', findingId: 'f1', severity: 'HIGH', category: '[backend] x', affectedFiles: ['a.mjs'], firstSeenRound: 1, round: 5, ruling: 'LATE-RULING' }] };
+  assert.doesNotMatch(ledgerTargets(snap, { upToRound: 2 })[0].text, /LATE-RULING/);
+  assert.match(ledgerTargets(snap)[0].text, /LATE-RULING/, 'control: the full checkpoint state does carry it');
 });

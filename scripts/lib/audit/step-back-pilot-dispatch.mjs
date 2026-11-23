@@ -80,6 +80,7 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   }
   const { dataset } = loadDataset(datasetPath);
   const rows = readRunRows(resultsPath); const novelty = JSON.parse(fs.readFileSync(`${resultsPath}.novelty.json`, 'utf8'));
+  if (novelty.datasetHash !== dataset.datasetHash || novelty.resultsSha256 !== sha256OfFile(resultsPath)) throw new ArgvError('the novelty file does not match this dataset and results file; rerun novelty');
   if (cmd === 'worksheet') {
     const { markdown, key } = buildWorksheet({ rows, novelty, seed: need('--seed'), dataset });
     const dir = need('--out-dir'); fs.mkdirSync(dir, { recursive: true });
@@ -91,7 +92,6 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const dir = need('--out-dir');
   const key = JSON.parse(fs.readFileSync(path.join(dir, 'pilot1-worksheet.key.json'), 'utf8'));
   const labelsById = parseWorksheetLabels(fs.readFileSync(need('--labels'), 'utf8'));
-  if (novelty.datasetHash !== dataset.datasetHash || novelty.resultsSha256 !== sha256OfFile(resultsPath)) throw new ArgvError('the novelty file does not match this dataset and results file; rerun novelty');
   const planned = readHeader(resultsPath).plannedPairs; // the FROZEN schedule, never what happened to be recorded
   if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });

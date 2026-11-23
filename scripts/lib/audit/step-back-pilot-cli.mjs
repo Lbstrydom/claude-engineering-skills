@@ -62,7 +62,11 @@ export function assertPinnedFixture(cwd = process.cwd()) {
 export function verifyRepoIdentity(r, { git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } = {}) {
   let url;
   try { url = git(r.localPath, ['remote', 'get-url', 'origin']); } catch { return { ok: false, reason: `its local clone ${r.localPath} has no readable origin remote` }; }
-  const slug = /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1];
+  // Host AND owner/name: a same-named repository on another host is not the authorised one.
+  const m = /^(?:https?:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/|(?:ssh:\/\/)?[^@/]+@([^/:]+)[:/])([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url);
+  const host = (m?.[1] ?? m?.[2] ?? '').toLowerCase();
+  if (host !== 'github.com') return { ok: false, reason: `its clone's origin host is ${host || '(unparseable)'}, not github.com` };
+  const slug = m?.[3];
   return slug && slug.toLowerCase() === String(r.name).toLowerCase() ? { ok: true } : { ok: false, reason: `its clone's origin is ${slug ?? url}` };
 }
 
