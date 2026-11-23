@@ -508,9 +508,9 @@ one prompt → one output, not a multi-round loop.
 | `scripts/model-eval-auditor.mjs` | modify | `--suite seeded` wiring to `seeded-report.mjs`. | #1 |
 | `scripts/lib/model-eval/case-tree.mjs` | modify | Apply a case's `diffRef` on `baseCommit` as a throwaway local commit, so `--scope diff` sees exactly the seeded diff. | #1 |
 | `scripts/defect-harvest.mjs` | modify | Candidate fields `introCommit`, `revertsCleanly`, `fixDate`, test-witness probe; second stream from `audit_findings.fix_commit_sha` (read-only, `scripts/lib/store/runs-findings.mjs`). Outcomes still reconcile or exit 3. | #1 (precedent) |
-| `docs/experiments/seeded-bench/README.md` | create | Corpus card: version, splits, holdout digest, access log, deviations, authorisations. | #5 |
+| `docs/experiments/seeded-bench/README.md` (planned) | create | Corpus card: version, splits, holdout digest, access log, deviations, authorisations. | #5 |
 | `docs/experiments/seeded-bench/cases.calibration.json` | create | Calibration split + clean controls (public). | — |
-| `docs/runbooks/seeded-bench.md` | create | Operator runbook for both pilots: freeze, fixture, heartbeat, spend, adjudication sitting, verdict. | — |
+| `docs/runbooks/seeded-bench.md` (planned) | create | Operator runbook for both pilots: freeze, fixture, heartbeat, spend, adjudication sitting, verdict. | — |
 | `.gitignore` | modify | Category P block for the local holdout copy; Category A for `.audit-loop/bench/` output. | gitignore policy |
 | `tests/concern-matcher.test.mjs` | create | Scorer controls (oracle 1.0, null 0, shuffled ≈ 0, duplicate credited once); filter window; assignment. | #11 |
 | `tests/step-back-continuation.test.mjs` | create | Offline end-to-end through the real `openai-audit.mjs` gate with injected providers for plan T1, code T1, code T2 fixtures: received sid / round / ledger / trigger; arms differ only in the meta flags; a stop records but never runs the debt command; trigger mismatch ⇒ `unrecoverable`; partition sets disjoint; `decideMetaPilot` every row of §2.3 incl. a 1–1 split, a zero CONTINUE sum and precedence collisions. | #11 |
@@ -537,16 +537,16 @@ prevalence) from the **calibration** set only (judge calls ≈ $10). Files: `scr
 5 rehearsal points (discarded from scoring); the paid pilot on the pilot set; adjudication sitting; advisory verdict.
 Files: `scripts/lib/audit/step-back-continuation.mjs` (create),
 `scripts/step-back-replay.mjs` (modify), `tests/step-back-continuation.test.mjs` (create),
-`docs/runbooks/seeded-bench.md` (create),
-`docs/research/experiment-9-meta-step-back-ab.md` (create).
+`docs/runbooks/seeded-bench.md` (planned) (create),
+`docs/research/experiment-9-meta-step-back-ab.md` (planned) (create).
 
 **Phase 3 — Pilot 2 corpus and run**: loader suite, case tree diff application, miner fields, the 44 cases, the paid pilot,
 advisory verdict. Files: `scripts/lib/model-eval/known-defect-corpus.mjs` (modify), `scripts/lib/model-eval/case-tree.mjs`
 (modify), `scripts/defect-harvest.mjs` (modify), `scripts/lib/model-eval/seeded-report.mjs` (create),
-`scripts/model-eval-auditor.mjs` (modify), `docs/experiments/seeded-bench/README.md` (create),
+`scripts/model-eval-auditor.mjs` (modify), `docs/experiments/seeded-bench/README.md` (planned) (create),
 `docs/experiments/seeded-bench/cases.calibration.json` (create), `.gitignore` (modify),
 `tests/seeded-corpus-loader.test.mjs` (create), `tests/seeded-report.test.mjs` (create), `tests/egress-path-scan.test.mjs`
-(modify), `docs/research/experiment-10-seeded-detection-pilot.md` (create).
+(modify), `docs/research/experiment-10-seeded-detection-pilot.md` (planned) (create).
 
 **Close-out (not a phase)**: `npm run check`, `npm test`, `npm run skills:regenerate` if a skill reference changed,
 `node scripts/campaign-contract-check.mjs docs/plans/seeded-defect-benchmark.md --closeout --rev origin/main`.
@@ -608,9 +608,9 @@ provider usage per call, never the preflight (memory: a replay preflight once es
     credited once; evidence: test names + counts. Then the §1.4 calibration bar; evidence: calibration report in experiment 9.
   - *Arms differ only by the toggle* — oracle: a test asserting the two arms' argv/env differ in exactly the meta flags;
     red on a deliberately leaky arm; evidence: test name.
-  - *Pilot 1 decides* — oracle: §2.3 rule on adjudicated counts; evidence: `docs/research/experiment-9-meta-step-back-ab.md`
+  - *Pilot 1 decides* — oracle: §2.3 rule on adjudicated counts; evidence: `docs/research/experiment-9-meta-step-back-ab.md` (planned)
     with the dataset hash, commands and metered spend.
-  - *Pilot 2 can separate arms* — oracle: §3.4 rule; evidence: `docs/research/experiment-10-seeded-detection-pilot.md`.
+  - *Pilot 2 can separate arms* — oracle: §3.4 rule; evidence: `docs/research/experiment-10-seeded-detection-pilot.md` (planned).
 
 ---
 
@@ -635,10 +635,10 @@ provider usage per call, never the preflight (memory: a replay preflight once es
   Pilot 1 — every cap-reaching session is frozen, then partitioned by session with a recorded seed into calibration,
   rehearsal, pilot and repeat sets (§2.1); the loader refuses a run whose set does not match its purpose.
 - **test-set-hash**: SHA-256 of the canonical holdout file, computed by the loader at freeze and committed in
-  `docs/experiments/seeded-bench/README.md`; Pilot 1's frozen dataset hash is recorded by `step-back-replay.mjs freeze`;
+  `docs/experiments/seeded-bench/README.md` (planned); Pilot 1's frozen dataset hash is recorded by `step-back-replay.mjs freeze`;
   every run re-verifies both.
 - **access-record**: every run against the holdout appends `{runId, revision, arm, operator, date, purpose}` to the
-  "Holdout access log" table in `docs/experiments/seeded-bench/README.md`; analysis designed after a result is seen is
+  "Holdout access log" table in `docs/experiments/seeded-bench/README.md` (planned); analysis designed after a result is seen is
   labelled exploratory; a changed rule needs a new corpus version.
 
 ### C3 — Feasibility and power
@@ -677,26 +677,26 @@ provider usage per call, never the preflight (memory: a replay preflight once es
 
 ### C7 — Dress rehearsal
 - **items**: 5
-- **evidence**: `docs/experiments/seeded-bench/rehearsal-pilot1.md`
+- **evidence**: `docs/experiments/seeded-bench/rehearsal-pilot1.md` (planned)
 
 ### C8 — In-run canary
 - **canary**: `AUDIT_CANARY=1` on every audited round of both pilots; a miss makes that run INCOMPLETE and its point or
   case is excluded from both arms of the paired comparison.
-- **evidence**: `docs/experiments/seeded-bench/canary-log.md`
+- **evidence**: `docs/experiments/seeded-bench/canary-log.md` (planned)
 
 ### C9 — Contract epoch
 - **contract-epoch**: `seeded-bench-v1` stamped at the collector on every evidence row with `matcherVersion` and the
   dataset/corpus digest; a meaning-changing fix bumps it and re-collects, never a backfill by date.
 
 ### C10 — Deviations
-- **ledger**: the "Deviations" section of `docs/experiments/seeded-bench/README.md`; anything off-contract goes to the
+- **ledger**: the "Deviations" section of `docs/experiments/seeded-bench/README.md` (planned); anything off-contract goes to the
   coordinator and Louis before merge.
 
 ### C11 — Done means artifact
-- **done-evidence**: docs/experiments/seeded-bench/README.md, docs/experiments/seeded-bench/rehearsal-pilot1.md, docs/research/experiment-9-meta-step-back-ab.md, docs/research/experiment-10-seeded-detection-pilot.md
+- **done-evidence**: docs/experiments/seeded-bench/README.md (planned), docs/experiments/seeded-bench/rehearsal-pilot1.md (planned), docs/research/experiment-9-meta-step-back-ab.md (planned), docs/research/experiment-10-seeded-detection-pilot.md (planned)
 
 ### C12 — Close-out claims check
-- **claims-check**: docs/research/experiment-9-meta-step-back-ab.md, docs/research/experiment-10-seeded-detection-pilot.md
+- **claims-check**: docs/research/experiment-9-meta-step-back-ab.md (planned), docs/research/experiment-10-seeded-detection-pilot.md (planned)
 
 ---
 
