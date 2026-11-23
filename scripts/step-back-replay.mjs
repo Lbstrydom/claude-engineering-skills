@@ -30,9 +30,10 @@ import { readFlagValue } from './lib/audit/round-cap.mjs';
 import { freezeDataset, scoringPathFor } from './lib/audit/step-back-dataset.mjs';
 import { exportRows, freezeFromExport, proposeRuns } from './lib/audit/step-back-export.mjs';
 import { claudeAvailability } from './lib/anthropic-client.mjs';
+import { runPilotCommand, PILOT_COMMANDS } from './lib/audit/step-back-pilot-dispatch.mjs';
 import { runReplay, scoreReplay, renderDryRun, renderScoreTable, readResultsJsonl, verifyDatasetInputs, sha256Hex, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
 
-const KNOWN_FLAGS = ['--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--pilot', '--seed', '--repos-file', '--set', '--replicates', '--point', '--ledger', '--call-id', '--evidence', '--cost-usd', '--out-dir', '--labels', '--calibration', '--audit-script', '--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
 export const EXIT_BUDGET_STOP = 5;
 
 /** Append + fsync the descriptor: once this returns, the record has been handed to the OS and flushed to the device (fsync), not merely buffered in this process. A power loss mid-call can still lose the call in flight, never an earlier one. */
@@ -93,6 +94,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const flag = (f) => readFlagValue(argv, f).value;
   const query = deps.query || (async (sql, params) => { const pool = await (await import('./lib/db/client.mjs')).getPool(); if (!pool) throw new Error('no audit store configured (AUDIT_DB_URL)'); return pool.query(sql, params); });
 
+  if (PILOT_COMMANDS.includes(cmd) && ((cmd !== 'freeze' && cmd !== 'score') || flag('--pilot') === 'meta-ab')) return runPilotCommand({ cmd, argv, flag });
   if (cmd === 'export') {
     const branches = (flag('--branches') || '').split(',').map((b) => b.trim()).filter(Boolean);
     const since = flag('--since'); const out = flag('--out');
@@ -147,7 +149,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     console.log(`step-back-replay score: spent $${parsed.spentUsd.toFixed(4)}${parsed.tornFinalRecord ? ' - WARNING: torn final record (the call in flight was lost)' : ''} - ${summaryOf(score)}${out ? ` -> ${out}` : ''}\n${renderScoreTable(score, modelsOf(parsed))}`);
     return 0;
   }
-  if (cmd !== 'run') throw new ArgvError(`step-back-replay: unknown command "${cmd}" (export|propose|freeze|run|score).`);
+  if (cmd !== 'run') throw new ArgvError(`step-back-replay: unknown command "${cmd}" (export|propose|freeze|run|score|continue|reconcile|calibrate-draw|calibrate-score|novelty|worksheet).`);
 
   const datasetPath = flag('--dataset');
   if (!datasetPath) throw new ArgvError('step-back-replay run: --dataset is required.');

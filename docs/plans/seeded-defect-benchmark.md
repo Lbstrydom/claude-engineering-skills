@@ -510,7 +510,7 @@ one prompt → one output, not a multi-round loop.
 | `scripts/defect-harvest.mjs` | modify | Candidate fields `introCommit`, `revertsCleanly`, `fixDate`, test-witness probe; second stream from `audit_findings.fix_commit_sha` (read-only, `scripts/lib/store/runs-findings.mjs`). Outcomes still reconcile or exit 3. | #1 (precedent) |
 | `docs/experiments/seeded-bench/README.md` (planned) | create | Corpus card: version, splits, holdout digest, access log, deviations, authorisations. | #5 |
 | `docs/experiments/seeded-bench/cases.calibration.json` | create | Calibration split + clean controls (public). | — |
-| `docs/runbooks/seeded-bench.md` (planned) | create | Operator runbook for both pilots: freeze, fixture, heartbeat, spend, adjudication sitting, verdict. | — |
+| `docs/runbooks/seeded-bench.md` | create | Operator runbook for both pilots: freeze, fixture, heartbeat, spend, adjudication sitting, verdict. | — |
 | `.gitignore` | modify | Category P block for the local holdout copy; Category A for `.audit-loop/bench/` output. | gitignore policy |
 | `tests/concern-matcher.test.mjs` | create | Scorer controls (oracle 1.0, null 0, shuffled ≈ 0, duplicate credited once); filter window; assignment. | #11 |
 | `tests/step-back-continuation.test.mjs` | create | Offline end-to-end through the real `openai-audit.mjs` gate with injected providers for plan T1, code T1, code T2 fixtures: received sid / round / ledger / trigger; arms differ only in the meta flags; a stop records but never runs the debt command; trigger mismatch ⇒ `unrecoverable`; partition sets disjoint; `decideMetaPilot` every row of §2.3 incl. a 1–1 split, a zero CONTINUE sum and precedence collisions. | #11 |
@@ -537,7 +537,7 @@ prevalence) from the **calibration** set only (judge calls ≈ $10). Files: `scr
 5 rehearsal points (discarded from scoring); the paid pilot on the pilot set; adjudication sitting; advisory verdict.
 Files: `scripts/lib/audit/step-back-continuation.mjs` (create),
 `scripts/step-back-replay.mjs` (modify), `tests/step-back-continuation.test.mjs` (create),
-`docs/runbooks/seeded-bench.md` (planned) (create),
+`docs/runbooks/seeded-bench.md` (create),
 `docs/research/experiment-9-meta-step-back-ab.md` (planned) (create).
 
 **Phase 3 — Pilot 2 corpus and run**: loader suite, case tree diff application, miner fields, the 44 cases, the paid pilot,

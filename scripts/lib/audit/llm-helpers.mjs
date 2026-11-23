@@ -35,6 +35,7 @@ import {
   retryAttemptsFor, retryAfterMs, nextRetryDelayMs,
 } from '../robustness.mjs';
 import { buildAuditPassPrompt } from './prompt-builder.mjs';
+import { withBudget, isBudgetActive, BudgetStopError } from '../llm-budget.mjs';
 import { recordGptCall, recordGptAttemptFailure, beginLogicalCall } from '../telemetry/llm-call-log.mjs';
 import { readProjectContextForPass, extractPlanForPass } from '../context.mjs';
 import { R2_ROUND_MODIFIER, buildRulingsBlock } from '../ledger.mjs';
@@ -289,9 +290,15 @@ export async function _callGPTOnce(openai, opts) {
   }
 
   try {
-    const response = await parseStructured(
-      openai, requestParams, { signal: controller.signal },
-      { model: wm, input, schema, schemaName, effort, tokens },
+    // Budget seam (plan §2.6): inert unless AUDIT_BUDGET_LEDGER is set. Active => the SDK's own silent retries are
+    // off (each retry is a new billed request and must reserve again) and the call runs under one reservation.
+    const callOpts = isBudgetActive() ? { signal: controller.signal, maxRetries: 0 } : { signal: controller.signal };
+    const response = await withBudget(
+      { seam: '_callGPTOnce', provider: 'openai', model: wm, body: requestParams, outputCap: requestParams.max_output_tokens },
+      () => parseStructured(
+        openai, requestParams, callOpts,
+        { model: wm, input, schema, schemaName, effort, tokens },
+      ),
     );
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
@@ -370,6 +377,7 @@ export async function _callGPTOnce(openai, opts) {
 
   } catch (err) {
     clearTimeout(timer);
+    if (err instanceof BudgetStopError) throw err; // a budget refusal is never relabelled or retried
     if (err instanceof LlmError) throw err; // Already structured
     const latencyMs = Date.now() - startMs;
     const isAbort = err.name === 'AbortError' || err.message?.toLowerCase().includes('abort');
@@ -521,6 +529,8 @@ export async function safeCallGPT(openai, opts, emptyResult) {
   try {
     return await callGPT(openai, opts);
   } catch (err) {
+    // A budget refusal stops the run (plan §2.6); it is never degraded to an empty result.
+    if (err instanceof BudgetStopError) throw err;
     // Fail-fast on programmer bugs (hybrid input, schema misconfig)
     if (err instanceof LlmError && err.llmCategory === 'config') {
       throw err;
