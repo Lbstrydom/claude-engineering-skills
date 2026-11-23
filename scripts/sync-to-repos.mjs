@@ -50,7 +50,7 @@ import { renderOutbound, decideUnmanifested } from './lib/sync-outbound.mjs';
 import { createConfirmPrompt } from './lib/sync-prompt.mjs';
 import { describeSafeToCommit } from './lib/sync-status.mjs';
 import { describeUnmeasuredTargets, enforceBaseLagForTarget } from './lib/sync-base-lag.mjs';
-import { describeRunSummary } from './lib/sync-run-summary.mjs';
+import { describeRunSummary, circularHydrateEntry } from './lib/sync-run-summary.mjs';
 import { createGitAncestry, planRollbackResponse, rollbackAgainstStamps, manifestStamp } from './lib/sync-rollback-guard.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { hookEpilogueLines } from './lib/prepush-hook-version.mjs';
@@ -659,7 +659,7 @@ async function main() {
   const unmeasuredTargets = [];
   // 2221: one resolver for the whole run - its blob cache and total budget are shared across every consumer and path.
   const priorUpstream = createPriorUpstreamResolver({ sourceRoot: SOURCE_ROOT });
-  const undeclaredDeps = []; // per-consumer `name: packages` lines for the end-of-run summary
+  const undeclaredDeps = [], circularHydrate = []; // per-consumer lines for the end-of-run summary: undeclared packages / a circular `skills:hydrate`
 
   // The ONE "which consumers does this run touch?" decision (lib/sync-argv.mjs selectTargets): an unusable
   // selector never falls through to "all".
@@ -1777,7 +1777,7 @@ async function main() {
     }
     const depDecl = reportDeclaredBundleDeps(repo.path, path.join(SOURCE_ROOT, 'scripts'), { Y, D, X });
     console.log(depDecl.lines.join('\n'));
-    if (depDecl.summary) undeclaredDeps.push(`${repo.name}: ${depDecl.summary}`);
+    if (depDecl.summary) undeclaredDeps.push(`${repo.name}: ${depDecl.summary}`); const hyd = circularHydrateEntry(repo.name, repo.path); if (hyd) circularHydrate.push(hyd);
 
     // Post-sync setup check — skip in dry-run (nothing was written)
     if (!DRY_RUN) {
@@ -1832,7 +1832,7 @@ async function main() {
   for (const line of describeRunSummary({
     dryRun: DRY_RUN, targetCount: targetRepos.length, totalSkipped, totalErrors, totalNew, totalUpdated, totalUnchanged,
     unmeasured: describeUnmeasuredTargets(unmeasuredTargets, { dryRun: DRY_RUN, targetCount: targetRepos.length }, { Y, D, X }),
-    hookLines: DRY_RUN ? [] : hookEpilogueLines(targetRepos),
+    hookLines: DRY_RUN ? [] : hookEpilogueLines(targetRepos), circularHydrate,
   }, { R, G, Y, D, X })) console.log(line);
 
   if (priorUpstream.stats.renderFailures) console.log(`${Y}⚠ ${priorUpstream.stats.renderFailures} earlier upstream version(s) could not be rendered${X} ${D}— a diverged file whose only evidence was such a version is refused as before; a renderer regression would look like this${X}`);

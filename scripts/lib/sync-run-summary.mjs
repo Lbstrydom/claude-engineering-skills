@@ -12,12 +12,35 @@
  * @module scripts/lib/sync-run-summary
  */
 
+import { CONSUMER_HYDRATE_NPM_SCRIPT } from './worktree-preflight.mjs';
+// Re-exported so the sync CLI (over the file-size ratchet) takes one import for the summary's producer and its consumer.
+export { circularHydrateEntry } from './worktree-preflight.mjs';
+
+/**
+ * Lines naming consumers whose `skills:hydrate` is circular (runs a file inside the gitignored `scripts/.claude-skills/`), with the
+ * doctor probe's fix. PURE. Printed, never applied: package.json is the consumer's.
+ *
+ * @param {Array<{name: string, circular: string[]}>} entries
+ * @param {{Y?: string, D?: string, X?: string}} [colors]
+ * @returns {string[]}
+ */
+export function describeCircularHydrate(entries, { Y = '', D = '', X = '' } = {}) {
+  if (!entries?.length) return [];
+  return [
+    `${Y}⚠ circular skills:hydrate${X} ${D}(doctor probe hydration/remedy-missing) — it runs a file inside the gitignored scripts/.claude-skills/ it exists to copy, so it dies on MODULE_NOT_FOUND in a fresh worktree:${X}`,
+    ...entries.map((e) => `  ${e.name}: ${e.circular.map((n) => `"${n}"`).join(', ')}`),
+    `  ${D}Replace the entry in each consumer's package.json (not edited here) with:${X}`,
+    `  ${CONSUMER_HYDRATE_NPM_SCRIPT}`,
+  ];
+}
+
 /**
  * @param {{
  *   dryRun: boolean, targetCount: number, totalSkipped: number, totalErrors: number,
  *   totalNew: number, totalUpdated: number, totalUnchanged: number,
  *   unmeasured: {verdict: string|null, lines: string[]},
  *   hookLines?: string[],
+ *   circularHydrate?: Array<{name: string, circular: string[]}>,
  * }} tally `unmeasured` is `describeUnmeasuredTargets`'s result, already coloured by the caller.
  * @param {{R?: string, G?: string, Y?: string, D?: string, X?: string}} [colors] — ANSI codes, caller's own
  * @returns {string[]}
@@ -25,13 +48,13 @@
 export function describeRunSummary(tally, { R = '', G = '', Y = '', D = '', X = '' } = {}) {
   const {
     dryRun, targetCount, totalSkipped, totalErrors, totalNew, totalUpdated, totalUnchanged,
-    unmeasured, hookLines = [],
+    unmeasured, hookLines = [], circularHydrate = [],
   } = tally;
   const out = [];
   if (dryRun) {
     out.push(unmeasured.verdict ?? `${Y}DRY RUN complete${X} — no files written`);
     out.push(`  Would create: ${totalNew}  update: ${totalUpdated}  unchanged: ${totalUnchanged}`);
-    out.push(...unmeasured.lines);
+    out.push(...unmeasured.lines, ...describeCircularHydrate(circularHydrate, { Y, D, X }));
     if (totalNew + totalUpdated > 0) out.push(`\nRun without --dry-run to apply.`);
     return out;
   }
@@ -67,5 +90,6 @@ export function describeRunSummary(tally, { R = '', G = '', Y = '', D = '', X = 
   out.push(`  ${D}If a consumer uses the pre-push audit hook, re-run \`npm run hooks:install -- --target <name>\` to pick up bundle hook changes.${X}`);
   // Per consumer, read-only (the effective hook as git resolves it): which ones are actually stale, and the exact command.
   out.push(...hookLines.map((line) => `  ${Y}hook${X}  ${line}`));
+  out.push(...describeCircularHydrate(circularHydrate, { Y, D, X }));
   return out;
 }
