@@ -24,6 +24,7 @@ const f = (id, severity, category) => ({ id, severity, category, section: '§2',
 const R3 = [f('H1', 'HIGH', 'Unsafe stop guard'), f('M1', 'MEDIUM', 'Wording polish'), f('M2', 'MEDIUM', 'Spec nit')];
 const [TH, TM1, TM2] = R3.map(topicOf);
 const ROUNDS = [{ round: 1, findings: [f('H1', 'HIGH', 'Unsafe stop guard')] }, { round: 2, findings: [f('H1', 'HIGH', 'Unsafe stop guard')] }, { round: 3, findings: R3 }];
+const CODE_ROUNDS = [...ROUNDS, { round: 4, findings: R3 }, { round: 5, findings: R3 }, { round: 6, findings: R3 }];
 const ruledEarlier = (t) => ({ topicId: t, adjudicationOutcome: 'accepted', firstSeenRound: 1, resolvedRound: 2 });
 const ruledAt3 = (t, o = 'accepted') => ({ topicId: t, adjudicationOutcome: o, firstSeenRound: 3, resolvedRound: 3, ruling: 'fix' });
 const A = { sustainability: 's', efficiency: 'e', effectiveness: 'x' };
@@ -58,6 +59,7 @@ function deps({ ledger = [ruledEarlier(TH), ruledAt3(TH), ruledAt3(TM1), ruledAt
     repoFiles: () => [], archNeighbours: null,
     computeSignals: () => ({ version: 1, round: 3, importanceSource: 'test', anyFires: signalsFire, unmeasured: [], signals: { reopenRate: { measured: true, fires: signalsFire, value: signalsFire ? 1 : 0, reason: 'test' } } }),
     selectProvider: prov.select, record: () => 'key', flush: async () => {},
+    evidence: () => ({ planSha256: 'p', head: 'h', diffSha256: null }),
     ...(append ? { append } : {}),
   };
 }
@@ -115,6 +117,14 @@ describe('guard (pure)', () => {
   test('NEGATIVE: a settled claim the ledger does not support is downgraded', () => {
     assert.equal(g(stopAll(), { ledgerEntries: [] }).reasonCode, 'unverified-settled');
   });
+  test('REGRESSION (R1 H1): a topic first SEEN early but first RULED in the last round is not settled', () => {
+    assert.equal(ruledBefore([{ topicId: TH, adjudicationOutcome: 'accepted', firstSeenRound: 1, resolvedRound: 3 }], TH, 3), false);
+  });
+  test('the auditor own _priorRuling stamp on a last-round finding IS a prior ruling', () => {
+    const inv = openInventory([{ ...R3[0], _priorRuling: { topicId: 'older', score: 0.3 } }]);
+    assert.equal(inv[0].priorRuled, true);
+    assert.equal(ruledBefore([], TH, 3, inv), true);
+  });
   test('a ruling made only in the last round is not "earlier"', () => {
     assert.equal(ruledBefore([ruledAt3(TH)], TH, 3), false);
     assert.equal(ruledBefore([ruledEarlier(TH)], TH, 3), true);
@@ -126,6 +136,7 @@ describe('guard (pure)', () => {
     const clipped = guardMetaDecision({ trigger: 'T1', output: { action: 'admit', assessment: A, rounds: 2, topics: [TH], reason: 'r' }, inventory, ledgerEntries: ledger, lastRound: 7, round: 8, caps: CAPS.code });
     assert.equal(clipped.admittedThrough, 8, 'never past the absolute cap');
     assert.equal(g({ action: 'admit', assessment: A, rounds: 1, topics: ['closed-topic'], reason: 'r' }).reasonCode, 'topic-not-open');
+    assert.equal(g({ action: 'admit', assessment: A, rounds: 1, topics: [TH, 'closed-topic'], reason: 'r' }).reasonCode, 'topic-not-open', 'REGRESSION (R1 M5): every admitted topic must be open');
   });
   test('structural: honoured with shown evidence and settled HIGHs; downgraded otherwise', () => {
     const s = (file) => ({ action: 'structural', assessment: A, cause: 'missing shared primitive', evidence: [{ file, why: 'w' }], proposedFix: 'plan it', reason: 'r' });
@@ -148,16 +159,17 @@ describe('guard (pure)', () => {
 describe('event log', () => {
   test('append, fold, reread; a torn tail is repaired and both later events survive', () => {
     const file = metaLogPath(dir, 's');
+    assert.equal(appendMetaEvent(file, { event: 'reserve', attemptId: 'a1' }).ok, true);
     assert.equal(appendMetaEvent(file, { event: 'decision', attemptId: 'a1', sent: true, guard: {} }).ok, true);
     fs.appendFileSync(file, '{"event":"decision","attemptId":"torn"');
     assert.equal(readMetaLog(file).tornTail > 0, true);
-    const r1 = appendMetaEvent(file, { event: 'decision', attemptId: 'a2', sent: true, guard: {} });
+    const r1 = appendMetaEvent(file, { event: 'reserve', attemptId: 'a2' });
     assert.equal(r1.ok, true); assert.ok(r1.repairedTornTail > 0);
     assert.equal(appendMetaEvent(file, { event: 'override', attemptId: 'a1', by: 'x' }).ok, true);
     const log = readMetaLog(file);
     assert.equal(log.malformed, null); assert.equal(log.tornTail, 0);
-    assert.deepEqual(log.events.map((e) => e.attemptId), ['a1', 'a2', 'a1']);
-    assert.ok(log.events[1].repairedTornTail > 0);
+    assert.deepEqual(log.events.map((e) => e.attemptId), ['a1', 'a1', 'a2', 'a1']);
+    assert.ok(log.events[2].repairedTornTail > 0);
     const fold = foldMetaLog(log.events);
     assert.equal(fold.sentCount, 2); assert.equal(fold.overridden.has('a1'), true);
   });
@@ -192,7 +204,8 @@ describe('runMetaReview — the positive and negative controls', () => {
     assert.equal(p.calls.length, 1);
     assert.match(p.calls[0].user, /Open-topic inventory/);
     const log = readMetaLog(metaLogPath(dir, 'audit-plan-1-1')).events;
-    assert.equal(log.length, 1); assert.equal(log[0].spendSource, 'usage'); assert.equal(typeof log[0].costUsd, 'number');
+    assert.deepEqual(log.map((e) => e.event), ['reserve', 'decision']);
+    assert.equal(log[1].spendSource, 'usage'); assert.equal(typeof log[1].costUsd, 'number');
     assert.equal(recorded[0].decisionType, 'meta_review_decision');
     assert.equal(recorded[0].externalId, r.decision.attemptId);
     assert.deepEqual(recorded[0].context.stopKinds, ['marginal', 'rigour-chasing', 'settled']);
@@ -250,8 +263,11 @@ describe('runMetaReview — the positive and negative controls', () => {
     assert.equal(fs.existsSync(metaLogPath(dir, 'audit-plan-1-1')), false);
   });
   test('persist-before-act: an append failure means no action', async () => {
-    const r = await run({}, deps({ prov: provider(stopAll()), append: () => ({ ok: false, reason: 'disk full' }) }));
+    const append = (file, ev) => (ev.event === 'decision' ? { ok: false, reason: 'disk full' } : appendMetaEvent(file, ev));
+    const r = await run({}, deps({ prov: provider(stopAll()), append }));
     assert.equal(r.persisted, false); assert.equal(r.effect, 'human-card');
+    const failReserve = await run({ sid: 'other' }, deps({ prov: provider(stopAll()), append: () => ({ ok: false, reason: 'disk full' }) }));
+    assert.equal(failReserve.ran, false); assert.match(failReserve.reason, /nothing was sent/);
   });
   test('a malformed log → not run, human path', async () => {
     fs.writeFileSync(metaLogPath(dir, 'audit-plan-1-1'), 'garbage\n{}\n');
@@ -261,7 +277,7 @@ describe('runMetaReview — the positive and negative controls', () => {
   });
   test('session budget: past it, no call and a recorded session-budget decision', async () => {
     const file = metaLogPath(dir, 'audit-plan-1-1');
-    for (let i = 0; i < META_REVIEW_SESSION_BUDGET.plan; i++) appendMetaEvent(file, { event: 'decision', attemptId: `prior-${i}`, sent: true, guard: { effect: 'human-card' } });
+    for (let i = 0; i < META_REVIEW_SESSION_BUDGET.plan; i++) appendMetaEvent(file, { event: 'reserve', attemptId: `prior-${i}` });
     const p = provider(stopAll());
     const r = await run({}, deps({ prov: p }));
     assert.equal(p.calls.length, 0); assert.match(r.decision.reason, /session-budget/);
@@ -291,6 +307,65 @@ describe('runMetaReview — the positive and negative controls', () => {
     const p = provider(stopAll());
     const r = await runMetaReview({ trigger: 'T2', sid: 'audit-code-1-1', mode: 'code', round: 4, caps: CAPS.code, argv: codeArgv(4), auditDir: dir }, deps({ prov: p }));
     assert.equal(r.ran, false); assert.match(r.reason, /signals did not fire/); assert.equal(p.calls.length, 0);
+  });
+});
+
+describe('R1 fixes', () => {
+  test('an unsent unavailable decision is retried once the route exists', async () => {
+    const first = await run({}, { ...deps({ prov: provider(stopAll()) }), selectProvider: () => ({ ok: false, reason: 'no route', skipped: [] }) });
+    assert.equal(first.decision.state, 'unavailable');
+    const p = provider(stopAll());
+    const second = await run({}, deps({ prov: p }));
+    assert.equal(p.calls.length, 1, 'retried, not reused'); assert.equal(second.effect, 'stop');
+    assert.equal(foldMetaLog(readMetaLog(metaLogPath(dir, 'audit-plan-1-1')).events).decisions.get(second.decision.attemptId).state, 'valid');
+  });
+  test('the budget reservation is durable BEFORE the call (a crash mid-call still counts)', async () => {
+    const p = provider(stopAll(), { throwErr: Object.assign(new Error('killed'), { sent: true }) });
+    await run({}, deps({ prov: p }));
+    const events = readMetaLog(metaLogPath(dir, 'audit-plan-1-1')).events;
+    assert.deepEqual(events.map((e) => e.event), ['reserve', 'decision']);
+    assert.equal(foldMetaLog(events).sentCount, 1);
+  });
+  test('a held claim (another or crashed invocation) → not run, no call', async () => {
+    const p = provider(stopAll());
+    const d = deps({ prov: p });
+    const probe = await run({}, { ...d, selectProvider: () => ({ ok: false, reason: 'probe', skipped: [] }) });
+    fs.writeFileSync(path.join(dir, `${probe.decision.attemptId}.meta-claim`), '');
+    const r = await run({}, d);
+    assert.equal(r.ran, false); assert.match(r.reason, /claimed by another invocation/); assert.equal(p.calls.length, 0);
+  });
+  test('a concurrent winner for the same attempt is the decision acted on', async () => {
+    const d = deps({ prov: provider(stopAll()) });
+    const append = (file, ev) => {
+      if (ev.event === 'decision') appendMetaEvent(file, { ...ev, eventId: 'rival', guard: { effect: 'human-card', honoured: false, reasonCode: 'invalid', reason: 'rival' }, state: 'invalid', sent: true });
+      return appendMetaEvent(file, ev);
+    };
+    const r = await run({}, { ...d, append });
+    assert.equal(r.decision.eventId, 'rival'); assert.equal(r.effect, 'human-card');
+  });
+  test('changed evidence (plan content / HEAD) at the same round decides afresh', async () => {
+    const p = provider(stopAll());
+    await run({}, deps({ prov: p }));
+    await run({}, { ...deps({ prov: p }), evidence: () => ({ planSha256: 'p2', head: 'h', diffSha256: null }) });
+    assert.equal(p.calls.length, 2);
+  });
+  test('an unknown auditor family admits no automatic reviewer', () => {
+    const r = createMetaReviewProvider({ auditorModel: null });
+    assert.equal(r.ok, false); assert.match(r.reason, /auditor-family-unknown/);
+  });
+  test('a structural verdict citing the plan is honoured only when the plan reached the pack whole', async () => {
+    const v = { action: 'structural', assessment: A, cause: 'stale doc', evidence: [{ file: 'docs/plans/x.md', why: 'w' }], proposedFix: 'f', reason: 'r' };
+    const pk = (included) => async () => ({ text: 'P', files: [], notes: [], truncations: [], excluded: { sensitive: 0, unreadable: 0 }, topics: [TH, TM1, TM2], plan: included == null ? null : { path: 'docs/plans/x.md', included } });
+    const ok = await runMetaReview({ trigger: 'T1', sid: 'c1', mode: 'code', round: 7, caps: CAPS.code, argv: codeArgv(7), auditDir: dir }, { ...deps({ prov: provider(v), rounds: CODE_ROUNDS }), buildPack: pk(true) });
+    assert.equal(ok.effect, 'structural');
+    const no = await runMetaReview({ trigger: 'T1', sid: 'c2', mode: 'code', round: 7, caps: CAPS.code, argv: codeArgv(7), auditDir: dir }, { ...deps({ prov: provider(v), rounds: CODE_ROUNDS }), buildPack: pk(null) });
+    assert.equal(no.decision.guard.reasonCode, 'evidence-not-in-pack');
+  });
+  test('an invalid-JSON reply never persists a secret through the parse error', async () => {
+    const r = await run({}, deps({ prov: provider('{"action":"stop", "x": sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD') }));
+    assert.equal(r.decision.state, 'invalid');
+    const line = fs.readFileSync(metaLogPath(dir, 'audit-plan-1-1'), 'utf8');
+    assert.doesNotMatch(line, /sk-proj-abcdef/);
   });
 });
 

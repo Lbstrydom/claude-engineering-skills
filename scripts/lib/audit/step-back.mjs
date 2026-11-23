@@ -236,7 +236,7 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   if (planFile) {
     const rel = posix(path.isAbsolute(planFile) ? path.relative(root, planFile) : planFile);
     const body = readBody(rel);
-    if (body != null) part('plan', `<plan path="${redact(rel)}">\n`, body, '\n</plan>'); else notes.push('plan file was excluded or unreadable');
+    if (body != null) { part('plan', `<plan path="${redact(rel)}">\n`, body, '\n</plan>'); parts[parts.length - 1].planPath = rel; } else notes.push('plan file was excluded or unreadable');
   }
   part('ledger', '<ledger>\n', redact(JSON.stringify(ledgerEntries, null, 1)), '\n</ledger>');
   const roundView = (rounds || []).map((r) => ({
@@ -292,6 +292,8 @@ export async function buildStepBackPack({ repoRoot, planFile = null, ledgerEntri
   const excluded = { sensitive: skipped.filter((s) => !s.unreadable).length, unreadable: skipped.filter((s) => s.unreadable).length };
   return {
     text: parts.map((p) => `${p.open}${p.body}${p.close}`).join(SEP), files: parts.filter((p) => p.meta).map((p) => p.meta),
+    // Whether the plan reached the pack WHOLE: the meta-review accepts it as evidence only then (an excluded or cut plan is not).
+    plan: (() => { const p = parts.find((x) => x.group === 'plan'); return p ? { path: p.planPath, included: !truncations.some((t) => t.section === 'plan') } : null; })(),
     skipped, skipLog, excluded, notes, truncations, topics,
   };
 }

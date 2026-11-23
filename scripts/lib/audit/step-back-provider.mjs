@@ -148,11 +148,13 @@ export function createMetaReviewProvider({ auditorModel = null } = {}, {
   factory = (arm) => createStepBackProvider(arm, { timeoutMs: META_REVIEW_TIMEOUT_MS }),
 } = {}) {
   const auditorFamily = auditorModel ? family(auditorModel) : null;
+  // Independence cannot be verified against an auditor whose vendor is unknown: no automatic reviewer (fail closed).
+  if (!auditorFamily) return { ok: false, reason: `auditor-family-unknown (auditor model ${auditorModel ? `"${auditorModel}" has no vendor family` : 'not given'})`, auditorFamily: null, skipped: [] };
   const skipped = [];
   let independent = false;
   for (const arm of META_REVIEW_ARM_CHAIN) {
     const fam = family(resolve(STEP_BACK_ARM_MODELS[arm]));
-    if (auditorFamily && fam === auditorFamily) { skipped.push({ arm, reason: `same vendor family as the auditor (${fam})` }); continue; }
+    if (!fam || fam === auditorFamily) { skipped.push({ arm, reason: fam ? `same vendor family as the auditor (${fam})` : 'reviewer vendor family unknown' }); continue; }
     independent = true;
     if (arm === 'different') {
       const g = geminiAvailability();

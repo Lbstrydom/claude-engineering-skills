@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFlagValue } from './round-cap.mjs';
 import { topicOf, assessCapProductivity, readLedgerEntries, renderCapProductivity } from './cap-productivity.mjs';
 import { readRoundsWithSha, defaultRepoFiles, defaultArchNeighbours } from './step-back-card.mjs';
@@ -80,9 +81,25 @@ export function fingerprintDigest(fp) {
   return crypto.createHash('sha256').update(canon).digest('hex').slice(0, 8);
 }
 
-/** Stable per (session, round, trigger, identity): a re-run reuses the decision, a changed identity gets a fresh one. */
-export function attemptIdFor({ sid, round, trigger, fingerprint }) {
-  return `${sid || 'session'}-r${round}-${trigger}-${fingerprintDigest(fingerprint)}`;
+/**
+ * The EVIDENCE the decision was made on: plan content, the audited HEAD and the diff content. It changes every round by
+ * design (fixes land between rounds), so it keys REUSE of one round's decision, never the admission across rounds,
+ * which keys on the identity fingerprint alone.
+ */
+export function evidenceOf({ argv, cwd = process.cwd(), readFile = (p) => fs.readFileSync(p), gitHead = defaultGitHead }) {
+  const sha = (p) => { if (!p) return null; try { return crypto.createHash('sha256').update(readFile(path.resolve(cwd, p))).digest('hex'); } catch { return 'unreadable'; } };
+  const diff = readFlagValue(argv, '--diff').value;
+  return { planSha256: sha(argv[1] || null), head: gitHead(cwd), diffSha256: sha(diff) };
+}
+
+function defaultGitHead(cwd) {
+  try { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null; } catch { return null; }
+}
+
+/** Stable per (session, round, trigger, identity, evidence): a re-run reuses the decision; changed identity or evidence decides afresh. */
+export function attemptIdFor({ sid, round, trigger, fingerprint, evidence = null }) {
+  const ev = evidence ? `-${fingerprintDigest(evidence)}` : '';
+  return `${sid || 'session'}-r${round}-${trigger}-${fingerprintDigest(fingerprint)}${ev}`;
 }
 
 // ── the append-only event log ────────────────────────────────────────────────────────────────────────
@@ -148,9 +165,11 @@ export function foldMetaLog(events) {
   const overridden = new Map();
   let sentCount = 0; let duplicates = 0; let captures = 0;
   for (const e of events || []) {
-    if (e?.event === 'decision') {
-      if (e.sent) sentCount++;
-      if (decisions.has(e.attemptId)) duplicates++; else decisions.set(e.attemptId, e);
+    if (e?.event === 'reserve') sentCount++;
+    else if (e?.event === 'decision') {
+      const prev = decisions.get(e.attemptId);
+      // A decision made before anything was sent (no route, budget, plan excluded) is RETRYABLE: a later one replaces it.
+      if (!prev || isRetryable(prev)) decisions.set(e.attemptId, e); else duplicates++;
     } else if (e?.event === 'override' || e?.event === 'revoke') {
       if (!overridden.has(e.attemptId)) overridden.set(e.attemptId, []);
       overridden.get(e.attemptId).push(e);
@@ -158,6 +177,9 @@ export function foldMetaLog(events) {
   }
   return { decisions, overridden, sentCount, duplicates, captures };
 }
+
+/** An `unavailable` decision for which no request was sent: nothing was decided, so it is not reused. */
+export const isRetryable = (d) => d?.state === 'unavailable' && !d.sent;
 
 /** The honoured, un-revoked T1 admission covering `round` for this identity, or null. */
 export function admissionFor({ fold, digest, round }) {
@@ -187,15 +209,23 @@ export function openInventory(findings) {
     const topicId = topicOf(f);
     const severity = String(f?.severity || '').toUpperCase();
     const prev = by.get(topicId);
-    if (!prev || (SEV_RANK[severity] || 0) > (SEV_RANK[prev.severity] || 0)) by.set(topicId, { topicId, findingId: f?.id ?? null, severity });
+    const priorRuled = !!f?._priorRuling?.topicId || !!prev?.priorRuled;
+    if (!prev || (SEV_RANK[severity] || 0) > (SEV_RANK[prev.severity] || 0)) by.set(topicId, { topicId, findingId: f?.id ?? null, severity, priorRuled });
+    else if (priorRuled) prev.priorRuled = true;
   }
   return [...by.values()].sort((a, b) => a.topicId.localeCompare(b.topicId));
 }
 
-/** A topic the ledger ruled BEFORE the last round: a re-raise of a settled concern. */
-export function ruledBefore(ledgerEntries, topicId, lastRound) {
-  return (ledgerEntries || []).some((e) => e?.topicId === topicId && RULED.has(e.adjudicationOutcome)
-    && [e.firstSeenRound, e.resolvedRound].some((r) => Number.isInteger(r) && r < lastRound));
+/**
+ * Was this topic RULED before the last round? Only two signals are trustworthy, and neither is a first-seen round (the
+ * ledger keeps no ruling history, so a topic seen early but ruled late must not pass): (a) its ledger entry carries a
+ * ruling made in an earlier round (`resolvedRound < lastRound`), or (b) the auditor's own suppression stamped the
+ * last-round finding `_priorRuling` at audit time — it was matched to a concern already in the ledger before that round
+ * ran. Anything else fails closed.
+ */
+export function ruledBefore(ledgerEntries, topicId, lastRound, inventory = []) {
+  if ((inventory || []).some((i) => i.topicId === topicId && i.priorRuled)) return true;
+  return (ledgerEntries || []).some((e) => e?.topicId === topicId && RULED.has(e.adjudicationOutcome) && Number.isInteger(e.resolvedRound) && e.resolvedRound < lastRound);
 }
 
 /**
@@ -217,7 +247,8 @@ export function guardMetaDecision({ trigger, output, inventory, ledgerEntries, l
 
   if (output.action === 'admit') {
     if (trigger === 'T2') return { effect: 'round-runs', honoured: true, reasonCode: 'ok', reason: 'admit inside the soft cap: the round runs as before' };
-    if (!output.topics.some((t) => inv.has(t))) return down('topic-not-open', 'no named topic is open in the last round');
+    const closed = output.topics.filter((t) => !inv.has(t));
+    if (closed.length) return down('topic-not-open', `admit names topic(s) not open in the last round: ${closed.slice(0, 5).join(', ')}`);
     const admittedThrough = Math.min(round - 1 + output.rounds, caps.absolute);
     return { effect: 'admit', honoured: true, reasonCode: 'ok', reason: `admits round(s) ${round}-${admittedThrough} (absolute cap ${caps.absolute})`, admittedThrough };
   }
@@ -227,7 +258,7 @@ export function guardMetaDecision({ trigger, output, inventory, ledgerEntries, l
     if (omitted.length) return down('omitted-topic', `stop omits open topic(s): ${omitted.slice(0, 5).join(', ')}`);
     const highNotSettled = highs.filter((h) => named.get(h.topicId)?.kind !== 'settled').map((h) => h.topicId);
     if (highNotSettled.length) return down('high-not-settled', `HIGH topic(s) judged without a verifiable ruling: ${highNotSettled.slice(0, 5).join(', ')}`);
-    const unverified = output.items.filter((i) => i.kind === 'settled' && !ruledBefore(ledgerEntries, i.topicId, lastRound)).map((i) => i.topicId);
+    const unverified = output.items.filter((i) => i.kind === 'settled' && !ruledBefore(ledgerEntries, i.topicId, lastRound, inventory)).map((i) => i.topicId);
     if (unverified.length) return down('unverified-settled', `"settled" not ruled in the ledger before round ${lastRound}: ${unverified.slice(0, 5).join(', ')}`);
     const pb = productiveBlock(); if (pb) return pb;
     return { effect: 'stop', honoured: true, reasonCode: 'ok', reason: `stop covers all ${inventory.length} open topic(s); every HIGH settled` };
@@ -236,7 +267,7 @@ export function guardMetaDecision({ trigger, output, inventory, ledgerEntries, l
   const shown = new Set(packFiles.map(posix));
   const missing = output.evidence.map((e) => posix(e.file)).filter((f) => !shown.has(f));
   if (missing.length) return down('evidence-not-in-pack', `evidence file(s) the pack did not show: ${missing.slice(0, 5).join(', ')}`);
-  const openHigh = highs.filter((h) => !ruledBefore(ledgerEntries, h.topicId, lastRound)).map((h) => h.topicId);
+  const openHigh = highs.filter((h) => !ruledBefore(ledgerEntries, h.topicId, lastRound, inventory)).map((h) => h.topicId);
   if (openHigh.length) return down('high-not-settled', `open HIGH topic(s) never ruled: ${openHigh.slice(0, 5).join(', ')}`);
   const pb = productiveBlock(); if (pb) return pb;
   return { effect: 'structural', honoured: true, reasonCode: 'ok', reason: 'structural cause named; every open HIGH already ruled' };
@@ -341,13 +372,14 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
 
   const fingerprint = fingerprintOf({ argv, mode, sid });
   const digest = fingerprintDigest(fingerprint);
-  const attemptId = attemptIdFor({ sid, round, trigger, fingerprint });
+  const evidence = (deps.evidence || evidenceOf)({ argv, cwd });
+  const attemptId = attemptIdFor({ sid, round, trigger, fingerprint, evidence });
   const file = metaLogPath(auditDir, sid);
   const log = readMetaLog(file);
   if (log.malformed) return notRun(`decision log ${path.basename(file)} is malformed (${log.malformed}); the human path applies`);
   const fold = foldMetaLog(log.events);
   const existing = fold.decisions.get(attemptId);
-  if (existing) return { ran: true, reused: true, persisted: true, decision: existing, effect: existing.guard.effect, honoured: !!existing.guard.honoured, lines: [`  [meta-review] reusing decision ${attemptId}: ${existing.guard.effect}${existing.guard.honoured ? '' : ' (downgraded)'}`] };
+  if (existing && !isRetryable(existing)) return { ran: true, reused: true, persisted: true, decision: existing, effect: existing.guard.effect, honoured: !!existing.guard.honoured, lines: [`  [meta-review] reusing decision ${attemptId}: ${existing.guard.effect}${existing.guard.honoured ? '' : ' (downgraded)'}`] };
 
   // Signals (code audits only) at the checkpoint the trigger reads.
   const ledgerAll = (deps.readLedger || readLedgerEntries)({ sid, auditDir });
@@ -367,12 +399,20 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const inventory = openInventory(last.findings);
   const base = {
     event: 'decision', version: META_REVIEW_VERSION, attemptId, at: (deps.now || (() => new Date().toISOString()))(), trigger, mode, round, caps,
-    fingerprint, fingerprintDigest: digest, signals, productivity: { acceptanceRate: productivity.acceptanceRate, stillProductive: productivity.stillProductive, unmeasured: productivity.unmeasured, highByRound: productivity.highByRound },
+    fingerprint, fingerprintDigest: digest, evidence, signals, productivity: { acceptanceRate: productivity.acceptanceRate, stillProductive: productivity.stillProductive, unmeasured: productivity.unmeasured, highByRound: productivity.highByRound },
     inventory, sent: false, costUsd: 0, spendSource: 'none',
   };
   const finish = async (fields) => {
     const decision = { ...base, ...fields };
     const out = (deps.append || appendMetaEvent)(file, decision);
+    releaseClaim();
+    // Act on the PERSISTED winner: if another invocation's decision for this attempt landed first, that one stands.
+    if (out.ok) {
+      const winner = foldMetaLog(readMetaLog(file).events).decisions.get(attemptId);
+      if (winner && winner.eventId !== out.event.eventId && !isRetryable(winner)) {
+        return { ran: true, reused: true, persisted: true, decision: winner, effect: winner.guard.effect, honoured: !!winner.guard.honoured, lines: [`  [meta-review] another invocation decided ${attemptId} first: acting on its decision (${winner.guard.effect})`] };
+      }
+    }
     const lines = [`  [meta-review] ${trigger} ${attemptId}: ${decision.state}${decision.verdict ? ` → ${decision.verdict.action}` : ''} · ${decision.guard.effect}${decision.guard.honoured ? ' (honoured)' : ` (${decision.guard.reasonCode})`} — ${decision.guard.reason}`];
     if (decision.model) lines.push(`  [meta-review] reviewer ${decision.arm} (${decision.model}) · cost $${(decision.costUsd ?? 0).toFixed(4)} (${decision.spendSource})`);
     if (!out.ok) {
@@ -384,6 +424,8 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
     lines.push(rec.recorded ? `  [meta-review] recorded (${META_DECISION_TYPE})` : `  [meta-review] learning row not recorded (${rec.reason})`);
     return { ran: true, persisted: true, decision, effect: decision.guard.effect, honoured: !!decision.guard.honoured, lines };
   };
+  let claimFile = null;
+  const releaseClaim = () => { if (claimFile) { try { fs.rmSync(claimFile, { force: true }); } catch { /* a stale claim fails closed next time */ } claimFile = null; } };
   const unavailable = (reason, extra = {}) => finish({ state: 'unavailable', reason: red(reason).slice(0, 300), guard: { effect: human, honoured: false, reasonCode: 'unavailable', reason: red(reason).slice(0, 300) }, ...extra });
 
   const budget = META_REVIEW_SESSION_BUDGET[mode];
@@ -405,6 +447,14 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const sel = (deps.selectProvider || createMetaReviewProvider)({ auditorModel });
   if (!sel.ok) return unavailable(`${sel.reason}${sel.skipped?.length ? ` (${sel.skipped.map((s) => `${s.arm}: ${s.reason}`).join('; ')})` : ''}`, { auditorFamily: sel.auditorFamily ?? null });
   const who = { arm: sel.arm, sentinel: sel.provider.sentinel, model: sel.provider.model, reviewerFamily: sel.family, auditorFamily: sel.auditorFamily };
+  // Claim the attempt exclusively, then RESERVE the budget durably, both BEFORE the request is sent: a crash after send
+  // still counts against the budget, and a concurrent invocation cannot send the same attempt.
+  const claimPath = path.join(auditDir, `${attemptId}.meta-claim`);
+  try { fs.mkdirSync(auditDir, { recursive: true }); fs.closeSync(fs.openSync(claimPath, 'wx')); claimFile = claimPath; } catch (err) {
+    return notRun(err?.code === 'EEXIST' ? `attempt ${attemptId} is claimed by another invocation (or a crashed one: delete ${path.basename(claimPath)} after checking); the human path applies` : `could not claim the attempt (${err?.code || err?.message})`);
+  }
+  const reserved = (deps.append || appendMetaEvent)(file, { event: 'reserve', attemptId, at: base.at, arm: sel.arm });
+  if (!reserved.ok) { releaseClaim(); return notRun(`could not reserve the reviewer call (${reserved.reason}); nothing was sent`); }
   process.stderr.write(`  [meta-review] calling ${sel.arm} (${sel.provider.model}): attempt ${fold.sentCount + 1} of budget ${budget}\n`);
 
   const header = packHeader({ mode, trigger, round, caps, signalsLine, productivityLine: renderCapProductivity(productivity, { round, caps }), inventory });
@@ -422,9 +472,11 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
 
   const parsed = parseMetaReviewOutput(res?.text ?? '', { knownTopics: pack.topics });
   if (!parsed.ok) {
-    return finish({ ...who, sent, ...spend(sent, res.usage), state: 'invalid', error: parsed.error, raw: red(res?.text ?? '').slice(0, RAW_KEEP_CHARS), guard: { effect: human, honoured: false, reasonCode: 'invalid', reason: `invalid reply: ${parsed.error}`.slice(0, 300) } });
+    const error = red(parsed.error).slice(0, 300);
+    return finish({ ...who, sent, ...spend(sent, res.usage), state: 'invalid', error, raw: red(res?.text ?? '').slice(0, RAW_KEEP_CHARS), guard: { effect: human, honoured: false, reasonCode: 'invalid', reason: `invalid reply: ${error}` } });
   }
-  const packFiles = [...pack.files.map((f) => f.path), ...(planFile ? [posix(path.isAbsolute(planFile) ? path.relative(cwd, planFile) : planFile)] : [])];
+  // Evidence is only what the pack SHOWED: file parts, plus the plan when it reached the pack whole.
+  const packFiles = [...pack.files.map((f) => f.path), ...(pack.plan?.included ? [pack.plan.path] : [])];
   const guard = guardMetaDecision({ trigger, output: parsed.output, inventory, ledgerEntries, lastRound, productivity, packFiles, round, caps });
   const verdict = JSON.parse(red(JSON.stringify(parsed.output)));
   return finish({ ...who, sent, ...spend(sent, res.usage), state: 'valid', verdict, guard: { effect: guard.effect, honoured: guard.honoured, reasonCode: guard.reasonCode, reason: red(guard.reason) }, admittedThrough: guard.admittedThrough ?? null });
