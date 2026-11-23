@@ -141,6 +141,16 @@ describe('ensureAuditDeps proposes the consumer playwright version (dry run, pro
     assert.doesNotMatch(out, /yarn add -D [^\n]*\bplaywright\b/);
   });
 
+  it('a held playwright that is the ONLY missing dep leaves no empty install command in a refusal hint', () => {
+    consumer({ spec: '^1.63.0' });
+    fs.rmSync(path.join(root, 'package-lock.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.writeFileSync(path.join(root, 'yarn.lock'), '');
+    const out = run();
+    assert.match(out, /not installing playwright/);
+    assert.doesNotMatch(out, /&&[ \t]*(\r?\n|$)/);
+    assert.match(out, /nothing else to install/);
+  });
+
   it('a pinned manual hint carries the exact flag (npm save-exact), so it cannot write a caret', () => {
     consumer({ testVersion: '1.63.0', spec: '1.63.0' });
     fs.rmSync(path.join(root, 'package-lock.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

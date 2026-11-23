@@ -458,7 +458,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
   const hintCmd = (pmName) => [
     ...(hintPkgs.length ? [displayAddDev(pmName, hintPkgs, repoRoot)] : []),
     ...(pwPinned ? [displayAddDev(pmName, [`playwright@${pwAlign.version}`], repoRoot, { exact: true })] : []),
-  ].join(' && ');
+  ].join(' && ') || '# nothing else to install: see the playwright note above';
   // Said BEFORE any package-manager refusal below, so a manual-install hint that omits playwright is never silent about why.
   if (pwHeld) process.stderr.write(`  ${Y}⚠${X} ${path.basename(repoRoot)}: not installing playwright — ${pwAlign.reason}; install it at the version @playwright/test resolves to (exact)\n`);
 
