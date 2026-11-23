@@ -140,10 +140,12 @@ fi
 # store RPC below would be pure waste. ONLY a positive `copilot` detection skips;
 # `unknown` (including a stdin-less --prompt run) and a module-load failure run the
 # query exactly as before. The module is resolved from THIS file's own directory
-# (never the cwd), across both tooling layouts. docs/plans/vscode-compatibility.md §7b.
+# (never the cwd), across both tooling layouts (the plan: VS Code compatibility, cluster D).
 HOOK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && { pwd -W 2>/dev/null || pwd; })"
 HOST_LIB=""
-for candidate in "$HOOK_ROOT/scripts/lib/hook-host.mjs" "$HOOK_ROOT/scripts/.claude-skills/lib/hook-host.mjs"; do
+# Segments, not literals: the module is a synced library, not a path a consumer can open.
+for sub in "lib" ".claude-skills/lib"; do
+  candidate="$HOOK_ROOT/scripts/$sub/hook-host.mjs"
   if [[ -f "$candidate" ]]; then HOST_LIB="$candidate"; break; fi
 done
 if [[ -n "$STDIN_JSON" ]]; then
