@@ -161,14 +161,35 @@ Demand, per 30 days (**derived**):
 | WarpBuild | $0.004/2-vCPU-min managed; BYOC $0.002/min plus your own compute ([latchkey](https://latchkey.dev/learn/runners/warpbuild-alternatives)) | **~$43–72** managed | expected similar to Blacksmith | very low | tunnel only |
 | Depot | $0.004–0.006/2-vCPU-min (sources disagree), plus plan fee | **~$45–110** | expected fast | very low | tunnel only |
 | Namespace | $0.002–0.006/2-vCPU-min (sources conflict), 1-minute minimum | **~$22–110** | expected fast | very low | tunnel only |
-| RunsOn on own AWS (spot) | AWS spot at cost (~$0.001–0.002/min for 2–4 vCPU, older figure) plus a flat annual license (their example shows $29/month at a large tier; small-tier price unconfirmed) ([runs-on.com](https://runs-on.com/pricing/)) | **~$15–50** | **expected** good (choose the instance size) | medium: CloudFormation stack in his own AWS, spot interruptions fall back to on-demand | tunnel, or a VPN to home |
-| philips-labs terraform-aws-github-runner | spot compute only, no license | **~$10–25** | as RunsOn | **high**: Terraform, Lambdas, SQS, AMI upkeep | tunnel or VPN |
-| GKE + ARC | spot nodes plus an always-on controller node (~$12+); zonal cluster fee covered by the free-tier credit for one cluster | **~$15–40** | good | **highest**: a Kubernetes cluster to run | tunnel or VPN |
+| RunsOn on a **new** personal AWS account (spot) | AWS spot at cost (~$0.001–0.002/min for 2–4 vCPU, older figure) plus a flat annual license (their example shows $29/month at a large tier; small-tier price unconfirmed) ([runs-on.com](https://runs-on.com/pricing/)) | **~$15–50** | **expected** good (choose the instance size) | **medium–high**: open and secure a new account first (see below), then a CloudFormation stack; spot interruptions fall back to on-demand | tunnel, or a VPN to home |
+| philips-labs terraform-aws-github-runner, new AWS account | spot compute only, no license | **~$10–25** | as RunsOn | **high**: new account, plus Terraform, Lambdas, SQS and AMI upkeep | tunnel or VPN |
+| GKE + ARC, new GCP account | spot nodes plus an always-on controller node (~$12+); zonal cluster fee covered by the free-tier credit for one cluster | **~$15–40** | good | **highest**: new account, plus a Kubernetes cluster to run | tunnel or VPN |
 | Home server (class B below) | capex ~$1,700–2,200 over 60 months, plus power | **~$35–48 all-in**; **~$6–11 marginal** (power only, if the box exists for HA or the store anyway) | **expected** ≈ today's desktop (NVMe, native Docker, no Docker Desktop VHDX) | medium: hardware, Proxmox, OS patching | **LAN: yes** |
 
 Power is **derived** as 25–40 W average idle (18–29 kWh/month) plus 60–100 CI hours at +40–80 W. At an assumed
 $0.30/kWh, substitute the local tariff. All cloud prices are snapshots from third-party comparison pages and vendor
 pages dated Sep–Nov 2026; verify on the vendor's page before buying.
+
+**The spot-VM rows assume a cloud account Louis does not have.** He has no personal AWS or GCP account, and a
+work account must never be used for the personal repos. Those options therefore start with opening a new
+personal account (**expected** half a day to a day):
+- set up a root user with MFA, then lock it away;
+- create an admin identity with SSO or IAM Identity Center;
+- in a region chosen for latency to home, give the runners a scoped IAM role.
+
+**Billing safety is non-optional there.** Set up:
+- AWS Budgets alerts at, for example, 50/80/100% of a $30 monthly budget, plus a Cost Anomaly Detection
+  monitor; GCP budget alerts are the equivalent;
+- **a hard cap.** Neither AWS nor GCP stops spend on its own, so wire a budget action (AWS: an SCP or IAM-deny
+  budget action, or a Lambda that scales the runner fleet to zero; GCP: a Pub/Sub budget notification that
+  disables billing on the project);
+- a per-job instance-type allowlist and `timeout-minutes` on every job, so a runaway loop cannot buy large
+  instances.
+
+A leaked access key is the main failure mode: public repo CI plus cloud credentials is a known abuse target.
+Prefer GitHub OIDC to a role over static keys. Taken together, this setup and the standing billing vigilance
+outweigh the $5–30 a month these options save over Ubicloud. **They rank below both the managed providers and
+the home server** for this workload.
 
 Two cautions:
 - **The prod-read and API secrets move to the provider's VMs.** That is the same trust class as GitHub-hosted,
