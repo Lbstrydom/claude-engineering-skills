@@ -54,6 +54,7 @@ This is the list to read when asking "what is in flight?".
 | [Telemetry linkage as a structural contract](./telemetry-linkage-structural.md) | `In Progress` |  |
 | [Verification lessons — no retry-to-green, gates judged from main, step-back, diff-triggered checklist](./verification-lessons.md) | `Approved` |  |
 | [VS Code compatibility — host facts, MCP, hook portability, fleet on VS Code](./vscode-compatibility.md) | `Draft` |  |
+| [Moving wine-cellar-app into a personal GitHub organisation](./wine-org-move.md) | `Draft` |  |
 
 ## Parked
 
