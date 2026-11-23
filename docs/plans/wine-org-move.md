@@ -26,13 +26,20 @@ GitHub Free for organisations has them for **public** repos only (§5.3). GitHub
 outright: a private repo moved to a Free user or org loses protected branches. Transferred into a Free org,
 the three rulesets stop being enforced: nothing would then require `Required gate`, so a red PR could be
 merged, and the E5b evidence refs could be deleted. The same move also loses private-repo **environments**
-(§5.3), CODEOWNERS, and the wiki.
+(§5.3), CODEOWNERS, and the wiki. GitHub's pricing page states the same in its plan table: "Repository
+rules" and "Code owners" are *Public repositories* only on Free, and *Included* on Team.
+
+**Plainly: yes, moving wine to a Free org drops its merge protection.** Keeping it costs one Team seat,
+$4 a month. A protection that is about to exist makes this sharper: wine is setting up a protected
+`release` branch that Railway will deploy production from, protected by a ruleset (wine #1421, in flight
+2026-11-23). On a Free org that ruleset could not be enforced either, so production's deploy source would
+be unprotected too.
 
 Three ways through, the owner picks one (`D0` in §8):
 
 | Option | Cost | Keeps the gate? | Notes |
 |---|---|---|---|
-| **A. NEWORG on GitHub Team** | one seat, monthly (`expected` about $4; read the price on github.com/pricing before deciding) | yes, rulesets enforced as today | the honest like-for-like |
+| **A. NEWORG on GitHub Team** | **$4 per user per month**, one seat = $48 a year ([pricing](https://github.com/pricing), read 2026-11-23) | yes, rulesets enforced as today | the honest like-for-like; Team also includes 3,000 Actions minutes a month against the Free org's 2,000 (same page) |
 | B. NEWORG on Free, gate moved into CI | none | **no, advisory only** | `Required gate` keeps running but cannot block a merge; the E5b refs lose their protection |
 | C. Stay put, no Blacksmith | none | yes | trim hosted minutes instead (wine's own `ci-hosted-minutes-trim-2026-11` plan) |
 
@@ -134,6 +141,10 @@ the **consumer** and name the **source** (`Lbstrydom/claude-engineering-skills`)
 | Dependabot | `.github/dependabot.yml` names no owner | none; re-enable security updates if the setting does not carry (§5) |
 | README badges | none name the slug | none |
 | self-hosted jobs | 9 jobs with `runs-on: self-hosted`; `pg-compat-test` picks its runner at run time | the runner is **repo-registered** (§3) |
+| runner-status token | a personal access token scoped to wine, used by the runner-health tooling (wine `ci-self-hosted-runner.md`) | a fine-grained token is bound to one resource owner, so a token issued for the user account cannot reach a NEWORG repo: re-issue it with NEWORG as owner (the org may have to approve fine-grained tokens) and re-set the secret. Verify its scope after the move |
+| runbooks | `required-checks-gate.md` names a ruleset **id**; `ci-self-hosted-runner.md` and `deployment-ops.md` name `repos/Lbstrydom/wine-cellar-app` | the id changes if a ruleset is re-created at step 8; text edits in the step 14 canary PR |
+| `release` branch ruleset | being created with wine #1421 | must exist and be in the step 3 baseline before the transfer; it is the production deploy source |
+| CODEOWNERS (12 paths, `@Lbstrydom`) | `.github/CODEOWNERS` | enforced on Team; confirm the user resolves and keeps write access as an org member |
 
 ### 2.4 Deploys, webhooks and integrations (GitHub side, counts only)
 
@@ -161,6 +172,11 @@ the **consumer** and name the **source** (`Lbstrydom/claude-engineering-skills`)
 - `~/.claude/CLAUDE.md`, rules and skills: no slug.
 - The shared host lock (sibling-session notes, 2026-11-23) records `repo = $GITHUB_REPOSITORY` in its record
   and is not live for wine yet. When wine joins, its records carry the new slug; nothing compares the old one.
+  Its planned run-status staleness check needs a cross-repo read token (the owner's decision): if wine is in
+  NEWORG and the other two repos are not, that token must span two owners, which a single fine-grained token
+  cannot. Take that into the token decision.
+- Wine's workflows and its sync hook read the public CES repo with no token. CES does not move, so nothing
+  changes; if CES ever moved, those reads would ride the redirect.
 
 ## 3. The self-hosted runner
 
@@ -364,7 +380,7 @@ From each page's "Who can use this feature?" line:
 | CODEOWNERS | yes | **no** | yes | [About code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners) |
 | Environments, environment variables, deployment branches | yes | **no** | yes | [Managing environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments), [Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments) |
 | Required reviewers / wait timers on environments | **no** (public only) | no | no | same |
-| Included Actions compute | $18/month (about 3,000 Linux minutes, `derived`) | $12/month (about 2,000) | see pricing page | [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) |
+| Included Actions compute | $18/month (about 3,000 Linux minutes, `derived`) | $12/month (about 2,000) | 3,000 minutes/month ([pricing](https://github.com/pricing)) | [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) |
 
 With no payment method, GitHub-hosted usage is **blocked** when the included quota runs out (same billing
 page). The owner's Pro allowance stays with the personal account and keeps covering the other personal repos.
@@ -437,7 +453,12 @@ transfer decision and its own look at the host-lock work in the sibling notes. N
 - **D4**: Blacksmith with a card on file (it requires one), the $25 alert, eu-west by support request (§6).
 - **D5**: GitHub Support's answer on transferring back into a retired name (step 4); if "no", accept forward
   recovery only, or do not transfer.
-- **Freeze window**: a date and length agreed with WCA (step 6).
+- **Freeze window**: a date and length agreed with WCA (step 6). WCA's calendar (2026-11-23): an alpha
+  release candidate is cut around 24 Nov (the `release` branch, its ruleset and Railway's source switch), live
+  participant testing starts 1 Dec, alpha invites go out 8 Dec. A transfer touches exactly those three
+  things, so WCA advises **no transfer before 8 Dec, preferably after the participant-testing window**. In
+  flight at the time: three Dependabot PRs and one owner-held promotion PR, all to merge or park before the
+  freeze.
 
 ## Audit trail
 
@@ -457,3 +478,7 @@ transfer decision and its own look at the host-lock work in the sibling notes. N
   stayed 100% every round, so the stop is the cap, not rigor pressure.
 - Final gate (Gemini, round 1 of 2): APPROVE, 0 blocking, 0 debt. Status stays Draft until the owner takes
   D0, D2 and D5.
+- Post-gate additions (2026-11-23, at the CES coordinator's request and with WCA's inputs): Team price and
+  the Free-vs-Team repository-rules line verified on the pricing page; the plain answer in §1; the `release`
+  ruleset (wine #1421); runner-status token, runbook ids, CODEOWNERS and host-lock token rows; WCA's freeze
+  calendar. Re-gated as Gemini round 2.
