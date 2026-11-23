@@ -26,7 +26,7 @@ import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format
 import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { AUDIT_ROUND_CAPS, EXIT_CAPPED, META_T2_ROUND, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
-import { finishAndExit } from './lib/cli-io.mjs';
+import { ArgvError, assertKnownFlags, finishAndExit } from './lib/cli-io.mjs';
 import { isInDiff } from './lib/finding-scope.mjs';
 import { gatesForCount } from './lib/finding-tags.mjs';
 
@@ -200,8 +200,22 @@ function parseArgs(argv) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+// Every flag parseArgs accepts. An unknown flag is refused rather than dropped: this CLI carries safety flags
+// (--past-cap, --meta-override, --no-meta-review), and a typo of one would otherwise run the real round.
+const KNOWN_FLAGS = [
+  '--max-rounds', '--past-cap', '--no-meta-review', '--meta-override', '--skip-gemini', '--scope', '--base',
+  '--exclude-paths', '--files', '--passes', '--no-tools', '--strict-lint', '--dry-run', '--debt-review',
+  '--predictive-skip',
+];
+
 async function main() {
   const rawArgs = process.argv.slice(2);
+  try {
+    assertKnownFlags(rawArgs, KNOWN_FLAGS, { cli: 'audit-loop', from: 2 });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); await finishAndExit(2); return; }
+    throw err;
+  }
   const args = parseArgs(rawArgs);
 
   if (!args.mode || !args.planFile) {

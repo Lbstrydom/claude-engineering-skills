@@ -1,6 +1,6 @@
 {
   "$comment": "Declared unreachable pointers in SYNCED content — skill markdown and the non-implementation assets the sync ships. See scripts/check-skill-consumer-refs.mjs. Three kinds: `doc` (a docs/ path outside the sync closure), `npm` (any npm run alias — the sync never merges npm scripts), `path` (a BARE upstream path in a tree the sync relocates; `node <path>` is excluded because the sync's rewriter maps exactly that form). Every entry needs a disposition and a real reason; a --update placeholder reason is rejected.",
-  "totalSites": 379,
+  "totalSites": 385,
   "refs": {
     "doc docs/architecture-map.md": {
       "disposition": "consumer-authored",
@@ -31,6 +31,11 @@
       "disposition": "provenance",
       "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
       "sites": 2
+    },
+    "doc docs/audit/shared-references/meta-review.md": {
+      "disposition": "provenance",
+      "reason": "Canonical-source banner on the synced copy — edit upstream, never the copy.",
+      "sites": 3
     },
     "doc docs/audit/shared-references/prerequisite-ladder.md": {
       "disposition": "provenance",
@@ -220,7 +225,7 @@
     "npm check": {
       "disposition": "source-repo-only",
       "reason": "The source repo pre-push aggregate. A consumer has its own test/verify entry point; the skills never depend on the aggregate existing.",
-      "sites": 53
+      "sites": 56
     },
     "npm dashboard:setup": {
       "disposition": "source-repo-only",
