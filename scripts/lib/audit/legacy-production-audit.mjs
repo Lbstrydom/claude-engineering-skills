@@ -129,7 +129,7 @@ import { finalizeRun } from './run-finalization.mjs';
 // consumers importing it from this module (only run-persistence.mjs, its
 // real owner, and this decomposition's own tests reference it now).
 import {
-  PASS_BACKEND_RUBRIC, PASS_FRONTEND_RUBRIC, PASS_SUSTAINABILITY_RUBRIC, buildClassificationRubric,
+  PASS_BACKEND_RUBRIC, PASS_FRONTEND_RUBRIC, PASS_SUSTAINABILITY_RUBRIC, buildClassificationRubric, LINE_ANCHOR_BLOCK,
 } from '../prompt-seeds.mjs';
 import { getActiveRevisionId } from '../prompt-registry.mjs'; import { runStartIdentity } from './audit-identity.mjs';
 import { incrementRunCounter } from '../llm-auditor.mjs';
@@ -876,6 +876,7 @@ async function runLegacyProductionAuditImpl(ctx) {
   }
 
   const focusBlock = priorityBlock + classificationBlock + (lintContext ? '\n\n' + lintContext : '');
+  const lineFocusBlock = focusBlock + LINE_ANCHOR_BLOCK; // ProducerFindingSchema passes only; architecture/duplication/adjacency keep focusBlock
 
   // Read shared files ONCE — reuse across passes that need them
   const sharedContext = shared.length > 0 ? renderFor('shared-context', shared, { maxPerFile: 6000, maxTotal: 20000 }, false) : '';
@@ -900,7 +901,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       safeCallGPT(openai, {
         ...passPrompt({
           rubric: PASS_STRUCTURE_SYSTEM,
-          focusBlock,
+          focusBlock: lineFocusBlock,
           passName: 'structure',
           planContent,
           ledgerFile: isR2Plus ? ledgerFile : null,
@@ -933,7 +934,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       safeCallGPT(openai, {
         ...passPrompt({
           rubric: PASS_WIRING_SYSTEM,
-          focusBlock,
+          focusBlock: lineFocusBlock,
           passName: 'wiring',
           planContent,
           ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1115,7 +1116,7 @@ async function runLegacyProductionAuditImpl(ctx) {
           wave2Promises.push(
             runMapReducePass(openai, effectiveRoutes, 'be-routes', (unit, i, total, unitLabel) => passPrompt({
               rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
-              focusBlock,
+              focusBlock: lineFocusBlock,
               passName: 'be-routes',
               planContent,
               ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1135,7 +1136,7 @@ async function runLegacyProductionAuditImpl(ctx) {
             safeCallGPT(openai, {
               ...passPrompt({
                 rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
-                focusBlock,
+                focusBlock: lineFocusBlock,
                 passName: 'be-routes',
                 planContent,
                 ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1162,7 +1163,7 @@ async function runLegacyProductionAuditImpl(ctx) {
           wave2Promises.push(
             runMapReducePass(openai, effectiveServices, 'be-services', (unit, i, total, unitLabel) => passPrompt({
               rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
-              focusBlock,
+              focusBlock: lineFocusBlock,
               passName: 'be-services',
               planContent,
               ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1182,7 +1183,7 @@ async function runLegacyProductionAuditImpl(ctx) {
             safeCallGPT(openai, {
               ...passPrompt({
                 rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
-                focusBlock,
+                focusBlock: lineFocusBlock,
                 passName: 'be-services',
                 planContent,
                 ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1209,7 +1210,7 @@ async function runLegacyProductionAuditImpl(ctx) {
         wave2Promises.push(
           runMapReducePass(openai, effectiveBackend, 'backend', (unit, i, total, unitLabel) => passPrompt({
             rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
-            focusBlock,
+            focusBlock: lineFocusBlock,
             passName: 'backend',
             planContent,
             ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1229,7 +1230,7 @@ async function runLegacyProductionAuditImpl(ctx) {
           safeCallGPT(openai, {
             ...passPrompt({
               rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
-              focusBlock,
+              focusBlock: lineFocusBlock,
               passName: 'backend',
               planContent,
               ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1265,7 +1266,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       wave2Promises.push(
         runMapReducePass(openai, effectiveFrontend, 'frontend', (unit, i, total, unitLabel) => passPrompt({
           rubric: isR2Plus ? PASS_FRONTEND_RUBRIC : PASS_FRONTEND_SYSTEM,
-          focusBlock,
+          focusBlock: lineFocusBlock,
           passName: 'frontend',
           planContent,
           ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1285,7 +1286,7 @@ async function runLegacyProductionAuditImpl(ctx) {
         safeCallGPT(openai, {
           ...passPrompt({
             rubric: isR2Plus ? PASS_FRONTEND_RUBRIC : PASS_FRONTEND_SYSTEM,
-            focusBlock,
+            focusBlock: lineFocusBlock,
             passName: 'frontend',
             planContent,
             ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1331,7 +1332,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       const changedFileSet = changedFiles.length > 0 ? new Set(changedFiles.map(normalizePath)) : null;
       sustainResult = await runMapReducePass(openai, sustainFiles, 'sustainability', (unit, i, total, unitLabel) => passPrompt({
         rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
-        focusBlock,
+        focusBlock: lineFocusBlock,
         passName: 'sustainability',
         planContent,
         ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1351,7 +1352,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       sustainResult = await safeCallGPT(openai, {
         ...passPrompt({
           rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
-          focusBlock,
+          focusBlock: lineFocusBlock,
           passName: 'sustainability',
           planContent,
           ledgerFile: isR2Plus ? ledgerFile : null,
@@ -1392,7 +1393,7 @@ async function runLegacyProductionAuditImpl(ctx) {
     quickfixResult = await safeCallGPT(openai, {
       ...passPrompt({
         rubric: qfRubric,
-        focusBlock,
+        focusBlock: lineFocusBlock,
         passName: 'quickfix',
         planContent,
         ledgerFile: isR2Plus ? ledgerFile : null,

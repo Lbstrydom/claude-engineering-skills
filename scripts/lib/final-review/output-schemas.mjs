@@ -75,7 +75,9 @@ export const BLOCKING_BASIS_VALUES = Object.freeze([
  * that schema is the response contract for every GPT audit pass too, where a
  * release-blocking judgement has no meaning.
  */
-export const FinalReviewFindingSchema = ProducerFindingSchema.extend({
+// `lineQuote` is omitted: the final gate's Gemini schema stays byte-identical (a nullable `anyOf` there is unproven
+// against the gate that blocks every audit, and the reviewer is never asked for a line anchor).
+export const FinalReviewFindingSchema = ProducerFindingSchema.omit({ lineQuote: true }).extend({
   // Wider than the shared 10: a reviewer-authored id is an IDENTITY, and two descriptive ids
   // ("G-existence-claim-one" / "-two") must not collapse to one when clipped. `addSemanticIds`
   // re-stamps `G<n>` on every kept finding, but stderr, the existence-gate report and the

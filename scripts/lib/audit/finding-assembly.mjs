@@ -47,6 +47,7 @@ import { runSuppressionPasses } from '../suppression-policy.mjs';
 import { reconcileRemediationProjection, markFindingsRemediation } from '../../learning-store.mjs';
 import { appendEvents, mergeLedgers as mergeLedgersForSuppression } from '../debt-memory.mjs';
 import { wireModel } from './llm-helpers.mjs';
+import { applyLineResolution, createSnapshotReader, llmPassPrefixes } from './finding-lines.mjs';
 // Documented allow-list exception (final-review finding, union-diff gate):
 // the plan's literal dependency-direction text allows a stage module to
 // import only finalization-contract.mjs + "pre-existing domain primitives" —
@@ -467,6 +468,8 @@ export async function assembleFindings(data) {
   for (const f of allFindings) {
     populateFindingMetadata(f, f._pass);
   }
+  // lineQuote -> lineStart/lineEnd (finding-lines.mjs): after `_primaryFile` exists, before suppression; never touches the hash.
+  process.stderr.write(applyLineResolution(allFindings, { llmPrefixes: llmPassPrefixes(passRegistry), reader: createSnapshotReader({ auditedSha: data.ctx?.auditedSha ?? null }) }).line);
 
   if (mergedLedger.entries.length > 0) {
     let { kept, suppressed, reopened, reopenTelemetry, nearMisses, concernTelemetry } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });

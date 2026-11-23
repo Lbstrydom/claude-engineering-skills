@@ -184,6 +184,7 @@
         "scripts/.claude-skills/lib/efficacy-lints.mjs",
         "scripts/.claude-skills/lib/final-review/output-schemas.mjs",
         "scripts/.claude-skills/lib/finalize-outcomes.mjs",
+        "scripts/.claude-skills/lib/finding-line-fields.mjs",
         "scripts/.claude-skills/lib/finding-tags.mjs",
         "scripts/.claude-skills/lib/fleet/checks.mjs",
         "scripts/.claude-skills/lib/fleet/config.mjs",

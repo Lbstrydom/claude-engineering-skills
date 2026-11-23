@@ -120,7 +120,8 @@ const INPUT_EST_SAFETY = 1.2;
 
 /** Shadow pass result schema — the OSS conformance check validates against this. */
 export const ShadowPassSchema = z.object({
-  findings: z.array(ProducerFindingSchema).max(50),
+  // `lineQuote` omitted: the shadow arms run the unchanged PASS_PROMPTS seeds, so the comparison stays like for like.
+  findings: z.array(ProducerFindingSchema.omit({ lineQuote: true })).max(50),
   summary: z.string().max(1000).default(''),
 });
 
