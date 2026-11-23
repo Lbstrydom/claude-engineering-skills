@@ -219,7 +219,7 @@ describe('debt handoff: --meta-decision', () => {
   });
   test('a missing round result is a SKIPPED candidate, never a silent zero', () => {
     const log = honouredStop();
-    fs.rmSync(path.join(dir, 's-r3-result.json'));
+    fs.rmSync(path.join(dir, 's-r3-result.json'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const p = metaDecisionToLedgerEntries({ logFile: log, attemptId: 's-r4-T1-x' });
     assert.equal(p.entries.length, 0); assert.equal(p.skipped.length, 2);
   });
