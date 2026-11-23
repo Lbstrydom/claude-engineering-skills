@@ -81,6 +81,23 @@ async function loadSensitivePaths() {
   return null;
 }
 
+// The host oracle (scripts/lib/hook-host.mjs), resolved across both layouts like the
+// classifier above. Null means "run the legacy Claude-shape path" (observable on stderr).
+const HOST_LIB_CANDIDATES = Object.freeze([
+  path.join(REPO_ROOT, 'scripts', 'lib', 'hook-host.mjs'),
+  path.join(REPO_ROOT, 'scripts', '.claude-skills', 'lib', 'hook-host.mjs'),
+]);
+
+async function loadHookHost() {
+  for (const candidate of HOST_LIB_CANDIDATES) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      return await import(pathToFileURL(candidate).href);
+    } catch { /* try the next layout */ }
+  }
+  return null;
+}
+
 /** Only this extension. See the scope contract above. */
 const CHECKED_EXTENSION = '.mjs';
 /** A parse error is a few lines; anything larger is pathological — fail open. */
@@ -105,12 +122,24 @@ async function main() {
     process.exit(0);
   }
 
-  const toolName = payload?.tool_name || '';
-  if (toolName !== 'Edit' && toolName !== 'Write') process.exit(0);
-
-  const toolInput = payload?.tool_input || {};
-  const filePath = toolInput.file_path || toolInput.filePath || '';
-  if (!filePath) process.exit(0);
+  // Host-normalised input: a path-only `file` event is enough here (no `text` needed).
+  // If the oracle cannot load, the legacy Claude-shape parse below runs instead.
+  const hostMod = await loadHookHost();
+  let host = 'unknown';
+  let filePath;
+  if (hostMod) {
+    host = hostMod.detectHookHost(payload);
+    const ev = hostMod.normaliseToolEvent(payload);
+    if (ev?.kind !== 'file') process.exit(0);
+    filePath = ev.filePath;
+  } else {
+    process.stderr.write('  [syntax-check] hook-host unavailable — legacy Claude path\n');
+    const toolName = payload?.tool_name || '';
+    if (toolName !== 'Edit' && toolName !== 'Write') process.exit(0);
+    const toolInput = payload?.tool_input || {};
+    filePath = toolInput.file_path || toolInput.filePath || '';
+    if (!filePath) process.exit(0);
+  }
 
   if (path.extname(filePath).toLowerCase() !== CHECKED_EXTENSION) process.exit(0);
 
@@ -181,7 +210,11 @@ async function main() {
 
   // Use the write-callback: process.exit(0) can terminate before piped stdio
   // flushes.
-  process.stdout.write(JSON.stringify({ systemMessage }) + '\n', () => process.exit(0));
+  const out = hostMod
+    ? hostMod.formatHookOutput(host, 'PostToolUse', 'context', systemMessage)
+    : { systemMessage };
+  if (!out) process.exit(0);
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
 }
 
 main().catch(err => {

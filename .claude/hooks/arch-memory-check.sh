@@ -33,6 +33,7 @@ set -u
 # ── Argument parsing ────────────────────────────────────────────────────────
 
 PROMPT=""
+STDIN_JSON=""
 DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -131,6 +132,43 @@ if [[ -z "$INTENT" ]]; then exit 0; fi
 if [[ "$DRY_RUN" == "1" ]]; then
   printf 'INTENT_DETECTED: %s\nPROMPT_HEAD: %s\n' "$INTENT" "$(printf '%s' "$PROMPT" | head -c 120)"
   exit 0
+fi
+
+# ── Host check: a positively detected Copilot host drops this hook's output ──
+#
+# Copilot documents that it discards UserPromptSubmit output, so the paid embed +
+# store RPC below would be pure waste. ONLY a positive `copilot` detection skips;
+# `unknown` (including a stdin-less --prompt run) and a module-load failure run the
+# query exactly as before. The module is resolved from THIS file's own directory
+# (never the cwd), across both tooling layouts. docs/plans/vscode-compatibility.md §7b.
+HOOK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && { pwd -W 2>/dev/null || pwd; })"
+HOST_LIB=""
+for candidate in "$HOOK_ROOT/scripts/lib/hook-host.mjs" "$HOOK_ROOT/scripts/.claude-skills/lib/hook-host.mjs"; do
+  if [[ -f "$candidate" ]]; then HOST_LIB="$candidate"; break; fi
+done
+if [[ -n "$STDIN_JSON" ]]; then
+  HOOK_HOST=""
+  if [[ -n "$HOST_LIB" ]]; then
+    HOOK_HOST="$(printf '%s' "$STDIN_JSON" | node -e '
+      let s = "";
+      process.stdin.on("data", d => s += d);
+      process.stdin.on("end", async () => {
+        try {
+          const { pathToFileURL } = await import("node:url");
+          const m = await import(pathToFileURL(process.argv[1]).href);
+          let p = null;
+          try { p = JSON.parse(s); } catch {}
+          process.stdout.write(m.detectHookHost(p));
+        } catch {}
+      });
+    ' "$HOST_LIB" 2>/dev/null || true)"
+  fi
+  if [[ -z "$HOOK_HOST" ]]; then
+    printf '  [arch-memory-check] hook-host unavailable — legacy Claude path\n' >&2
+  elif [[ "$HOOK_HOST" == "copilot" ]]; then
+    printf '  [arch-memory-check] Copilot host detected — it drops this hook output; skipping the embed + store query\n' >&2
+    exit 0
+  fi
 fi
 
 # ── Find the repo root (where scripts/cross-skill.mjs lives) ────────────────

@@ -189,6 +189,10 @@ export const CORE_ENTRY = [
   // Test-evidence record/check CLI (Cluster C); nothing imports it, so declared here. In CLI_SMOKE_SET.
   'scripts/test-evidence.mjs',
   '.claude/hooks/quickfix-scan.mjs',
+  // The host oracle the four hooks (quickfix-scan, syntax-check, bash-grep-nudge, arch-memory-check.sh) load at runtime by a
+  // computed path across BOTH tooling layouts, which the import walker cannot see: nothing statically imports it, so it must
+  // be declared or a consumer's hook silently falls back to the legacy Claude path. Zero imports. Cluster D, vscode-compatibility.md.
+  'scripts/lib/hook-host.mjs',
   // Session-start advisory: a retired skill surface on the machine can shadow
   // the repo-scoped copy. Registered in the SYNCED .claude/settings.json, so it
   // must ship too -- it was registered everywhere and shipped nowhere until
