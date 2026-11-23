@@ -114,7 +114,7 @@ gated('cli-help-is-a-pure-read', 'help-readonly-gate', {
 gated('mcp-config-mirrored', 'mcp-parity', {
   trigger: { paths: ['.mcp.json', '.vscode/mcp.json', 'scripts/check-mcp-parity.mjs'] },
   lead: 'Adding or changing an MCP server means editing BOTH config files.',
-  context: 'AGENTS.md: "VS Code reads @@" Claude Code reads .mcp.json; VS Code reads .vscode/mcp.json; the parity gate checks both shapes (a Windows `npx` server needs its `-y`).',
+  context: 'AGENTS.md: "@@" Claude Code and the default VS Code Copilot harness read .mcp.json; .vscode/mcp.json is only forwarded on the default harness; the parity gate checks both shapes (a Windows `npx` server needs its `-y`).',
   incident: 'The two files had to stay mirrored and nothing enforced it until the parity gate (tests/mcp-parity.test.mjs header).',
   control: { path: '.mcp.json', text: '    "new-server": { "command": "npx", "args": ["new-server"] }' } });
 gated('own-model-capture-column-coverage', 'own-model-coverage-gate', {
