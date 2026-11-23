@@ -25,6 +25,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { withCaseTree } from '../model-eval/case-tree.mjs';
 import { validateAuditRound, META_T2_ROUND } from './round-cap.mjs';
 import { metaTriggerFor, readMetaLog, metaLogPath, foldMetaLog } from './meta-review.mjs';
+import { topicOf } from './cap-productivity.mjs';
 import { computeRoundSignals, makeGitRunner } from './round-signals.mjs';
 import { decideMetaPilot, scoreMetaRuns, SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
 
@@ -106,19 +107,30 @@ export function ledgerTargets(snapshot, { upToRound = Infinity } = {}) {
 }
 
 /**
+ * A restored finding as a LIVE finding is: the store's own `topicId` (an 8-hex fingerprint) is dropped. A live finding carries none, so the
+ * reviewer pack, its reply validator and the guard's inventory all derive the topic the same way (`topicOf`); leaving the store id on the
+ * finding made the pack and the validator speak 8-hex while the guard spoke 12-hex (measured on the Pilot 1 rehearsal: 0 of 5 decisions honoured).
+ */
+export function toLiveFinding(f) { const { topicId: _store, ...rest } = f ?? {}; return rest; }
+
+/**
  * The store-reconstructed ledger entries in the shape the audit's own ledger readers expect (`pass`, `section`, `detail`,
- * `semanticHash`, `ruling` ...). The store keeps the fingerprint, not the audit's semantic hash, so the fingerprint stands in
- * for it: a stated limit of the reconstruction, identical for both arms.
+ * `semanticHash`, `ruling` ...). The ledger entry's topic is what the live ledger writer would have derived from its finding
+ * (`topicOf`), so it matches the reviewer pack, the validator and the guard's inventory; an entry whose finding is not in the
+ * snapshot keeps the store fingerprint (it matches nothing live, as before). The derived id approximates the original live id:
+ * a stated limit of the reconstruction, identical for both arms.
  */
 export function toAuditLedgerEntries(snapshot) {
   const byId = new Map();
   for (const r of snapshot.rounds) for (const f of r.findings) byId.set(f.id, f);
   const sev = (x) => (['HIGH', 'MEDIUM', 'LOW'].includes(String(x).toUpperCase()) ? String(x).toUpperCase() : 'MEDIUM');
   return snapshot.ledgerEntries.map((e) => {
-    const f = byId.get(e.findingId) ?? {};
+    const live = byId.get(e.findingId);
+    const f = live ?? {};
     const category = String(e.category ?? f.category ?? '');
+    const topicId = live ? topicOf(toLiveFinding(live)) : String(e.topicId);
     return {
-      topicId: String(e.topicId), latestFindingId: e.findingId ?? undefined, semanticHash: String(e.topicId), severity: sev(e.severity), originalSeverity: sev(e.severity),
+      topicId, latestFindingId: e.findingId ?? undefined, semanticHash: topicId, severity: sev(e.severity), originalSeverity: sev(e.severity),
       category, section: String(f.section ?? e.affectedFiles?.[0] ?? ''), detail: String(f.detail ?? ''), pass: /^\[([^\]]+)\]/.exec(category)?.[1]?.toLowerCase() ?? 'backend',
       affectedFiles: e.affectedFiles ?? [], adjudicationOutcome: e.adjudicationOutcome, remediationState: e.remediationState ?? 'pending',
       ruling: e.ruling ?? 'sustain', rulingRationale: '', resolvedRound: Number.isInteger(e.round) ? e.round : e.firstSeenRound, round: e.firstSeenRound, source: 'session',
@@ -135,7 +147,7 @@ export function restorePointFiles({ dir, point, snapshot, sid, fsImpl = fs }) {
   fsImpl.mkdirSync(auditDir, { recursive: true });
   const written = [];
   const put = (name, obj) => { const p = path.join(auditDir, name); if (isLink(p)) throw new Error(`${name} is a symlink in the tree; refusing to write through it`); const text = `${JSON.stringify(obj, null, 2)}\n`; fsImpl.writeFileSync(p, text); if (sha256Hex(fsImpl.readFileSync(p)) !== sha256Hex(text)) throw new Error(`restore verification failed for ${name}`); written.push(name); };
-  for (const r of snapshot.rounds) put(`${sid}-r${r.round}-result.json`, { round: r.round, verdict: r.verdict, findings: r.findings, _auditedSha: r.auditedSha, _sid: sid });
+  for (const r of snapshot.rounds) put(`${sid}-r${r.round}-result.json`, { round: r.round, verdict: r.verdict, findings: r.findings.map(toLiveFinding), _auditedSha: r.auditedSha, _sid: sid });
   const digest = sha256Hex(JSON.stringify({ rounds: snapshot.rounds, ledgerEntries: snapshot.ledgerEntries }));
   if (digest !== point.snapshotDigest) throw new Error('snapshot digest does not match the frozen point');
   put(`${sid}-ledger.json`, { version: 1, meta: { round: point.checkpoint, auditedSha: point.checkpointSha, reconstructedFrom: 'store-events' }, entries: toAuditLedgerEntries(snapshot) });

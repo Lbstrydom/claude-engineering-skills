@@ -509,6 +509,10 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   };
   const unavailable = (reason, extra = {}) => finish({ state: 'unavailable', reason: red(reason).slice(0, 300), guard: { effect: human, honoured: false, reasonCode: 'unavailable', reason: red(reason).slice(0, 300) }, ...extra });
 
+  // Nothing open to judge: a valid stop or admit must name >= 1 topic, so a reviewer call here can never yield a usable decision (measured on the
+  // Pilot 1 rehearsal: two calls, $0.27-$1.01, both "invalid"). No call, no spend; the human path applies exactly as it did after an invalid reply.
+  if (inventory.length === 0) return unavailable('no open topics in the last round: a stop or admit must name at least one, so no reviewer call was made');
+
   const budget = META_REVIEW_SESSION_BUDGET[mode];
   if (fold.sentCount >= budget) return unavailable(`session-budget: ${fold.sentCount} of ${budget} reviewer calls already made for this session`);
 
