@@ -336,7 +336,10 @@ async function main() {
     // Step 2 — Run audit
     banner(`ROUND ${round} — GPT-5.4 Audit`);
     const fullAuditArgs = ['scripts/openai-audit.mjs', 'code', args.planFile, ...auditArgs];
-    process.stderr.write(`${D}$ node ${fullAuditArgs.join(' ')}${X}\n`);
+    // Display only, but faithful: an argument with spaces or shell metacharacters (a free-text --meta-override / --past-cap
+    // reason) is single-quoted, so the printed command is the argument list that actually runs.
+    const shown = fullAuditArgs.map((a) => (/^[\w./:,=@%+-]+$/.test(a) ? a : `'${String(a).replace(/'/g, "'\\''")}'`));
+    process.stderr.write(`${D}$ node ${shown.join(' ')}${X}\n`);
 
     try {
       execFileSync('node', fullAuditArgs, { stdio: 'inherit', timeout: 600000 });
