@@ -34,8 +34,10 @@ describe('check:static:ci parity', () => {
     for (const g of ci) assert.ok(all.includes(g), `${g} is in check:static:ci but not check:static`);
     for (const g of local) assert.ok(all.includes(g), `${g} is local-only but not in check:static (stale entry)`);
   });
-  it('every local-only entry carries a reason', () => {
-    for (const g of local) assert.ok(typeof localOnly[g] === 'string' && localOnly[g].trim().length > 20, `${g} needs a reason`);
+  it('every local-only entry carries a reason, an owner and the run point it protects', () => {
+    for (const g of local) for (const k of ['reason', 'owner', 'runPoint']) {
+      assert.ok(typeof localOnly[g]?.[k] === 'string' && localOnly[g][k].trim().length > 10, `${g} needs a non-empty ${k}`);
+    }
   });
   it('the workflow runs both this parity test and check:static:ci', () => {
     const wf = fs.readFileSync(path.join(REPO, '.github', 'workflows', 'static-gates.yml'), 'utf8');
@@ -46,5 +48,11 @@ describe('check:static:ci parity', () => {
     const wf = fs.readFileSync(path.join(REPO, '.github', 'workflows', 'static-gates.yml'), 'utf8');
     assert.match(wf, /group: static-gates-\$\{\{ github\.event_name == 'pull_request' && github\.ref \|\| github\.run_id \}\}/);
     assert.match(wf, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+  });
+  it('the job has the stable name static-gates and no path filter (a required check skipped on some PRs disappears silently)', () => {
+    const wf = fs.readFileSync(path.join(REPO, '.github', 'workflows', 'static-gates.yml'), 'utf8');
+    assert.match(wf, /^ {2}static-gates:\s*\r?\n {4}name: static-gates\s*$/m);
+    assert.doesNotMatch(wf, /^\s*paths(-ignore)?:/m);
+    assert.doesNotMatch(wf, /^\s*branches-ignore:/m);
   });
 });
