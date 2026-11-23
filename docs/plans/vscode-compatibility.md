@@ -188,7 +188,7 @@ no codemod is warranted.
 
 | File | Purpose | Key change | Principle |
 |---|---|---|---|
-| `docs/runbooks/vscode-host-smoke.md` (planned) (create) | The per-harness smoke test Louis runs | Steps, capture recipe, the fixture destination, and recording into `hosts.md` | #12 Testability |
+| `docs/runbooks/vscode-host-smoke.md` (create) | The per-harness smoke test Louis runs | Steps, capture recipe, the fixture destination, and recording into `hosts.md` | #12 Testability |
 | `AGENTS.md` (modify) | The MCP line | Copilot harness reads `.mcp.json`; Local reads `.vscode/mcp.json`; keep both mirrored | #5 |
 | `scripts/gate-contracts/mcp-parity-gate.json` (modify) | The verbatim `stated` quote | Re-quote the new sentence | gate honesty |
 | `scripts/lib/checklist/gen.mjs` (modify) | Its checklist context string | Match the new line | #5 |
@@ -217,32 +217,59 @@ extension, and the cloud agent where it applies.
   - **Before the run.** Launch VS Code from a shell with `$env:ARCH_MEMORY_HOOK_DISABLE = '1'`. The repo's
     `.claude/settings.json` hooks also fire under the Copilot harness, so without this every captured prompt would pay
     for an embed before Phase 5's skip exists. Record that the variable was set.
-  - **Where raw captures go.** The hook script writes raw payloads OUTSIDE the repo, to
-    `$env:LOCALAPPDATA\ces-hook-capture\<host>\` (a per-user directory, so it is not world-readable). It never writes
-    into the working tree.
-  - **Cleanup.** Removing the hook config, its script and the capture directory is the runbook's last step. It runs even
-    if an earlier step failed. The step then checks each removal explicitly:
-    - `Test-Path` must be `False` for `.github/hooks/payload-capture.json`, for its script, and for
-      `$env:LOCALAPPDATA\ces-hook-capture`;
-    - `git status --porcelain --ignored -- .github/hooks` must print nothing.
+  - **Preflight (refuse, never overwrite).** The runbook first checks that `.github/hooks/payload-capture.json` and its
+    script path do not exist. If either does, it stops: those are the operator's files, and the runbook never replaces
+    or deletes a file it did not create.
+  - **Where raw captures go.** The hook script writes raw payloads OUTSIDE the repo, to a **unique per-run** directory,
+    `$env:LOCALAPPDATA\ces-hook-capture\<run-id>\<host>\`, where `<run-id>` is a timestamp plus a random suffix. It
+    never writes into the working tree.
+  - **Access control: restrict, then verify against an allowlist.** The runbook creates the run directory and
+    immediately removes inheritance and grants an explicit set:
+    `icacls <dir> /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F"`.
+    It then verifies with `Get-Acl`:
+    - `AreAccessRulesProtected` is `True`, so nothing is inherited;
+    - every access rule's identity, resolved to a SID, is in the allowlist: the operator's own SID, `S-1-5-18`
+      (SYSTEM) and `S-1-5-32-544` (Administrators). A rule for any other principal, a group or an individual account,
+      fails the check.
+
+    If the check fails, or cannot run, the runbook stops before any capture. A negative control runs first: grant
+    `Users:(R)` to the directory, confirm the check refuses, then remove the grant and confirm it passes.
+  - **Run record.** The runbook writes each artifact it creates (the hook config, its script, the run directory) to a
+    run record, `$env:LOCALAPPDATA\ces-hook-capture\<run-id>.created.txt`.
+  - **Cleanup.** The runbook's last step removes **only the artifacts in the run record**, then the record itself. It
+    runs even if an earlier step failed. Other files under `.github/hooks/` or `ces-hook-capture\` are left alone. The
+    step then checks each removal explicitly:
+    - `Test-Path` must be `False` for every path in the run record and for the record itself;
+    - `git status --porcelain --ignored -- .github/hooks/payload-capture.json <script path>` must print nothing.
 
     A `True` or any output means cleanup failed. The runbook says so in bold and stops until it is fixed.
   - **Fixtures.** A fixture is made only by a **fail-closed schema projection** script that the runbook gives inline.
-    - **It is recursive and allowlist-based.** It walks the payload. For each supported event it has an enumerated list
-      of permitted key paths.
-    - **What it drops.** A key not on the list is DROPPED, and its name is printed to stderr for Louis to review before
-      it is ever added. A nested object or array under a non-listed key is dropped whole.
+    - **It is recursive and allowlist-based.** It walks the payload. For each supported event it reads a **versioned
+      allowlist**, `tests/fixtures/hook-payloads/allowlist.json` (`{"version": N, "events": {<event>: {<key path>:
+      <synthetic value>}}}`), created with the first fixture commit. Each permitted key path has its synthetic value.
+    - **Unknown key paths REFUSE; they are never dropped.** If the payload holds any key path not on the allowlist, the
+      script exits 2 and writes no fixture. It prints the unknown key **paths** to stderr, never their values. So an
+      unpublished field, which is exactly the evidence Tier 2 needs, cannot be lost silently.
+    - **Approving a field is a two-step process.** Louis reviews the printed paths privately. He adds each one he
+      approves to the allowlist with a synthetic value and bumps `version`. Then he re-runs the projection on the same
+      raw capture. A path he does not approve means no fixture for that event; the raw capture is then deleted at
+      cleanup.
     - **What it keeps.** No original string value survives anywhere except the closed-list identifiers below. Every
-      other string, number or nested value is replaced by the synthetic value assigned to that key path.
-    - **When it refuses.** It refuses (exit 2, no output) on an unsupported event.
+      other string, number or nested value is replaced by the synthetic value its key path has in the allowlist.
+    - **When else it refuses.** It refuses (exit 2, no output) on an unsupported event.
 
-    Its test feeds it a payload carrying a nested secret, an unexpected field, a private non-path string and a home path,
-    and asserts none of them appear in the output. Beyond that, it **keeps** the fields that identify the event:
+    Its tests:
+    - a payload with a nested secret, a private non-path string and a home path, all on approved paths: none of them
+      appear in the output;
+    - a payload with an unexpected field: exit 2, no output, and stderr names the path but not its value;
+    - the same payload after that path is added to the allowlist: the output carries the path with its synthetic value.
+
+    Because unknown paths refuse, a fixture's key set always equals the recording's key set. Beyond that, it **keeps**
+    the fields that identify the event:
     - `hook_event_name` and `tool_name` verbatim, validated against a closed list (the documented event names, and the
       Claude tool names from the reference's mapping table);
-    - every top-level envelope key, including `timestamp` replaced by the fixed value `2026-01-01T00:00:00.000Z` and
-      `session_id` replaced by `"fixture-session"`;
-    - the exact key set of `tool_input`.
+    - `timestamp`, replaced by the fixed value `2026-01-01T00:00:00.000Z`, and `session_id`, replaced by
+      `"fixture-session"`.
 
     It **replaces** values with synthetic ones:
     - a path becomes `src/fixture.mjs`;
@@ -258,7 +285,7 @@ extension, and the cloud agent where it applies.
 - *Fleet:* the two-session test from `hosts.md:73-75`.
 - *Results:* the result table and where it is recorded (the `hosts.md` matrix, with harness version and date).
 
-Files: `docs/runbooks/vscode-host-smoke.md` (planned) (create).
+Files: `docs/runbooks/vscode-host-smoke.md` (create).
 
 **Phase 2 — Host-facts refresh.** Rewrite each stale fact with its citation.
 
@@ -310,25 +337,72 @@ merge, canonical-path and EOL treatment as `.vscode/mcp.json`. Keep the parity g
 - A managed server whose merged values differ between the two files fails parity, unless the consumer declared that
   divergence in `.sync-overrides.json`.
 
-The temporary-consumer tests cover three cases:
+**Where consumer parity runs.** It runs in the existing consumer-side verifier, `scripts/lib/sync-isolation-verify.mjs`
+(`runGates`, `:916` at `4b778e70`), as a new **gate 10, managed MCP parity**. That verifier already runs from the
+consumer side after a sync and reads the consumer's manifest as its source of truth. So consumer parity needs no new
+CLI, and it runs after the merge and the writes, against the files as they landed.
 
-1. an extra server on one side only, which must pass;
-2. a declared divergent managed value, which must pass;
-3. an undeclared managed mismatch, which must fail.
+- **Managed names.** The manifest's `files` map is path → hash and has no per-entry metadata, so the names go in a new
+  **top-level** field, `mcpManagedServers: string[]` (sorted, each non-empty), taken from the source `.mcp.json` the
+  sync merged in. The gate reads it from the consumer's validated manifest, never from the source repo. The field
+  touches one persistence path, changed together:
+  - `SyncManifestSchema` (`scripts/lib/sync-manifest.mjs:62`) gains `mcpManagedServers:
+    z.array(z.string().min(1)).optional()`. Without this the non-strict schema strips the key on parse, and gate 10
+    never sees it;
+  - `buildConsumerManifest` (`:341`) takes and writes it, and `sync-to-repos.mjs` passes it;
+  - the verifier already validates through `SyncManifestSchema.safeParse` (`sync-isolation-verify.mjs:226`), so it
+    needs no second parse.
+
+  **Backward compatibility:** the field is optional. An older manifest without it still validates. A malformed value
+  (not an array of non-empty strings) fails schema validation, which the verifier already reports as a failure.
+- **Overrides.** An override is per FILE, not per server: `.sync-overrides.json` freezes a whole path. The gate loads
+  it with the existing `loadOverrides` and checks each of the two files with `matchOverride`
+  (`scripts/lib/sync-overrides.mjs:254`, `:285`). If either file is overridden, the consumer has declared that pair
+  divergent. Gate 10 then compares nothing and reports `declared`, naming the overridden file. That is a recorded
+  decision, never `pass`.
+- **Comparison.** It calls the existing oracle, `compareMcpSurfaces` (`scripts/lib/mcp-parity.mjs:268`), on the two
+  consumer files, restricted to the managed names by a new `managedNames` option. Without that option the function
+  behaves as today, so the source-repo gate is unchanged.
+- **Reporting and exit status.** Gate 10 has four results. Only two let the verifier exit 0:
+  - `pass`: every managed server matches;
+  - `declared`: the pair is overridden (above);
+  - `fail` (`MCP_PARITY_MISMATCH`): a managed server differs, reported with its name and the differing leaf path;
+  - `unmeasured` (`MCP_PARITY_UNMEASURED`): the manifest lists the root `.mcp.json` but has no `mcpManagedServers`.
+
+  `fail` and `unmeasured` are gate failures: the verifier exits non-zero, as for any other failed gate. `unmeasured`
+  prints its own diagnostic, distinct from a mismatch: "manifest predates managed-server recording — re-sync with
+  `npm run sync -- --target <name>` from claude-engineering-skills". A manifest that does not list `.mcp.json` at all
+  was written before Cluster C. There is nothing to compare, so gate 10 reports `not-applicable` and exits 0.
+
+The temporary-consumer tests run a real sync into the temporary consumer. They reload the manifest through
+`SyncManifestSchema` and assert the exact `mcpManagedServers` value. Then they call `runGates` with gate 10, the same
+production path an operator runs, and assert both the gate result and the verifier's overall exit status:
+
+1. an extra server on one side only: `pass`, exit 0;
+2. an overridden pair with a divergent managed value: `declared`, exit 0;
+3. an undeclared managed mismatch: `fail`, non-zero;
+4. `mcpManagedServers` removed from a manifest that lists `.mcp.json`: `unmeasured`, non-zero, with the re-sync
+   diagnostic;
+5. `mcpManagedServers` set to a malformed value: schema failure, non-zero;
+6. a manifest with no `.mcp.json` entry: `not-applicable`, exit 0.
 
 Files: `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/sync-path-map.mjs` (modify),
 `scripts/lib/sync-divergence.mjs` (modify), `scripts/lib/sync-eol-pins.mjs` (modify), `scripts/check-mcp-parity.mjs`
-(modify), `tests/mcp-parity.test.mjs` (modify).
+(modify), `scripts/lib/mcp-parity.mjs` (modify), `scripts/lib/sync-isolation-verify.mjs` (modify),
+`scripts/lib/sync-manifest.mjs` (modify: schema field and `buildConsumerManifest`), `scripts/sync-to-repos.mjs`
+(modify: pass `mcpManagedServers`), `tests/mcp-parity.test.mjs` (modify).
 
 **Phase 4 — Hook host oracle.** Create `scripts/lib/hook-host.mjs` with three exports:
 
 - `detectHookHost(payload)`: `claude-code` | `copilot` | `unknown`;
 - `normaliseToolEvent(payload)` returns a discriminated union, or `null`:
-  - `{kind:'edit', filePath, text}`: both required. Used by quick-fix (`text`) and syntax-check (`filePath` only).
-  - `{kind:'write', filePath, text}`: both required.
+  - `{kind:'file', op:'edit'|'write', filePath, text?}`: `filePath` required, `text` optional (absent when the payload
+    carries no text field). Used by syntax-check, which needs only `filePath`, and by quick-fix, which needs both.
   - `{kind:'shell', command}`: `command` required; there is no path. Used by grep-nudge.
 
-  A variant missing a required field is `null`. A consumer reads only the fields of the variant it handles.
+  A variant missing a **required** field is `null`; a missing optional `text` is not. Each hook checks the fields it
+  needs: quick-fix exits 0 with no output when `text` is absent, while syntax-check still runs on a path-only event.
+  So no hook that reads only the path today loses an event it handles now.
   - **Multi-file tools** (Copilot `apply_patch`) are **explicitly deferred**: `normaliseToolEvent` returns `null` for
     them. No hook sees a partial or unparsed patch, so no path skips the sensitive check.
   - Only single-file `edit`/`str_replace_editor`/`create` are mapped, and only in Tier 2.
@@ -419,6 +493,9 @@ Files: `scripts/lib/hook-host.mjs` (create), `tests/hook-host.test.mjs` (create)
   - No new path-handling code is written.
   - Tests for BOTH payload shapes: a direct sensitive path, a symlink into a sensitive location, and a dangling link.
     Each must short-circuit with no scan and no `node --check`, for INC-001.
+  - A spawned-hook regression test feeds `syntax-check.mjs` a path-only Claude `Edit` event (no `new_string`) and
+    asserts that `node --check` still runs, as it does at `4b778e70`. It feeds `quickfix-scan.mjs` the same event and
+    asserts exit 0 with no output. Once Tier 2 fixtures exist, the same pair runs on the recorded Copilot event.
 - `bash-grep-nudge.mjs` emits a host-shaped deny. Its message names the host's search tool ("the Grep tool", or "the grep
   tool" on Copilot).
 - `arch-memory-check.sh` asks the oracle (through its existing `node -e` parse) and exits 0 **before** the embed and the
@@ -590,8 +667,9 @@ INC-001 applies to the hook-payload work:
     commit or `gates:check` fails.
   - author-tier: standard
 - **Cluster C** — Phase 3 — fix-gate: none ⚑ (Louis approves before it starts)
-  - Coupling: one sync surface: the inventory, path map, divergence merge, EOL pin and parity gate for `.mcp.json`. They
-    move together or the sync and its verifier disagree.
+  - Coupling: one sync surface: the inventory, path map, divergence merge, EOL pin and parity gate for `.mcp.json`,
+    plus the `mcpManagedServers` manifest field (schema, writer and sync call site) and the consumer-side gate 10 in
+    `sync-isolation-verify.mjs` that reads it. They move together or the sync and its verifier disagree.
   - author-tier: standard
 - **Cluster D** — Phases 4-5 — fix-gate: yes
   - Coupling: the oracle and its four callers share one contract (the normalised event and the output shape). The
@@ -613,6 +691,18 @@ INC-001 applies to the hook-payload work:
 | R1 | H5 M3 | 8/8 |
 | R2 | H2 M2 | 4/4 |
 | R3 | H4 M1 | 5/5 |
+| R4 (past cap) | H3 M1 | 4/4 |
+| R5 (past cap, absolute) | H3 | 3/3 |
+
+**Rounds 4 and 5** ran past the soft cap with Louis's approval of 2026-11-23 (`--past-cap`, relayed by the coordinator
+and confirmed by Louis in this session). They fixed:
+
+- R4: the path-only syntax event (one `file` variant, `text` optional), consumer parity as gate 10 of the
+  consumer-side verifier, unknown fixture keys refusing rather than dropping, and per-run runbook cleanup;
+- R5: the `mcpManagedServers` persistence path through `SyncManifestSchema`, gate 10's exit semantics, and a
+  restrict-then-verify ACL allowlist for the capture directory.
+
+Round 5 is the absolute cap; no further GPT round is possible.
 
 **Every round was productive.** The findings narrowed from design gaps to contract detail:
 
@@ -640,3 +730,6 @@ items. Three non-blocking items were folded into the plan rather than carried as
 - **G3 (LOW):** the hooks fire twice during the Phase 1 capture. The smoke run now sets `ARCH_MEMORY_HOOK_DISABLE=1`.
 
 No second gate round was run, because nothing was blocking.
+
+**Final gate after rounds 4-5** (Gemini, `gemini-4-argon`, round 1/2, run `fce79324`): verdict APPROVE, disposition
+`approve`, 0 blocking, 0 debt.

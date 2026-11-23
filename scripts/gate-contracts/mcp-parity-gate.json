@@ -7,7 +7,7 @@
       "id": "mcp-parity-rejects-missing-dash-y",
       "kind": "executable",
       "statedIn": "AGENTS.md",
-      "stated": "`.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.",
+      "stated": "VS Code Copilot reads root `.mcp.json` directly and only forwards `.vscode/mcp.json` — keep the two mirrored when adding servers.",
       "implementation": "scripts/check-mcp-parity.mjs",
       "tests": [
         "tests/mcp-parity.test.mjs"

@@ -71,8 +71,8 @@ user's decision; the coordinator rules that govern when to bring it to them are 
   names its files and whether each file's committed content already equals base;
   uncommitted work in its worktree is not part of that comparison, and the line
   says so. Its output ends with the session-list check line:
-  before running any printed removal, check the desktop session list (pinned and
-  dormant sessions included) for a session whose cwd is that worktree.
+  before running any printed removal, check the host's session list (also before `prune --apply`; pinned and
+  dormant sessions included) for a session whose cwd is that worktree, per `references/hosts.md` for other hosts.
 - **Detached worktrees and stale registrations.** `prune` also judges worktrees no branch names. A detached worktree is removable only when it is clean (ignored files and unpushed commits count) and every commit its registration alone can reach (its HEAD, both ids of each HEAD-reflog entry, `ORIG_HEAD`) is held by a remote-tracking ref, with no per-worktree ref in its admin dir. A pre-push sandbox (`ces-prepush-…`) is kept for its own sweep. A registration whose directory is gone is only LISTED and counted, as "registration only, nothing judged": no removal is offered for it, and `--apply` never runs the repository-wide `git worktree prune`. `--apply` re-checks all of this under the lock, and `--include-fresh` covers only what the plan showed, never activity since.
 - **The prune count reaches you without running prune.** `fleet status` plans a
   prune under a 30 s budget and prints one `prune:` line (removable, fresh,

@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "tools": [
+    "Bash",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "Read",
+    "Grep",
+    "Glob",
+    "Agent",
+    "Task",
+    "bash",
+    "powershell",
+    "edit",
+    "str_replace_editor",
+    "apply_patch",
+    "create",
+    "view",
+    "grep",
+    "glob",
+    "task"
+  ],
+  "events": {
+    "UserPromptSubmit": {
+      "session_id": "fixture-session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "cwd": "/fixture/repo",
+      "transcript_path": "fixture-transcript.jsonl",
+      "permission_mode": "default",
+      "prompt": "fix the fixture bug"
+    },
+    "userPromptSubmitted": {
+      "session_id": "fixture-session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "cwd": "/fixture/repo",
+      "transcript_path": "fixture-transcript.jsonl",
+      "permission_mode": "default",
+      "prompt": "fix the fixture bug"
+    },
+    "PreToolUse": {
+      "session_id": "fixture-session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "cwd": "/fixture/repo",
+      "transcript_path": "fixture-transcript.jsonl",
+      "permission_mode": "default",
+      "tool_use_id": "fixture-tool-use"
+    },
+    "preToolUse": {
+      "session_id": "fixture-session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "cwd": "/fixture/repo",
+      "transcript_path": "fixture-transcript.jsonl",
+      "permission_mode": "default",
+      "tool_use_id": "fixture-tool-use"
+    },
+    "PostToolUse": {
+      "session_id": "fixture-session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "cwd": "/fixture/repo",
+      "transcript_path": "fixture-transcript.jsonl",
+      "permission_mode": "default",
+      "tool_use_id": "fixture-tool-use"
+    },
+    "postToolUse": {
+      "session_id": "fixture-session",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "cwd": "/fixture/repo",
+      "transcript_path": "fixture-transcript.jsonl",
+      "permission_mode": "default",
+      "tool_use_id": "fixture-tool-use"
+    }
+  }
+}

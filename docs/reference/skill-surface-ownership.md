@@ -214,7 +214,7 @@ and then delegates. It owns no file lists.
 | Editor | Reads | Covered by |
 |---|---|---|
 | Claude Code | project `.claude/skills/` | committed here; synced elsewhere |
-| VS Code Copilot 1.109+ | `.claude/skills/` (workspace root) | same |
+| VS Code Copilot 1.109+ | `.claude/skills/` (workspace root; the Copilot runtime reads it, though the VS Code skills page lists only `.github/skills/` and calls its table non-exhaustive, so the harness listing is unconfirmed pending the smoke run) | same |
 | Cursor | `.claude/skills/` | same |
 | Windsurf | `.claude/skills/` | same |
 | Any terminal | n/a | `node scripts/<runner>.mjs` here, `scripts/.claude-skills/<runner>.mjs` in a consumer |
@@ -317,8 +317,8 @@ has no oracle — declare the discriminator in BOTH descriptions instead (*topic
   skills surface as `/name` slash commands in the SAME namespace as prompt files,
   same-basename shims collided with their own skills (and half pointed at
   non-existent CLIs). **Do not re-introduce a `.github/prompts` generator.**
-- MCP: VS Code reads `.vscode/mcp.json`, **NOT** Claude's `.mcp.json` — keep the
-  two mirrored when adding servers.
+- MCP: VS Code Copilot reads root `.mcp.json` directly and only forwards
+  `.vscode/mcp.json` — keep the two mirrored when adding servers.
 
 ### `--keep-github-skills` removed entirely (2026-07-28)
 
