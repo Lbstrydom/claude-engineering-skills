@@ -85,9 +85,10 @@ describe('runbook scripts exist and parse', () => {
 });
 
 describe('the committed allowlist seed', () => {
-  it('is {version >= 1, events} and covers the six supported events', () => {
+  it('is {version >= 1, tools, events} and covers the six supported events', () => {
     const a = seed();
     assert.ok(Number.isInteger(a.version) && a.version >= 1);
+    assert.ok(Array.isArray(a.tools) && a.tools.includes('bash') && a.tools.includes('Write'));
     assert.deepEqual(Object.keys(a.events).sort(),
       ['PostToolUse', 'PreToolUse', 'UserPromptSubmit', 'postToolUse', 'preToolUse', 'userPromptSubmitted']);
   });
@@ -225,12 +226,55 @@ describe('project.mjs — allowlist-driven, unknown paths REFUSE', () => {
     assert.equal(runProject(approved(), { extra: ['--name', '../escape'] }).status, 2);
   });
 
-  it('skips an existing fixture instead of overwriting, unless --name is given', () => {
+  it('an identical re-projection is skipped; a DIFFERENT shape for the same event and tool is kept as a variant', () => {
     const first = runProject(approved());
     const again = spawnSync(process.execPath, [projectJs, '--host', 'copilot', '--root', first.root, '--in', first.input,
       '--allowlist', first.allowFile], { encoding: 'utf8' });
     assert.equal(again.status, 0);
-    assert.match(again.stdout, /^exists, skipped /);
+    assert.match(again.stdout, /^identical to posttooluse.write.json, skipped/);
+    // a second payload, same event + tool, with an extra approved path: a different shape
+    const a = seed();
+    a.version = 2;
+    a.events.PostToolUse.extra_flag = true;
+    fs.writeFileSync(first.allowFile, JSON.stringify(a));
+    const second = path.join(path.dirname(first.input), 'raw2.json');
+    fs.writeFileSync(second, JSON.stringify({ ...approved(), extra_flag: false }));
+    const v2 = spawnSync(process.execPath, [projectJs, '--host', 'copilot', '--root', first.root, '--in', second,
+      '--allowlist', first.allowFile], { encoding: 'utf8' });
+    assert.equal(v2.status, 0, v2.stderr);
+    assert.match(v2.stdout, /posttooluse.write-v2.json .*variant 2/);
+    assert.deepEqual(fs.readdirSync(path.join(first.root, 'copilot')).sort(), ['posttooluse.write-v2.json', 'posttooluse.write.json']);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(first.root, 'copilot', 'posttooluse.write-v2.json'), 'utf8')).extra_flag, true);
+  });
+
+  it('refuses a synthetic value of the wrong type, naming the path and the type names only', () => {
+    const a = seed();
+    a.events.PostToolUse.cwd = 42; // recorded value is a string
+    const r = runProject(approved(), { allowlist: a });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /type mismatch at: cwd {3}\(recorded type: string, allowlist type: number\)/);
+    assert.deepEqual(r.files, []);
+    const empty = seed();
+    empty.events.PostToolUse['tool_input.empty'] = 'x'; // recorded value is an empty object
+    const e = runProject({ ...approved(), tool_input: { empty: {} } }, { allowlist: empty });
+    assert.equal(e.status, 2);
+    assert.match(e.stderr, /type mismatch at: tool_input.empty.*recorded type: object/);
+  });
+
+  it('a tool name outside the allowlist refuses, and neither it nor a hostile event name is ever echoed', () => {
+    const t = runProject({ hook_event_name: 'PreToolUse', tool_name: 'CustomerAcmeTool' });
+    assert.equal(t.status, 2);
+    assert.ok(!t.stderr.includes('CustomerAcme'));
+    assert.match(t.stderr, /"tools" in the allowlist/);
+    const e = runProject({ hook_event_name: 'secret-event-name-Contoso' });
+    assert.equal(e.status, 2);
+    assert.ok(!e.stderr.includes('Contoso'));
+    // approving the tool name in the allowlist (version bumped) makes the same payload pass the tool gate
+    const a = seed();
+    a.version = 2;
+    a.tools.push('NewVendorTool');
+    const ok = runProject({ hook_event_name: 'PreToolUse', tool_name: 'NewVendorTool' }, { allowlist: a });
+    assert.equal(ok.status, 0, ok.stderr);
   });
 });
 
@@ -316,6 +360,8 @@ describe('runbook contract (what the plan requires it to say)', () => {
     ['tests/fixtures/hook-payloads/copilot/', 'names the fixture destination Cluster D reads'],
     ['Tier 2 deferred: no recorded fixtures', 'states the fallback'],
     ['cleanup failed', 'says cleanup failure is a stop'],
+    ['The run record is **kept while any check fails**', 'a failed cleanup can be retried'],
+    ['fleet-claim|', 'fleet claims are recorded and released'],
   ];
   for (const [needle, why] of must) {
     it('contains ' + needle + ' (' + why + ')', () => {
@@ -335,6 +381,11 @@ describe('runbook contract (what the plan requires it to say)', () => {
     const blocks = [...runbook.matchAll(/```powershell\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
     assert.ok(blocks.length >= 8);
     for (const b of blocks) assert.doesNotMatch(b, /<[A-Za-z][A-Za-z -]*>/, b);
+  });
+
+  it('cleanup removes the record only AFTER the failure check', () => {
+    const block = runbook.slice(runbook.indexOf('## 7. Cleanup'), runbook.indexOf('## 8.'));
+    assert.ok(block.indexOf('if ($failed) { Write-Host') < block.indexOf('Remove-Item -LiteralPath $record'));
   });
 
   it('the capture hook config is never left in the tree', () => {

@@ -1,5 +1,26 @@
 {
   "version": 1,
+  "tools": [
+    "Bash",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "Read",
+    "Grep",
+    "Glob",
+    "Agent",
+    "Task",
+    "bash",
+    "powershell",
+    "edit",
+    "str_replace_editor",
+    "apply_patch",
+    "create",
+    "view",
+    "grep",
+    "glob",
+    "task"
+  ],
   "events": {
     "UserPromptSubmit": {
       "session_id": "fixture-session",
