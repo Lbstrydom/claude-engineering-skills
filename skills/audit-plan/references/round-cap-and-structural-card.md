@@ -100,10 +100,9 @@ fix range, ≥ 0.5 fires), **severity drift** (median per-file change in max sev
 **retired** (accepted topics closed; ≤ 1 for two consecutive rounds fires). An unmeasured signal (no `audited_sha`, no cited
 lines, no ledger) never fires and is never read as quiet; the card says the trigger is unmeasured.
 
-When one fires, run `node scripts/audit-structural-card.mjs --sid "$SID" --mode code --round <N+1> --step-back`
-(`--step-back-arm same|different`; a paid call, never automatic). A fresh-context reviewer reads an egress-gated pack and
-returns `structural`, `stop` or `defect`; there is no `continue`. Invalid or unavailable output admits no round. A `stop` is
-a proposal: debt is written only after a human approves it.
+When one fires at checkpoint 3, and at every refused round past the soft cap (plan too), the **automatic meta-review**
+runs inside the gate: `meta-review.md` (opt out with `--no-meta-review`). The manual
+`--step-back` (`--step-back-arm same|different|higher`) remains, advisory: `structural`, `stop` or `defect`, no `continue`.
 
 After round 6 the default is **stop-to-debt or a human**; rounds 7-8 need `--past-cap`. The 6/8 caps are unchanged.
 

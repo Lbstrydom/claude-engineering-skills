@@ -146,14 +146,13 @@ transaction instance?) → `references/triage-rubrics.md` §Same-module independ
 when its condition holds:**
 - **Grounding** — a non-trivial plan (≥6 files, ≥2 subsystems, a dependency chain, or
   >1 sitting) whose §1 Code Trace lacks concrete `file:line` refs **and a call path** is
-  **HIGH `ungrounded-plan`**; spot-check each "what exists today" claim that drives a
-  design decision — a design built on a mis-described existing contract is HIGH; an unpinned `file:line`
-  is LOW (ask for `path:line (sha)`).
+  **HIGH `ungrounded-plan`**; spot-check each "what exists today" claim a design
+  decision rests on — a mis-described contract is HIGH; an unpinned `file:line` is LOW (ask for `path:line (sha)`).
 - **Test-premise lint** — "tests already cover X" with no executed command + result
   attached is a build-time spike, not evidence: flag it. Naming a source/field must
   also prove its semantics match the contract.
 - **Campaign** (plan header has `- **Mode**: campaign`) — run `node scripts/campaign-contract-check.mjs "$PLAN_FILE"`;
-  each problem it prints is a HIGH finding; exit 2 means it did not run — say so, never read it as complete.
+  each problem it prints is HIGH; exit 2 = it did not run, never read as complete.
   It proves presence only: judge each control's adequacy yourself.
 - **§11 clustering** (plan has the block) — check partition, coupling soundness,
   fix-gate placement, contiguous ordering, derived scope; a malformed block that would
@@ -164,8 +163,7 @@ when its condition holds:**
 
 | Severity | Deliberation |
 |---|---|
-| HIGH | ALWAYS send to GPT deliberation |
-| MEDIUM | ALWAYS send to GPT deliberation |
+| HIGH, MEDIUM | ALWAYS send to GPT deliberation |
 | LOW | Claude decides locally |
 
 Only send rebuttal if rebut HIGH or MEDIUM findings exist:
@@ -199,13 +197,12 @@ is not a stop signal — fixes create new surface; evidence in
 | R2+ findings push for v2 features, parser deps | **STOP** — record as "Out of Scope" |
 
 **Cap: 3 rounds, 5 absolute — enforced by `openai-audit.mjs`.** Round 4 exits
-`4` (`CAPPED`) with a structural-or-stop card: a stop for a human call, never a
-retry (`references/round-cap-and-structural-card.md`). At round 3 without
-convergence run `node scripts/audit-structural-card.mjs --sid "$SID" --mode plan --plan "$PLAN_FILE"`
-and **present the card to the operator** with its three choices (STOP /
-STRUCTURAL / CONTINUE); continuing is their call. An **implementation-completeness**
-finding ("specify the store step") belongs to the code audit. Record the call
-(rounds, acceptance rate, card verdicts, why) in the plan's audit trail.
+`4` (`CAPPED`), a stop for a human call, never a retry, unless the **meta-review**
+(`references/meta-review.md`) admits it. On `META_*` run the printed debt command;
+on `PAST_CAP_REQUIRED` present the card (`references/round-cap-and-structural-card.md`)
+to the operator: STOP / STRUCTURAL / CONTINUE, their call.
+**Implementation-completeness** findings belong to the code audit. Record the
+call (rounds, acceptance, decision id, why) in the plan's audit trail.
 
 When stopping with deferrals, append a `## Out of Scope (Future)` section to
 the plan listing deferred concerns with rationale.
@@ -332,6 +329,7 @@ situations — read them only when the trigger applies.
 | `references/convergence-evidence.md` | Why the stop rules are what they are — acceptance-rate evidence, Gemini-cap rationale, outcome-recording fallback. | Step 3/6 — a stop decision is contested, OR a `[finalize] WARN` line appeared and Step 3.5b needs the manual fallback. |
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 6 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |
 | `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 3 without converging. |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — a prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 3 — applying the grounding rubric to a plan whose Code Trace cites `file:line`. |
