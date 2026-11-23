@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { helpGuardEntry, usageFromSource, wantsHelp } from '../scripts/lib/help-guard.mjs';
 import { probeHelp } from '../scripts/lib/help-probe/probe.mjs';
 import {
-  hasHelpContract, offenderIds, listEntryPoints,
+  hasHelpContract, offenderIds, listEntryPoints, listSubcommandProbes, withHandledFinding,
 } from '../scripts/check-help-readonly.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -244,5 +244,28 @@ describe('static contract — comments do not count', () => {
   it('a --help mentioned only in a comment or docstring is no contract', () => {
     assert.equal(hasHelpContract('/** Usage: node x.mjs --help */\n// handles --help later\nawait main();'), false);
     assert.equal(hasHelpContract("if (process.argv.includes('--help')) usage();"), true);
+  });
+});
+
+// Contract id: help-readonly-gate-rejects-a-cli-that-runs-on-help (subcommand half).
+describe('cross-skill subcommand --help (2026-11-23: `ledger mint --help` minted a work item)', () => {
+  it('subcommand probes are derived from the registry, verbs included', () => {
+    const labels = listSubcommandProbes(ROOT).map((p) => p.label);
+    assert.ok(labels.includes('cross-skill.mjs ledger mint'), 'the field-report command must be probed');
+    assert.ok(labels.includes('cross-skill.mjs whoami'));
+  });
+  it('positive control: a result-printing run is flagged, a Usage block is not', () => {
+    const bad = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 0, stdout: '{"ok":true,"work_item_id":"01a"}' });
+    assert.deepEqual(bad.kinds, ['help-not-handled']);
+    const good = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 0, stdout: 'Usage: node scripts/cross-skill.mjs ledger\n' });
+    assert.deepEqual(good.kinds, []);
+    const nonzero = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 2, stdout: 'Usage: x' });
+    assert.deepEqual(nonzero.kinds, ['help-not-handled']);
+  });
+  it('ledger mint --help prints usage and mints nothing', () => {
+    const out = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'cross-skill.mjs'), 'ledger', 'mint', '--help'], { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(out.status, 0);
+    assert.match(out.stdout, /^Usage: node scripts\/cross-skill\.mjs ledger/);
+    assert.doesNotMatch(out.stdout, /work_item_id/);
   });
 });

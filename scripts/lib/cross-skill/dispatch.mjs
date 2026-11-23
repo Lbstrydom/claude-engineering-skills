@@ -156,6 +156,33 @@ function findPositionals(rest, decls, payload) {
   return out;
 }
 
+/** True when `--help` appears as a flag (not a valued flag's value, not after `--`). */
+export function helpRequested(rest, decls) {
+  const valued = new Set(
+    decls.filter((d) => d.kind === 'valued' || d.kind === 'repeatable').map((d) => `--${d.name}`),
+  );
+  valued.add('--json');
+  for (let i = 0; i < rest.length; i += 1) {
+    const a = rest[i];
+    if (a === '--') return false;
+    if (a === '--help') return true;
+    if (valued.has(a)) i += 1;
+  }
+  return false;
+}
+
+/** Usage text derived from the registry entry (never hand-listed). */
+export function renderHelp(cmd, decls) {
+  const flags = [
+    ...decls.map((d) => `--${d.name}${d.kind === 'boolean' ? '' : ' <value>'}`),
+    ...payloadFlags(cmd.payload),
+  ];
+  const verbs = cmd.positionals && cmd.positionals !== 'none' && cmd.positionals.verbs
+    ? ` [${cmd.positionals.verbs.join('|')}]` : '';
+  const head = `Usage: node scripts/cross-skill.mjs ${cmd.name}${verbs} [flags]\n`;
+  return head + (flags.length ? `Flags:\n${flags.map((f) => `  ${f}`).join('\n')}\n` : '');
+}
+
 /**
  * Dispatch one registry command.
  *
@@ -185,6 +212,16 @@ export async function dispatch(argv, overrides = {}) {
       return { envelope: null, exitCode: 2 };
     }
     throw err;
+  }
+
+  // ── --help: a pure read, BEFORE any work (AGENTS.md `--help` invariant) ──
+  // `ledger mint --help` once ignored the flag and minted a work item
+  // (2026-11-23). Answered here, for every registry command, ahead of positional
+  // validation, handler load, store init and payload/stdin reads. A `--help`
+  // that is the VALUE of a valued flag (`--note --help`) is data, not a request.
+  if (helpRequested(rest, decls)) {
+    process.stdout.write(renderHelp(cmd, decls));
+    return { envelope: null, exitCode: 0 };
   }
 
   // ── Positional validation ────────────────────────────────────────────────

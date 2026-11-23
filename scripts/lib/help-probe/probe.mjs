@@ -22,10 +22,10 @@ export const HELP_TIMEOUT_MS = 60000;
 
 /**
  * @param {string} scriptAbs absolute path of the CLI
- * @param {{cwd: string, timeoutMs?: number, args?: string[], label?: string}} opts
+ * @param {{cwd: string, timeoutMs?: number, args?: string[], label?: string, captureStdout?: boolean}} opts
  * @returns {Promise<{file: string, kinds: string[], violations: Array<{kind:string, detail:string}>, exitCode: number|null, timedOut: boolean}>}
  */
-export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = ['--help'], label = path.basename(scriptAbs) }) {
+export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = ['--help'], label = path.basename(scriptAbs), captureStdout = false }) {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'help-probe-'));
   const log = path.join(logDir, 'log.jsonl');
   fs.writeFileSync(log, '');
@@ -39,7 +39,9 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
     HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9',
   };
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [scriptAbs, ...args], { cwd, env, stdio: ['ignore', 'ignore', 'ignore'] });
+    const child = spawn(process.execPath, [scriptAbs, ...args], { cwd, env, stdio: ['ignore', captureStdout ? 'pipe' : 'ignore', 'ignore'] });
+    let stdout = '';
+    if (captureStdout) { child.stdout.setEncoding('utf8'); child.stdout.on('data', (d) => { if (stdout.length < 4096) stdout += d; }); }
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     child.on('close', (exitCode) => {
@@ -56,7 +58,7 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
       fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       if (timedOut) violations.push({ kind: 'hang', detail: `no exit within ${timeoutMs}ms` });
       const kinds = [...new Set(violations.map((v) => v.kind))].sort();
-      resolve({ file: label, kinds, violations, exitCode, timedOut });
+      resolve({ file: label, kinds, violations, exitCode, timedOut, stdout });
     });
     child.on('error', (err) => {
       clearTimeout(timer);

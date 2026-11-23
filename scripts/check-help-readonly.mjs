@@ -33,6 +33,7 @@ import path from 'node:path';
 import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { probeHelp, mapPool } from './lib/help-probe/probe.mjs';
+import { REGISTRY } from './lib/cross-skill/registry.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const KNOWN_FLAGS = ['--json', '--report', '--only'];
@@ -72,6 +73,44 @@ export function listEntryPoints(root = ROOT, smokeSet = []) {
   const libSmoke = [...smokeSet].filter((rel) => rel.startsWith('lib/'))
     .map((rel) => path.join(dir, rel)).filter((p) => fs.existsSync(p));
   return [...top, ...nested, ...libSmoke];
+}
+
+/**
+ * SUBCOMMAND half (2026-11-23). `cross-skill.mjs --help` is answered by its own
+ * `main()` before dispatch, so probing the TOP level proved nothing about
+ * `cross-skill.mjs ledger mint --help`, which ignored the flag and minted a work
+ * item. Every registry command — and every declared positional verb of one — is
+ * probed under the same write-blocking preload. Derived from the registry, never
+ * hand-listed, so a NEW subcommand is covered the day it lands.
+ *
+ * @returns {{abs: string, args: string[], label: string}[]}
+ */
+export function listSubcommandProbes(root = ROOT) {
+  const abs = path.join(root, 'scripts', 'cross-skill.mjs');
+  return REGISTRY.flatMap((c) => {
+    const verbs = c.positionals && typeof c.positionals === 'object' ? (c.positionals.verbs ?? []) : [];
+    return [
+      { abs, args: [c.name, '--help'], label: `cross-skill.mjs ${c.name}` },
+      ...verbs.map((v) => ({ abs, args: [c.name, v, '--help'], label: `cross-skill.mjs ${c.name} ${v}` })),
+    ];
+  });
+}
+
+/**
+ * BEHAVIOURAL half for subcommands. Some subcommands do work with NO observable
+ * write (`ledger mint` computes and prints a work-item id), so the write-blocking
+ * preload alone reads them clean — the hole this gate shipped with. A subcommand's
+ * `--help` must therefore also be ANSWERED: exit 0 and a `Usage:` block on stdout,
+ * never the command's own result.
+ */
+export function withHandledFinding(result) {
+  if (result.exitCode === 0 && /^Usage:/.test(result.stdout ?? '')) return result;
+  const detail = `--help not answered with a Usage block (exit ${result.exitCode}): ${String(result.stdout ?? '').slice(0, 80).replace(/\s+/g, ' ')}`;
+  return {
+    ...result,
+    kinds: [...result.kinds, 'help-not-handled'].sort(),
+    violations: [...result.violations, { kind: 'help-not-handled', detail }],
+  };
 }
 
 /** Path of an entry point relative to `scripts/`, with `/` separators — its stable identity. */
@@ -138,17 +177,22 @@ async function main() {
   const onlyIdx = process.argv.indexOf('--only');
   const only = onlyIdx !== -1 ? process.argv[onlyIdx + 1] : null;
   const { _internals } = await import('./lib/sync-isolation-verify.mjs');
-  let files = listEntryPoints(ROOT, _internals.CLI_SMOKE_SET);
+  let probes = [
+    ...listEntryPoints(ROOT, _internals.CLI_SMOKE_SET).map((f) => ({ abs: f, args: ['--help'], label: labelOf(f), top: true })),
+    ...listSubcommandProbes(ROOT),
+  ];
   if (onlyIdx !== -1) {
     // A filter that matches nothing must not read as a pass over zero CLIs, and a
     // missing value must not silently fall back to the full census.
     if (!only || only.startsWith('--')) { process.stderr.write('check-help-readonly: --only requires a scripts-relative path\n'); return finishAndExit(2); }
-    files = files.filter((f) => labelOf(f) === only);
-    if (files.length === 0) { process.stderr.write(`check-help-readonly: --only ${only} matches no CLI in the census\n`); return finishAndExit(2); }
+    probes = probes.filter((p) => p.label === only);
+    if (probes.length === 0) { process.stderr.write(`check-help-readonly: --only ${only} matches no CLI in the census\n`); return finishAndExit(2); }
   }
+  const files = probes;
 
-  const results = (await mapPool(files, CONCURRENCY, (f) => probeHelp(f, { cwd: ROOT, label: labelOf(f) })))
-    .map((r) => withStaticFinding(r));
+  const results = (await mapPool(probes, CONCURRENCY, (p) => probeHelp(p.abs, { cwd: ROOT, label: p.label, args: p.args, captureStdout: !p.top })))
+    // The static no-help-contract half reads a CLI's source: top-level entry points only.
+    .map((r, i) => (probes[i].top ? withStaticFinding(r) : withHandledFinding(r)));
   const ids = offenderIds(results);
 
   if (process.argv.includes('--report')) {
