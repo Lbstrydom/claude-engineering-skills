@@ -195,6 +195,17 @@ export function calibrationMaterial({ dataset, snapshots }) {
   return { findings, ledger };
 }
 
+const WORKSHEET_INTRO = [
+  '<!-- HOW TO USE THIS SHEET -->',
+  '> **Blind, numbered, save as you go.** Work in sittings (about 20-30 minutes each, roughly 3 hours in total). Type your answer after `Label:` or `Restates:` and save the file; unanswered items are simply skipped until you reach them, so partial progress is safe. Do not edit anything else.',
+  '>',
+  '> **Part A (P001...)**: for each pair, `same` = fixing one would fix the other; `partial` = they overlap but neither restates the other; `different` = unrelated concerns.',
+  '> **Part B (R001...)**: list the id(s) of every ledger entry the finding restates, searching the WHOLE list below it, or write `none`.',
+  '>',
+  '> Progress check (PowerShell): `(Select-String -Path calibration-worksheet.md -Pattern "^Label: \S").Count` of 200 pair labels.',
+  '',
+].join('\n');
+
 export function runCalibrateDraw({ datasetPath, seed, outDir, sizes }) {
   const { dataset, snapshots } = loadDataset(datasetPath);
   const { findings, ledger } = calibrationMaterial({ dataset, snapshots });
@@ -203,7 +214,8 @@ export function runCalibrateDraw({ datasetPath, seed, outDir, sizes }) {
   key.shortfalls = sets.shortfalls; // recorded so the score step can refuse a calibration drawn from fewer pairs than the plan requires
   fs.mkdirSync(outDir, { recursive: true });
   for (const f of ['calibration-worksheet.md', 'calibration-key.json', 'calibration-material.json']) if (fs.existsSync(path.join(outDir, f))) throw new ArgvError(`${f} already exists in ${outDir}; a human may have labelled it. Draw into a new --out-dir.`);
-  atomicWriteFileSync(path.join(outDir, 'calibration-worksheet.md'), worksheetMarkdown);
+  atomicWriteFileSync(path.join(outDir, 'calibration-worksheet.md'), `${WORKSHEET_INTRO}
+${worksheetMarkdown}`);
   writeJson(path.join(outDir, 'calibration-key.json'), key);
   writeJson(path.join(outDir, 'calibration-material.json'), { datasetHash: dataset.datasetHash, findings, ledger });
   return { findings: findings.length, ledger: ledger.length, shortfalls: sets.shortfalls, pairs: Object.keys(key.pairs).length, recall: Object.keys(key.filterRecall).length };

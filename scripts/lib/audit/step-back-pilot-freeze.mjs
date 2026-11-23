@@ -30,7 +30,7 @@ export const PILOT_SETS = Object.freeze(['calibration', 'rehearsal', 'pilot', 'r
 export const AMBIGUOUS_BRANCHES = Object.freeze(['main', 'master', 'HEAD']);
 /** The only repos a pilot may read (the approval of 2026-11-23). Matched on the store's `audit_repos.name`. */
 export const AUTHORISED_REPOS = Object.freeze(['Lbstrydom/claude-engineering-skills', 'Lbstrydom/wine-cellar-app', 'Lbstrydom/ai-organiser']);
-export const DEFAULT_TARGETS = Object.freeze({ calibration: 12, rehearsal: 5, pilot: 16, minPilotCode: 6 });
+export const DEFAULT_TARGETS = Object.freeze({ calibration: 30, rehearsal: 5, pilot: 16, minPilotCode: 6 });
 
 /** The checkpoint a trigger reads, per mode: plan T1 reads round 3 (refused round 4); code T1 round 6 (refused 7); code T2 round 3 (admitted 4). */
 export const POINT_SHAPES = Object.freeze([

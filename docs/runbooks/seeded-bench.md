@@ -49,7 +49,7 @@ node scripts/step-back-replay.mjs calibrate-draw --dataset C:/tmp/pilot1/dataset
 node scripts/step-back-replay.mjs calibrate-score --out-dir C:/tmp/pilot1/cal --labels C:/tmp/pilot1/cal/calibration-worksheet.md --max-usd 10 --confirm-spend
 ```
 
-Draws from **calibration-set sessions only**: findings of round *r* against ledger entries first seen before *r* (the "source arm" stratum is the
+Draws from **calibration-set sessions only** (30 points, so the 60-finding filter-recall sample can be met): findings of round *r* against ledger entries first seen before *r* (the "source arm" stratum is the
 audit mode, since the two pilot arms exist only after the pilot runs). Both judges (`latest-opus`, `latest-pro`) are scored against the human labels;
 the Jaccard-0.15 scorer is the negative control. **Accept**: precision ≥ 0.90, recall ≥ 0.85, filter recall ≥ 0.95, per-arm gap ≤ 0.05, ≥ 15 `same`
 pairs per arm, for **both** judges. Below the bar the pilots stop (no fallback to the file/line filter). `inconclusive` = grow the labels.
