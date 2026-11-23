@@ -124,7 +124,7 @@
       "reason": "Step 3C in-cluster fix-gate rule (2026-08-08). /cycle is a THIN ORCHESTRATOR: the loop is executed by the model, not by code, so none of these lines claims an enforcing script — they instruct the agent, and the enforcement they describe belongs to /audit-code (convergence thresholds, contracted in skills/audit-code/gate-contract.json) and to gemini-review.mjs (the consolidated gate). Contracting them here would assert an oracle that does not exist, which is the fake-check class this registry exists to catch. Added when the fix-gate wording was corrected: the old text demanded whole-plan convergence per cluster, which no cluster but the last could reach (measured 6->5->3 total HIGH against 2->2->0 in-cluster). See docs/plans/gate-honesty-adjudicated-defects.md 11.1."
     },
     {
-      "line": "**Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.",
+      "line": "**Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s cap; on exit 4 `META_*` run its printed debt command (`references/meta-review.md`).",
       "reason": "Caller-behaviour instruction, not a gate /cycle enforces with an exit code. The one mechanically-backed claim inside it — that a non-ancestor base is refused rather than demoted — is already dispositioned by the cluster-start-ref-validated-on-use gate, whose enforcement is scripts/lib/worktree-identity.mjs::resolveRangeSnapshot. 'require --baseline-ref' describes what the operator must supply on a resume; there is no /cycle exit code behind it."
     },
     {
@@ -386,6 +386,14 @@
     {
       "line": "Use the returned sets as returned. `emptyAllowlist: true` → the consolidated gate, never a vacuous pass. Each",
       "reason": "Agent routing instruction for cycle-cluster-scope.mjs's JSON (emptyAllowlist / unchangedDeclared), condensed 2026-11-15 from the deletion-only paragraph with the same disposition: the script reports, /cycle routes; no /cycle exit code to assert. Resident-ness is guarded by tests/cycle-autonomous-ship-gate.test.mjs."
+    },
+    {
+      "line": "**Budget**: no runtime splitting in v1 — `/audit-code` on the derived scope handles large diffs itself. `/cycle` only enforces **never merge** across a declared boundary.",
+      "reason": "Caller-behaviour instruction (how /cycle hands a large cluster to /audit-code), not a gate /cycle enforces with an exit code; the never-merge boundary is enforced by the clustered-execution state machine, documented in references/clustered-execution.md."
+    },
+    {
+      "line": "**Author-tier** (telemetry only, never routes) → `references/clustered-execution.md` §Optional author-tier — read when a cluster has `author-tier:`.",
+      "reason": "Telemetry pointer: the author-tier hint is observation-only and never routes a model, so there is no gate to bind; the detail lives in references/clustered-execution.md."
     }
   ]
 }
