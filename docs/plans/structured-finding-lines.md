@@ -1,6 +1,6 @@
 # Plan: structured line anchors on audit findings, so the T2 `reopenRate` signal becomes measurable
 - **Date**: 2026-11-23
-- **Status**: ACCEPTED (audit-plan: 3 GPT rounds, Gemini final gate APPROVE, 2026-11-23); implementation autonomous, no push, no PR
+- **Status**: In progress — plan audited 2026-11-23 (3 GPT rounds, Gemini APPROVE); implementation autonomous, no push, no PR
 - **Author**: Claude + Louis (Louis approved the prompt change now, not after Pilot 1)
 - **Scope**: backend (stack `js-ts`): `scripts/lib/schemas.mjs`, `scripts/lib/prompt-seeds.mjs`, a new `scripts/lib/audit/finding-lines.mjs`, one call in `scripts/lib/audit/finding-assembly.mjs`, tests
 - **Builds on**: `docs/plans/meta-step-back-at-cap.md` (T2 trigger), the 2026-11-23 T2 investigation, `docs/plans/seeded-defect-benchmark.md` (Pilot 1)
