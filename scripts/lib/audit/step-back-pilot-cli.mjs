@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ArgvError } from '../cli-io.mjs';
+import { atomicWriteFileSync } from '../file-io.mjs';
 import { withCaseTree } from '../model-eval/case-tree.mjs';
 import { resolveMainRoot, defaultFixtureRoot } from '../pinned-worktree/paths.mjs';
 import { initLedger, readLedgerSummary, reconcileCall, BUDGET_LEDGER_ENV } from '../llm-budget.mjs';
@@ -29,7 +30,7 @@ export const PILOT = 'meta-ab';
 export const LABELS = Object.freeze(['REAL', 'WRONG', 'NOT_A_DEFECT', 'RIGOUR_CHASING', 'UNDETERMINED']);
 const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
-const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
+const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); atomicWriteFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
 export const snapshotsPathFor = (datasetPath) => datasetPath.replace(/\.json$/, '') + '.snapshots.json';
 
 /** Append + fsync: once this returns the record is on the device. */
@@ -110,7 +111,7 @@ export async function runContinue({ datasetPath, set, replicates, maxUsd, confir
   const pin = deps.pin ?? assertPinnedFixture();
   if (fs.existsSync(resultsPath)) throw new ArgvError(`--results ${resultsPath} already exists; a paid run never overwrites or appends to it.`);
   fs.mkdirSync(path.dirname(path.resolve(resultsPath)), { recursive: true });
-  fs.writeFileSync(resultsPath, '', { flag: 'wx' });
+  fs.closeSync(fs.openSync(resultsPath, 'wx'));
   const ledgerFile = `${resultsPath}.budget.jsonl`;
   initLedger({ file: ledgerFile, capUsd: maxUsd });
   const spentUsd = () => readLedgerSummary(ledgerFile).spentUsd;
@@ -173,7 +174,7 @@ export function runCalibrateDraw({ datasetPath, seed, outDir, sizes }) {
   const sets = drawCalibrationSets({ findings, ledgerEntries: ledger, seed, ...(sizes ? { sizes } : {}) });
   const { worksheetMarkdown, key } = renderWorksheet(sets, { seed, ledgerEntries: ledger });
   fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, 'calibration-worksheet.md'), worksheetMarkdown);
+  atomicWriteFileSync(path.join(outDir, 'calibration-worksheet.md'), worksheetMarkdown);
   writeJson(path.join(outDir, 'calibration-key.json'), key);
   writeJson(path.join(outDir, 'calibration-material.json'), { datasetHash: dataset.datasetHash, findings, ledger });
   return { findings: findings.length, ledger: ledger.length, shortfalls: sets.shortfalls, pairs: Object.keys(key.pairs).length, recall: Object.keys(key.filterRecall).length };

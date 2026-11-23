@@ -10,13 +10,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgvError } from '../cli-io.mjs';
+import { atomicWriteFileSync } from '../file-io.mjs';
 import {
   runFreeze, runContinue, runReconcile, runCalibrateDraw, runCalibrateScore, runNovelty, buildWorksheet, parseWorksheetLabels, scorePilot,
   loadDataset, readRunRows,
 } from './step-back-pilot-cli.mjs';
 
 export const PILOT_COMMANDS = Object.freeze(['freeze', 'continue', 'reconcile', 'calibrate-draw', 'calibrate-score', 'novelty', 'worksheet', 'score']);
-const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
+const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); atomicWriteFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
 const DEFAULT_AUDIT_SCRIPT = fileURLToPath(new URL('../../openai-audit.mjs', import.meta.url));
 
 /** @returns {Promise<number>} exit code */
@@ -68,7 +69,7 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   if (cmd === 'worksheet') {
     const { markdown, key } = buildWorksheet({ rows, novelty, seed: need('--seed'), dataset });
     const dir = need('--out-dir'); fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'pilot1-worksheet.md'), markdown); writeJson(path.join(dir, 'pilot1-worksheet.key.json'), key);
+    atomicWriteFileSync(path.join(dir, 'pilot1-worksheet.md'), markdown); writeJson(path.join(dir, 'pilot1-worksheet.key.json'), key);
     console.log(`step-back-replay worksheet: ${Object.keys(key.items).length} findings to label -> ${dir} (the key file stays with the operator, never the labeller)`);
     return 0;
   }

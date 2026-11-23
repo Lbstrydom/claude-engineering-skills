@@ -38,7 +38,7 @@ afterEach(() => {
   for (const [k, v] of [[BUDGET_LEDGER_ENV, savedEnv.ledger], ['ANTHROPIC_API_KEY', savedEnv.key], ['CLAUDE_BACKEND', savedEnv.backend]]) {
     if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 const arm = (capUsd) => { initLedger({ file, capUsd, runId: 't' }); process.env[BUDGET_LEDGER_ENV] = file; };
@@ -432,7 +432,7 @@ describe('seams: inert when AUDIT_BUDGET_LEDGER is unset, metered when set', () 
     await callGemini(ai, 'SYS', 'USER', {}, { model: 'gemini-3-flash-preview', maxOutputTokens: 100 });
     const c = readLedgerSummary(file).calls[0];
     assert.equal(c.state, 'settled'); assert.equal(c.provider, 'google'); assert.deepEqual(c.tokens, { input: 100, output: 20 });
-    fs.rmSync(file); arm(0.0000001);
+    fs.rmSync(file, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); arm(0.0000001);
     let sent = false;
     await assert.rejects(callGemini({ models: { generateContent: async () => { sent = true; return geminiResponse; } } }, 'S', 'U', {}, { model: 'gemini-3-flash-preview' }), BudgetStopError);
     assert.equal(sent, false);
@@ -458,7 +458,7 @@ describe('seams: inert when AUDIT_BUDGET_LEDGER is unset, metered when set', () 
     await assert.rejects(callReviewer({ models: { generateContentStream: async () => { throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }); } } }, { transportKind: 'gemini', model: 'gemini-3-flash-preview', systemPrompt: 'S', userPrompt: 'U', passName: 'fr' }));
     assert.equal(readLedgerSummary(file).calls[1].state, 'failed-unknown');
     // A refusal is never relabelled as a provider error.
-    fs.rmSync(file); arm(0.0000001);
+    fs.rmSync(file, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); arm(0.0000001);
     await assert.rejects(callReviewer({ models: { generateContentStream: async () => stream() } }, { transportKind: 'gemini', model: 'gemini-3-flash-preview', systemPrompt: 'S', userPrompt: 'U', passName: 'fr' }), BudgetStopError);
   });
 });

@@ -111,7 +111,7 @@ describe('blind worksheet and scoring', () => {
 
 test('appendDurably appends whole records', () => {
   const f = path.join(os.tmpdir(), `ad-${process.pid}.jsonl`); appendDurably(f, 'a\n'); appendDurably(f, 'b\n');
-  assert.equal(fs.readFileSync(f, 'utf8'), 'a\nb\n'); fs.rmSync(f);
+  assert.equal(fs.readFileSync(f, 'utf8'), 'a\nb\n'); fs.rmSync(f, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   assert.ok(snapshotsPathFor('x/ds.json').endsWith('ds.snapshots.json'));
   assert.ok(typeof freezeMetaPilot === 'function' && typeof readLedgerSummary === 'function');
 });

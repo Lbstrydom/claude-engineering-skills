@@ -47,7 +47,6 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { resolveClaudeRouteFromEnv } from './azure-claude-route.mjs';
 import { cliFaithfulnessVerdict } from './anthropic-cli-faithfulness.mjs';
-import { budgetedMessagesCreate, assertCliAllowedUnderBudget } from './llm-budget.mjs';
 
 /** Short, non-reversible token for cache keys — never store raw key material. */
 function keyDigest(k) {
@@ -665,9 +664,12 @@ function wrapSdkClient(rawClient, redactor) {
           const { timeoutMs, ...rest } = opts;
           opts = { ...rest, timeout: timeoutMs };
         }
-        // Budget seam (plan §2.6): llm-budget.mjs returns undefined when AUDIT_BUDGET_LEDGER is unset (path unchanged).
-        const metered = budgetedMessagesCreate(rawClient, body, opts);
-        return metered === undefined ? rawClient.messages.create(body, opts) : metered;
+        // Budget seam (plan §2.6). llm-budget.mjs is imported ONLY when AUDIT_BUDGET_LEDGER is set: its import chain loads
+        // the model resolver (and with it the local env), which would otherwise change this client's ambient credentials.
+        if (process.env.AUDIT_BUDGET_LEDGER) {
+          return import('./llm-budget.mjs').then((m) => { const metered = m.budgetedMessagesCreate(rawClient, body, opts); return metered === undefined ? rawClient.messages.create(body, opts) : metered; });
+        }
+        return rawClient.messages.create(body, opts);
       },
     },
   };
@@ -775,7 +777,7 @@ function createCliAdapter(opts = {}) {
         if (verdict) throw new Error(verdict.message);
 
         // Budget seam (plan §2.6): claude -p cannot enforce max_tokens, so with AUDIT_BUDGET_LEDGER set it is refused.
-        assertCliAllowedUnderBudget();
+        if (process.env.AUDIT_BUDGET_LEDGER) (await import('./llm-budget.mjs')).assertCliAllowedUnderBudget();
 
         const { model, max_tokens, system, messages } = params;
 

@@ -216,7 +216,7 @@ describe('the continuation contract (§2.1) against the REAL gate', () => {
     const row = await runContinuation({
       point, snapshot, arm: 'META', rep: 0, repoRoot: '/r', auditScript: '/a.mjs', ledgerFile: 'L',
       deps: {
-        withTree: async (_w, fn) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-tree-')); fs.mkdirSync(path.join(d, 'docs/plans'), { recursive: true }); fs.writeFileSync(path.join(d, 'docs/plans/p.md'), '#'); try { return await fn(d); } finally { fs.rmSync(d, { recursive: true, force: true }); } },
+        withTree: async (_w, fn) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-tree-')); fs.mkdirSync(path.join(d, 'docs/plans'), { recursive: true }); fs.writeFileSync(path.join(d, 'docs/plans/p.md'), '#'); try { return await fn(d); } finally { fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } },
         spawn: (argv) => { spawned.push(argv); spend += 0.9; return { status: 4, stderr: '  [meta-review] STOP (a). Capture the open topics as debt:\n    node scripts/debt-auto-capture.mjs --meta-decision X\nError [META_STOP]: the meta-review ended this audit' }; },
         spentUsd: () => spend,
       },

@@ -109,7 +109,7 @@ function makeRepoWithSymlink() {
       realpathSync: (p) => (String(p).endsWith('notes.txt') ? path.join(real, 'secrets', 'key.txt') : fs.realpathSync(p)),
     };
   }
-  return { root, fs: injected, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, fs: injected, cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }) };
 }
 
 test('a symlinked sensitive file fails to leave: as the finding\'s file => not-judged; as cited code => dropped and counted', async () => {

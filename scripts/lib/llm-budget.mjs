@@ -205,7 +205,7 @@ async function acquireFileLock(file) {
       const held = fs.readFileSync(lock, 'utf8').trim();
       const holder = Number.parseInt(held, 10);
       const dead = held !== '' ? !pidAlive(holder) : (Date.now() - fs.statSync(lock).mtimeMs > 10_000);
-      if (dead && fs.readFileSync(lock, 'utf8').trim() === held) fs.rmSync(lock, { force: true });
+      if (dead && fs.readFileSync(lock, 'utf8').trim() === held) fs.rmSync(lock, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     } catch { /* lock vanished between calls — retry */ }
     if (Date.now() > deadline) throw new BudgetStopError('lock-timeout', `could not take ${lock} within ${LOCK_TIMEOUT_MS}ms`);
     await sleep(5 + Math.floor(Math.random() * 20));
@@ -216,7 +216,7 @@ function withLedgerLock(file, fn) {
   const prev = _chains.get(file) ?? Promise.resolve();
   const run = prev.then(async () => {
     const lock = await acquireFileLock(file);
-    try { return await fn(); } finally { fs.rmSync(lock, { force: true }); }
+    try { return await fn(); } finally { fs.rmSync(lock, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
   _chains.set(file, run.catch(() => {}));
   return run;
