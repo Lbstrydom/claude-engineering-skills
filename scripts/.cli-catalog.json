@@ -669,6 +669,10 @@
       "description": "The static gates of `check` (everything before the test suite), in order. `check` is `check:static` then `npm test`; the pre-push sandbox runs them separately so it can ask the test-tier oracle in between.",
       "category": "test"
     },
+    "check:static:ci": {
+      "description": "check:static minus the gates in .ci-static-local-only.json (they need gitignored or store-backed inputs a CI checkout cannot have). Run by the static-gates CI job; tests/check-static-ci-parity.test.mjs keeps the two lists reconciled.",
+      "category": "test"
+    },
     "test:tier": {
       "description": "The test-tier CLI: `select --head <sha> [--base <sha>] --json` (would the branch tier skip a heavy file for that head: the query ship-trains Cluster D asks), `plan` (the push-time envelope the sandbox uses), `refresh-heavy --timing <file>` (report-only), `ci-verdict (--pr <n> | --head <sha>)` (the merge verdict read from the CI full-suite run: exit 0 full, 3 pending or unverified, 4 failed). Docs: docs/runbooks/gate-cost.md section 6.",
       "category": "test"
