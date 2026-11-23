@@ -17,6 +17,9 @@ import { pathToFileURL } from 'node:url';
 
 const PRELOAD = path.join(import.meta.dirname, 'preload.mjs');
 
+/** Captured stdout cap; ANY byte beyond it sets `stdoutTruncated` (a usage block that large is itself a finding). */
+export const STDOUT_CAP = 65536;
+
 /** Seconds a `--help` may take before it counts as having started real work. */
 export const HELP_TIMEOUT_MS = 60000;
 
@@ -41,7 +44,12 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [scriptAbs, ...args], { cwd, env, stdio: ['ignore', captureStdout ? 'pipe' : 'ignore', 'ignore'] });
     let stdout = '';
-    if (captureStdout) { child.stdout.setEncoding('utf8'); child.stdout.on('data', (d) => { if (stdout.length < 4096) stdout += d; }); }
+    let stdoutTruncated = false;
+    if (captureStdout) { child.stdout.setEncoding('utf8'); child.stdout.on('data', (d) => {
+      const room = STDOUT_CAP - stdout.length;
+      if (d.length > room) stdoutTruncated = true; // ANY discarded output, even past an exactly-full buffer
+      if (room > 0) stdout += d.slice(0, room);
+    }); }
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     child.on('close', (exitCode) => {
@@ -58,7 +66,7 @@ export function probeHelp(scriptAbs, { cwd, timeoutMs = HELP_TIMEOUT_MS, args = 
       fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       if (timedOut) violations.push({ kind: 'hang', detail: `no exit within ${timeoutMs}ms` });
       const kinds = [...new Set(violations.map((v) => v.kind))].sort();
-      resolve({ file: label, kinds, violations, exitCode, timedOut, stdout });
+      resolve({ file: label, kinds, violations, exitCode, timedOut, stdout, stdoutTruncated });
     });
     child.on('error', (err) => {
       clearTimeout(timer);

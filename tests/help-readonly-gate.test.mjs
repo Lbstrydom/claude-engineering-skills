@@ -268,6 +268,15 @@ describe('cross-skill subcommand --help (2026-11-23: `ledger mint --help` minted
     const ok = withHandledFinding({ file: 'x', kinds: [], violations: [], exitCode: 0, stdout: 'Usage: node scripts/cross-skill.mjs ledger [mint]\nFlags:\n  --kind <value>\n  --json\n' });
     assert.deepEqual(ok.kinds, []);
   });
+  it('probe flags stdout beyond the capture cap, and the gate refuses a truncated capture', async () => {
+    const { STDOUT_CAP } = await import('../scripts/lib/help-probe/probe.mjs');
+    const f = fixture('big.mjs', `process.stdout.write('Usage: x\\n'.padEnd(${STDOUT_CAP}, ' ')); setTimeout(() => process.stdout.write('{"ok":true}\\n'), 50);`);
+    const r = await probeHelp(f, { cwd: dir, captureStdout: true });
+    assert.equal(r.stdoutTruncated, true);
+    assert.deepEqual(withHandledFinding({ ...r, exitCode: 0, stdout: 'Usage: x\n' }).kinds, ['help-not-handled']);
+    const small = fixture('small.mjs', "process.stdout.write('Usage: x\\n');");
+    assert.equal((await probeHelp(small, { cwd: dir, captureStdout: true })).stdoutTruncated, false);
+  });
   it('helpRequested: a flag, not a valued flag value, not after `--`', async () => {
     const { helpRequested } = await import('../scripts/lib/cross-skill/dispatch.mjs');
     const decls = [{ name: 'note', kind: 'valued' }, { name: 'dry-run', kind: 'boolean' }];
@@ -276,6 +285,8 @@ describe('cross-skill subcommand --help (2026-11-23: `ledger mint --help` minted
     assert.equal(helpRequested(['--note', '--help'], decls), false, 'a valued flag VALUE is data');
     assert.equal(helpRequested(['--json', '--help'], decls), false, '--json value is data');
     assert.equal(helpRequested(['a', '--', '--help'], decls), false);
+    // Pinned: a valued flag swallows `--` as its value (same as findPositionals); resolves toward help, never toward running.
+    assert.equal(helpRequested(['--note', '--', '--help'], decls), true);
   });
   it('dispatch --help never touches the store port, for EVERY registry command and verb', async () => {
     const { dispatch } = await import('../scripts/lib/cross-skill/dispatch.mjs');

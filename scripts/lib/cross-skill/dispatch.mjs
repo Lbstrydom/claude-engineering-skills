@@ -166,6 +166,9 @@ export function helpRequested(rest, decls) {
     const a = rest[i];
     if (a === '--') return false;
     if (a === '--help') return true;
+    // A valued flag consumes the NEXT token whatever it is — exactly as findPositionals does, so the
+    // two scanners agree. `--note -- --help` therefore reads `--` as the value and `--help` as a flag:
+    // the ambiguity resolves toward ANSWERING help, never toward running the handler.
     if (valued.has(a)) i += 1;
   }
   return false;

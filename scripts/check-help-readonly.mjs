@@ -108,7 +108,8 @@ const USAGE_ONLY = /^Usage: [^\n]*\r?\n(Flags:\r?\n(  --[^\n]*\r?\n)*)?$/;
 export function withHandledFinding(result) {
   // The WHOLE stdout must be the usage block (`Usage:` line, optional `Flags:` list) — a handler that
   // prints a usage line and then its result must not pass.
-  if (result.exitCode === 0 && USAGE_ONLY.test(result.stdout ?? '')) return result;
+  // Truncated capture = the rest of stdout is unseen, so it cannot be vouched for.
+  if (result.exitCode === 0 && !result.stdoutTruncated && USAGE_ONLY.test(result.stdout ?? '')) return result;
   const detail = `--help not answered with a Usage block (exit ${result.exitCode}): ${String(result.stdout ?? '').slice(0, 80).replace(/\s+/g, ' ')}`;
   return {
     ...result,
