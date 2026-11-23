@@ -270,7 +270,7 @@ Each finding has `is_mechanical: true/false` from GPT:
 
 ### Tiered rebuttal (when action=rebut)
 
-HIGH/MEDIUM: ALWAYS GPT deliberation (after verification, below). LOW: Claude decides.
+HIGH and MEDIUM: ALWAYS GPT deliberation (after verification, below). LOW: Claude decides locally.
 
 Settle a contested HIGH/MEDIUM finding with a quoted line first: `node scripts/verify-findings.mjs --sid "$SID" --round N
 --triage <file> --out .audit/$SID-rN-verify.json`, then `--check` it. A verdict is evidence for triage, not a ruling; send

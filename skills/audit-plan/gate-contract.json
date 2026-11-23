@@ -111,7 +111,7 @@
       "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0, so the skill tells the operator to read `labelled: 0` with a non-zero `total` as a failure. The CLI prints a WARN naming the cause. Re-worded 2026-10-25 when write-ledger-entries began labelling the triaged round itself; the sentence is the same warning, shorter."
     },
     {
-      "line": "`4` (`CAPPED`) with a structural-or-stop card: a stop for a human call, never a",
+      "line": "`4` (`CAPPED`), a stop for a human call, never a retry, unless the **meta-review**",
       "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     },
     {
@@ -179,7 +179,7 @@
       "reason": "Agent-facing instruction or rubric text, rewrapped or relocated by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md). It directs the agent running the skill and makes no enforcement claim beyond the contracted round-cap gate; the verbs (must, never, fails) describe what the agent should do, not a refusal this skill mechanically performs."
     },
     {
-      "line": "each problem it prints is a HIGH finding; exit 2 means it did not run — say so, never read it as complete.",
+      "line": "  each problem it prints is HIGH; exit 2 = it did not run, never read as complete.",
       "reason": "Step 3 campaign rubric (docs/plans/test-campaign-controls.md §2.4): tells the AGENT how to read campaign-contract-check.mjs output. The checker's own exit contract (0 complete, 1 problems, 2 unreadable/bad usage) is enforced by tests/campaign-contract.test.mjs \"CLI exit codes\"; /audit-plan itself has no exit code for this line."
     },
     {
@@ -205,6 +205,18 @@
     {
       "line": "final-gate validation.",
       "reason": "Wording/route-naming edit (debt 71f46acf3d3f): names the final gate as Gemini-else-Claude; documents the existing Step 7 degradation ladder, makes no new enforcement claim — the ladder itself is stated and covered in references/gemini-gate.md."
+    },
+    {
+      "line": "| HIGH, MEDIUM | ALWAYS send to GPT deliberation |",
+      "reason": "Rebuttal routing table (the two former HIGH and MEDIUM rows merged into one): which findings go to GPT deliberation is a triage procedure the operator follows, not a gate any script exits on."
+    },
+    {
+      "line": "on `PAST_CAP_REQUIRED` present the card (`references/round-cap-and-structural-card.md`)",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
+    },
+    {
+      "line": "| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |",
+      "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     }
   ]
 }
