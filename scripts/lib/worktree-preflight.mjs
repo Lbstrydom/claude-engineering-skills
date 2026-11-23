@@ -165,6 +165,21 @@ export function checkMarkerRemedies(rootDir, io = {}) {
 }
 
 /**
+ * A consumer whose `skills:hydrate` runs a file inside the gitignored tooling tree, for the sync's end-of-run summary.
+ * The same verdict as the doctor probe `hydration/remedy-missing`, read from the same oracle ({@link checkMarkerRemedies}).
+ * Read-only: the consumer's package.json is theirs and is never edited.
+ *
+ * @param {string} name consumer name
+ * @param {string} repoPath consumer root
+ * @param {{readPackageJson?: (dir: string) => object}} [io]
+ * @returns {{name: string, circular: string[]}|null} null when nothing is circular (absent/unreadable is the probe's business)
+ */
+export function circularHydrateEntry(name, repoPath, io = {}) {
+  const res = checkMarkerRemedies(repoPath, io);
+  return res.circular.length > 0 ? { name, circular: res.circular } : null;
+}
+
+/**
  * `node [flags] <path under scripts/.claude-skills/>` as the EXECUTED file. A flag may
  * be `--x`, `--x=v` or take a separate value (`--require ./a`, `--import tsx`); the
  * optional value group backtracks, so a boolean flag followed by the path still matches.

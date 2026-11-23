@@ -311,6 +311,83 @@ export function isInstalledPackage(nodeModules, dep) {
   return fs.existsSync(path.join(nodeModules, dep, 'package.json'));
 }
 
+/** Packages that must share ONE version with `playwright`: the runner resolves `playwright-core` through either. */
+const PLAYWRIGHT_PEERS = ['@playwright/test', 'playwright'];
+const EXACT_VERSION = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z.-]+)?$/; // build metadata is accepted, then dropped
+
+/**
+ * Which version may the sync install `playwright` at, given what the consumer already has?
+ *
+ * `playwright` and `@playwright/test` each pull `playwright-core`; at different versions the consumer gets TWO copies and its
+ * tests break (a work consumer, after sync 4e55b28e: `playwright` 1.65.1 beside `@playwright/test` 1.63.0). So the consumer's
+ * own pin wins and the sync never installs a floating newer one. PURE: no filesystem, no network.
+ *
+ * Evidence order: INSTALLED beats DECLARED (a range says what is allowed, node_modules says what resolves), and
+ * `@playwright/test` beats `playwright`:
+ *   1. installed version of `@playwright/test`, then `playwright`
+ *   2. declared spec that IS an exact version (`1.63.0`, `=1.63.0`)
+ *   3. the first declared peer is only a range (`^1.63.0`, `latest`) with nothing installed -> `hold`: the resolved version is unknowable
+ *      here, so installing anything could mismatch; the operator is told instead.
+ * Neither declared nor installed -> `unconstrained` (today's behaviour: install the bundle's own range).
+ *
+ * @param {{declared?: Record<string, string>, installed?: Record<string, string>, unreadable?: string[]}} evidence keyed by package name; `unreadable` names evidence that exists but could not be read
+ * @returns {{action: 'unconstrained'} | {action: 'pin', version: string, source: string} | {action: 'hold', reason: string}}
+ */
+export function alignPlaywrightVersion({ declared = {}, installed = {}, unreadable = [] } = {}) {
+  // Present but unreadable evidence is NOT absence: treating it so would fall through to `unconstrained` and install the
+  // floating version this function exists to prevent.
+  if (unreadable.length) return { action: 'hold', reason: `${unreadable.join(', ')} could not be read, so the version to match is unknown` };
+  for (const name of PLAYWRIGHT_PEERS) {
+    const m = EXACT_VERSION.exec(String(installed[name] ?? '').trim());
+    if (m) return { action: 'pin', version: m[1], source: `installed ${name}` };
+  }
+  // The FIRST declared peer decides (`@playwright/test` before `playwright`): a range there must not fall through to an exact
+  // `playwright` spec that may disagree with what the range resolves to.
+  const name = PLAYWRIGHT_PEERS.find((n) => typeof declared[n] === 'string');
+  if (!name) return { action: 'unconstrained' };
+  const m = EXACT_VERSION.exec(declared[name].trim().replace(/^=/, ''));
+  if (m) return { action: 'pin', version: m[1], source: `declared ${name}` };
+  return { action: 'hold', reason: `${name}@${declared[name]} is declared as a range and not installed, so the version it resolves to is unknown` };
+}
+
+/**
+ * Gather the evidence {@link alignPlaywrightVersion} judges: the consumer's declarations (all four dependency sections) and the
+ * versions actually in `node_modules`. A read failure is absence, never a throw - the sync must not die on a malformed manifest.
+ *
+ * @param {string} repoRoot
+ * @returns {{declared: Record<string, string>, installed: Record<string, string>, unreadable: string[]}}
+ */
+export function readPlaywrightEvidence(repoRoot) {
+  const declared = {};
+  const installed = {};
+  const unreadable = [];
+  let pkg = null;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')); } catch (e) {
+    if (e?.code !== 'ENOENT') unreadable.push('package.json');
+  }
+  for (const name of PLAYWRIGHT_PEERS) {
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+      const spec = pkg?.[section]?.[name];
+      if (typeof spec === 'string') { declared[name] = spec; break; }
+    }
+    // Node's own resolution walks UP: a workspace member inherits an ancestor's node_modules, so probe the same chain.
+    let manifest = null;
+    for (let dir = path.resolve(repoRoot); ; dir = path.dirname(dir)) {
+      const candidate = path.join(dir, 'node_modules', name, 'package.json');
+      if (fs.existsSync(candidate)) { manifest = candidate; break; }
+      if (path.dirname(dir) === dir) break;
+    }
+    if (!manifest) continue; // genuinely absent
+    try {
+      const v = JSON.parse(fs.readFileSync(manifest, 'utf-8')).version;
+      // A version we cannot parse is unreadable evidence (hold), never absence.
+      if (typeof v === 'string' && EXACT_VERSION.test(v.trim())) installed[name] = v.trim();
+      else unreadable.push(`${name} (unparseable version)`);
+    } catch { unreadable.push(`${name} package.json`); }
+  }
+  return { declared, installed, unreadable };
+}
+
 export function findMissingDeps(repoRoot) {
   const hasPackageJson = fs.existsSync(path.join(repoRoot, 'package.json'));
   if (!hasPackageJson) {
@@ -371,6 +448,19 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
 
   const pm = detectPackageManager(repoRoot);
   const all = [...missing, ...missingOptional];
+  // `playwright` is aligned to the consumer's own @playwright/test, never installed floating (see alignPlaywrightVersion).
+  const pwAlign = missingOptional.includes('playwright') ? alignPlaywrightVersion(readPlaywrightEvidence(repoRoot)) : { action: 'unconstrained' };
+  const pwPinned = pwAlign.action === 'pin';
+  const pwHeld = pwAlign.action === 'hold';
+  const optionalNow = missingOptional.filter(d => !(d === 'playwright' && (pwPinned || pwHeld)));
+  // What a manual-install hint names: the aligned spec, or nothing for a held playwright - never the floating one.
+  const hintPkgs = all.filter(d => d !== 'playwright' || !(pwPinned || pwHeld));
+  const hintCmd = (pmName) => [
+    ...(hintPkgs.length ? [displayAddDev(pmName, hintPkgs, repoRoot)] : []),
+    ...(pwPinned ? [displayAddDev(pmName, [`playwright@${pwAlign.version}`], repoRoot, { exact: true })] : []),
+  ].join(' && ');
+  // Said BEFORE any package-manager refusal below, so a manual-install hint that omits playwright is never silent about why.
+  if (pwHeld) process.stderr.write(`  ${Y}⚠${X} ${path.basename(repoRoot)}: not installing playwright — ${pwAlign.reason}; install it at the version @playwright/test resolves to (exact)\n`);
 
   // Ambiguity/invalid-declaration/unsupported-manager refusal has to run BEFORE
   // the dry-run branch, not after (round-1 audit M9, 2026-08-15) — otherwise
@@ -386,7 +476,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     process.stderr.write(
       `  ${Y}⚠${X} ${path.basename(repoRoot)}: package.json "packageManager" field is present but unrecognised — not guessing\n`
       + `  Fix it to "<name>@<version>" (${SUPPORTED_PACKAGE_MANAGERS.join('|')}), or install manually:\n`
-      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all, repoRoot)}\n`,
+      + `    cd ${repoRoot} && ${hintCmd(pm.name)}\n`,
     );
     return {
       action: 'invalid-package-manager-declaration', installed: [], installedOptional: [],
@@ -402,7 +492,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     process.stderr.write(
       `  ${Y}⚠${X} ${path.basename(repoRoot)}: multiple lockfiles (${pm.candidates.join(', ')}) — not guessing a package manager\n`
       + `  Add a "packageManager" field to package.json, or install manually with the one you use:\n`
-      + `    cd ${repoRoot} && ${displayAddDev(pm.candidates[0], all, repoRoot)}\n`,
+      + `    cd ${repoRoot} && ${hintCmd(pm.candidates[0])}\n`,
     );
     return {
       action: 'ambiguous-package-manager', installed: [], installedOptional: [],
@@ -427,7 +517,7 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     process.stderr.write(
       `  ${Y}⚠${X} ${path.basename(repoRoot)}: automated install supports npm/pnpm only — not attempting an unverified ${pm.name} install\n`
       + `  Install manually:\n`
-      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all, repoRoot)}\n`,
+      + `    cd ${repoRoot} && ${hintCmd(pm.name)}\n`,
     );
     return {
       action: 'manual-install-required', installed: [], installedOptional: [],
@@ -438,11 +528,13 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
   if (dryRun) {
     if (!quiet) {
       if (missing.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install required via ${pm.name} — ${missing.join(', ')}\n`);
-      if (missingOptional.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install optional via ${pm.name} — ${missingOptional.join(', ')}\n`);
+      if (optionalNow.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install optional via ${pm.name} — ${optionalNow.join(', ')}\n`);
+      if (pwPinned) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install playwright@${pwAlign.version} (exact; matches ${pwAlign.source})\n`);
+      if (pwHeld) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would NOT install playwright — ${pwAlign.reason}\n`);
     }
     return {
       action: missing.length > 0 ? 'installed' : 'already-satisfied',
-      installed: missing, installedOptional: missingOptional, failed: [],
+      installed: missing, installedOptional: [...optionalNow, ...(pwPinned ? ['playwright'] : [])], failed: [],
       packageManager: pm.name,
     };
   }
@@ -478,11 +570,11 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
    * @param {number} capMs
    * @returns {{stillMissing: string[], err: Error|null, timedOut: boolean}}
    */
-  const installAndVerify = (pkgs, capMs) => {
+  const installAndVerify = (pkgs, capMs, { specs = pkgs, exact = false } = {}) => {
     let err = null;
     try {
       const { bin, prefix, shell } = packageManagerInvocation(pm.name);
-      execFileSync(bin, [...prefix, ...addDevDepsArgs(pm.name, pkgs, repoRoot)], {
+      execFileSync(bin, [...prefix, ...addDevDepsArgs(pm.name, specs, repoRoot, { exact })], {
         cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: capMs, shell,
       });
     } catch (e) {
@@ -547,11 +639,11 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     }
   }
 
-  if (missingOptional.length > 0) {
-    process.stderr.write(`  ${D}Installing optional audit-loop deps in ${path.basename(repoRoot)} via ${pm.name}: ${missingOptional.join(', ')}${X}\n`);
-    const r = installAndVerify(missingOptional, caps.optionalMs);
+  if (optionalNow.length > 0) {
+    process.stderr.write(`  ${D}Installing optional audit-loop deps in ${path.basename(repoRoot)} via ${pm.name}: ${optionalNow.join(', ')}${X}\n`);
+    const r = installAndVerify(optionalNow, caps.optionalMs);
     timedOut ||= r.timedOut;
-    installedOptional.push(...missingOptional.filter(p => !r.stillMissing.includes(p)));
+    installedOptional.push(...optionalNow.filter(p => !r.stillMissing.includes(p)));
     if (r.stillMissing.length > 0) {
       failed.push(...r.stillMissing);
       const why = r.timedOut
@@ -565,6 +657,30 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
       } else if (r.err) {
         process.stderr.write(`  ${Y}○${X} ${pm.name} reported: ${advisory(r.err)}\n`);
       }
+    }
+  }
+
+  // LAST on purpose: every other install above may reify the tree, so alignment is verified after the final one.
+  if (pwPinned) {
+    // Own install call: `exact` must not leak onto the other optional packages' ranges.
+    const spec = `playwright@${pwAlign.version}`;
+    process.stderr.write(`  ${D}Installing ${spec} (exact; matches ${pwAlign.source}) in ${path.basename(repoRoot)} via ${pm.name}${X}\n`);
+    const r = installAndVerify(['playwright'], caps.optionalMs, { specs: [spec], exact: true });
+    timedOut ||= r.timedOut;
+    // Present is not ALIGNED: re-probe the versions now in node_modules (the install may have reified the tree).
+    const { installed: after, unreadable: afterUnreadable } = readPlaywrightEvidence(repoRoot);
+    const norm = (v) => (v === undefined ? v : EXACT_VERSION.exec(v)?.[1]);
+    const misaligned = r.stillMissing.length === 0
+      && (afterUnreadable.length > 0 || norm(after.playwright) !== pwAlign.version
+        || (after['@playwright/test'] !== undefined && norm(after['@playwright/test']) !== pwAlign.version));
+    if (r.stillMissing.length > 0 || misaligned) {
+      failed.push('playwright');
+      process.stderr.write(misaligned
+        ? `  ${Y}⚠${X} playwright ${after.playwright ?? '?'} / @playwright/test ${after['@playwright/test'] ?? 'absent'} do not match ${pwAlign.version} after install — two playwright-core copies are possible; align them by hand\n`
+        : `  ${Y}○${X} ${spec} unavailable${r.timedOut ? ` (${DEPS_TIMEOUT_MARKER})` : ''} — browser features degrade gracefully\n`);
+    } else {
+      installedOptional.push('playwright');
+      process.stderr.write(`  ${G}✓${X} ${spec} installed\n`);
     }
   }
 

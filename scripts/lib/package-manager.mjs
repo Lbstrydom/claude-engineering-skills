@@ -251,19 +251,20 @@ export function isPnpmWorkspaceRoot(repoRoot) {
  * @param {string} pm
  * @param {string[]} pkgs
  * @param {string} [repoRoot]
+ * @param {{exact?: boolean}} [opts] `exact` saves the version as written (no `^`) — for an alignment pin that must not float.
  * @returns {string[]}
  */
-export function addDevDepsArgs(pm, pkgs, repoRoot = null) {
+export function addDevDepsArgs(pm, pkgs, repoRoot = null, { exact = false } = {}) {
   switch (pm) {
     case 'pnpm':
-      return ['add', '-D', ...(repoRoot && isPnpmWorkspaceRoot(repoRoot) ? ['-w'] : []), ...pkgs];
+      return ['add', '-D', ...(exact ? ['-E'] : []), ...(repoRoot && isPnpmWorkspaceRoot(repoRoot) ? ['-w'] : []), ...pkgs];
     case 'yarn':
-      return ['add', '-D', ...pkgs];
+      return ['add', '-D', ...(exact ? ['--exact'] : []), ...pkgs];
     case 'bun':
-      return ['add', '-d', ...pkgs];
+      return ['add', '-d', ...(exact ? ['--exact'] : []), ...pkgs];
     case 'npm':
     default:
-      return ['install', '--save-dev', '--legacy-peer-deps', ...pkgs];
+      return ['install', '--save-dev', ...(exact ? ['--save-exact'] : []), '--legacy-peer-deps', ...pkgs];
   }
 }
 
@@ -314,19 +315,20 @@ export function displayCommand(pm, args) {
  * @param {string} pm
  * @param {string[]} pkgs
  * @param {string} [repoRoot]
+ * @param {{exact?: boolean}} [opts] `exact`: the hand-typed command must save the version as written, like {@link addDevDepsArgs}.
  * @returns {string}
  */
-export function displayAddDev(pm, pkgs, repoRoot = null) {
+export function displayAddDev(pm, pkgs, repoRoot = null, { exact = false } = {}) {
   switch (pm) {
     case 'pnpm':
-      return ['pnpm', 'add', '-D', ...(repoRoot && isPnpmWorkspaceRoot(repoRoot) ? ['-w'] : []), ...pkgs].join(' ');
+      return ['pnpm', 'add', '-D', ...(exact ? ['-E'] : []), ...(repoRoot && isPnpmWorkspaceRoot(repoRoot) ? ['-w'] : []), ...pkgs].join(' ');
     case 'yarn':
-      return ['yarn', 'add', '-D', ...pkgs].join(' ');
+      return ['yarn', 'add', '-D', ...(exact ? ['--exact'] : []), ...pkgs].join(' ');
     case 'bun':
-      return ['bun', 'add', '-d', ...pkgs].join(' ');
+      return ['bun', 'add', '-d', ...(exact ? ['--exact'] : []), ...pkgs].join(' ');
     case 'npm':
     default:
-      return ['npm', 'i', '-D', ...pkgs].join(' ');
+      return ['npm', 'i', '-D', ...(exact ? ['--save-exact'] : []), ...pkgs].join(' ');
   }
 }
 
