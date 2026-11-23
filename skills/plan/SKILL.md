@@ -541,7 +541,7 @@ this session, validate each block before persisting — a syntax error otherwise
 renders as a red error box in GitHub.
 
 **The tool is `mcp__mermaid__generate_mermaid_diagram`**, from the `mermaid`
-server that `.mcp.json` and `.vscode/mcp.json` both register. Pass the block as
+server, where the repo registers it. Pass the block as
 `mermaid` and `outputType: "mermaid"` — that echoes the source back instead of
 rendering an image, so validation costs nothing. Invalid syntax comes back as an
 MCP error carrying the parser's line and column; that error IS the validation.

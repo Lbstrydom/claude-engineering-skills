@@ -20,6 +20,8 @@ import { EOL_PIN_GLOBS } from '../scripts/lib/sync-eol-pins.mjs';
 import { compareMcpSurfaces, managedServerNames } from '../scripts/lib/mcp-parity.mjs';
 import { runGates } from '../scripts/lib/sync-isolation-verify.mjs';
 import { SyncManifestSchema } from '../scripts/lib/sync-manifest.mjs';
+import { renderConsumerMcp, planRootMcp } from '../scripts/lib/sync-mcp-optin.mjs';
+import { validateOverrides } from '../scripts/lib/sync-overrides.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = fs.readFileSync(path.join(REPO_ROOT, '.mcp.json'), 'utf8');
@@ -29,6 +31,16 @@ const render = (srcContent, existingContent = null, rel = '.mcp.json') =>
   renderOutbound({ srcRel: rel, dstRel: rel, srcContent, existingContent, rewriteConfig: cfg });
 const ours = JSON.parse(SRC);
 const MANAGED = managedServerNames(ours);
+
+/** An opted-in consumer that pins + has installed @playwright/mcp (and nothing else): only `playwright` is managed there. */
+const PINNED_MANAGED = ['playwright'];
+const OPT_IN = { version: 1, syncOptIn: [{ feature: 'root-mcp-json', reason: 'test consumer pins @playwright/mcp' }] };
+const seedPinnedConsumer = (tmp, { pkg = '@playwright/mcp', version = '0.0.85', bin = { 'playwright-mcp': 'cli.js' }, optIn = true } = {}) => {
+  fs.mkdirSync(path.join(tmp, 'node_modules', ...pkg.split('/')), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'node_modules', ...pkg.split('/'), 'package.json'), JSON.stringify({ name: pkg, version, bin }));
+  fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'consumer', devDependencies: { [pkg]: version } }));
+  if (optIn) fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify(OPT_IN));
+};
 
 describe('.mcp.json is registered on every sync surface', () => {
   it('inventory, canonical path, co-owned merge and EOL pin all name it', () => {
@@ -132,14 +144,14 @@ describe('gate 10 + manifest field: real sync, reload through the schema, runGat
     path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), '--target-path', tmp, '--no-prompt', '--adopt-orphans',
   ], { cwd: REPO_ROOT, encoding: 'utf8', stdio: 'pipe', timeout: 240_000 });
   const exitOf = (tmp) => spawnSync(process.execPath, [VERIFY, '--consumer-root', tmp, '--gates', '10'], { encoding: 'utf8' }).status;
-  const withConsumer = (fn, seed) => {
+  const withConsumer = (fn, seed = seedPinnedConsumer) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate10-'));
     try {
       if (seed) seed(tmp);
       realSync(tmp);
       // Reload through the SCHEMA: a non-strict schema would strip an undeclared field here.
       const parsed = SyncManifestSchema.parse(JSON.parse(fs.readFileSync(manifestPath(tmp), 'utf8')));
-      assert.deepEqual(parsed.mcpManagedServers, MANAGED, 'the manifest carries exactly the source names, sorted');
+      assert.deepEqual(parsed.mcpManagedServers, PINNED_MANAGED, 'the manifest carries exactly the servers shipped to this consumer, sorted');
       const gate = () => runGates({ consumerRoot: tmp, gates: ['10'] })[0];
       return fn({ tmp, gate });
     } finally {
@@ -151,7 +163,7 @@ describe('gate 10 + manifest field: real sync, reload through the schema, runGat
   it('pass: a clean sync is green, exit 0', () => withConsumer(({ tmp, gate }) => {
     const g = gate();
     assert.equal(g.result, 'pass');
-    assert.equal(g.details.compared, MANAGED.length);
+    assert.equal(g.details.compared, PINNED_MANAGED.length);
     assert.equal(exitOf(tmp), 0);
   }));
 
@@ -163,7 +175,7 @@ describe('gate 10 + manifest field: real sync, reload through the schema, runGat
 
   it('declared: either file claimed in .sync-overrides.json means no compare, exit 0 even with a mismatch', () => withConsumer(({ tmp, gate }) => {
     editJson(path.join(tmp, '.mcp.json'), (j) => { j.mcpServers.playwright.args = ['-y', '@playwright/mcp@0.0.1']; });
-    fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify({ version: 1, overrides: [{ path: '.vscode/mcp.json', reason: 'pinned locally' }] }));
+    fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify({ ...OPT_IN, overrides: [{ path: '.vscode/mcp.json', reason: 'pinned locally' }] }));
     const g = gate();
     assert.equal(g.result, 'declared', JSON.stringify(g));
     assert.equal(exitOf(tmp), 0);
@@ -200,4 +212,139 @@ describe('gate 10 + manifest field: real sync, reload through the schema, runGat
     assert.match(bad.error, /manifest schema invalid/);
     assert.notEqual(exitOf(tmp), 0);
   }));
+});
+
+describe('root .mcp.json is OPT-IN per consumer and never launches by a network fetch', () => {
+  const run = (tmp) => execFileSync(process.execPath, [
+    path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), '--target-path', tmp, '--no-prompt', '--adopt-orphans',
+  ], { cwd: REPO_ROOT, encoding: 'utf8', stdio: 'pipe', timeout: 240_000 });
+  const withTmp = (seed, fn) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-optin-'));
+    try { seed?.(tmp); const out = run(tmp); return fn(tmp, out); }
+    finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  };
+  const manifest = (tmp) => JSON.parse(fs.readFileSync(path.join(tmp, 'scripts', '.sync-manifest.json'), 'utf8'));
+  const gate10 = (tmp) => runGates({ consumerRoot: tmp, gates: ['10'] })[0];
+  const OWN = '{"mcpServers":{"corp":{"command":"x"}}}\n';
+
+  it('an opted-OUT consumer gets no .mcp.json, an untouched pre-existing one, and gate 10 reads not-applicable', () => withTmp(
+    (tmp) => { seedPinnedConsumer(tmp, { optIn: false }); fs.writeFileSync(path.join(tmp, '.mcp.json'), OWN); },
+    (tmp) => {
+      assert.equal(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8'), OWN, 'the consumer file is never merged into');
+      assert.ok(!('.mcp.json' in manifest(tmp).files));
+      assert.equal(manifest(tmp).mcpManagedServers, undefined);
+      assert.equal(gate10(tmp).result, 'not-applicable');
+    },
+  ));
+
+  it('an opted-out consumer with no file at all is not handed one', () => withTmp(
+    (tmp) => seedPinnedConsumer(tmp, { optIn: false }),
+    (tmp) => { assert.ok(!fs.existsSync(path.join(tmp, '.mcp.json'))); assert.equal(gate10(tmp).result, 'not-applicable'); },
+  ));
+
+  it('an opted-in consumer pinned to @playwright/mcp@0.0.85 gets `node …/cli.js`, no npx, no mermaid, and parity passes', () => withTmp(
+    (tmp) => seedPinnedConsumer(tmp),
+    (tmp, out) => {
+      const root = JSON.parse(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8'));
+      assert.deepEqual(Object.keys(root.mcpServers), ['playwright']);
+      assert.equal(root.mcpServers.playwright.command, 'node');
+      assert.deepEqual(root.mcpServers.playwright.args, ['node_modules/@playwright/mcp/cli.js', '--headless']);
+      const vs = JSON.parse(fs.readFileSync(path.join(tmp, '.vscode', 'mcp.json'), 'utf8'));
+      assert.deepEqual(vs.servers.playwright.args, root.mcpServers.playwright.args);
+      assert.ok(!/npx|0\.0\.84|mcp-mermaid/.test(JSON.stringify([root, vs])), 'no fetch launcher, no source pin, no unadmitted package');
+      assert.match(out, /mermaid left out: mcp-mermaid is not declared in package\.json/);
+      assert.equal(gate10(tmp).result, 'pass');
+    },
+  ));
+
+  it("the emitted launcher follows the consumer's own pin, never the source's", () => withTmp(
+    (tmp) => seedPinnedConsumer(tmp, { version: '0.0.91' }),
+    (tmp) => {
+      const args = JSON.parse(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8')).mcpServers.playwright.args;
+      assert.equal(args[0], 'node_modules/@playwright/mcp/cli.js');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 'node_modules/@playwright/mcp/package.json'), 'utf8')).version, '0.0.91');
+    },
+  ));
+
+  it('an opted-in consumer that also pins mcp-mermaid gets that entry', () => withTmp(
+    (tmp) => {
+      seedPinnedConsumer(tmp);
+      fs.mkdirSync(path.join(tmp, 'node_modules', 'mcp-mermaid'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'node_modules', 'mcp-mermaid', 'package.json'), JSON.stringify({ name: 'mcp-mermaid', version: '0.4.1', bin: 'build/index.js' }));
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ devDependencies: { '@playwright/mcp': '0.0.85', 'mcp-mermaid': '0.4.1' } }));
+    },
+    (tmp) => {
+      const m = JSON.parse(fs.readFileSync(path.join(tmp, '.mcp.json'), 'utf8')).mcpServers.mermaid;
+      assert.deepEqual([m.command, m.args], ['node', ['node_modules/mcp-mermaid/build/index.js']]);
+      assert.deepEqual(manifest(tmp).mcpManagedServers, ['mermaid', 'playwright']);
+    },
+  ));
+
+  it('opted in but nothing pinned: neither MCP file is shipped and gate 10 is not-applicable (never a pass)', () => withTmp(
+    (tmp) => fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify(OPT_IN)),
+    (tmp, out) => {
+      assert.ok(!fs.existsSync(path.join(tmp, '.mcp.json')));
+      assert.ok(!fs.existsSync(path.join(tmp, '.vscode', 'mcp.json')));
+      assert.match(out, /\.mcp\.json not shipped/);
+      assert.equal(gate10(tmp).result, 'not-applicable');
+    },
+  ));
+});
+
+describe('renderConsumerMcp — what is left out, and why', () => {
+  const tmpWith = (pkgJson, installed) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-render-'));
+    if (pkgJson) fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify(pkgJson));
+    for (const [name, j] of Object.entries(installed ?? {})) {
+      fs.mkdirSync(path.join(tmp, 'node_modules', ...name.split('/')), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'node_modules', ...name.split('/'), 'package.json'), JSON.stringify(j));
+    }
+    return tmp;
+  };
+  const render = (tmp) => { try { return renderConsumerMcp({ sourceText: SRC, consumerRoot: tmp }); } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } };
+  const pw = (v) => ({ '@playwright/mcp': { version: v, bin: { 'playwright-mcp': 'cli.js' } } });
+
+  it('a range is not a pin: left out', () => {
+    const r = render(tmpWith({ devDependencies: { '@playwright/mcp': '^0.0.85' } }, pw('0.0.85')));
+    assert.equal(r.text, null);
+    assert.match(r.notes.join(';'), /not an exact version/);
+  });
+  it('declared but installed at another version: left out, never emitted at either version', () => {
+    const r = render(tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.84')));
+    assert.equal(r.text, null);
+    assert.match(r.notes.join(';'), /not installed/);
+  });
+  it('declared but not installed at all: left out', () => {
+    assert.equal(render(tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, {})).text, null);
+  });
+  it('a bin with several entries and no match is ambiguous: left out; one that escapes the package is refused', () => {
+    const amb = render(tmpWith({ dependencies: { '@playwright/mcp': '0.0.85' } }, { '@playwright/mcp': { version: '0.0.85', bin: { a: 'a.js', b: 'b.js' } } }));
+    assert.equal(amb.text, null);
+    const esc = render(tmpWith({ dependencies: { '@playwright/mcp': '0.0.85' } }, { '@playwright/mcp': { version: '0.0.85', bin: '../../evil.js' } }));
+    assert.equal(esc.text, null);
+  });
+  it('no package.json at all: nothing is emitted', () => {
+    assert.equal(render(tmpWith(null, pw('0.0.85'))).text, null);
+  });
+  it('negative control: rendering never touches the source, so CES keeps its own .mcp.json', () => {
+    render(tmpWith({ devDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85')));
+    assert.equal(fs.readFileSync(path.join(REPO_ROOT, '.mcp.json'), 'utf8'), SRC);
+    assert.deepEqual(ours.mcpServers.playwright.args, ['-y', '@playwright/mcp@0.0.84', '--headless']);
+    assert.deepEqual(MANAGED, ['mermaid', 'playwright']);
+  });
+});
+
+describe('.sync-overrides.json syncOptIn', () => {
+  it('accepts the known feature, and rejects an unknown feature, a missing reason and a non-array', () => {
+    assert.deepEqual(validateOverrides(OPT_IN).syncOptIn.map((e) => e.feature), ['root-mcp-json']);
+    assert.match(validateOverrides({ version: 1, syncOptIn: [{ feature: 'nope', reason: 'x' }] }).errors.join(), /unknown feature/);
+    assert.match(validateOverrides({ version: 1, syncOptIn: [{ feature: 'root-mcp-json' }] }).errors.join(), /reason/);
+    assert.match(validateOverrides({ version: 1, syncOptIn: {} }).errors.join(), /must be an array/);
+  });
+  it('planRootMcp: no declaration means the root file is omitted and the source is used for neither', () => {
+    const plan = planRootMcp({ consumerRoot: os.tmpdir(), sourceRoot: REPO_ROOT, syncOptIn: [] });
+    assert.equal(plan.optedIn, false);
+    assert.ok(plan.omit.has('.mcp.json'));
+    assert.equal(plan.textFor('.mcp.json'), null);
+  });
 });
