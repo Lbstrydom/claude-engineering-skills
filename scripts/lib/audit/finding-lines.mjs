@@ -15,7 +15,8 @@
  *   - Unique match or null. Ambiguous and not-found are "unlocated", never a guess.
  *   - Only `_primaryFile` is searched, read through `safeReadFile` (containment after
  *     symlink resolution, sensitive-file refusal).
- *   - Snapshot contract: a line is valid for the signal only when the text read IS the
+ *   - Snapshot contract (the claim is about the AUDITED COMMIT: "this text sits uniquely at line N of `auditedSha`",
+ *     which is exactly what the signal maps, so a file edited and restored mid-run cannot make it false): a line is valid for the signal only when the text read IS the
  *     audited commit's content (the signal maps lines through `auditedSha(N)`). A file
  *     whose working text differs from `git show <auditedSha>:<path>` is `dirty`, and a
  *     missing sha or blob is `no-basis`.
@@ -36,7 +37,9 @@ export const MAX_QUOTE_LINES = 3;
 export const LINE_STATUSES = Object.freeze(['anchored', 'no-quote', 'not-found', 'ambiguous', 'dirty', 'no-basis', 'no-file']);
 
 const SHA_RE = /^[0-9a-f]{40,64}$/;
-const fold = (s) => String(s).replace(/\r\n?/g, '\n');
+// CRLF -> LF ONLY. A standalone CR is NOT a line break to git (its line counting, and the hunks the signal maps through,
+// are LF-delimited), so folding it would put a quote on a line number git does not have.
+const fold = (s) => String(s).replace(/\r\n/g, '\n');
 
 /** `git show <sha>:<path>` as text, or null (unknown sha/blob, git failure). */
 export function gitShowText(cwd, sha, relPath) {
@@ -120,6 +123,9 @@ export function resolveFindingLines(finding, reader) {
  * pass emitting `ProducerFindingSchema` findings.
  */
 export const NON_PRODUCER_PASSES = Object.freeze(['duplication', 'adjacency', 'architecture', 'orphan-introduced', 'event-wiring-symmetry']);
+
+/** Static registry names that DO come from a `ProducerFindingSchema` response (backend names are dynamic: `backendPassNames`). */
+export const PRODUCER_PASSES = Object.freeze(['structure', 'wiring', 'frontend', 'sustainability', 'quickfix']);
 
 /**
  * Display prefixes of the passes whose findings are model-authored against

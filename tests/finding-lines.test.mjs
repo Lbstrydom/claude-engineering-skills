@@ -122,6 +122,14 @@ describe('locateQuote — exact, unique-or-null', () => {
     assert.equal(locateQuote(lines, '  if (x) { ').status, 'not-found', 'trailing space');
     assert.equal(locateQuote(lines, '    return `    pad`;').status, 'not-found', 'whitespace inside a template literal differs');
   });
+  it('a standalone CR is NOT a line break (git counts LF-delimited lines); CRLF still is', () => {
+    // CRLF folds, a lone CR does not: 'a<CR>b' is ONE file line, so a quote of 'b' must not anchor to a phantom line 2
+    const CR = String.fromCharCode(13);
+    assert.equal(locateQuote([`a${CR}b`, 'c'], 'b').status, 'not-found');
+    assert.deepEqual(locateQuote([`a${CR}b`, 'c'], `a${CR}b`), { status: 'anchored', lineStart: 1, lineEnd: 1 });
+    assert.deepEqual(locateQuote(['x', 'y'], `x${CR}
+y`), { status: 'anchored', lineStart: 1, lineEnd: 2 });
+  });
   it('empty, blank, non-string and over-long quotes are no-quote', () => {
     for (const q of ['', '   ', '\n', null, undefined, 7, 'a\nb\nc\nd']) assert.equal(locateQuote(lines, q).status, 'no-quote', String(q));
   });
@@ -202,6 +210,14 @@ describe('snapshot contract + resolver + identity, against a real temp git repo'
     assert.match(out.line, /\[lines\] 3 findings: anchored 1, no-quote 1, not-found 1, ambiguous 0, dirty 0, no-basis 0, no-file 0/);
   });
 
+  it('every static registry pass in finding-assembly is classified as producer or non-producer (a new pass must be classified)', async () => {
+    const { PRODUCER_PASSES } = await import('../scripts/lib/audit/finding-lines.mjs');
+    const src = fs.readFileSync(new URL('../scripts/lib/audit/finding-assembly.mjs', import.meta.url), 'utf8');
+    const names = [...src.matchAll(/{ name: '([a-z-]+)', ran:/g)].map((m) => m[1]);
+    assert.ok(names.length >= 10, 'found the registry entries');
+    for (const n of names) assert.ok(PRODUCER_PASSES.includes(n) || NON_PRODUCER_PASSES.includes(n), n + ' is unclassified');
+  });
+
   it('NON_PRODUCER_PASSES names the waves that cannot carry the field (quickfix is NOT one of them)', () => {
     assert.equal(NON_PRODUCER_PASSES.includes('quickfix'), false);
     assert.ok(['duplication', 'adjacency', 'architecture', 'orphan-introduced', 'event-wiring-symmetry'].every((n) => NON_PRODUCER_PASSES.includes(n)));
@@ -279,27 +295,36 @@ describe('snapshot contract + resolver + identity, against a real temp git repo'
 });
 
 describe('historical positive control (needs the real commits)', () => {
-  it('66b91739..c2d62f6b scripts/lib/llm-budget.mjs: a quote copied from a real changed line anchors inside a real hunk', (t) => {
+  it('66b91739..c2d62f6b scripts/lib/llm-budget.mjs: a quote from a line INSIDE a real post-image hunk anchors and counts as a reopenRate hit; one outside does not', (t) => {
     const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
-    let have = true;
-    try { execFileSync('git', ['cat-file', '-e', 'c2d62f6b^{commit}'], { cwd: root, stdio: 'ignore' }); execFileSync('git', ['cat-file', '-e', '66b91739^{commit}'], { cwd: root, stdio: 'ignore' }); } catch { have = false; }
-    if (!have) {
+    const rev = (r) => { try { return execFileSync('git', ['rev-parse', '--verify', '--quiet', r + '^{commit}'], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return null; } };
+    const base = rev('66b91739'); const head = rev('c2d62f6b');
+    if (!base || !head) {
       if (process.env.REQUIRE_HISTORICAL_RANGE === '1') assert.fail('historical commits absent and REQUIRE_HISTORICAL_RANGE=1');
       t.skip('skipped (objects absent): 66b91739 / c2d62f6b not in this checkout');
       return;
     }
-    const sha = execFileSync('git', ['rev-parse', 'c2d62f6b'], { cwd: root }).toString().trim();
-    const text = execFileSync('git', ['show', `${sha}:scripts/lib/llm-budget.mjs`], { cwd: root }).toString();
-    const lines = text.split('\n');
-    const hunks = execFileSync('git', ['diff', '-U0', '66b91739', sha, '--', 'scripts/lib/llm-budget.mjs'], { cwd: root }).toString()
-      .split('\n').filter((l) => l.startsWith('@@'));
-    assert.ok(hunks.length > 0, 'the range changes the file');
-    const m = /\+(\d+)(?:,(\d+))?/.exec(hunks[0]);
-    const start = Number(m[1]);
-    const candidate = lines.findIndex((l, i) => i + 1 >= start && l.trim() !== '' && lines.filter((x) => x === l).length === 1);
-    assert.ok(candidate >= 0, 'a unique line exists at/after the first post-image hunk');
-    const hit = locateQuote(lines, lines[candidate]);
-    assert.equal(hit.status, 'anchored');
-    assert.equal(hit.lineStart, candidate + 1);
+    const FILE = 'scripts/lib/llm-budget.mjs';
+    const lines = execFileSync('git', ['show', head + ':' + FILE], { cwd: root }).toString().split('\n');
+    const hunks = execFileSync('git', ['diff', '-U0', base, head, '--', FILE], { cwd: root }).toString().split('\n')
+      .map((l) => /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(l)).filter(Boolean)
+      .map((m) => [Number(m[1]), Number(m[1]) + (m[2] === undefined ? 1 : Number(m[2])) - 1]).filter(([a, b]) => b >= a);
+    assert.ok(hunks.length > 0, 'the range changes the file with non-empty post-image hunks');
+    const inHunk = (n) => hunks.some(([a, b]) => n >= a && n <= b);
+    const unique = (n) => lines[n - 1].trim() !== '' && lines.filter((x) => x === lines[n - 1]).length === 1;
+    const inside = lines.map((_, k) => k + 1).find((n) => inHunk(n) && unique(n));
+    const outside = lines.map((_, k) => k + 1).find((n) => !inHunk(n) && n < lines.length && unique(n));
+    assert.ok(inside && outside, 'a unique line exists inside and outside the hunks');
+    const mk = (n, detail) => ({ ...BASE_FINDING, id: 'H' + n, detail, _primaryFile: FILE, _pass: 'Backend', lineQuote: lines[n - 1] });
+    const found = [mk(inside, 'inside'), mk(outside, 'outside')];
+    // the file at HEAD of that range is not this checkout's working tree: resolve against the committed text directly
+    const reader = { read: () => ({ status: 'ok', lines }) };
+    for (const f of found) Object.assign(f, resolveFindingLines(f, reader));
+    assert.deepEqual([found[0].lineStart, found[1].lineStart], [inside, outside]);
+    assert.ok(inHunk(found[0].lineStart) && !inHunk(found[1].lineStart), 'the resolved line is the one inside the hunk bounds');
+    const sig = computeRoundSignals({ round: 3, ledgerEntries: null, git: makeGitRunner(root), rounds: [{ round: 2, auditedSha: base, findings: [] }, { round: 3, auditedSha: head, findings: found.map(({ status, ...f }) => f) }] });
+    assert.equal(sig.signals.reopenRate.measured, true);
+    assert.equal(sig.signals.reopenRate.hits, 1, 'exactly the inside-hunk finding is a reopen hit');
+    assert.equal(sig.signals.reopenRate.located, 2);
   });
 });
