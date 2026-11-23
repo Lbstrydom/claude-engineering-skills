@@ -68,7 +68,9 @@ test('a secret-shaped string is redacted before it leaves, in finding, entry and
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jp-root-'));
   fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/a.js'), 'x');
   try {
-    const { sent, rc } = await runBoth([pair], { repoRoot: root });
+    const { sent, rc, rg } = await runBoth([pair], { repoRoot: root });
+    assert.equal(sent.claude.length, 1, 'the Claude judge sent a request'); assert.equal(sent.gemini.length, 1, 'the Gemini judge sent a request');
+    assert.notEqual(rg.results[0].verdict, 'not-judged', 'the Gemini path was exercised end to end');
     for (const body of [...sent.claude, ...sent.gemini]) {
       assert.ok(!body.includes(SECRET), 'secret reached the request body');
       assert.match(body, /REDACTED:/);

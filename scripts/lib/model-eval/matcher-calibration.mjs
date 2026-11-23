@@ -360,7 +360,7 @@ export function renderWorksheet(sets, { seed, ledgerEntries = [] }) {
     md.push(`### ${id}`, '', '**Finding F**', block(r.f), '', '**Ledger entries**', '');
     for (const xid of r.candidateXIds) {
       const x = xById.get(xid);
-      md.push(`- \`${xid}\`${x ? ` (${(x.file ?? '')}${x.lines != null ? `:${JSON.stringify(x.lines)}` : ''}): ${String(x.text ?? '').replace(/\s+/g, ' ').slice(0, 300)}` : ''}`);
+      md.push(`- \`${xid}\`${x ? ` (${(x.file ?? '')}${x.lines != null ? `:${JSON.stringify(x.lines)}` : ''}): ${String(x.text ?? '').replace(/\s+/g, ' ')}` : ''}`);
     }
     md.push('', 'Restates: ', '');
   });

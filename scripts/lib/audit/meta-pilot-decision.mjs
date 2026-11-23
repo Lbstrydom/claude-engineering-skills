@@ -150,13 +150,14 @@ export function scoreMetaRuns({ runs, novelByFinding, labels }) {
     const findings = Array.isArray(r.findings) ? r.findings : []; // a non-array is blocked above and never iterated
     for (const f of findings) {
       const sev = String(f.severity).toUpperCase();
-      if (sev !== 'HIGH' && sev !== 'MEDIUM') continue;
+      if (!['HIGH', 'MEDIUM', 'LOW'].includes(sev)) { blocked.push({ key: f.key, reason: `unrecognised-severity:${f.severity}` }); continue; }
+      if (sev === 'LOW') continue;
       const nv = novelByFinding.get(f.key);
       if (nv === undefined) { blocked.push({ key: f.key, reason: 'no-novelty-judgment' }); continue; } // a missing judgment is NOT 'not novel'
       if (nv !== true) continue;
       const label = labels.get(f.key);
       if (!label || label === 'UNDETERMINED') { blocked.push({ key: f.key, reason: label ?? 'unlabelled' }); continue; }
-      if (label === 'REAL') { any += 1; hm += 1; } else noise += 1;
+      if (label === 'REAL') { any += 1; hm += 1; } else if (['WRONG', 'NOT_A_DEFECT', 'RIGOUR_CHASING'].includes(label)) noise += 1; else blocked.push({ key: f.key, reason: `unrecognised-label:${label}` });
     }
     return { pointId: r.pointId, arm: r.arm, rep: r.rep, valid: r.valid, invalidReason: r.invalidReason ?? null, stopRun: r.stopRun === true, novelActionableHM: hm, novelActionable: any, noise, costUsd: r.costUsd };
   });

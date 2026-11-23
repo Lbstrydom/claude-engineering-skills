@@ -187,7 +187,7 @@ export function calibrationMaterial({ dataset, snapshots }) {
         const dedupe = `${p.sessionId}|${f.id}`;
         if (done.has(dedupe)) continue;
         done.add(dedupe);
-        findings.push({ id: `${sessionId}|${f.id}`, file: f._primaryFile ?? f.affectedFiles?.[0] ?? null, lines: null, severity: String(f.severity).toUpperCase(), text: [f.category, f.section, f.detail].filter(Boolean).join('\n'), arm: p.mode, sessionId });
+        findings.push({ id: `${sessionId}|${f.id}`, file: f._primaryFile ?? f.affectedFiles?.[0] ?? null, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: null, severity: String(f.severity).toUpperCase(), text: [f.category, f.section, f.detail].filter(Boolean).join('\n'), arm: p.mode, sessionId });
       }
       for (const x of visible) { const id = `${sessionId}|${x.id}`; if (!ledger.some((l) => l.id === id)) ledger.push({ ...x, id, sessionId }); }
     }
@@ -200,6 +200,7 @@ export function runCalibrateDraw({ datasetPath, seed, outDir, sizes }) {
   const { findings, ledger } = calibrationMaterial({ dataset, snapshots });
   const sets = drawCalibrationSets({ findings, ledgerEntries: ledger, seed, ...(sizes ? { sizes } : {}) });
   const { worksheetMarkdown, key } = renderWorksheet(sets, { seed, ledgerEntries: ledger });
+  key.shortfalls = sets.shortfalls; // recorded so the score step can refuse a calibration drawn from fewer pairs than the plan requires
   fs.mkdirSync(outDir, { recursive: true });
   for (const f of ['calibration-worksheet.md', 'calibration-key.json', 'calibration-material.json']) if (fs.existsSync(path.join(outDir, f))) throw new ArgvError(`${f} already exists in ${outDir}; a human may have labelled it. Draw into a new --out-dir.`);
   atomicWriteFileSync(path.join(outDir, 'calibration-worksheet.md'), worksheetMarkdown);
@@ -227,6 +228,7 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
   const key = readJson(path.join(dir, 'calibration-key.json'));
   const material = readJson(path.join(dir, 'calibration-material.json'));
   const answers = parseCalibrationAnswers(fs.readFileSync(labelsFile, 'utf8'));
+  const short = Object.entries(key.shortfalls ?? {}).filter(([, n]) => n > 0).map(([k, n]) => `${k} short by ${n}`);
   const joined = joinWorksheetLabels({ key, answers, findings: material.findings, ledgerEntries: material.ledger });
   const ledgerFile = path.join(dir, 'calibration.budget.jsonl');
   initLedger({ file: ledgerFile, capUsd: maxUsd });
@@ -240,7 +242,8 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
   }
   const s = readLedgerSummary(ledgerFile);
   out.spentUsd = s.spentUsd; out.flagged = s.flagged;
-  out.decision = Object.values(out.judges).every((j) => j.score.decision.status === 'accept') ? 'accept' : Object.values(out.judges).some((j) => j.score.decision.status === 'fail') ? 'fail' : 'inconclusive';
+  out.shortfalls = short;
+  out.decision = short.length ? 'inconclusive' : Object.values(out.judges).every((j) => j.score.decision.status === 'accept') ? 'accept' : Object.values(out.judges).some((j) => j.score.decision.status === 'fail') ? 'fail' : 'inconclusive';
   writeJson(path.join(dir, 'calibration-report.json'), out);
   return out;
 }
