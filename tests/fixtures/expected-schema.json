@@ -2098,6 +2098,24 @@
           "is_identity": "NO",
           "identity_generation": null,
           "ordinal_position": 69
+        },
+        {
+          "column_name": "linkage_state",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 70
+        },
+        {
+          "column_name": "linkage_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "is_identity": "NO",
+          "identity_generation": null,
+          "ordinal_position": 71
         }
       ]
     },
@@ -10861,6 +10879,13 @@
       "config": null
     },
     {
+      "function_name": "audit_runs_derive_linkage",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": "search_path=public"
+    },
+    {
       "function_name": "avg",
       "args": "halfvec",
       "return_type": "halfvec",
@@ -12618,6 +12643,18 @@
       "constraint_name": "audit_runs_gemini_verdict_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((gemini_verdict = ANY (ARRAY['APPROVE'::text, 'CONCERNS'::text, 'CONCERNS_REMAINING'::text, 'REJECT'::text])))"
+    },
+    {
+      "table_name": "audit_runs",
+      "constraint_name": "audit_runs_linkage_pair_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((linkage_state IS NULL) OR ((linkage_state = 'linked'::text) AND (audit_session_id IS NOT NULL) AND (linkage_reason IS NULL)) OR ((linkage_state = 'standalone'::text) AND (audit_session_id IS NULL) AND COALESCE((linkage_reason = ANY (ARRAY['manual-single-shot'::text, 'canary'::text, 'model-eval'::text])), false)) OR ((linkage_state = 'unlinked'::text) AND (audit_session_id IS NULL) AND (linkage_reason IS NOT NULL))))"
+    },
+    {
+      "table_name": "audit_runs",
+      "constraint_name": "audit_runs_linkage_state_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((linkage_state IS NULL) OR (linkage_state = ANY (ARRAY['linked'::text, 'unlinked'::text, 'standalone'::text]))))"
     },
     {
       "table_name": "audit_runs",
@@ -15620,6 +15657,13 @@
     }
   ],
   "triggers": [
+    {
+      "table_name": "audit_runs",
+      "trigger_name": "trg_audit_runs_derive_linkage",
+      "action_timing": "BEFORE",
+      "events": "INSERT,UPDATE",
+      "action_statement": "EXECUTE FUNCTION audit_runs_derive_linkage()"
+    },
     {
       "table_name": "campaign_events",
       "trigger_name": "campaign_events_no_update",

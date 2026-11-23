@@ -10,9 +10,11 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
+const PRODUCTION_URL = process.env.AUDIT_DB_URL; // captured BEFORE any describe repoints AUDIT_DB_URL at the test DB
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (integration block)';
 
 describe('audit telemetry capture (DB integration)', { skip }, () => {
@@ -793,5 +795,189 @@ describe('capture query recipes: the doc is pinned to the code module', () => {
     const { sql } = captureStatement('reopen-rate');
     assert.equal(sql.match(/\bWITH\b/g).length, 1);
     assert.ok(sql.indexOf('capture_rounds AS') < sql.indexOf('capture_concerns AS') && sql.indexOf('capture_concerns AS') < sql.indexOf('final_round AS'));
+  });
+});
+
+// ── Telemetry linkage chain (docs/plans/telemetry-linkage-structural.md) ─────────────────────
+// Runs in THIS enrolled suite so no second enrolment (db-test-container.mjs + postgres-parity.yml) is needed.
+describe('telemetry linkage chain (DB integration)', { skip }, () => {
+  let q, rf, repoId, lq;
+  const tag = crypto.randomUUID().slice(0, 8);
+  const sess = (n) => `link-${tag}-${n}`;
+
+  before(async () => {
+    const { assertDisposableDbUrl, _resetForTest } = await import('../scripts/lib/db/client.mjs');
+    assertDisposableDbUrl(TEST_URL, { productionUrl: PRODUCTION_URL });
+    process.env.AUDIT_DB_URL = TEST_URL;
+    _resetForTest?.();
+    q = await import('../scripts/lib/db/query.mjs');
+    rf = await import('../scripts/lib/store/runs-findings.mjs');
+    lq = await import('../scripts/lib/telemetry/linkage-queries.mjs');
+    repoId = crypto.randomUUID();
+    await q.query('INSERT INTO audit_repos (id, name) VALUES ($1, $2)', [repoId, `linkage-${tag}`]);
+  });
+
+  after(async () => {
+    if (!q) return;
+    await q.query('DELETE FROM llm_call_provenance WHERE audit_run_id IN (SELECT id FROM audit_runs WHERE repo_id = $1)', [repoId]);
+    await q.query('DELETE FROM llm_call_log_summary WHERE audit_run_id IN (SELECT id FROM audit_runs WHERE repo_id = $1)', [repoId]);
+    await q.query('DELETE FROM audit_pass_stats WHERE run_id IN (SELECT id FROM audit_runs WHERE repo_id = $1)', [repoId]);
+    await q.query('DELETE FROM audit_findings WHERE run_id IN (SELECT id FROM audit_runs WHERE repo_id = $1)', [repoId]);
+    await q.query('DELETE FROM audit_runs WHERE repo_id = $1', [repoId]);
+    await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
+    const { closePool } = await import('../scripts/lib/db/client.mjs');
+    await closePool();
+  });
+
+  const finding = (hash) => ({ _hash: hash, _bucket: null, severity: 'HIGH', category: 'test', section: 'x', detail: 'd' });
+  const callRow = (runId) => ({ call_id: crypto.randomUUID(), audit_run_id: runId, repo_id: repoId, producer: 'audit', purpose: 'audit', model_resolved: 'm', route: 'r', schema_version: 1 });
+  const row = (id) => q.one('SELECT audit_session_id, audit_round, linkage_state, linkage_reason FROM audit_runs WHERE id = $1', [id]);
+
+  test('a run with no session is recorded `unlinked`, never a bare NULL; the explicit reason is stored', async () => {
+    const id = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', {});
+    assert.deepEqual(await row(id), { audit_session_id: null, audit_round: null, linkage_state: 'unlinked', linkage_reason: 'undeclared' });
+  });
+
+  test('a declared standalone reason is stored as `standalone`; a bad declaration never discards a real session', async () => {
+    const ok = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { standaloneReason: 'manual-single-shot' });
+    assert.deepEqual(await row(ok), { audit_session_id: null, audit_round: null, linkage_state: 'standalone', linkage_reason: 'manual-single-shot' });
+    const typo = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { standaloneReason: 'because' });
+    assert.equal((await row(typo)).linkage_state, 'unlinked');
+    assert.match((await row(typo)).linkage_reason, /^invalid-declaration/);
+    // a contradiction (standalone AND a session): the supplied session survives, the declaration is ignored
+    const both = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { standaloneReason: 'canary', auditSessionId: sess('both'), auditRound: 2 });
+    assert.deepEqual(await row(both), { audit_session_id: sess('both'), audit_round: 2, linkage_state: 'linked', linkage_reason: null });
+  });
+
+  test('the database refuses the pairs the resolver refuses (negative control: a writer that bypasses it)', async () => {
+    const ins = (cols, vals) => q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode, ${cols}) VALUES ($1, $2, 'x', 'code', ${vals})`, [crypto.randomUUID(), repoId]);
+    await assert.rejects(ins('linkage_state', "'linked'"), (e) => e.code === '23514', 'linked without a session');
+    await assert.rejects(ins('linkage_state, audit_session_id, linkage_reason', "'linked', 's', 'why'"), (e) => e.code === '23514', 'linked carrying a reason');
+    await assert.rejects(ins('linkage_state', "'standalone'"), (e) => e.code === '23514', 'standalone without a reason');
+    await assert.rejects(ins('linkage_state, linkage_reason', "'standalone', 'made-up'"), (e) => e.code === '23514', 'standalone with an undeclared reason');
+    await assert.rejects(ins('linkage_state', "'bogus'"), (e) => e.code === '23514');
+  });
+
+  test('a writer that predates the migration (supplies no state) still never stores a bare NULL', async () => {
+    const withSession = crypto.randomUUID();
+    await q.query("INSERT INTO audit_runs (id, repo_id, plan_file, mode, audit_session_id) VALUES ($1, $2, 'x', 'code', 'old-writer')", [withSession, repoId]);
+    assert.equal((await row(withSession)).linkage_state, 'linked');
+    const bare = crypto.randomUUID();
+    await q.query("INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'x', 'code')", [bare, repoId]);
+    assert.deepEqual(await row(bare), { audit_session_id: null, audit_round: null, linkage_state: 'unlinked', linkage_reason: 'undeclared' });
+  });
+
+  test('a blank session id is no session; an UPDATE cannot erase the state of a stamped row', async () => {
+    const id = crypto.randomUUID();
+    await q.query("INSERT INTO audit_runs (id, repo_id, plan_file, mode, audit_session_id) VALUES ($1, $2, 'x', 'code', E' \t\n ')", [id, repoId]);
+    assert.deepEqual(await row(id), { audit_session_id: null, audit_round: null, linkage_state: 'unlinked', linkage_reason: 'undeclared' });
+    const linked = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('upd'), auditRound: 1 });
+    await q.query('UPDATE audit_runs SET linkage_state = NULL, linkage_reason = NULL WHERE id = $1', [linked]);
+    assert.equal((await row(linked)).linkage_state, 'linked', 'the trigger restores the state an UPDATE tried to clear');
+    await assert.rejects(q.query('UPDATE audit_runs SET audit_session_id = NULL WHERE id = $1', [linked]), (e) => e.code === '23514', 'clearing the session of a linked row is refused');
+  });
+
+  test('REUSE RACE: two concurrent reuses with different sessions - exactly one wins, the other is refused', async () => {
+    const runId = crypto.randomUUID();
+    await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId });
+    const [a, b] = await Promise.all(['A', 'B'].map((n) => rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess(`race${n}`) })));
+    assert.equal([a, b].filter((x) => x === runId).length, 1, 'one adopted, one refused');
+    assert.equal([a, b].filter((x) => x === null).length, 1);
+    assert.match((await row(runId)).audit_session_id, /race[AB]$/);
+  });
+
+  test('REUSE: a run reused by explicit id adopts a now-known session, and never overwrites a different one', async () => {
+    const runId = crypto.randomUUID();
+    await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId });
+    assert.equal((await row(runId)).linkage_state, 'unlinked');
+    await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess('reuse'), auditRound: 2 });
+    assert.deepEqual(await row(runId), { audit_session_id: sess('reuse'), audit_round: null, linkage_state: 'linked', linkage_reason: null });
+    assert.equal(await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess('other') }), null, 'a conflicting session is refused, never silently attributed');
+    assert.equal((await row(runId)).audit_session_id, sess('reuse'), 'and does not overwrite the link');
+  });
+
+  test('a pass with no round is REFUSED at the audit-path writer (not filed as round 1)', async () => {
+    const { durableWrite } = await import('../scripts/lib/durable-write.mjs');
+    await import('../scripts/lib/audit-store-writers.mjs');
+    const run = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('pass'), auditRound: 2 });
+    const spillRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'linkage-spill-'));
+    for (const round of [undefined, 0, -1, 1.5, '2']) {
+      const r = await durableWrite('audit.passStats', { runId: run, passName: 'backend', round, stats: { raised: 1 } }, { repoRoot: spillRoot });
+      assert.notEqual(r.outcome, 'written', `round ${String(round)} must not be written`);
+    }
+    assert.equal((await q.one('SELECT count(*)::int AS n FROM audit_pass_stats WHERE run_id = $1', [run])).n, 0);
+    const ok = await durableWrite('audit.passStats', { runId: run, passName: 'backend', round: 2, stats: { raised: 1 } }, { repoRoot: spillRoot });
+    assert.equal(ok.outcome, 'written');
+    assert.equal((await q.one('SELECT round FROM audit_pass_stats WHERE run_id = $1', [run])).round, 2);
+    fs.rmSync(spillRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  test('RETRY: a retried round (two rows, one key) stays linked, and a replayed call batch writes once', async () => {
+    const a = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('retry'), auditRound: 1 });
+    const b = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('retry'), auditRound: 1 });
+    for (const id of [a, b]) assert.equal((await row(id)).linkage_state, 'linked');
+    const { recordLlmCalls } = await import('../scripts/lib/store/llm-calls.mjs');
+    const payload = { runId: b, producer: 'audit', nonce: 'n1', rows: [callRow(b), callRow(b)], recorded: 2, dropped: 0 };
+    assert.equal((await recordLlmCalls(payload)).rows, 2);
+    assert.equal((await recordLlmCalls(payload)).rows, 0, 'the replay inserts nothing');
+    await rf.recordPassStats(b, 'backend', { raised: 1 }, 1);
+    const rep = await lq.queryLinkage(q.many, { session: sess('retry'), round: 1 });
+    assert.equal(rep.runs.length, 2);
+    assert.equal(rep.calls.matched, 2, 'calls counted once through the retry');
+    assert.equal(rep.passes.matched, 1);
+  });
+
+  test('RESUME: round 2+ continuing a session, per-round and unified, places each pass/finding in ITS round', async () => {
+    const r1 = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('resume'), auditRound: 1 });
+    await rf.recordFindings(r1, [finding(`res1-${tag}`)], 'backend', 1);
+    // R2 resumed from a ledger: a unified run spans rounds, so its round column is NULL by design.
+    const unified = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('resume'), auditRound: 2, runId: crypto.randomUUID() });
+    assert.equal((await row(unified)).audit_round, null);
+    await rf.recordPassStats(unified, 'backend', { raised: 1 }, 2);
+    await rf.recordFindings(unified, [finding(`res2-${tag}`)], 'backend', 2);
+    const { recordLlmCalls } = await import('../scripts/lib/store/llm-calls.mjs');
+    await recordLlmCalls({ runId: unified, producer: 'audit', nonce: 'u', rows: [callRow(unified)], recorded: 1, dropped: 0 });
+    const r2 = await lq.queryLinkage(q.many, { session: sess('resume'), round: 2 });
+    assert.equal(r2.findings.matched, 1);
+    assert.equal(r2.findings.otherRounds, 1, 'round 1 finding is reported as another round, not dropped');
+    assert.equal(r2.passes.matched, 1);
+    assert.equal(r2.calls.unresolvedRound, 1, 'a unified run call has no round: reported, never guessed');
+    assert.equal(r2.complete, false);
+  });
+
+  test('COORDINATOR -> WORKER: a different process, handed only the --out path, continues the same session and round', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const outPath = `${sess('coord')}-r3-result.json`;
+    const child = spawnSync(process.execPath, [path.resolve('tests/helpers/linkage-worker-child.mjs'), repoId, outPath], {
+      env: { ...process.env, AUDIT_DB_TEST_URL: TEST_URL, AUDIT_DB_URL: TEST_URL }, encoding: 'utf8', timeout: 60_000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const result = JSON.parse(child.stdout.split('\n').find((l) => l.startsWith('RESULT ')).slice(7));
+    assert.deepEqual(result.identity, { auditSessionId: sess('coord'), auditRound: 3, conflict: null });
+    assert.deepEqual(await row(result.runId), { audit_session_id: sess('coord'), audit_round: 3, linkage_state: 'linked', linkage_reason: null });
+    const rep = await lq.queryLinkage(q.many, { session: sess('coord'), round: 3 });
+    assert.equal(rep.complete, true);
+    assert.deepEqual([rep.passes.matched, rep.findings.matched], [1, 1]);
+  });
+
+  test('QUERY: a nonexistent round, repo scope and a consistent snapshot', async () => {
+    const rep = await lq.queryLinkage(q.many, { session: sess('coord'), round: 999 });
+    assert.equal(rep.sessionKnown, true);
+    assert.equal(rep.roundKnown, false);
+    assert.equal(rep.complete, false, 'a round that does not exist is never complete');
+    const other = await lq.queryLinkage(q.many, { session: sess('coord'), round: 3, repoId: crypto.randomUUID() });
+    assert.equal(other.sessionKnown, false, 'scoped to a different repo the session is unknown');
+    const snap = (fn) => q.withTx(async () => { await q.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'); return fn(); });
+    const inTx = await lq.queryLinkage(q.many, { session: sess('coord'), round: 3, repoId, snapshot: snap });
+    assert.equal(inTx.complete, true);
+  });
+
+  test('QUERY: an unknown session is NOT an empty success: it says so and still reports the unlinked rows', async () => {
+    await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', {});
+    const rep = await lq.queryLinkage(q.many, { session: `nobody-${tag}`, round: 1 });
+    assert.equal(rep.sessionKnown, false);
+    assert.equal(rep.complete, false);
+    const unlinked = rep.unlinkedStoreWide.find((r) => r.state === 'unlinked' && r.reason === 'undeclared');
+    assert.ok(unlinked && unlinked.runs >= 1, 'the unlinked run is reported');
   });
 });

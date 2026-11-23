@@ -28,7 +28,7 @@ import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import { findingKeyString, selectFindingRow } from './finding-identity.mjs';
 import { applyFindingWrite } from './finding-write.mjs';
 import { applyFinalReviewDisposition } from './adjudication-events.mjs';
-import { captureIdentityColumns } from './capture-identity.mjs';
+import { captureIdentityColumns, reconcileReusedRunLinkage } from './capture-identity.mjs';
 import { detectClassificationColumns, detectPassStatsRoundColumn, probeColumnExistence, columnExists, strictColumnExists } from './column-probes.mjs';
 export { _resetClassificationColumnCache, _resetPassStatsRoundColumnCache, _resetRunReadColumnCache } from './column-probes.mjs';
 // Imported, never re-exported (learning-store.mjs does `export *` from here).
@@ -257,7 +257,7 @@ function repoIdentityMatches(a, b) {
 // A re-record carrying NULL here must not erase a value an earlier write set (audit-telemetry-capture Decision 3).
 const KEEP_WHEN_NULL = new Set(['source_model', 'stage', 'arm']);
 
-export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag, auditSessionId, auditRound } = {}) {
+export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag, auditSessionId, auditRound, standaloneReason } = {}) {
   if (!await isCloudEnabled()) return null;
   // Run-unification (WS1 §1.2/§1.3b): when the orchestrator threads an explicit
   // `runId`, REUSE the existing audit_runs row so all rounds of one audit share
@@ -280,7 +280,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
           process.stderr.write(`  [learning] recordRunStart: run_id ${runId} belongs to a different repo — refusing reuse\n`);
           return null;
         }
-        return existing.id; // reuse — do not re-insert
+        return reconcileReusedRunLinkage(existing, { auditSessionId }); // reuse — do not re-insert; adopt a now-known session
       }
     } catch (err) {
       process.stderr.write(`  [learning] recordRunStart reuse-probe failed: ${err.message}\n`);
@@ -306,7 +306,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
     // failure — the graceful-degradation invariant runs the other way.
     ...(experimentTag && await columnExists('audit_runs', 'experiment_tag', many, isCloudEnabled)
       ? { experiment_tag: experimentTag } : {}),
-    ...(await captureIdentityColumns({ auditSessionId, auditRound, unifiedRun: Boolean(runId) })),
+    ...(await captureIdentityColumns({ auditSessionId, auditRound, unifiedRun: Boolean(runId), standaloneReason })),
   };
   try {
     const out = await insertReturning('audit_runs', row, { returning: ['id'] });
@@ -324,7 +324,7 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
       // reuse a row that raced in for a DIFFERENT repo — that would attach this
       // audit's findings to another repo's run.
       if (existing?.id && repoIdentityMatches(existing.repo_id, repoId)) {
-        return existing.id;
+        return reconcileReusedRunLinkage(existing, { auditSessionId });
       }
     }
     process.stderr.write(`  [learning] recordRunStart failed: ${err.message}\n`);
