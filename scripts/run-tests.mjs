@@ -130,9 +130,10 @@ export function scrubChildEnv(env) {
   const out = scrubRoutingEnv(env);
   for (const k of SCRUBBED_RUNNER_ENV) delete out[k];
   // The automatic meta-review (docs/plans/meta-step-back-at-cap.md) makes a PAID reviewer call from any spawned
-  // openai-audit.mjs at the round cap. Off for the suite by default; dotenv never overrides a set variable, so a repo
-  // .env cannot re-enable it. A test exercising the enabled path sets it explicitly (an explicit value is kept).
-  if (out.AUDIT_META_REVIEW === undefined) out.AUDIT_META_REVIEW = 'off';
+  // openai-audit.mjs at the round cap. Always OFF for the suite, whatever the operator's shell says (hermetic); dotenv
+  // never overrides a set variable, so a repo .env cannot re-enable it. The one test of the enabled path sets it on
+  // its own spawned child, after this scrub.
+  out.AUDIT_META_REVIEW = 'off';
   return out;
 }
 

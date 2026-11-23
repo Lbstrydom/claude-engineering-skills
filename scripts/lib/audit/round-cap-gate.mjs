@@ -20,7 +20,7 @@
  */
 import path from 'node:path';
 import {
-  EXIT_CAPPED, MIN_PAST_CAP_REASON_CHARS, cardFileName, formatRoundCapLine, parseRoundFlag, readFlagValue, resolveAuditMode, validateAuditRound,
+  EXIT_CAPPED, META_T2_ROUND, MIN_PAST_CAP_REASON_CHARS, cardFileName, formatRoundCapLine, parseRoundFlag, readFlagValue, resolveAuditMode, validateAuditRound,
 } from './round-cap.mjs';
 import { parseResultPath } from '../finalize-outcomes.mjs';
 import { buildStructuralCard, readMatchingCard, writeCardFile } from './structural-card.mjs';
@@ -112,10 +112,11 @@ export async function gateRoundCap(argv, {
   }
   const metaArgs = { sid, mode, round, caps: v.caps, argv, auditDir, cwd, env, auditorModel };
   const mo = readFlagValue(argv, '--meta-override');
-  if (mo.present) {
-    const res = await applyMetaOverride({ meta, mode, round, sid, argv, auditDir, env, reason: mo.value, deps: metaDeps });
-    if (!res.ok) { write(`Error [${res.code}]: ${res.error}\n`); return { ok: false, exitCode: 1, code: res.code }; }
-    write(`  [meta-review] override recorded against ${res.attemptId}: the round runs\n`);
+  // --meta-override answers ONE honoured early stop inside the soft cap. Refused, writing nothing, on any round the
+  // cap itself refuses or a --past-cap continues: the override is recorded only once the round is otherwise accepted.
+  if (mo.present && (!v.ok || v.pastCap)) {
+    write(`Error [META_OVERRIDE_UNNEEDED]: --meta-override applies only to an accepted code round ${META_T2_ROUND} inside the soft cap; drop it.\n`);
+    return { ok: false, exitCode: 1, code: 'META_OVERRIDE_UNNEEDED' };
   }
 
   if (!v.ok) {
@@ -151,7 +152,17 @@ export async function gateRoundCap(argv, {
     }
     cardSummary = found.card.summary ?? null;
     // A human --past-cap over an honoured T1 stop/structural is an OVERRIDE of that decision: recorded, never silent.
-    if (meta) await recordPastCapOverride(meta, { argv, mode, sid, auditDir, round, reason: v.pastCapReason, write, deps: metaDeps });
+    if (meta) {
+      const rec = await recordPastCapOverride(meta, { argv, mode, sid, auditDir, round, reason: v.pastCapReason, write, deps: metaDeps });
+      // An override nobody can see is indistinguishable from the stop still standing: an unrecorded one admits nothing.
+      if (!rec.ok) { write(`Error [META_OVERRIDE_WRITE]: the --past-cap override of ${rec.attemptId} could not be recorded (${rec.reason}); the round is not admitted. Re-run, or opt out with --no-meta-review.\n`); return { ok: false, exitCode: 1, code: 'META_OVERRIDE_WRITE' }; }
+    }
+  }
+
+  if (mo.present) {
+    const res = await applyMetaOverride({ meta, mode, round, sid, argv, auditDir, env, reason: mo.value, deps: metaDeps });
+    if (!res.ok) { write(`Error [${res.code}]: ${res.error}\n`); return { ok: false, exitCode: 1, code: res.code }; }
+    write(`  [meta-review] override recorded against ${res.attemptId}: the round runs\n`);
   }
 
   if (meta && !v.pastCap && !mo.present && meta.metaTriggerFor({ mode, round }) === 'T2') {
@@ -199,8 +210,10 @@ function loopEndsFor(meta, { argv, mode, sid, auditDir, round, trigger }) {
 async function recordPastCapOverride(meta, { argv, mode, sid, auditDir, round, reason, write, deps }) {
   for (const d of loopEndsFor(meta, { argv, mode, sid, auditDir, round, trigger: 'T1' })) {
     const out = await meta.appendMetaOverride({ auditDir, sid, attemptId: d.attemptId, kind: 'override', by: null, reason, source: 'past-cap' }, deps);
-    write(out.ok ? `  [meta-review] --past-cap overrides decision ${d.attemptId} (${d.guard.effect}); recorded\n` : `  [meta-review] override of ${d.attemptId} NOT recorded (${out.reason})\n`);
+    if (!out.ok) return { ok: false, attemptId: d.attemptId, reason: out.reason };
+    write(`  [meta-review] --past-cap overrides decision ${d.attemptId} (${d.guard.effect}); recorded\n`);
   }
+  return { ok: true };
 }
 
 /** `--meta-override "<reason>"`: override an honoured T2 stop/structural for this round and identity; refused otherwise. */
@@ -209,7 +222,7 @@ async function applyMetaOverride({ meta, mode, round, sid, argv, auditDir, reaso
   if (typeof reason !== 'string' || reason.trim().length < MIN_PAST_CAP_REASON_CHARS) {
     return { ok: false, code: 'META_OVERRIDE_REASON', error: `--meta-override needs a reason of at least ${MIN_PAST_CAP_REASON_CHARS} characters.` };
   }
-  const ends = mode === 'code' && round === meta.META_T2_ROUND ? loopEndsFor(meta, { argv, mode, sid, auditDir, round, trigger: 'T2' }) : [];
+  const ends = mode === 'code' && round === META_T2_ROUND ? loopEndsFor(meta, { argv, mode, sid, auditDir, round, trigger: 'T2' }) : [];
   if (!ends.length) return { ok: false, code: 'META_OVERRIDE_UNNEEDED', error: `--meta-override: no honoured meta-review stop for ${mode} round ${round} of this session and change. Drop the flag.` };
   const target = ends[ends.length - 1];
   const out = await meta.appendMetaOverride({ auditDir, sid, attemptId: target.attemptId, kind: 'override', by: null, reason: reason.trim(), source: 'meta-override' }, deps);

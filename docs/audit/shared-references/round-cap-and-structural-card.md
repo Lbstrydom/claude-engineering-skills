@@ -10,8 +10,8 @@ synced by `node scripts/sync-shared-audit-refs.mjs` and drift-checked in
 
 ## The cap is enforced in code
 
-`openai-audit.mjs` refuses a round past the cap before it spends anything — no catalog refresh, no
-brief, no provider call. It is the GPT sibling of the Gemini gate's 2-round cap.
+`openai-audit.mjs` refuses a round past the cap before any audit spend — no catalog refresh, no
+brief, no audit call (the automatic meta-review may make ONE reviewer call: `meta-review.md`). It is the GPT sibling of the Gemini gate's 2-round cap.
 
 | Audit | Soft cap | Absolute cap |
 |---|---|---|
@@ -98,7 +98,7 @@ When one fires at checkpoint 3, and at every refused round past the soft cap (pl
 runs inside the gate: `meta-review.md` (opt out with `--no-meta-review`). The manual
 `--step-back` (`--step-back-arm same|different|higher`) remains, advisory: `structural`, `stop` or `defect`, no `continue`.
 
-After round 6 the default is **stop-to-debt or a human**; rounds 7-8 need `--past-cap`. The 6/8 caps are unchanged.
+After round 6 the default is **stop-to-debt or a human**; rounds 7-8 need `--past-cap` or a meta-review admission. The 6/8 caps are unchanged.
 
 ## The human call
 

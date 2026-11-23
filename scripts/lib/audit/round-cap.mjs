@@ -30,6 +30,9 @@ export const AUDIT_ROUND_CAPS = Object.freeze({
   code: Object.freeze({ soft: 6, absolute: 8 }),
 });
 
+/** The code round whose gate runs the meta-review's T2 (it reads checkpoint 3). One owner: the gate and audit-loop import it. */
+export const META_T2_ROUND = 4;
+
 /** A cap stop: the audit needs a human call (see the structural-or-stop card). */
 export const EXIT_CAPPED = 4;
 

@@ -25,7 +25,7 @@ import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
 import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
-import { AUDIT_ROUND_CAPS, EXIT_CAPPED, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
+import { AUDIT_ROUND_CAPS, EXIT_CAPPED, META_T2_ROUND, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
 import { isInDiff } from './lib/finding-scope.mjs';
 import { gatesForCount } from './lib/finding-tags.mjs';
@@ -179,7 +179,8 @@ function parseArgs(argv) {
       case '--max-rounds': i++; break;   // parsed strictly in main() by parseRoundFlag
       case '--past-cap': args.pastCap = argv[++i] ?? ''; break;
       case '--no-meta-review': args.noMetaReview = true; break;
-      case '--meta-override': args.metaOverride = argv[++i] ?? ''; break;
+      // A reason is never another flag: `--meta-override --no-meta-review` must not swallow the opt-out.
+      case '--meta-override': { const next = argv[i + 1]; args.metaOverride = next !== undefined && !next.startsWith('--') ? argv[++i] : ''; break; }
       case '--skip-gemini': args.skipGemini = true; break;
       case '--scope': args.scope = argv[++i]; break;
       case '--base': args.base = argv[++i]; break;
@@ -330,7 +331,7 @@ async function main() {
     if (args.pastCap && capsForMode && round > capsForMode.soft) auditArgs.push('--past-cap', args.pastCap);
     if (args.noMetaReview) auditArgs.push('--no-meta-review');
     // --meta-override answers ONE honoured early stop (code round 4), so it is forwarded only to that round.
-    if (args.metaOverride != null && round === 4) auditArgs.push('--meta-override', args.metaOverride);
+    if (args.metaOverride != null && round === META_T2_ROUND) auditArgs.push('--meta-override', args.metaOverride);
 
     // Step 2 — Run audit
     banner(`ROUND ${round} — GPT-5.4 Audit`);

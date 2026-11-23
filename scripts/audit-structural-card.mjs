@@ -52,7 +52,10 @@ async function main() {
   const wantStepBack = argv.includes('--step-back');
   const arm = readFlagValue(argv, '--step-back-arm').value || 'same';
   if (!['same', 'different', 'higher'].includes(arm)) throw new ArgvError('audit-structural-card: --step-back-arm must be same, different or higher.');
-  if (argv.includes('--revoke-meta-admission')) return revokeMetaAdmission({ sid, mode, auditDir, argv });
+  if (argv.includes('--revoke-meta-admission')) {
+    if (argv.includes('--no-write')) throw new ArgvError('audit-structural-card: --revoke-meta-admission writes a revoke event; it cannot be combined with --no-write.');
+    return revokeMetaAdmission({ sid, mode, auditDir, argv });
+  }
   const { card, text } = await buildStructuralCard({ sid, mode, round: roundRes.value, planFile, caps, auditDir });
   const provider = wantStepBack ? createStepBackProvider(arm) : null;
   const section = await buildCheckpointSection({

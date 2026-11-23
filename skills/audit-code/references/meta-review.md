@@ -77,8 +77,10 @@ was sent). An allowlisted projection (ids, counts, enums; no paths or prose) goe
 - A T2 stop: re-run the same round with `--meta-override "<why, 15+ chars>"`; refused when there is nothing to override.
 - An admission: `node scripts/audit-structural-card.mjs --sid "$SID" --mode code --revoke-meta-admission --by "<name>" --reason "<why>"`.
 - Off for one run: `--no-meta-review`; off everywhere: `AUDIT_META_REVIEW=off` (`npm test` sets it).
-- A held `.audit/<sid>.meta-review.lock`, or an attempt reserved with no decision, fails closed to the human path;
-  if no audit of that session is running, a crashed one left it: delete it.
+- A held `.audit/<sid>.meta-review.lock` fails closed to the human path; if no audit of that session is running, a
+  crashed one left it: delete it. An attempt **reserved with no decision** (a crash mid-call) also fails closed, for
+  that attempt only, and the log keeps it (append-only, charged to the budget): take the human path for that round
+  (`--past-cap`, or `--meta-override` at code round 4), or `--no-meta-review`. A changed plan, diff or HEAD is a new attempt.
 
 ## What the operator does with the result
 

@@ -306,9 +306,9 @@ describe('an ambient NODE_TEST_CONTEXT cannot empty the run', () => {
     assert.deepEqual(out, { PATH: '/usr/bin', AUDIT_META_REVIEW: 'off' });
   });
 
-  test('the automatic meta-review is OFF in the suite by default; an explicit value is kept', () => {
+  test('the automatic meta-review is OFF in the suite, even when the operator shell enables it (hermetic)', () => {
     assert.equal(scrubChildEnv({}).AUDIT_META_REVIEW, 'off', 'a spawned openai-audit at the cap must never make a paid reviewer call from npm test');
-    assert.equal(scrubChildEnv({ AUDIT_META_REVIEW: 'on' }).AUDIT_META_REVIEW, 'on', 'the one test of the enabled path sets it explicitly');
+    assert.equal(scrubChildEnv({ AUDIT_META_REVIEW: 'on' }).AUDIT_META_REVIEW, 'off', 'REGRESSION (cluster B R1 M11): an inherited value does not leak into the suite');
   });
 
   test('scrubChildEnv is pure — the input is not mutated', () => {

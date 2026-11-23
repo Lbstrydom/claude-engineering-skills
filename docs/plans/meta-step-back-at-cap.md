@@ -356,10 +356,10 @@ needs a human before any debt is written).
 | `scripts/run-tests.mjs` | child env defaults `AUDIT_META_REVIEW=off` (an explicit value is kept) | suite-wide isolation (§8) |
 | `tests/meta-review.test.mjs` (create) | §9 | Tier 3 + controls |
 | `tests/audit-round-cap-cli.test.mjs` | one spawned case with prior round results and meta ON under the no-network preload: exactly the reviewer's request is attempted, refused, recorded `unavailable` + `estimate`, exit 4 card; and the same with `--no-meta-review`: zero attempts | eligibility is real, opt-out is real |
-| `tests/run-tests-env.test.mjs` (create) | the child env carries `AUDIT_META_REVIEW=off` unless set | the isolation default |
+| `tests/test-guard-false-green.test.mjs` (modify; planned as `run-tests-env.test.mjs`) | the child env carries `AUDIT_META_REVIEW=off`, even when inherited | the isolation default |
 | `tests/sync-shared-audit-refs.test.mjs` (modify) | `meta-review.md` lands in all three skills' `references/` with the generated banner and re-spelled links, and the `.claude/skills/` copies match after `skills:regenerate` | Tier 3 (b): the sync contract, same commit |
 | `tests/step-back-contract.test.mjs` | v2 schema cases | contract |
-| `tests/debt-auto-capture-meta-stop.test.mjs` (create) | `--meta-decision` projection and refusal | one writer |
+| `tests/meta-review-gate.test.mjs` (create; planned as `debt-auto-capture-meta-stop.test.mjs`) | gate wiring, `--meta-decision` projection, refusal, CLI | one writer |
 
 ### 7b. Implementation Phases
 
@@ -374,7 +374,7 @@ needs a human before any debt is written).
 (modify), `scripts/openai-audit.mjs` (modify), `scripts/audit-loop.mjs` (modify), `scripts/audit-structural-card.mjs`
 (modify), `scripts/debt-auto-capture.mjs` (modify),
 `tests/audit-round-cap-cli.test.mjs` (modify), `tests/audit-loop-round-cap.test.mjs` (modify),
-`tests/debt-auto-capture-meta-stop.test.mjs` (create), `scripts/run-tests.mjs` (modify), `tests/run-tests-env.test.mjs` (create).
+`tests/meta-review-gate.test.mjs` (create), `scripts/run-tests.mjs` (modify), `tests/test-guard-false-green.test.mjs` (modify).
 
 **Phase 4 — Prose**: the shared reference, the sync registry, the three SKILL.md files. Files:
 `docs/audit/shared-references/meta-review.md` (create), `docs/audit/shared-references/round-cap-and-structural-card.md`

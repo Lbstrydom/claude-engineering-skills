@@ -788,7 +788,9 @@ async function main() {
     const total = deferredEntries.length + (adjLedger.skipped?.length ?? 0);
     const captured = total - skipped.length - result.rejected.length;
     const ev = appendMetaEvent(ledgerPath, { event: 'debt-capture', attemptId: args.decision, at: new Date().toISOString(), captured, total, run: sid });
-    process.stderr.write(`  [auto-capture] meta-review handoff: captured ${captured} of ${total}${ev.ok ? '' : ` (log event not written: ${ev.reason})`}\n`);
+    process.stderr.write(`  [auto-capture] meta-review handoff: captured ${captured} of ${total}${ev.ok ? '' : ` (log event NOT written: ${ev.reason})`}\n`);
+    // The decision log must show the handoff, or "stopped" reads as "captured". Re-running is safe: capture is idempotent.
+    if (!ev.ok) { console.error('INCOMPLETE HANDOFF: the debt-capture event was not recorded in the decision log; re-run the same command.'); await finishAndExit(1); return; }
   }
 
   await runSupersedeIfRequested(args);

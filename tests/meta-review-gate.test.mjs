@@ -77,7 +77,7 @@ describe('T1 — at the cap', () => {
     const h = harness({ verdict: stopAll, ledger: [ruled(TH, 2)] });
     const r = await h.gate(planArgv(4));
     assert.equal(r.ok, false); assert.equal(r.exitCode, 4); assert.equal(r.code, 'META_STOP');
-    assert.match(h.out(), /debt-auto-capture\.mjs --meta-decision .* --decision s-r4-T1-/);
+    assert.match(h.out(), /debt-auto-capture\.mjs --meta-decision '.*' --decision 's-r4-T1-[^']+' --run 's'/);
   });
   test('NEGATIVE: the same stop with the HIGH never ruled → today\'s refusal (PAST_CAP_REQUIRED)', async () => {
     const h = harness({ verdict: stopAll, ledger: [] });
@@ -155,6 +155,44 @@ describe('T2 — code round 4 with a fired signal (L2)', () => {
   test('--meta-override with the meta-review off is refused (it is not a general bypass)', async () => {
     const h = harness({ verdict: stopAll, ledger: unproductive, signalsFire: true });
     assert.equal((await h.gate(codeArgv(4, ['--meta-override', 'this round closes the real HIGH']), { metaReview: false })).code, 'META_OVERRIDE_UNNEEDED');
+  });
+});
+
+describe('cluster B R1 fixes', () => {
+  const unproductive = [ruled(TH, 2), ruled(TH, 3, 'dismissed'), ruled(TM, 3, 'dismissed')];
+  test('REGRESSION (H3/M8): --meta-override on a round the cap refuses writes NOTHING', async () => {
+    const h = harness({ verdict: stopAll, ledger: unproductive, signalsFire: true });
+    await h.gate(codeArgv(4));
+    const before = fs.readFileSync(metaLogPath(dir, 'c'), 'utf8');
+    const r = await h.gate(codeArgv(4, ['--meta-override', 'this round closes the real HIGH', '--past-cap', 'and a needless past-cap reason here']));
+    assert.equal(r.ok, false);
+    assert.equal(fs.readFileSync(metaLogPath(dir, 'c'), 'utf8'), before, 'no override event was appended');
+  });
+  test('REGRESSION (M2/M7): a --past-cap override that cannot be recorded admits nothing', async () => {
+    const h = harness({ verdict: stopAll, ledger: [ruled(TH, 2)] });
+    await h.gate(planArgv(4));
+    const failing = { ...h, gate: (argv) => gateRoundCap(argv, { cwd: dir, auditDir: dir, env: {}, write: () => {}, metaReview: true, auditorModel: 'gpt-6',
+      metaDeps: { record: () => 'k', flush: async () => {}, append: () => ({ ok: false, reason: 'disk full' }) },
+      build: async ({ round, mode, planFile }) => ({ card: { version: 1, round, mode, planFile, summary: {} }, text: 'CARD' }), recordCap: async () => ({ recorded: false }) }) };
+    const r = await failing.gate(planArgv(4, ['--past-cap', 'the HIGH is real and this round closes it']));
+    assert.equal(r.ok, false); assert.equal(r.code, 'META_OVERRIDE_WRITE');
+  });
+  test('REGRESSION (H1/M5): the printed debt command single-quotes every argument', async () => {
+    const { metaDebtCommand, shellQuote } = await import('../scripts/lib/audit/meta-review.mjs');
+    assert.equal(shellQuote("a'b $(rm -rf x) `y`"), "'a'\\''b $(rm -rf x) `y`'");
+    const cmd = metaDebtCommand({ auditDir: path.join(dir, '$(evil)'), sid: 's;x', attemptId: "a'1" });
+    assert.match(cmd, /--meta-decision '[^']*\$\(evil\)[^']*' --decision 'a'\\''1' --run 's;x'$/);
+  });
+  test('REGRESSION (M4): a round result whose findings is not an array is a skipped candidate set, never ok-with-nothing-wrong', () => {
+    const log = metaLogPath(dir, 's');
+    fs.writeFileSync(path.join(dir, 's-r3-result.json'), JSON.stringify({ findings: { not: 'an array' } }));
+    appendMetaEvent(log, { event: 'decision', attemptId: 'a', round: 4, fingerprint: { sid: 's' }, sent: true, state: 'valid', inventory: [{ topicId: TH, findingId: 'H1', severity: 'HIGH' }], verdict: stopAll, guard: { effect: 'stop', honoured: true } });
+    const p = metaDecisionToLedgerEntries({ logFile: log, attemptId: 'a' });
+    assert.equal(p.entries.length, 0); assert.match(p.skipped[0].reason, /no findings array/);
+  });
+  test('REGRESSION (M9): --revoke-meta-admission with --no-write is refused (exit 2), writing nothing', () => {
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts/audit-structural-card.mjs'), '--sid', 's', '--mode', 'plan', '--dir', dir, '--revoke-meta-admission', '--by', 'x', '--reason', 'a reason long enough here', '--no-write'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AUDIT_DB_URL: '' } });
+    assert.equal(r.status, 2, r.stderr); assert.match(r.stderr, /cannot be combined with --no-write/);
   });
 });
 
