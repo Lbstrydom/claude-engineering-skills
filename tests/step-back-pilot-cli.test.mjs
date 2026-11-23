@@ -27,9 +27,9 @@ function exportOf(n) {
 const AMENDMENT = path.resolve('docs/experiments/seeded-bench/amendment-2-novelty-audit.json');
 const setup = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-cli-'));
-  const exp = path.join(dir, 'e.json'); fs.writeFileSync(exp, JSON.stringify(exportOf(20)));
+  const exp = path.join(dir, 'e.json'); fs.writeFileSync(exp, JSON.stringify(exportOf(40)));
   fs.writeFileSync(path.join(dir, 'repos.json'), JSON.stringify({ R: { name: 'Lbstrydom/wine-cellar-app', localPath: dir } }));
-  runFreeze({ exports: [exp], reposFile: path.join(dir, 'repos.json'), seed: 's', out: path.join(dir, 'ds.json'), verifyRepo: () => ({ ok: true }) });
+  runFreeze({ exports: [exp], reposFile: path.join(dir, 'repos.json'), seed: 's', out: path.join(dir, 'ds.json'), verifyRepo: () => ({ ok: true }), precheck: () => ({ ok: true }) });
   return dir;
 };
 

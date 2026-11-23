@@ -14,7 +14,7 @@ import path from 'node:path';
 import { gateRoundCap } from '../scripts/lib/audit/round-cap-gate.mjs';
 import { readMetaLog, metaLogPath, foldMetaLog } from '../scripts/lib/audit/meta-review.mjs';
 import { topicOf } from '../scripts/lib/audit/cap-productivity.mjs';
-import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShuffle } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
+import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShuffle, POINT_SHAPES, EXCLUDED_TRIGGERS } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
 import {
   buildArmInvocations, stripMetaFlags, restorePointFiles, validateTrigger, classifyOutcome, sidFor, runContinuation, childEnv, toAuditLedgerEntries, CONTINUATION_PAST_CAP_REASON,
 } from '../scripts/lib/audit/step-back-continuation.mjs';
@@ -42,8 +42,10 @@ function makeExport(spec) {
 }
 const REPOS = { rCES: { name: 'Lbstrydom/claude-engineering-skills', localPath: '/x/ces' }, rWine: { name: 'Lbstrydom/wine-cellar-app', localPath: '/x/wine' }, rWork: { name: 'louis-strydom_wartsila/storyline', localPath: '/x/work' } };
 
+const T2_SHAPE = { mode: 'code', trigger: 'T2', checkpoint: 3 };
+const ALL_SHAPES = [...POINT_SHAPES, T2_SHAPE]; // tests only: the T2 machinery still exists and is exercised, but a pilot freeze never produces it (deviation 1)
 const bigSpec = () => [
-  ...Array.from({ length: 8 }, (_, i) => ({ repo: 'rWine', branch: `feat/w${i}`, mode: 'code', n: 7 })),
+  ...Array.from({ length: 14 }, (_, i) => ({ repo: 'rWine', branch: `feat/w${i}`, mode: 'code', n: 7 })),
   ...Array.from({ length: 8 }, (_, i) => ({ repo: 'rCES', branch: `feat/c${i}`, mode: 'plan', n: 4 })),
   { repo: 'rWork', branch: 'feat/work', mode: 'code', n: 9 },
   { repo: 'rWine', branch: 'main', mode: 'code', n: 30 },
@@ -58,13 +60,23 @@ describe('freeze + partition (§2.1)', () => {
     assert.ok(a.dataset.excluded.some((e) => /not authorised/.test(e.reason)));
     assert.ok(a.dataset.excluded.some((e) => /interleaves/.test(e.reason)));
   });
-  test('code sessions of 7 runs yield a T2 (checkpoint 3) and a T1 (checkpoint 6) point; plan sessions of 4 a T1 at 3', () => {
+  test('deviation 1: a pilot freeze holds T1 points only (code T1 at checkpoint 6, plan T1 at 3); T2 is excluded and the dataset says why', () => {
     const code = a.dataset.points.filter((p) => p.mode === 'code'); const plan = a.dataset.points.filter((p) => p.mode === 'plan');
-    assert.deepEqual([...new Set(code.map((p) => `${p.trigger}@${p.checkpoint}->${p.round}`))].sort(), ['T1@6->7', 'T2@3->4']);
+    assert.deepEqual([...new Set(code.map((p) => `${p.trigger}@${p.checkpoint}->${p.round}`))], ['T1@6->7']);
     assert.deepEqual([...new Set(plan.map((p) => `${p.trigger}@${p.checkpoint}->${p.round}`))], ['T1@3->4']);
+    assert.equal(a.dataset.scope, 'T1-only'); assert.equal(a.dataset.deviation, 'deviation-1'); assert.deepEqual(a.dataset.excludedTriggers, EXCLUDED_TRIGGERS);
+    assert.ok(a.dataset.points.every((p) => p.trigger !== 'T2'));
+    // control: the same export WITH the T2 shape does produce T2 points, so the exclusion is the shape list, not a data accident
+    const withT2 = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }), shapes: ALL_SHAPES });
+    assert.ok(withT2.dataset.points.some((p) => p.trigger === 'T2'));
     // the tree a point audits is the NEXT run's sha (what production would audit), and the snapshot is sealed
-    const p = code.find((x) => x.trigger === 'T1');
+    const p = code[0];
     assert.equal(p.treeSha, a.snapshots[p.pointId] && makeExport(bigSpec()).runs.find((r) => r.id === p.runIds[6]).audited_sha);
+  });
+  test('a freeze-time precheck failure makes a point unrecoverable (never silently dropped from a frozen set)', () => {
+    const r = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }), precheck: ({ point }) => (point.mode === 'plan' ? { ok: false, reason: 'plan file absent from the tree the round audits' } : { ok: true }) });
+    assert.ok(r.dataset.points.filter((p) => p.mode === 'plan').every((p) => p.status === 'unrecoverable' && /plan file absent/.test(p.reason)));
+    assert.ok(r.dataset.points.some((p) => p.mode === 'code' && p.status === 'recoverable'));
   });
   test('the four sets are disjoint by SESSION, the pilot meets its code floor and never overshoots 16', () => {
     assert.ok(assertPartition(a.dataset));
@@ -98,7 +110,7 @@ describe('freeze + partition (§2.1)', () => {
 });
 
 describe('the continuation contract (§2.1) against the REAL gate', () => {
-  const frozen = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }) });
+  const frozen = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }), shapes: ALL_SHAPES });
   const pt = (mode, trigger) => frozen.dataset.points.find((p) => p.mode === mode && p.trigger === trigger && p.status === 'recoverable');
 
   function gateHarness({ point, arm }) {

@@ -28,7 +28,7 @@ node scripts/step-back-replay.mjs freeze --pilot meta-ab --export C:/tmp/pilot1/
 `dataset.snapshots.json`; the dataset hash is an identity (two freezes of one export and seed are byte-identical). Sessions are partitioned
 **by session** into `calibration`, `rehearsal` (5 points), `pilot` (16, ≥ 6 code) and `repeat` (the rest); the loader refuses a run whose set does not match its purpose.
 
-**Decision point** = a session at the moment the meta-review fires: plan T1 (round 4), code T1 (round 7), code T2 (round 4, signal fires). The
+**Decision point** = a session at the moment the meta-review fires: plan T1 (round 4) or code T1 (round 7). **T2 (code round 4) is out of scope** ([deviation 1](../experiments/seeded-bench/deviation-1-t1-only.md)): store-era data cannot reproduce its round signals, so the pilot measures the T1 decision only and its report must say so. The
 checkpoint state is the store reconstruction (`buildExportSnapshot`), sealed with a digest. The tree each run audits is the audited sha of the
 **next recorded run** (what production would audit). Branches `main`/`master`/`HEAD` are excluded (their runs are many unrelated sessions).
 
@@ -47,8 +47,8 @@ The §1.4 calibration ran once (2026-11-23, $2.2286 of $10, pinned to main `f74c
 judge-positive pairs (6 correct), all pairs were code audits, and Gemini returned malformed JSON on 4 pairs. That verdict is final for epoch v1 and is never
 rewritten. [Amendment 2](../experiments/seeded-bench/amendment-2-novelty-audit.md) (epoch `seeded-bench-v2`, approved by Louis in chat 2026-11-23) replaces the
 pre-pilot certification with a **pilot-time audit** (§5). Novelty and scoring now refuse to run without the signed amendment
-(`--amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json`) and the calibration report of the same dataset (`--calibration`, whose judge stamps pin
-the judges). `calibrate-draw` and `calibrate-score` stay available for evidence and judge-vs-human agreement; do not re-run them without a new approval.
+(`--amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json`) and the calibration report (`--calibration`, whose judge stamps pin the judges). The report belongs to the
+earlier dataset, so pass the signed bridge too: `--deviation docs/experiments/seeded-bench/deviation-1-t1-only.json`. `calibrate-draw` and `calibrate-score` stay available for evidence and judge-vs-human agreement; do not re-run them without a new approval.
 
 ## 4. Dress rehearsal ($15) and pilot ($100)
 
@@ -65,7 +65,7 @@ A META stop records its debt command and never runs it. The rehearsal asserts ev
 ## 5. Novelty, blind labelling, audit, decision
 
 ```powershell
-node scripts/step-back-replay.mjs novelty --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --calibration C:/tmp/pilot1/cal/calibration-report.json --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json --confirm-spend
+node scripts/step-back-replay.mjs novelty --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --calibration C:/tmp/pilot1/cal/calibration-report.json --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json --deviation docs/experiments/seeded-bench/deviation-1-t1-only.json --confirm-spend
 node scripts/step-back-replay.mjs worksheet --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json --seed seeded-bench-v2-pilot1 --out-dir C:/tmp/pilot1/out
 # Louis labels pilot1-worksheet.md (REAL | RIGOUR_CHASING | NOT_A_DEFECT | WRONG | KNOWN | UNDETERMINED), then:
 node scripts/step-back-replay.mjs score --pilot meta-ab --dataset C:/tmp/pilot1/dataset.json --results C:/tmp/pilot1/pilot.jsonl --out-dir C:/tmp/pilot1/out --labels C:/tmp/pilot1/out/pilot1-worksheet.md --amendment docs/experiments/seeded-bench/amendment-2-novelty-audit.json

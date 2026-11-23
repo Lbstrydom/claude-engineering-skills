@@ -32,12 +32,23 @@ export const AMBIGUOUS_BRANCHES = Object.freeze(['main', 'master', 'HEAD']);
 export const AUTHORISED_REPOS = Object.freeze(['Lbstrydom/claude-engineering-skills', 'Lbstrydom/wine-cellar-app', 'Creathyst/wine-cellar-app', 'Lbstrydom/ai-organiser']);
 export const DEFAULT_TARGETS = Object.freeze({ calibration: 30, rehearsal: 5, pilot: 16, minPilotCode: 6 });
 
-/** The checkpoint a trigger reads, per mode: plan T1 reads round 3 (refused round 4); code T1 round 6 (refused 7); code T2 round 3 (admitted 4). */
+/**
+ * The checkpoint a trigger reads, per mode: plan T1 reads round 3 (refused round 4); code T1 round 6 (refused 7).
+ * Code T2 (round 4, admitted) is NOT frozen: see `EXCLUDED_TRIGGERS` (deviation 1).
+ */
 export const POINT_SHAPES = Object.freeze([
   { mode: 'plan', trigger: 'T1', checkpoint: 3 },
-  { mode: 'code', trigger: 'T2', checkpoint: 3 },
   { mode: 'code', trigger: 'T1', checkpoint: 6 },
 ]);
+
+/**
+ * Deviation 1 (docs/experiments/seeded-bench/deviation-1-t1-only.md): T2 points cannot be reproduced from store-era data. The meta-review's
+ * T2 trigger needs the checkpoint-3 round signals to FIRE, and a store reconstruction leaves reopenRate, severityDrift and retired
+ * unmeasured; an unmeasured signal never fires. Measured by the dry-run on 2026-11-23: 0 of 14 T2 points in the rehearsal and pilot sets fired.
+ * The pilot therefore measures the T1 decision (a round refused past the soft cap) only, and says so in its report.
+ */
+export const EXCLUDED_TRIGGERS = Object.freeze({ T2: 'the checkpoint-3 round signals cannot be reproduced from store-era data (reopenRate, severityDrift and retired are unmeasured, and an unmeasured signal never fires)' });
+export const PILOT_SCOPE = 'T1-only';
 
 const sha256Hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const ts = (s) => Date.parse(s);
@@ -87,7 +98,7 @@ export function sessionsOf(exp) {
  * @param {string[]} [a.authorisedRepos]
  * @returns {{dataset: object, snapshots: object}}
  */
-export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, authorisedRepos = AUTHORISED_REPOS, verifyRepo }) {
+export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, authorisedRepos = AUTHORISED_REPOS, verifyRepo, precheck = null, shapes = POINT_SHAPES }) {
   if (typeof verifyRepo !== 'function') throw new Error('freezeMetaPilot: a verifyRepo(repo) function is required; authorisation never defaults to trusting the supplied name');
   if (!seed) throw new Error('freezeMetaPilot: a seed is required (it is recorded in the dataset)');
   // Authorisation binds to a VERIFIED repository identity: the caller-supplied name must match the clone's own origin.
@@ -104,9 +115,9 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
     const exclude = (reason) => excluded.push({ sessionId: s.sessionId, repo: repo?.name ?? s.repoId, mode: s.mode, runs: s.runs.length, reason });
     if (!repo || !authorisedRepos.includes(repo.name)) { if (s.runs.length >= 4) exclude(`repo not authorised for a pilot (${repo?.name ?? 'unknown'})`); continue; }
     if (AMBIGUOUS_BRANCHES.includes(s.branch)) { if (s.runs.length >= 4) exclude(`branch "${s.branch}" interleaves unrelated sessions`); continue; }
-    const shapes = POINT_SHAPES.filter((p) => p.mode === s.mode && s.runs.length >= p.checkpoint);
+    const myShapes = shapes.filter((p) => p.mode === s.mode && s.runs.length >= p.checkpoint);
     const mine = [];
-    for (const shape of shapes) {
+    for (const shape of myShapes) {
       const N = shape.checkpoint;
       const next = s.runs[N];
       const pointId = `${s.mode}-${shape.trigger}-${sha256Hex(`${s.repoId}|${s.branch}|${s.runs[0].id}|${N}`).slice(0, 10)}`;
@@ -116,6 +127,10 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
       const snap = buildExportSnapshot({ exp, runIds: s.runs.map((r) => r.id), checkpoint: N });
       if (!snap.ok) { points.push({ ...base, status: 'unrecoverable', reason: snap.reason }); continue; }
       if (!(next.plan_file || snap.snapshot.planFile)) { points.push({ ...base, status: 'unrecoverable', reason: `${s.mode} audit with no recorded plan_file (the invocation cannot be re-issued)` }); continue; }
+      // Runtime prerequisites are checked at FREEZE (cheap git lookups, no checkout), so a frozen set is runnable: a point that fails is unrecoverable, never silently shrunk later.
+      const planFile = next.plan_file ?? snap.snapshot.planFile ?? null;
+      const pre = precheck ? precheck({ repo, point: { ...base, treeSha: next.audited_sha, planFile, firstSha: s.runs[0].audited_sha ?? null } }) : { ok: true };
+      if (!pre.ok) { points.push({ ...base, status: 'unrecoverable', reason: pre.reason }); continue; }
       const sealed = { rounds: snap.snapshot.rounds, ledgerEntries: snap.snapshot.ledgerEntries };
       const digest = sha256Hex(JSON.stringify(sealed));
       snapshots[pointId] = { ...sealed, digest };
@@ -156,7 +171,7 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
   const sorted = (xs, k) => [...xs].sort((a, b) => String(a[k]).localeCompare(String(b[k])));
 
   const dataset = {
-    version: PILOT_DATASET_VERSION, kind: PILOT_KIND, source: 'store-export', seed, targets, authorisedRepos: [...authorisedRepos],
+    version: PILOT_DATASET_VERSION, kind: PILOT_KIND, source: 'store-export', scope: PILOT_SCOPE, excludedTriggers: EXCLUDED_TRIGGERS, deviation: 'deviation-1', seed, targets, authorisedRepos: [...authorisedRepos],
     exportSha256: exp.exportSha256 ?? null, exportedAt: exp.exportedAt ?? null,
     repoPaths: Object.fromEntries(Object.values(repos).filter((r) => authorisedRepos.includes(r.name)).map((r) => [r.name, r.localPath ?? null])),
     counts: {
