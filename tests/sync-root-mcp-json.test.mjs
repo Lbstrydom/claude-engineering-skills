@@ -11,13 +11,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import { renderOutbound, decideUnmanifested } from '../scripts/lib/sync-outbound.mjs';
 import { isCoOwnedJsonDest, sourceRelToDestRel, isExplicitException } from '../scripts/lib/sync-path-map.mjs';
 import { _internals as inventory } from '../scripts/lib/sync-inventory.mjs';
 import { EOL_PIN_GLOBS } from '../scripts/lib/sync-eol-pins.mjs';
-import { compareManagedMcpSurfaces, managedServerNames } from '../scripts/lib/mcp-parity.mjs';
+import { compareMcpSurfaces, managedServerNames } from '../scripts/lib/mcp-parity.mjs';
+import { runGates } from '../scripts/lib/sync-isolation-verify.mjs';
+import { SyncManifestSchema } from '../scripts/lib/sync-manifest.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = fs.readFileSync(path.join(REPO_ROOT, '.mcp.json'), 'utf8');
@@ -81,74 +83,108 @@ describe('renderOutbound(.mcp.json) — merge semantics', () => {
   });
 });
 
-describe('compareManagedMcpSurfaces — parity over MANAGED servers only', () => {
+describe('compareMcpSurfaces({managedNames}) — parity over MANAGED servers only', () => {
   const mergedPair = (theirClaude, theirVscode) => ({
     claude: JSON.parse(render(SRC, theirClaude).content),
     vscode: JSON.parse(render(SRC_VSCODE, theirVscode, '.vscode/mcp.json').content),
   });
+  const cmp = (p) => compareMcpSurfaces({ ...p, managedNames: MANAGED });
 
   it('negative control: the unmodified merged pair passes and actually compared both servers', () => {
-    const r = compareManagedMcpSurfaces({ ...mergedPair(null, null), managed: MANAGED });
+    const r = cmp(mergedPair(null, null));
     assert.equal(r.ok, true);
     assert.equal(r.compared, MANAGED.length);
   });
-
-  it("1. an extra server on ONE side only passes (the consumer's own, even if unmodelled)", () => {
-    const p = mergedPair(JSON.stringify({ mcpServers: { corp: { type: 'http', url: 'https://x.example/mcp' } } }), null);
-    const r = compareManagedMcpSurfaces({ ...p, managed: MANAGED });
+  it("an extra server on ONE side only passes (the consumer's own, even if unmodelled)", () => {
+    const r = cmp(mergedPair(JSON.stringify({ mcpServers: { corp: { type: 'http', url: 'https://x.example/mcp' } } }), null));
     assert.equal(r.ok, true, r.diagnostics.join('; '));
     assert.equal(r.compared, MANAGED.length);
   });
-
-  it('2. a DECLARED divergent managed value passes, reported as excused', () => {
+  it('an undeclared managed mismatch fails, and without managedNames the same extra server is drift (source gate unchanged)', () => {
     const p = mergedPair(null, null);
     p.claude.mcpServers.playwright.args = ['-y', '@playwright/mcp@0.0.1'];
-    const r = compareManagedMcpSurfaces({ ...p, managed: MANAGED, overriddenPaths: ['.mcp.json'] });
-    assert.equal(r.ok, true);
-    assert.equal(r.excused, true);
-  });
-
-  it('3. an UNDECLARED managed mismatch fails', () => {
-    const p = mergedPair(null, null);
-    p.claude.mcpServers.playwright.args = ['-y', '@playwright/mcp@0.0.1'];
-    const r = compareManagedMcpSurfaces({ ...p, managed: MANAGED });
-    assert.equal(r.ok, false);
+    const r = cmp(p);
     assert.equal(r.code, 'mcp/parity-drift');
     assert.deepEqual(r.drifted, ['playwright']);
+    const q = mergedPair(JSON.stringify({ mcpServers: { corp: { command: 'x' } } }), null);
+    assert.equal(compareMcpSurfaces(q).ok, false);
   });
-
   it("a managed server missing from one file fails (not the consumer's own)", () => {
     const p = mergedPair(null, null);
     delete p.vscode.servers.mermaid;
-    assert.equal(compareManagedMcpSurfaces({ ...p, managed: MANAGED }).ok, false);
-  });
-
-  it('an override does not excuse an unrecognisable shape', () => {
-    const r = compareManagedMcpSurfaces({ claude: [], vscode: {}, managed: MANAGED, overriddenPaths: ['.mcp.json'] });
-    assert.equal(r.ok, false);
+    assert.equal(cmp(p).ok, false);
   });
 });
 
-describe('INTEGRATION: the real sync writes .mcp.json into a temporary consumer', () => {
-  it('merges into an existing file and a second run is byte-stable', () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'root-mcp-sync-'));
-    const run = () => execFileSync(process.execPath, [
-      path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), '--target-path', tmp, '--no-prompt', '--adopt-orphans',
-    ], { cwd: REPO_ROOT, encoding: 'utf8', stdio: 'pipe', timeout: 240_000 });
+describe('gate 10 + manifest field: real sync, reload through the schema, runGates AND the CLI exit', () => {
+  const VERIFY = path.join(REPO_ROOT, 'scripts', 'lib', 'sync-isolation-verify.mjs');
+  const manifestPath = (tmp) => path.join(tmp, 'scripts', '.sync-manifest.json');
+  const realSync = (tmp) => execFileSync(process.execPath, [
+    path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs'), '--target-path', tmp, '--no-prompt', '--adopt-orphans',
+  ], { cwd: REPO_ROOT, encoding: 'utf8', stdio: 'pipe', timeout: 240_000 });
+  const exitOf = (tmp) => spawnSync(process.execPath, [VERIFY, '--consumer-root', tmp, '--gates', '10'], { encoding: 'utf8' }).status;
+  const withConsumer = (fn, seed) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gate10-'));
     try {
-      fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { corp: { command: 'their-tool' }, playwright: { command: 'STALE', note: 'kept' } } }, null, 2));
-      run();
-      const f = path.join(tmp, '.mcp.json');
-      const merged = JSON.parse(fs.readFileSync(f, 'utf8'));
-      assert.deepEqual(merged.mcpServers.corp, { command: 'their-tool' });
-      assert.equal(merged.mcpServers.playwright.command, ours.mcpServers.playwright.command);
-      assert.equal(merged.mcpServers.playwright.note, 'kept');
-      assert.deepEqual(merged.mcpServers.mermaid, ours.mcpServers.mermaid);
-      const before = fs.readFileSync(f);
-      run();
-      assert.ok(before.equals(fs.readFileSync(f)), 'second sync changed .mcp.json bytes');
+      if (seed) seed(tmp);
+      realSync(tmp);
+      // Reload through the SCHEMA: a non-strict schema would strip an undeclared field here.
+      const parsed = SyncManifestSchema.parse(JSON.parse(fs.readFileSync(manifestPath(tmp), 'utf8')));
+      assert.deepEqual(parsed.mcpManagedServers, MANAGED, 'the manifest carries exactly the source names, sorted');
+      const gate = () => runGates({ consumerRoot: tmp, gates: ['10'] })[0];
+      return fn({ tmp, gate });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
-  });
+  };
+  const editJson = (f, fn) => { const j = JSON.parse(fs.readFileSync(f, 'utf8')); fn(j); fs.writeFileSync(f, JSON.stringify(j, null, 2)); };
+
+  it('pass: a clean sync is green, exit 0', () => withConsumer(({ tmp, gate }) => {
+    const g = gate();
+    assert.equal(g.result, 'pass');
+    assert.equal(g.details.compared, MANAGED.length);
+    assert.equal(exitOf(tmp), 0);
+  }));
+
+  it("pass: the consumer's own server on one side only is never judged, exit 0", () => withConsumer(({ tmp, gate }) => {
+    editJson(path.join(tmp, '.mcp.json'), (j) => { j.mcpServers.corp = { type: 'http', url: 'https://x.example/mcp' }; });
+    assert.equal(gate().result, 'pass');
+    assert.equal(exitOf(tmp), 0);
+  }));
+
+  it('declared: either file claimed in .sync-overrides.json means no compare, exit 0 even with a mismatch', () => withConsumer(({ tmp, gate }) => {
+    editJson(path.join(tmp, '.mcp.json'), (j) => { j.mcpServers.playwright.args = ['-y', '@playwright/mcp@0.0.1']; });
+    fs.writeFileSync(path.join(tmp, '.sync-overrides.json'), JSON.stringify({ version: 1, overrides: [{ path: '.vscode/mcp.json', reason: 'pinned locally' }] }));
+    const g = gate();
+    assert.equal(g.result, 'declared', JSON.stringify(g));
+    assert.equal(exitOf(tmp), 0);
+  }));
+
+  it('fail: an undeclared managed mismatch is MCP_PARITY_MISMATCH and the exit is non-zero', () => withConsumer(({ tmp, gate }) => {
+    editJson(path.join(tmp, '.mcp.json'), (j) => { j.mcpServers.playwright.args = ['-y', '@playwright/mcp@0.0.1']; });
+    const g = gate();
+    assert.equal(g.result, 'fail');
+    assert.equal(g.code, 'MCP_PARITY_MISMATCH');
+    assert.notEqual(exitOf(tmp), 0);
+  }));
+
+  it('unmeasured: .mcp.json in the manifest but the field absent is MCP_PARITY_UNMEASURED with a re-sync diagnostic, non-zero exit', () => withConsumer(({ tmp, gate }) => {
+    editJson(manifestPath(tmp), (j) => { delete j.mcpManagedServers; });
+    const g = gate();
+    assert.equal(g.result, 'unmeasured');
+    assert.equal(g.code, 'MCP_PARITY_UNMEASURED');
+    assert.match(g.error, /Re-sync/);
+    assert.notEqual(exitOf(tmp), 0);
+  }));
+
+  it('not-applicable: no .mcp.json in the manifest is green, exit 0; a malformed field is a schema failure', () => withConsumer(({ tmp, gate }) => {
+    editJson(manifestPath(tmp), (j) => { delete j.files['.mcp.json']; });
+    assert.equal(gate().result, 'not-applicable');
+    assert.equal(exitOf(tmp), 0);
+    editJson(manifestPath(tmp), (j) => { j.mcpManagedServers = ['playwright', 'mermaid']; });   // unsorted
+    const bad = gate();
+    assert.equal(bad.gate, 'preflight');
+    assert.match(bad.error, /manifest schema invalid/);
+    assert.notEqual(exitOf(tmp), 0);
+  }));
 });

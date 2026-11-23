@@ -117,6 +117,10 @@ const SYNC_ISOLATION_PROBES = [
     gate: '9', id: 'sync/skill-frontmatter-layout', title: 'Inert SKILL.md frontmatter declaration (sync gate 9)',
     fix: 'Dedent the named key to column 0 of the SKILL.md frontmatter (indented under `description: |` it is parsed as text and silently stops applying); re-sync if the file is bundle-owned; delete the directory if the skill is no longer shipped.',
   }),
+  syncGateProbe({
+    gate: '10', id: 'sync/mcp-managed-parity', title: 'MCP parity on the managed servers (sync gate 10)',
+    fix: 'Re-sync so .mcp.json and .vscode/mcp.json agree on the managed servers (MCP_PARITY_MISMATCH / MCP_PARITY_UNMEASURED), or declare the divergence in .sync-overrides.json: npx github:Lbstrydom/claude-engineering-skills <this-repo>',
+  }),
 ];
 
 // ── New probe: worktree hydration (§2.3a) ───────────────────────────────────

@@ -26,6 +26,10 @@
  *       scalar — YAML parses that as description TEXT and the declaration is
  *       silently inert. Fails on ANY skill dir, owned or not: unlike gate 8's
  *       foreign names this is never harmless, and the fix is one local edit.
+ *   10  MCP parity on the MANAGED servers only: the consumer's `.mcp.json` and `.vscode/mcp.json` agree on the servers the
+ *       source ships (manifest `mcpManagedServers`). A server of the consumer's own is never judged. Results: pass,
+ *       declared (either file claimed in `.sync-overrides.json`: no compare), fail (MCP_PARITY_MISMATCH), unmeasured
+ *       (MCP_PARITY_UNMEASURED: `.mcp.json` is in the manifest but the field is absent: re-sync), not-applicable.
  *
  * @module scripts/lib/sync-isolation-verify
  */
@@ -44,6 +48,7 @@ import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
 import { lintSkillTree } from './skill-frontmatter-layout.mjs';
 import { assertKnownFlags, ArgvError } from './cli-io.mjs';
+import { compareMcpSurfaces } from './mcp-parity.mjs';
 import { detectCheckout } from './checkout-kind.mjs';
 import { isInvokedAsScript } from './cli-entry.mjs';
 
@@ -58,7 +63,7 @@ import { isInvokedAsScript } from './cli-entry.mjs';
 // filters its own exclusion list (gate1 is migration-only, not a health
 // check) from this module's own constant rather than hand-listing gate ids a
 // second time — one more single-oracle application.
-export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8', '9'];
+export const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8', '9', '10'];
 // Backlog-triage fix — every flag this CLI's own parseArgs recognizes, fed to
 // the shared assertKnownFlags oracle (the same one reconcile-repo-identity.mjs
 // and friends use) so an unrecognized flag alongside a recognized one is a
@@ -832,6 +837,56 @@ function gate9(consumerRoot, manifest) {
   };
 }
 
+/**
+ * Gate 10 — consumer-side MCP parity, after the write, over the MANAGED servers only.
+ * `pass` and `declared` and `not-applicable` are green; `fail` and `unmeasured` are red (never a skip: a gate that
+ * cannot say which servers are ours must not read as "no drift").
+ *
+ * @param {string} consumerRoot
+ * @param {{files?: Record<string, unknown>, mcpManagedServers?: string[]}|null} manifest
+ */
+function gate10(consumerRoot, manifest) {
+  const CLAUDE = '.mcp.json';
+  const VSCODE = '.vscode/mcp.json';
+  const files = manifest?.files ?? {};
+  if (!(CLAUDE in files)) {
+    return { gate: '10', pass: true, result: 'not-applicable', details: { note: `${CLAUDE} is not in the manifest` } };
+  }
+  const managed = manifest?.mcpManagedServers;
+  if (!Array.isArray(managed) || managed.length === 0) {
+    return {
+      gate: '10', pass: false, result: 'unmeasured', code: 'MCP_PARITY_UNMEASURED',
+      error: `MCP_PARITY_UNMEASURED: the manifest lists ${CLAUDE} but carries no mcpManagedServers, so which servers are managed is unknown. `
+        + 'Re-sync from the current engineering-skills source: npx github:Lbstrydom/claude-engineering-skills <this-repo>',
+    };
+  }
+  // Declared per FILE: either claimed in the consumer's own `.sync-overrides.json` means the divergence is theirs to keep.
+  const { overrides } = loadOverrides(consumerRoot);
+  const declaredPaths = [CLAUDE, VSCODE].filter((p) => matchOverride(p, overrides));
+  if (declaredPaths.length > 0) {
+    return { gate: '10', pass: true, result: 'declared', details: { declared: declaredPaths, managed } };
+  }
+  const read = (rel) => {
+    try { return { ok: true, value: JSON.parse(fs.readFileSync(path.join(consumerRoot, ...rel.split('/')), 'utf-8')) }; }
+    catch (err) { return { ok: false, reason: `${rel}: ${err.code === 'ENOENT' ? 'missing' : `unreadable or malformed (${err.message})`}` }; }
+  };
+  const claude = read(CLAUDE);
+  const vscode = read(VSCODE);
+  const bad = [claude, vscode].filter((r) => !r.ok).map((r) => r.reason);
+  if (bad.length > 0) {
+    return { gate: '10', pass: false, result: 'unmeasured', code: 'MCP_PARITY_UNMEASURED', error: `MCP_PARITY_UNMEASURED: cannot read the pair — ${bad.join('; ')}` };
+  }
+  const r = compareMcpSurfaces({ claude: claude.value, vscode: vscode.value, managedNames: managed });
+  if (!r.ok) {
+    return {
+      gate: '10', pass: false, result: 'fail', code: 'MCP_PARITY_MISMATCH',
+      error: `MCP_PARITY_MISMATCH: ${r.diagnostics.join('; ')} — re-sync, or declare the divergence in ${OVERRIDES_PATH}`,
+      details: { drifted: r.drifted, managed },
+    };
+  }
+  return { gate: '10', pass: true, result: 'pass', details: { compared: r.compared, managed } };
+}
+
 function gate8(consumerRoot, manifest) {
   const SHADOWING = ['.github/skills', '.agents/skills'];
   const LIVE = '.claude/skills';
@@ -940,7 +995,7 @@ export function runGates(opts) {
 
   const manifestRes = loadConsumerManifest(consumerRoot);
 
-  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8', '9'].includes(g));
+  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8', '9', '10'].includes(g));
   if (needManifest && !manifestRes.ok) {
     return [{ gate: 'preflight', pass: false, error: manifestRes.error }];
   }
@@ -959,6 +1014,7 @@ export function runGates(opts) {
       else if (g === '7') results.push(gate7(consumerRoot));
       else if (g === '8') results.push(gate8(consumerRoot, manifest));
       else if (g === '9') results.push(gate9(consumerRoot, manifest));
+      else if (g === '10') results.push(gate10(consumerRoot, manifest));
       else results.push({ gate: g, pass: false, error: `unknown gate: ${g}` });
     } catch (err) {
       results.push({ gate: g, pass: false, error: `gate threw: ${err.message}` });
@@ -980,7 +1036,7 @@ function formatText(results) {
   let allPass = true;
   for (const r of results) {
     if (r.pass) {
-      lines.push(`  ✓ gate ${r.gate}`);
+      lines.push(`  ✓ gate ${r.gate}${r.result && r.result !== 'pass' ? ` (${r.result})` : ''}`);
       // A PASS that excused something must say what it excused. Gate 2B skips
       // paths declared in `.sync-overrides.json`, and a bare `✓` would make a
       // standing divergence invisible in the default output — which is the
@@ -1044,6 +1100,6 @@ if (isInvokedAsScript(import.meta.url)) {
 
 export const _internals = {
   CLI_SMOKE_SET, LIB_IMPORT_SET, CMD_SCAN_PATHS, COMMAND_REGEX,
-  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7, gate8, gate9,
+  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7, gate8, gate9, gate10,
   ownedSkillNamesFromManifest, runGates, formatText,
 };
