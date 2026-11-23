@@ -270,6 +270,7 @@ source comments that no docs linter sees — stays valid.
 | [Own-model decision ledger and coordinator capture points (PR 2 of 3)](./own-model-decision-ledger.md) | `Complete` | shipped in #311 (f508ab1d); deferred items moved to own-model-telemetry-pr3. |
 | [Own-model telemetry PR 3 — §6.8 columns, null-rate coverage gate, transcript archive, dated baseline](./own-model-telemetry-pr3.md) | `Complete` | shipped in #312 (ff4e4627). Deferred and independent: git back-fill, transcript mining, randomised routing… |
 | [Own-model telemetry slice 1 (H1 capture gaps)](./own-model-telemetry-slice-1.md) | `Complete` | shipped in #304 (76b03788); PRs 2 and 3 followed in #311 and #312. |
+| [Path-scoped context — measure per host, then move path-specific tripwires out of AGENTS.md](./path-scoped-context.md) | `Complete` | pilot shipped (Postgres store + consumer sync); further topics NOT SCHEDULED |
 | [Persona Click-Path Capture → nav-audit Reachability Seeding](./persona-clickpath-nav-seeding.md) | `Complete` | (2026-06-27 — built via `/cycle` autonomous, both clusters; consolidated Gemini gate APPROVE round 2). See… |
 | [Version `personaFindingHash` (route/expected context) + safe backfill](./persona-finding-hash-versioning.md) | `Complete` | implemented + audited… |
 | [Persona/Nav feedback-loop recovery — deterministic correlator, nav-audit v2 persistence, telemetry surfacing, outcome labels](./persona-nav-feedback-recovery.md) | `Complete` | all 4 workstreams (WS1-WS4) implemented across 4 `/cycle --autonomous` clusters, each independently… |
