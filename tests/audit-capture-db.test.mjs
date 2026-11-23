@@ -869,12 +869,21 @@ describe('telemetry linkage chain (DB integration)', { skip }, () => {
 
   test('a blank session id is no session; an UPDATE cannot erase the state of a stamped row', async () => {
     const id = crypto.randomUUID();
-    await q.query("INSERT INTO audit_runs (id, repo_id, plan_file, mode, audit_session_id) VALUES ($1, $2, 'x', 'code', '   ')", [id, repoId]);
+    await q.query("INSERT INTO audit_runs (id, repo_id, plan_file, mode, audit_session_id) VALUES ($1, $2, 'x', 'code', E' \t\n ')", [id, repoId]);
     assert.deepEqual(await row(id), { audit_session_id: null, audit_round: null, linkage_state: 'unlinked', linkage_reason: 'undeclared' });
     const linked = await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { auditSessionId: sess('upd'), auditRound: 1 });
     await q.query('UPDATE audit_runs SET linkage_state = NULL, linkage_reason = NULL WHERE id = $1', [linked]);
     assert.equal((await row(linked)).linkage_state, 'linked', 'the trigger restores the state an UPDATE tried to clear');
     await assert.rejects(q.query('UPDATE audit_runs SET audit_session_id = NULL WHERE id = $1', [linked]), (e) => e.code === '23514', 'clearing the session of a linked row is refused');
+  });
+
+  test('REUSE RACE: two concurrent reuses with different sessions - exactly one wins, the other is refused', async () => {
+    const runId = crypto.randomUUID();
+    await rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId });
+    const [a, b] = await Promise.all(['A', 'B'].map((n) => rf.recordRunStart(repoId, 'docs/plans/x.md', 'code', { runId, auditSessionId: sess(`race${n}`) })));
+    assert.equal([a, b].filter((x) => x === runId).length, 1, 'one adopted, one refused');
+    assert.equal([a, b].filter((x) => x === null).length, 1);
+    assert.match((await row(runId)).audit_session_id, /race[AB]$/);
   });
 
   test('REUSE: a run reused by explicit id adopts a now-known session, and never overwrites a different one', async () => {
