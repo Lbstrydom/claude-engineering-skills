@@ -132,8 +132,8 @@ async function main() {
   // the legacy Claude-shape parse runs instead (observable on stderr).
   const hostMod = await loadHookHost();
   let host = 'unknown';
-  let toolName = '';
-  let filePath = '';
+  let toolName;
+  let filePath;
   let diffText = '';
 
   if (hostMod) {
