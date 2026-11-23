@@ -528,11 +528,11 @@
       "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0, so the skill tells the operator to read `labelled: 0` with a non-zero `total` as a failure. The CLI prints a WARN naming the cause. Re-worded 2026-10-25 when write-ledger-entries began labelling the triaged round itself; the sentence is the same warning, shorter."
     },
     {
-      "line": "a structural-or-stop card: a stop for a human call, never a retry. At round 6 without convergence run",
+      "line": "the card, never a retry, unless the **meta-review** (`references/meta-review.md`, also round 4 on a fired signal)",
       "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     },
     {
-      "line": "operator (STOP / STRUCTURAL / CONTINUE); continuing is their call (`references/round-cap-and-structural-card.md`).",
+      "line": "| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |",
       "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     },
     {

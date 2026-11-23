@@ -25,7 +25,7 @@ import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib
 import { formatCoverageSuffix, coverageMissingNote } from './lib/coverage-format.mjs';
 import { COVERAGE_CONVERGENCE_REASONS } from './lib/audit/convergence.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
-import { AUDIT_ROUND_CAPS, EXIT_CAPPED, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
+import { AUDIT_ROUND_CAPS, EXIT_CAPPED, META_T2_ROUND, parseRoundFlag, readFlagValue, validateAuditRound } from './lib/audit/round-cap.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
 import { isInDiff } from './lib/finding-scope.mjs';
 import { gatesForCount } from './lib/finding-tags.mjs';
@@ -178,6 +178,9 @@ function parseArgs(argv) {
     switch (argv[i]) {
       case '--max-rounds': i++; break;   // parsed strictly in main() by parseRoundFlag
       case '--past-cap': args.pastCap = argv[++i] ?? ''; break;
+      case '--no-meta-review': args.noMetaReview = true; break;
+      // A reason is never another flag: `--meta-override --no-meta-review` must not swallow the opt-out.
+      case '--meta-override': { const next = argv[i + 1]; args.metaOverride = next !== undefined && !next.startsWith('--') ? argv[++i] : ''; break; }
       case '--skip-gemini': args.skipGemini = true; break;
       case '--scope': args.scope = argv[++i]; break;
       case '--base': args.base = argv[++i]; break;
@@ -326,11 +329,17 @@ async function main() {
     if (args.noTools) auditArgs.push('--no-tools');
     if (args.strictLint) auditArgs.push('--strict-lint');
     if (args.pastCap && capsForMode && round > capsForMode.soft) auditArgs.push('--past-cap', args.pastCap);
+    if (args.noMetaReview) auditArgs.push('--no-meta-review');
+    // --meta-override answers ONE honoured early stop (code round 4), so it is forwarded only to that round.
+    if (args.metaOverride != null && round === META_T2_ROUND) auditArgs.push('--meta-override', args.metaOverride);
 
     // Step 2 — Run audit
     banner(`ROUND ${round} — GPT-5.4 Audit`);
     const fullAuditArgs = ['scripts/openai-audit.mjs', 'code', args.planFile, ...auditArgs];
-    process.stderr.write(`${D}$ node ${fullAuditArgs.join(' ')}${X}\n`);
+    // Display only, but faithful: an argument with spaces or shell metacharacters (a free-text --meta-override / --past-cap
+    // reason) is single-quoted, so the printed command is the argument list that actually runs.
+    const shown = fullAuditArgs.map((a) => (/^[\w./:,=@%+-]+$/.test(a) ? a : `'${String(a).replace(/'/g, "'\\''")}'`));
+    process.stderr.write(`${D}$ node ${shown.join(' ')}${X}\n`);
 
     try {
       execFileSync('node', fullAuditArgs, { stdio: 'inherit', timeout: 600000 });

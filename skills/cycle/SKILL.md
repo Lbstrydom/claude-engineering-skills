@@ -306,9 +306,9 @@ State-driven + resumable: read state first, **skip `gate-clear` clusters**.
 For each remaining cluster in declared order:
 
 1. **Implement** the cluster's member-file phases.
-2. **Budget**: no runtime splitting in v1 — invoke `/audit-code` on the cluster's derived scope and let its internal map-reduce handle large diffs. `/cycle` only enforces **never merge** across a declared boundary.
-   - **Optional author-tier observation** (telemetry only; it does NOT change which model runs) → `references/clustered-execution.md` §Optional author-tier — read when the cluster carries an `author-tier:` hint.
-3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
+2. **Budget**: no runtime splitting in v1 — `/audit-code` on the derived scope handles large diffs itself. `/cycle` only enforces **never merge** across a declared boundary.
+   - **Author-tier** (telemetry only, never routes) → `references/clustered-execution.md` §Optional author-tier — read when a cluster has `author-tier:`.
+3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s cap; on exit 4 `META_*` run its printed debt command (`references/meta-review.md`).
 
    > **`--files` is the ONLY flag that scopes the audit** (`--changed`/`--diff` never bound what the model
    > reads), and it is the declared scope ∩ what CHANGED — never compute it by hand
@@ -338,13 +338,12 @@ node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --chang
    Use the returned sets as returned. `emptyAllowlist: true` → the consolidated gate, never a vacuous pass. Each
    `unchangedDeclared` path: over-declared or a MISSED edit? Settle it before the cluster is done → `references/clustered-execution.md` §Two sets.
 4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) **over this cluster's IN-CLUSTER findings** (see 4a) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
-   - **3a. `clusterStartRef` is validated ON USE, not just captured.** Run
+   - **3a. `clusterStartRef` is validated ON USE.** Run
      `git merge-base --is-ancestor <clusterStartRef> HEAD` before it becomes a
-     diff base. On a non-ancestor (a concurrent session moved HEAD),
-     halt and report rather than demoting to the
-     dirty-aware default, which would quietly widen the range you asked for.
+     diff base. On a non-ancestor (a concurrent session moved HEAD), halt and
+     report; never demote to the dirty-aware default (it widens the range).
      → `references/clustered-execution.md` §3a — read when the base check is questioned.
-   - **4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:
+   - **4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass** (→ `references/clustered-execution.md` §4a — read when in-cluster scoring is challenged). Classify every finding by the cluster owning its cited file — mechanical, from the derived scopes:
 
      | Cited file is in… | Class | Effect on THIS gate |
      |---|---|---|
@@ -610,7 +609,8 @@ situations — read them only when the trigger applies.
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | The no-dispatch fallback — passing an inlined skill its plan path, sub-command and flags as orchestrator-supplied input (rule 0). |
 | `references/prerequisite-ladder.md` | Step 0 prerequisite ladder — absent helper bundle or auditor route, and reporting a run that did not happen. | Step 0 — an audit prerequisite did not resolve (helper scripts missing, no GPT route), OR about to report a run that degraded or did not happen. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Reporting a degraded or substituted run — §7's coverage rule, which the prerequisite ladder's census rows cite. |
-| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |
+| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate, OR no `GEMINI_API_KEY` (the ladder picks the substitute). |
+| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |
 | `references/remediate-mode.md` | REMEDIATE mode — fix triaged post-ship findings against an accepted plan without replaying the full cycle. | The mode is REMEDIATE (Step R), OR the user asks to skip /audit-plan because the plan is already accepted. |
 | `references/clustered-execution.md` | Step 3C detail — cluster-state schema, author-tier hint, scope-flag incident, 4a measurement, round-2 rationale. | Step 3C — first read/write of `.audit/cycle-cluster-state.json`, an `author-tier:` hint, OR a cluster's scope, class or gate is contested. |
 | `references/orchestration-rationale.md` | Why /cycle's linear steps are shaped as they are — inline dispatch, plan deps, empty-diff guard, persona URL, ship. | A linear step's rule (Steps 0–7, outside 3C) is questioned or looks safe to skip. |

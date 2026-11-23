@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFlagValue } from './round-cap.mjs';
+import { readFlagValue, META_T2_ROUND } from './round-cap.mjs';
 import { topicOf, assessCapProductivity, readLedgerEntries, renderCapProductivity } from './cap-productivity.mjs';
 import { readRoundsWithSha, defaultRepoFiles, defaultArchNeighbours } from './step-back-card.mjs';
 import { computeRoundSignals, renderRoundSignals, makeGitRunner } from './round-signals.mjs';
@@ -30,8 +30,7 @@ import { redactSecrets } from '../secret-patterns.mjs';
 
 /** Sent attempts allowed per session id: one per trigger point of a single identity (code T2@4, T1@7, T1@8; plan T1@4, T1@5). */
 export const META_REVIEW_SESSION_BUDGET = Object.freeze({ code: 3, plan: 2 });
-/** The code round whose gate runs T2 (it reads checkpoint 3). */
-export const META_T2_ROUND = 4;
+export { META_T2_ROUND };
 export const META_DECISION_TYPE = 'meta_review_decision';
 export const META_OVERRIDE_TYPE = 'meta_review_override';
 /** Closed enum for the store projection: no free text leaves the machine through the learning row. */
@@ -551,4 +550,55 @@ export function renderMetaLog({ auditDir, sid }) {
     lines.push(`  ${d.attemptId}: ${d.state}${d.verdict ? ` ${d.verdict.action}` : ''} → ${d.guard.effect}${d.guard.honoured ? '' : ` (${d.guard.reasonCode})`}${d.admittedThrough ? ` through round ${d.admittedThrough}` : ''}${ov ? ` · ${ov.map((o) => `${o.event} by ${o.by}`).join(', ')}` : ''}`);
   }
   return lines;
+}
+
+// ── debt capture of an honoured loop-ending decision (debt-auto-capture --meta-decision) ─────────────
+
+/** The one command the gate prints after an honoured stop/structural (docs/plans/meta-step-back-at-cap.md §2.7). */
+export function metaDebtCommand({ auditDir, sid, attemptId }) {
+  const log = path.relative(process.cwd(), metaLogPath(auditDir, sid)) || metaLogPath(auditDir, sid);
+  return `node scripts/debt-auto-capture.mjs --meta-decision ${shellQuote(log)} --decision ${shellQuote(attemptId)} --run ${shellQuote(sid)}`;
+}
+
+/** POSIX single-quote every argument: no expansion of any kind survives inside single quotes. */
+export function shellQuote(s) {
+  return `'${String(s ?? '').replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Project an HONOURED, un-overridden stop/structural decision onto the adjudication-ledger entry shape, so the single
+ * debt writer persists it. Candidates are the decision's recorded inventory (a structural route captures only the
+ * non-HIGH topics; its HIGHs were already ruled); each finding object is RE-READ from that round's own result file,
+ * matched by id and re-checked by topic. A missing result or an unmatched finding is a skipped candidate, never silent.
+ * @returns {{ok: true, entries: object[], skipped: Array<{id: string, reason: string}>, decision: object}|{ok: false, error: string}}
+ */
+export function metaDecisionToLedgerEntries({ logFile, attemptId, sid = null, readResult = (p) => JSON.parse(fs.readFileSync(p, 'utf8')) }) {
+  if (!attemptId) return { ok: false, error: '--decision <attemptId> is required (a log may hold several decisions; none is guessed)' };
+  const log = readMetaLog(logFile);
+  if (log.malformed) return { ok: false, error: `decision log is malformed (${log.malformed})` };
+  const fold = foldMetaLog(log.events);
+  const d = honouredLoopEnd({ fold, attemptId });
+  if (!d) return { ok: false, error: `${attemptId} is not an honoured stop/structural decision in this log, or a human overrode it` };
+  const dSid = d.fingerprint?.sid ?? null;
+  if (sid && dSid && sid !== dSid) return { ok: false, error: `--run ${sid} does not match the decision's session ${dSid}` };
+  const lastRound = d.round - 1;
+  const resultPath = path.join(path.dirname(logFile), `${dSid || 'session'}-r${lastRound}-result.json`);
+  let findings = null; let readError = null;
+  try { findings = readResult(resultPath)?.findings; } catch (err) { readError = err?.code || err?.message; }
+  if (findings != null && !Array.isArray(findings)) { readError = 'result has no findings array'; findings = null; }
+  const candidates = d.verdict?.action === 'stop' ? d.inventory : (d.inventory || []).filter((i) => i.severity !== 'HIGH');
+  const premiseOf = new Map(d.verdict?.action === 'stop' ? d.verdict.items.map((i) => [i.topicId, `${i.kind}: ${i.premise}`]) : []);
+  const why = (topicId) => (d.verdict?.action === 'stop' ? `meta-review stop (${premiseOf.get(topicId) ?? 'no premise'})` : `meta-review structural: ${d.verdict?.cause ?? ''}`);
+  const entries = []; const skipped = [];
+  for (const c of candidates || []) {
+    const f = Array.isArray(findings) ? findings.find((x) => x?.id === c.findingId && topicOf(x) === c.topicId) : null;
+    if (!f) { skipped.push({ id: c.topicId, reason: findings ? `finding ${c.findingId} not found in ${path.basename(resultPath)}` : `round result unreadable (${readError ?? 'no findings'})` }); continue; }
+    entries.push({
+      topicId: c.topicId, semanticHash: f._hash ?? c.topicId, ruling: 'defer', severity: f.severity, category: f.category, section: f.section,
+      detailSnapshot: f.detail ?? '', affectedFiles: Array.isArray(f.affectedFiles) && f.affectedFiles.length ? f.affectedFiles : (f._primaryFile ? [f._primaryFile] : []),
+      affectedPrinciples: f.principle ? [f.principle] : [], pass: f._pass || 'meta-review',
+      rulingRationale: `${why(c.topicId)}. Decision ${attemptId} by ${d.model ?? 'the meta-reviewer'}, honoured by the deterministic guard (${d.guard?.reason ?? 'ok'}); the audit loop stopped at round ${d.round} with this topic open in round ${lastRound}. Revisit in the next change that touches these files, or override: the decision log records who and why.`.slice(0, 3900),
+    });
+  }
+  return { ok: true, entries, skipped, decision: d };
 }

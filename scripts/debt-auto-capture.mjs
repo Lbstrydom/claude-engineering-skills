@@ -30,6 +30,9 @@
  *   node scripts/debt-auto-capture.mjs --ledger <path> --run <SID>
  *   node scripts/debt-auto-capture.mjs --final-review <gemini-result.json> [--dry-run] [--run <SID>]
  *
+ * `--meta-decision <log> --decision <attemptId>` (instead of `--ledger`) captures the open-topic inventory an HONOURED
+ * meta-review stop/structural closed (docs/plans/meta-step-back-at-cap.md §2.7); anything else is refused, writing nothing.
+ *
  * `--final-review` (instead of `--ledger`) captures every NON-release-blocking
  * `new_findings` entry of a final-review (`gemini-review.mjs --out`) result as
  * debt — the approved-with-debt close of the final gate. Release-blocking
@@ -68,6 +71,7 @@ import { generateRepoProfile } from './lib/context.mjs';
 import { finishAndExit } from './lib/cli-io.mjs';
 import { compactRunKey } from './lib/run-key.mjs';
 import { finalReviewToLedgerEntries } from './lib/final-review/round-gate.mjs';
+import { metaDecisionToLedgerEntries, appendMetaEvent } from './lib/audit/meta-review.mjs';
 import { manualToLedgerEntries } from './lib/debt-manual-entry.mjs';
 // Side-effecting import — populates the process-local writer registry
 // (`debt.entries` among others) the same way the orchestrator does. Without
@@ -81,6 +85,8 @@ function parseArgs(argv) {
   const args = {
     ledger: null,
     finalReview: null,          // gemini-review --out result JSON (alternative to --ledger)
+    metaDecision: null,         // a meta-review decision log (.jsonl) — with --decision <attemptId> (alternative to --ledger)
+    decision: null,
     add: false,                 // --add: ONE hand-authored entry (alternative to --ledger/--final-review)
     manual: {},                 // --severity/--category/--file/--line/--detail/--rationale/--principle for --add
     reason: 'out-of-scope',     // default deferredReason
@@ -102,6 +108,8 @@ function parseArgs(argv) {
     switch (argv[i]) {
       case '--ledger':          args.ledger         = argv[++i]; break;
       case '--final-review':    args.finalReview    = argv[++i]; break;
+      case '--meta-decision':   args.metaDecision   = argv[++i]; break;
+      case '--decision':        args.decision       = argv[++i]; break;
       case '--add':             args.add            = true;      break;
       case '--severity': case '--category': case '--file': case '--line': case '--detail': case '--rationale': case '--principle':
         args.manual[argv[i].slice(2)] = argv[++i]; break;
@@ -128,6 +136,7 @@ function usage() {
   console.log(`
 Usage: node scripts/debt-auto-capture.mjs --ledger <path> [options]
        node scripts/debt-auto-capture.mjs --final-review <gemini-result.json> [options]
+       node scripts/debt-auto-capture.mjs --meta-decision <sid-meta-review.jsonl> --decision <attemptId> --run <sid>
        node scripts/debt-auto-capture.mjs --add --severity HIGH|MEDIUM|LOW --category <c> --file <path> --detail <text> --rationale <text> [--line N] [--principle <p>] [options]
 
 Reads an adjudication ledger and captures all ruling=defer entries to
@@ -138,6 +147,8 @@ Options:
   --final-review <path>  A gemini-review --out result: capture every NON-release-
                          blocking new_finding as debt (approved-with-debt close).
                          Release-blocking findings are listed, never captured.
+  --meta-decision <log>  A meta-review decision log: capture the open topics an
+                         HONOURED stop/structural closed (needs --decision <id>).
   --add                  File ONE hand-authored debt entry (no ledger needed). Same
                          redaction, schema validation, local write and cloud sync as
                          a ledger capture; --severity --category --file --detail
@@ -662,15 +673,15 @@ async function main() {
 
   if (args.help) { usage(); return; }
 
-  if ([args.ledger, args.finalReview, args.add].filter(Boolean).length !== 1) {
-    console.error('Error: exactly one of --ledger <path>, --final-review <path> or --add is required');
+  if ([args.ledger, args.finalReview, args.metaDecision, args.add].filter(Boolean).length !== 1) {
+    console.error('Error: exactly one of --ledger <path>, --final-review <path>, --meta-decision <log> or --add is required');
     usage();
     await finishAndExit(1); // usage() writes to stdout: a piped stdout must drain before the exit
     return;
   }
 
   // --add has no input file; the trail check only needs the directory the debt ledger lives in.
-  const ledgerPath = args.add ? path.resolve(path.dirname(DEFAULT_DEBT_LEDGER_PATH), 'manual-add') : path.resolve(args.ledger ?? args.finalReview);
+  const ledgerPath = args.add ? path.resolve(path.dirname(DEFAULT_DEBT_LEDGER_PATH), 'manual-add') : path.resolve(args.ledger ?? args.finalReview ?? args.metaDecision);
   if (!args.add && !fs.existsSync(ledgerPath)) {
     console.error(`Error: ${args.finalReview ? 'final-review result' : 'ledger'} not found: ${ledgerPath}`);
     process.exit(1);
@@ -688,7 +699,15 @@ async function main() {
   }
 
   let adjLedger;
-  if (args.add) {
+  if (args.metaDecision) {
+    // An honoured meta-review stop/structural: the inventory it closed, re-read from the round's own result, through the
+    // SAME build/persist path below (there is no second debt writer). Refused, writing nothing, for anything else.
+    const proj = metaDecisionToLedgerEntries({ logFile: ledgerPath, attemptId: args.decision, sid: args.run });
+    if (!proj.ok) { console.error(`Error: ${proj.error}`); await finishAndExit(1); return; }
+    for (const sk of proj.skipped) process.stderr.write(`  [auto-capture] Skipped ${sk.id}: ${sk.reason}
+`);
+    adjLedger = { entries: proj.entries, skipped: proj.skipped };
+  } else if (args.add) {
     const manual = manualToLedgerEntries(args.manual);
     if (!manual.ok) { console.error(`Error: ${manual.error}`); await finishAndExit(1); return; }
     adjLedger = { entries: manual.entries };
@@ -764,6 +783,15 @@ async function main() {
   const trail = checkCaptureTrail(ledgerPath);
 
   printSummary({ built, skipped, result, reason, sid, cloudSync, trail, sameFileBatches, templateBatches });
+  if (args.metaDecision) {
+    // The decision log records the handoff either way, so "stopped" is never read as "captured" when it was not.
+    const total = deferredEntries.length + (adjLedger.skipped?.length ?? 0);
+    const captured = total - skipped.length - result.rejected.length;
+    const ev = appendMetaEvent(ledgerPath, { event: 'debt-capture', attemptId: args.decision, at: new Date().toISOString(), captured, total, run: sid });
+    process.stderr.write(`  [auto-capture] meta-review handoff: captured ${captured} of ${total}${ev.ok ? '' : ` (log event NOT written: ${ev.reason})`}\n`);
+    // The decision log must show the handoff, or "stopped" reads as "captured". Re-running is safe: capture is idempotent.
+    if (!ev.ok) { console.error('INCOMPLETE HANDOFF: the debt-capture event was not recorded in the decision log; re-run the same command.'); await finishAndExit(1); return; }
+  }
 
   await runSupersedeIfRequested(args);
 

@@ -299,12 +299,11 @@ Stability uses `_hash` for exact cross-round matching:
 | Summary line ends `— not convergence evidence` | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Details: `references/convergence-report.md` §not-convergence remedies |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
-| Round 6, not stable | Run the structural-or-stop card, present it to the operator, then REQUIRED Step 7 |
+| Round 6, not stable | Run round 7: the meta-review decides; then REQUIRED Step 7 |
 
 **Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`) with
-a structural-or-stop card: a stop for a human call, never a retry. At round 6 without convergence run
-`node scripts/audit-structural-card.mjs --sid "$SID" --mode code --plan "$PLAN_FILE"` and present the card to the
-operator (STOP / STRUCTURAL / CONTINUE); continuing is their call (`references/round-cap-and-structural-card.md`).
+the card, never a retry, unless the **meta-review** (`references/meta-review.md`, also round 4 on a fired signal)
+admits it; on `META_*` run the printed debt command.
 
 **Step 7 (Gemini final review) is MANDATORY** after the last audit round,
 regardless of convergence. No-key degradation ladder (`references/gemini-gate.md`
@@ -694,6 +693,7 @@ situations — read them only when the trigger applies.
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
 | `references/convergence-report.md` | Step 6–7 detail — census bookkeeping, example report card, source-repo steps, cross-surface clause, RUN_ID history. | Step 6 — printing a report with a non-`completed` row, OR Step 7 — `RUN_ID` is empty or `FINAL_REVIEW_SHADOW` is set. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |
 | `references/round-cap-and-structural-card.md` | Enforced GPT round cap (plan 3/5, code 6/8), exit 4 CAPPED, and the structural-or-stop card read at the cap. | A round exited 4, OR the audit reached round 6 without converging. |
 | `references/resume.md` | --resume - finish an INCOMPLETE round by replaying the passes that completed, so a 429 or timeout does not re-pay them. | A round ended INCOMPLETE from 429/timeout passes. |
 | `references/contested-verification.md` | Quoted-line verification of contested findings: flow, item states, exit codes. | Step 3 - a finding is disputed or re-raised after a dismissal. |
