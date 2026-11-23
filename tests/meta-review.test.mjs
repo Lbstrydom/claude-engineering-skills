@@ -14,7 +14,7 @@ import { topicOf } from '../scripts/lib/audit/cap-productivity.mjs';
 import {
   runMetaReview, guardMetaDecision, openInventory, ruledBefore, metaTriggerFor, isMetaReviewOptedOut,
   fingerprintOf, attemptIdFor, metaLogPath, readMetaLog, appendMetaEvent, foldMetaLog, admissionFor,
-  honouredLoopEnd, spendOf, projectMetaDecisionForStore, appendMetaOverride, META_REVIEW_SESSION_BUDGET, renderMetaLog,
+  honouredLoopEnd, spendOf, projectMetaDecisionForStore, appendMetaOverride, META_REVIEW_SESSION_BUDGET, renderMetaLog, reserveUnderSessionLock,
 } from '../scripts/lib/audit/meta-review.mjs';
 import { buildStepBackPack, parseMetaReviewOutput, MetaReviewSchema } from '../scripts/lib/audit/step-back.mjs';
 import { createMetaReviewProvider, createStepBackProvider } from '../scripts/lib/audit/step-back-provider.mjs';
@@ -366,6 +366,33 @@ describe('R1 fixes', () => {
     assert.equal(r.decision.state, 'invalid');
     const line = fs.readFileSync(metaLogPath(dir, 'audit-plan-1-1'), 'utf8');
     assert.doesNotMatch(line, /sk-proj-abcdef/);
+  });
+});
+
+describe('R2 fixes', () => {
+  test('REGRESSION (R2 H1): the budget is checked inside a session lock — a slot taken meanwhile is seen', () => {
+    const file = metaLogPath(dir, 's');
+    const first = reserveUnderSessionLock({ auditDir: dir, sid: 's', file, budget: 1, event: { event: 'reserve', attemptId: 'a' } });
+    assert.equal(first.ok, true);
+    const second = reserveUnderSessionLock({ auditDir: dir, sid: 's', file, budget: 1, event: { event: 'reserve', attemptId: 'b' } });
+    assert.equal(second.ok, false); assert.equal(second.budget, true);
+  });
+  test('a held session lock fails closed (no reservation, no call)', () => {
+    fs.writeFileSync(path.join(dir, 's.meta-budget.lock'), '');
+    const r = reserveUnderSessionLock({ auditDir: dir, sid: 's', file: metaLogPath(dir, 's'), budget: 3, event: { event: 'reserve', attemptId: 'a' }, tries: 2 });
+    assert.equal(r.ok, false); assert.match(r.reason, /held/);
+  });
+  test('REGRESSION (R2 H2): a changed ledger ruling at the same round decides afresh', async () => {
+    const p = provider(stopAll());
+    await run({}, deps({ prov: p }));
+    await run({}, deps({ prov: p, ledger: [ruledEarlier(TH), ruledAt3(TH, 'dismissed'), ruledAt3(TM1), ruledAt3(TM2)] }));
+    assert.equal(p.calls.length, 2);
+  });
+  test('REGRESSION (R2 H3): an overridden decision is not re-applied on reuse', async () => {
+    const r = await run({}, deps({ prov: provider(stopAll()) }));
+    await appendMetaOverride({ auditDir: dir, sid: 'audit-plan-1-1', attemptId: r.decision.attemptId, kind: 'override', by: 'louis', reason: 'continuing past the cap deliberately', source: 'past-cap' }, { record: () => 'k', flush: async () => {} });
+    const again = await run({}, deps({ prov: provider(stopAll()) }));
+    assert.equal(again.overridden, true); assert.equal(again.honoured, false); assert.equal(again.effect, 'human-card');
   });
 });
 

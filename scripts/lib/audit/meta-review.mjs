@@ -329,6 +329,41 @@ export async function appendMetaOverride({ auditDir, sid, attemptId, kind, by, r
   return { ok: true, recorded: rec.recorded, recordReason: rec.reason };
 }
 
+/** sha256 of what the guard reads: each round's finding ids/topics/severities and each ledger ruling. Order-insensitive. */
+export function decisionInputsDigest({ rounds, ledgerEntries }) {
+  const r = (rounds || []).map((x) => `${x.round}:${(x.findings || []).map((f) => `${f.id}|${topicOf(f)}|${f.severity}|${f._priorRuling?.topicId ?? ''}`).sort().join(',')}`).sort();
+  const l = (ledgerEntries || []).map((e) => `${e.topicId}|${e.adjudicationOutcome}|${e.resolvedRound}`).sort();
+  return crypto.createHash('sha256').update(JSON.stringify([r, l])).digest('hex');
+}
+
+/**
+ * Session-scoped budget reservation: take an exclusive lock file, re-read the log, check the budget, append the
+ * reserve event, release. A held lock is retried briefly (another reservation is a sub-millisecond append), then
+ * fails closed. Synchronous on purpose: no await between the check and the append.
+ * @returns {{ok: true, sentCount: number}|{ok: false, budget?: boolean, sentCount?: number, reason?: string}}
+ */
+export function reserveUnderSessionLock({ auditDir, sid, file, budget, event, append = appendMetaEvent, tries = 50 }) {
+  const lock = path.join(auditDir, `${sid || 'session'}.meta-budget.lock`);
+  let fd = null;
+  for (let i = 0; i < tries && fd == null; i++) {
+    try { fd = fs.openSync(lock, 'wx'); } catch (err) {
+      if (err?.code !== 'EEXIST') return { ok: false, reason: `budget lock (${err?.code || err?.message})` };
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+  if (fd == null) return { ok: false, reason: `budget lock ${path.basename(lock)} held (a crashed invocation leaves it: delete it after checking)` };
+  try {
+    const log = readMetaLog(file);
+    if (log.malformed) return { ok: false, reason: `log malformed (${log.malformed})` };
+    const sentCount = foldMetaLog(log.events).sentCount;
+    if (sentCount >= budget) return { ok: false, budget: true, sentCount };
+    const out = append(file, event);
+    return out.ok ? { ok: true, sentCount: sentCount + 1 } : { ok: false, reason: out.reason };
+  } finally {
+    try { fs.closeSync(fd); fs.rmSync(lock, { force: true }); } catch { /* a leftover lock fails closed next time */ }
+  }
+}
+
 // ── the runner ───────────────────────────────────────────────────────────────────────────────────────
 
 function packHeader({ mode, trigger, round, caps, signalsLine, productivityLine, inventory }) {
@@ -370,20 +405,25 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   const { rounds, unmeasured } = (deps.readRounds || readRoundsWithSha)({ sid, auditDir, upTo: lastRound });
   if (!rounds || !rounds.some((r) => r.round === lastRound)) return notRun(rounds ? `no result for round ${lastRound} (nothing to review)` : (unmeasured || 'no prior rounds'));
 
+  const ledgerAll = (deps.readLedger || readLedgerEntries)({ sid, auditDir });
+  const ledgerEntries = (ledgerAll.entries || []).filter(asOf(lastRound));
   const fingerprint = fingerprintOf({ argv, mode, sid });
   const digest = fingerprintDigest(fingerprint);
-  const evidence = (deps.evidence || evidenceOf)({ argv, cwd });
+  // Everything the GUARD reads is evidence too: the round results and the ledger rulings, not only plan / HEAD / diff.
+  const evidence = { ...(deps.evidence || evidenceOf)({ argv, cwd }), decisionInputsSha256: decisionInputsDigest({ rounds, ledgerEntries }) };
   const attemptId = attemptIdFor({ sid, round, trigger, fingerprint, evidence });
   const file = metaLogPath(auditDir, sid);
   const log = readMetaLog(file);
   if (log.malformed) return notRun(`decision log ${path.basename(file)} is malformed (${log.malformed}); the human path applies`);
   const fold = foldMetaLog(log.events);
   const existing = fold.decisions.get(attemptId);
-  if (existing && !isRetryable(existing)) return { ran: true, reused: true, persisted: true, decision: existing, effect: existing.guard.effect, honoured: !!existing.guard.honoured, lines: [`  [meta-review] reusing decision ${attemptId}: ${existing.guard.effect}${existing.guard.honoured ? '' : ' (downgraded)'}`] };
+  if (existing && !isRetryable(existing)) {
+    // An overridden decision is never re-applied: the human's call stands (the gate records and honours the override).
+    if (fold.overridden.has(attemptId)) return { ran: true, reused: true, persisted: true, overridden: true, decision: existing, effect: human, honoured: false, lines: [`  [meta-review] decision ${attemptId} was overridden by a human: the human path applies`] };
+    return { ran: true, reused: true, persisted: true, decision: existing, effect: existing.guard.effect, honoured: !!existing.guard.honoured, lines: [`  [meta-review] reusing decision ${attemptId}: ${existing.guard.effect}${existing.guard.honoured ? '' : ' (downgraded)'}`] };
+  }
 
   // Signals (code audits only) at the checkpoint the trigger reads.
-  const ledgerAll = (deps.readLedger || readLedgerEntries)({ sid, auditDir });
-  const ledgerEntries = (ledgerAll.entries || []).filter(asOf(lastRound));
   let signals = null; let signalsLine = null;
   if (mode === 'code') {
     try {
@@ -453,9 +493,15 @@ export async function runMetaReview({ trigger, sid, mode, round, caps, argv, aud
   try { fs.mkdirSync(auditDir, { recursive: true }); fs.closeSync(fs.openSync(claimPath, 'wx')); claimFile = claimPath; } catch (err) {
     return notRun(err?.code === 'EEXIST' ? `attempt ${attemptId} is claimed by another invocation (or a crashed one: delete ${path.basename(claimPath)} after checking); the human path applies` : `could not claim the attempt (${err?.code || err?.message})`);
   }
-  const reserved = (deps.append || appendMetaEvent)(file, { event: 'reserve', attemptId, at: base.at, arm: sel.arm });
-  if (!reserved.ok) { releaseClaim(); return notRun(`could not reserve the reviewer call (${reserved.reason}); nothing was sent`); }
-  process.stderr.write(`  [meta-review] calling ${sel.arm} (${sel.provider.model}): attempt ${fold.sentCount + 1} of budget ${budget}\n`);
+  // The budget check and the reservation run under ONE session-scoped lock, re-reading the log inside it, so two
+  // concurrent attempts with different evidence cannot both take the last slot.
+  const reservation = reserveUnderSessionLock({ auditDir, sid, file, budget, event: { event: 'reserve', attemptId, at: base.at, arm: sel.arm }, append: deps.append || appendMetaEvent });
+  if (!reservation.ok) {
+    releaseClaim();
+    if (reservation.budget) return unavailable(`session-budget: ${reservation.sentCount} of ${budget} reviewer calls already made for this session`);
+    return notRun(`could not reserve the reviewer call (${reservation.reason}); nothing was sent`);
+  }
+  process.stderr.write(`  [meta-review] calling ${sel.arm} (${sel.provider.model}): attempt ${reservation.sentCount} of budget ${budget}\n`);
 
   const header = packHeader({ mode, trigger, round, caps, signalsLine, productivityLine: renderCapProductivity(productivity, { round, caps }), inventory });
   const user = `${header}\n\n${pack.text}`;
