@@ -330,7 +330,7 @@ session yourself? Name the tool.`). The answer decides how `fleet` chips are tol
 
 ## 3. Repeat for the other harnesses
 
-At the start of H2 and H3 switch the capture word (§2, first block) and open a new chat in that harness. Run §2.1 to §2.8
+At the start of H2 and H3 clear the files the previous harness made (`Remove-Item -LiteralPath scratch -Recurse -Force -ErrorAction SilentlyContinue`; it is a recorded path, so this is safe), switch the capture word (§2, first block) and open a new chat in that harness. Run §2.1 to §2.8
 again. Do not close VS Code between harnesses (the env variable from §1.4 must stay in force).
 
 ## 4. Fleet smoke test (hosts.md two-session test)
