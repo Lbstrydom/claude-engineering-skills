@@ -19,9 +19,11 @@
  *
  * @module scripts/lib/audit/step-back-provider
  */
-import { resolveModel } from '../model-resolver.mjs';
+import { resolveModel, modelFamily } from '../model-resolver.mjs';
 import { normalizeGeminiUsage, isCount } from '../gemini-usage.mjs';
 import { claudeAvailability, createAnthropicClient } from '../anthropic-client.mjs';
+import { priceFor } from '../model-pricing.mjs';
+import { resolveProviderAvailability } from '../provider-availability.mjs';
 
 export const STEP_BACK_ARM_MODELS = Object.freeze({ same: 'latest-gpt', different: 'latest-pro', higher: 'latest-opus' });
 export const STEP_BACK_MAX_OUTPUT_TOKENS = 4000;
@@ -29,6 +31,24 @@ export const STEP_BACK_MAX_OUTPUT_TOKENS = 4000;
 export const STEP_BACK_GEMINI_THINKING_BUDGET = 3000;
 /** maxOutputTokens for Gemini covers the thinking budget PLUS the answer, so it is also the real output ceiling. */
 export const STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS = STEP_BACK_GEMINI_THINKING_BUDGET + STEP_BACK_MAX_OUTPUT_TOKENS;
+
+/** Cost of a metered call in USD, or null when the model is unpriced (tier-aware: input tokens are forwarded). */
+export function estimateCostUsd({ modelId, inputTokens, outputTokens }) {
+  const rate = priceFor(modelId, { inputTokens });
+  return rate ? (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000 : null;
+}
+
+/**
+ * Mark a call SENT just before the SDK request is awaited: a failure while building the client is `sent: false`
+ * (nothing billed), a failure after it is `sent: true` (it may have been). The meta-review's spend rule keys on it.
+ */
+async function sending(fn) {
+  const state = { sent: false };
+  try { return { ...(await fn(() => { state.sent = true; })), sent: true }; } catch (err) {
+    if (err && typeof err === 'object') err.sent = state.sent;
+    throw err;
+  }
+}
 
 /** Usage with BOTH counts present and numeric, else `usageMissing: true` (the call is then charged its upper bound, never $0). */
 function usageOf(inTok, outTok) {
@@ -41,16 +61,18 @@ function usageOf(inTok, outTok) {
  * @param {{client?: object, resolve?: Function, createClient?: Function, sdkAvailability?: () => {available: boolean, error: string|null}}} [seams]
  * @returns {{model: string, sentinel: string, call: Function, outputCeilingTokens: number, unmeasuredReason?: string}}
  */
-export function createStepBackProvider(arm = 'same', { client = null, resolve = resolveModel, createClient = createAnthropicClient, sdkAvailability = () => claudeAvailability('sdk') } = {}) {
+export function createStepBackProvider(arm = 'same', { client = null, resolve = resolveModel, createClient = createAnthropicClient, sdkAvailability = () => claudeAvailability('sdk'), timeoutMs = null } = {}) {
+  const signal = () => (Number.isInteger(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
   const sentinel = STEP_BACK_ARM_MODELS[arm];
   if (!sentinel) throw new Error(`createStepBackProvider: unknown arm "${arm}" (same|different|higher)`);
   const model = resolve(sentinel);
   if (arm === 'same') {
     return {
       model, sentinel, outputCeilingTokens: STEP_BACK_MAX_OUTPUT_TOKENS,
-      call: async ({ system, user }) => {
+      call: ({ system, user }) => sending(async (markSent) => {
         const c = client || await (await import('../openai-client.mjs')).createOpenAIClient({ purpose: 'gpt' });
-        const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS });
+        markSent();
+        const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS }, { signal: signal() });
         const truncated = r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens';
         // Any other non-success response is an INSTRUMENT failure, never parsed as a model decision.
         let failure = null;
@@ -58,7 +80,7 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
         else if (r.status === 'incomplete' && !truncated) failure = `OpenAI incomplete: ${r.incomplete_details?.reason ?? 'unknown reason'}`;
         else if (r.status && r.status !== 'completed' && r.status !== 'incomplete') failure = `OpenAI status ${r.status}${r.error?.message ? `: ${r.error.message}` : ''}`;
         return { text: r.output_text ?? '', truncated, failure, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
-      },
+      }),
     };
   }
   if (arm === 'higher') {
@@ -71,23 +93,25 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
     }
     return {
       ...base,
-      call: async ({ system, user }) => {
+      call: ({ system, user }) => sending(async (markSent) => {
         const c = client || await createClient({ backend: 'sdk' });
-        const r = await c.messages.create({ model, max_tokens: STEP_BACK_MAX_OUTPUT_TOKENS, system, messages: [{ role: 'user', content: user }] });
+        markSent();
+        const r = await c.messages.create({ model, max_tokens: STEP_BACK_MAX_OUTPUT_TOKENS, system, messages: [{ role: 'user', content: user }] }, { signal: signal() });
         const text = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
         const truncated = r.stop_reason === 'max_tokens';
         const failure = truncated || r.stop_reason === 'end_turn' ? null : `Anthropic stop_reason ${r.stop_reason ?? 'absent'} (not end_turn)`;
         return { text, truncated, failure, usage: usageOf(r.usage?.input_tokens, r.usage?.output_tokens) };
-      },
+      }),
     };
   }
   return {
     model, sentinel, outputCeilingTokens: STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS,
-    call: async ({ system, user }) => {
+    call: ({ system, user }) => sending(async (markSent) => {
       const ai = client || await (await import('../llm-wrappers.mjs')).getGeminiClient();
       if (!ai) throw new Error('no Gemini route (GEMINI_API_KEY unset)');
+      markSent();
       const r = await ai.models.generateContent({ model, contents: user, config: {
-        systemInstruction: system, maxOutputTokens: STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS, responseMimeType: 'application/json',
+        systemInstruction: system, maxOutputTokens: STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS, responseMimeType: 'application/json', abortSignal: signal(),
         thinkingConfig: { thinkingBudget: STEP_BACK_GEMINI_THINKING_BUDGET, includeThoughts: false },
       } });
       const u = normalizeGeminiUsage(r.usageMetadata);
@@ -99,6 +123,46 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
       else if (fin === undefined || fin === null) failure = 'no-completion-state: Gemini candidate carries no finishReason';
       else if (fin !== 'STOP' && fin !== 'MAX_TOKENS') failure = `Gemini finishReason ${fin}`;
       return { text: r.text ?? '', truncated, failure, usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, usageMissing: u.usageMissing } };
-    },
+    }),
   };
+}
+
+// ── the automatic meta-review's reviewer (docs/plans/meta-step-back-at-cap.md §2.2) ──────────────────
+
+/** Stronger first, then a different vendor; never `same` (the auditor's own family). A constant, not config. */
+export const META_REVIEW_ARM_CHAIN = Object.freeze(['higher', 'different']);
+/** One attempt is one call with this deadline; there are no retries. */
+export const META_REVIEW_TIMEOUT_MS = 120_000;
+
+/**
+ * Pick the first arm of the chain whose ROUTE exists and whose vendor family differs from the auditor's.
+ * `higher` is gated on `claudeAvailability('sdk')` (inside createStepBackProvider: never a cli fallback),
+ * `different` on `resolveProviderAvailability('gemini')`. No client is constructed here.
+ * @param {{auditorModel?: string|null}} a
+ * @param {{family?: Function, resolve?: Function, geminiAvailability?: Function, factory?: Function}} [seams]
+ * @returns {{ok: true, provider: object, arm: string, family: string|null, auditorFamily: string|null, skipped: object[]}
+ *   | {ok: false, reason: string, auditorFamily: string|null, skipped: object[]}}
+ */
+export function createMetaReviewProvider({ auditorModel = null } = {}, {
+  family = modelFamily, resolve = resolveModel, geminiAvailability = () => resolveProviderAvailability('gemini'),
+  factory = (arm) => createStepBackProvider(arm, { timeoutMs: META_REVIEW_TIMEOUT_MS }),
+} = {}) {
+  const auditorFamily = auditorModel ? family(auditorModel) : null;
+  // Independence cannot be verified against an auditor whose vendor is unknown: no automatic reviewer (fail closed).
+  if (!auditorFamily) return { ok: false, reason: `auditor-family-unknown (auditor model ${auditorModel ? `"${auditorModel}" has no vendor family` : 'not given'})`, auditorFamily: null, skipped: [] };
+  const skipped = [];
+  let independent = false;
+  for (const arm of META_REVIEW_ARM_CHAIN) {
+    const fam = family(resolve(STEP_BACK_ARM_MODELS[arm]));
+    if (!fam || fam === auditorFamily) { skipped.push({ arm, reason: fam ? `same vendor family as the auditor (${fam})` : 'reviewer vendor family unknown' }); continue; }
+    independent = true;
+    if (arm === 'different') {
+      const g = geminiAvailability();
+      if (!g.available) { skipped.push({ arm, reason: g.reason || 'no Gemini route' }); continue; }
+    }
+    const provider = factory(arm);
+    if (provider.unmeasuredReason) { skipped.push({ arm, reason: provider.unmeasuredReason }); continue; }
+    return { ok: true, provider, arm, family: fam, auditorFamily, skipped };
+  }
+  return { ok: false, reason: independent ? 'no route for any independent reviewer' : 'no-independent-route', auditorFamily, skipped };
 }
