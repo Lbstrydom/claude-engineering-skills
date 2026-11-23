@@ -664,6 +664,11 @@ function wrapSdkClient(rawClient, redactor) {
           const { timeoutMs, ...rest } = opts;
           opts = { ...rest, timeout: timeoutMs };
         }
+        // Budget seam (plan §2.6). llm-budget.mjs is imported ONLY when AUDIT_BUDGET_LEDGER is set: its import chain loads
+        // the model resolver (and with it the local env), which would otherwise change this client's ambient credentials.
+        if (process.env.AUDIT_BUDGET_LEDGER) {
+          return import('./llm-budget.mjs').then((m) => { const metered = m.budgetedMessagesCreate(rawClient, body, opts); return metered === undefined ? rawClient.messages.create(body, opts) : metered; });
+        }
         return rawClient.messages.create(body, opts);
       },
     },
@@ -771,6 +776,9 @@ function createCliAdapter(opts = {}) {
         const verdict = cliFaithfulnessVerdict(params);
         if (verdict) throw new Error(verdict.message);
 
+        // Budget seam (plan §2.6): claude -p cannot enforce max_tokens, so with AUDIT_BUDGET_LEDGER set it is refused.
+        if (process.env.AUDIT_BUDGET_LEDGER) (await import('./llm-budget.mjs')).assertCliAllowedUnderBudget();
+
         const { model, max_tokens, system, messages } = params;
 
         assertOneShotTextMessages(messages);
@@ -794,21 +802,12 @@ function createCliAdapter(opts = {}) {
         // Prompt goes via stdin — avoids shell-escaping the user content
         // when `shell: true` is required (Windows .cmd / .bat resolution).
         //
-        // `--tools ''` disables ALL tools. This backend's contract is a SINGLE-
-        // SHOT TEXT completion (assertOneShotTextMessages), so tool access
-        // contradicts it: given a large/complex prompt an agentic `claude -p`
-        // may choose `tool_use`, burn its `--max-turns` on the tool call, and
-        // exit `error_max_turns` WITHOUT ever emitting the answer. Every current
-        // caller (final review, summaries, prompt refinement, audits) wants a
-        // completion, not an agent — disabling tools makes the one-shot contract
-        // hold and is strictly safer for all of them.
-        //
-        // `--max-turns 6` (not 1): with tools OFF there is no agentic loop to
-        // bound, but a large-prompt completion empirically still needs >1
-        // internal turn — `--max-turns 1` made big audit prompts exit
-        // `error_max_turns` (num_turns 2) with no answer. 6 is comfortable
-        // headroom; the model still returns in a single visible turn, so this
-        // costs nothing extra in the normal case while fixing the false failure.
+        // `--tools ''` disables ALL tools: this backend's contract is a single-shot text completion
+        // (assertOneShotTextMessages), and an agentic `claude -p` given a big prompt may burn its turns on a
+        // `tool_use` and exit `error_max_turns` without ever answering.
+        // `--max-turns 6` (not 1): even with tools off a large-prompt completion empirically needs >1 internal
+        // turn (`--max-turns 1` made big audit prompts exit `error_max_turns`, num_turns 2); the model still
+        // returns in one visible turn, so the headroom costs nothing.
         const args = ['-p', '--output-format', 'json', '--max-turns', '6', '--tools', ''];
         if (effectiveSystem) args.push('--system-prompt', effectiveSystem);
         if (model) args.push('--model', model);

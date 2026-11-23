@@ -23,6 +23,7 @@ import { resolveModel, modelFamily } from '../model-resolver.mjs';
 import { normalizeGeminiUsage, isCount } from '../gemini-usage.mjs';
 import { claudeAvailability, createAnthropicClient } from '../anthropic-client.mjs';
 import { priceFor } from '../model-pricing.mjs';
+import { withBudget } from '../llm-budget.mjs';
 import { resolveProviderAvailability } from '../provider-availability.mjs';
 
 export const STEP_BACK_ARM_MODELS = Object.freeze({ same: 'latest-gpt', different: 'latest-pro', higher: 'latest-opus' });
@@ -74,7 +75,9 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
       call: ({ system, user }) => sending(async (markSent) => {
         const c = client || await (await import('../openai-client.mjs')).createOpenAIClient({ purpose: 'gpt' });
         markSent();
-        const r = await c.responses.create({ model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS }, reqOpts());
+        const body = { model, instructions: system, input: user, max_output_tokens: STEP_BACK_MAX_OUTPUT_TOKENS };
+        const r = await withBudget({ seam: 'step-back-provider.responses.create', provider: 'openai', model, body, outputCap: STEP_BACK_MAX_OUTPUT_TOKENS },
+          () => c.responses.create(body, reqOpts()), (x) => ({ usage: x?.usage, modelServed: x?.model }));
         const truncated = r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens';
         // Any other non-success response is an INSTRUMENT failure, never parsed as a model decision.
         let failure = null;
@@ -112,10 +115,13 @@ export function createStepBackProvider(arm = 'same', { client = null, resolve = 
       const ai = client || await (await import('../llm-wrappers.mjs')).getGeminiClient();
       if (!ai) throw new Error('no Gemini route (GEMINI_API_KEY unset)');
       markSent();
-      const r = await ai.models.generateContent({ model, contents: user, config: {
+      const req = { model, contents: user, config: {
         systemInstruction: system, maxOutputTokens: STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS, responseMimeType: 'application/json', abortSignal: signal(),
         thinkingConfig: { thinkingBudget: STEP_BACK_GEMINI_THINKING_BUDGET, includeThoughts: false },
-      } });
+      } };
+      // The reserved output cap includes the thinking budget (reasoning counts as output).
+      const r = await withBudget({ seam: 'step-back-provider.generateContent', provider: 'google', model, body: { model, contents: user, system }, outputCap: STEP_BACK_GEMINI_MAX_OUTPUT_TOKENS + STEP_BACK_GEMINI_THINKING_BUDGET },
+        () => ai.models.generateContent(req), (x) => { const u = normalizeGeminiUsage(x?.usageMetadata); return { usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, usageMissing: u.usageMissing }, modelServed: model }; });
       const u = normalizeGeminiUsage(r.usageMetadata);
       const fin = r.candidates?.[0]?.finishReason;
       const truncated = fin === 'MAX_TOKENS';

@@ -724,7 +724,7 @@ export async function runPillsInParallel(contracts, { concurrency, fork: forkFn 
  */
 export const ACKNOWLEDGED_COMPUTED_IMPORTS = Object.freeze({
   'scripts/lib/test-tier.mjs': { calls: 1, fingerprint: 'f30f00b5b523', reason: 'the words "dynamic import" in comments and messages, no dynamic import call' },
-  'scripts/lib/anthropic-client.mjs': { calls: 1, fingerprint: '3d87d161e646', reason: 'optional provider SDK packages (bare specifiers, so package.json is the input, and it is one)' },
+  'scripts/lib/anthropic-client.mjs': { calls: 1, fingerprint: '48919975554f', reason: 'optional provider SDK packages (bare specifiers, so package.json is the input, and it is one)' },
   'install.mjs': { calls: 1, fingerprint: 'be7abfda9f2a', targets: ['scripts/lib/install/legacy-surfaces.mjs'], reason: 'loads scripts/lib/install/legacy-surfaces.mjs through a path.join of literal segments; the target is followed' },
   'scripts/lib/sync-isolation-verify.mjs': { calls: 1, fingerprint: 'bd83a782dd43', reason: 'imports the consumer-sync verification target; a sync tool no pill executes' },
   'scripts/lib/store/population-ambient.mjs': { calls: 1, fingerprint: '09fccb1ce039', reason: 'sourceOnly(rel) loads sibling store modules named at its own call sites' },

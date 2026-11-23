@@ -273,7 +273,7 @@ export function dbSuitesTriggers(tree) {
 export const ACKNOWLEDGED_COMPUTED_IMPORTS = Object.freeze({
   'scripts/lib/test-tier.mjs': { calls: 1, fingerprint: 'f30f00b5b523', reason: 'the text a dynamic import in comments and messages, no dynamic import call' },
   'scripts/ux-lock-run.mjs': { calls: 1, fingerprint: '8355abdd1f84', reason: 'the word in an error message (alias imports), no dynamic import call' },
-  'scripts/lib/anthropic-client.mjs': { calls: 1, fingerprint: '3d87d161e646', reason: 'optional provider SDK packages (bare specifiers, so package.json is the input, and it is one)' },
+  'scripts/lib/anthropic-client.mjs': { calls: 1, fingerprint: '48919975554f', reason: 'optional provider SDK packages (bare specifiers, so package.json is the input, and it is one)' },
   'scripts/learning/replay.mjs': { calls: 1, fingerprint: '7025ae54e1ad', reason: 'imports an operator-supplied policy module path (a CLI argument); no DB suite runs it' },
   'scripts/lib/sync-isolation-verify.mjs': { calls: 1, fingerprint: 'bd83a782dd43', reason: 'imports the consumer-sync verification target; a sync tool the DB suites never execute' },
   'tests/helpers/audit-capture-oldschema-child.mjs': { calls: 4, fingerprint: '0f93c6f47f3d', reason: 'its targets are named as literal `new URL(\'scripts/...\')` paths, which the literal scan follows (and the test that spawns it names the helper)' },
