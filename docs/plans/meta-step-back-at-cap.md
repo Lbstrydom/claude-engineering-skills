@@ -137,15 +137,17 @@ after it is `sent: true`. §2.5's spend rule keys on that flag, never on the err
 >   the structural fix as its own plan or PR. Fixing symptoms round by round is not effective.
 > - **Admit** more rounds only when named open findings are real defects that the next round can close. Give the topics
 >   and the smallest number of rounds (1 or 2).
-> Every topicId you name must appear in the ledger or rounds you were given. Reply with ONLY one JSON object.
+> Every topicId you name must appear in the ledger or rounds you were given. Reply with ONLY one JSON object, with
+> `action`, an `assessment` object {sustainability, efficiency, effectiveness}, and that action's fields (exact shapes below).
 
 Schema (`MetaReviewSchema`, `z.discriminatedUnion('action', …)`, every object `strictObject`):
 
 ```text
-assessment: {sustainability, efficiency, effectiveness}   required, non-empty strings (recorded, not acted on)
-admit:      {action, rounds: 1|2, topics: [topicId] ≥1, reason}
-stop:       {action, items: [{topicId, kind: rigour-chasing|settled|marginal|false-premise, premise}] ≥1, reason}
-structural: {action, cause, evidence: [{file, why}] ≥1, proposedFix, reason}
+admit:      {action, assessment, rounds: 1|2, topics: [topicId] ≥1, reason}
+stop:       {action, assessment, items: [{topicId, kind: rigour-chasing|settled|marginal|false-premise, premise}] ≥1, reason}
+structural: {action, assessment, cause, evidence: [{file, why}] ≥1, proposedFix, reason}
+assessment: {sustainability, efficiency, effectiveness}   a required strictObject property ON EVERY BRANCH (flat wire
+            shape, no wrapper), each a non-empty string; recorded, not acted on
 ```
 
 `parseMetaReviewOutput` reuses v1's JSON/fence handling and the known-topic check. There is still no bare `continue`:
@@ -305,12 +307,15 @@ prints the one command, naming the attempt explicitly:
 `node scripts/debt-auto-capture.mjs --meta-decision .audit/<sid>-meta-review.jsonl --decision <attemptId> --run <sid>`.
 
 `--meta-decision` is a third input beside `--ledger` and `--final-review`. It:
-1. folds the log and refuses (exit 1, nothing written) unless `<attemptId>` is an honoured stop that no later override
+1. folds the log and refuses (exit 1, nothing written) unless `<attemptId>` is an honoured **loop-ending** decision (`stop` or `structural`) that no later override
    reversed, for the same sid as `--run`; a log with two decisions never guesses: `--decision` is required;
 2. takes the candidates from the decision's recorded **inventory** and re-reads each finding object from that round's own
    result file (`.audit/<sid>-r<round>-result.json`, matched by `findingId` and re-checked by `topicId`), so every
    candidate has its real finding whether or not the ledger has an entry for it; a missing result file or an unmatched
-   finding is a failed candidate (step 4), never a silent skip. Each is joined to its stop item for the premise;
+   finding is a failed candidate (step 4), never a silent skip. For a `stop`, each is joined to its stop item and takes
+   `deferredReason: "meta-review stop: <premise>"`; for a `structural`, the candidates are the inventory topics that are
+   not HIGH (an honoured structural has every HIGH already ruled, §2.4) and each takes
+   `deferredReason: "meta-review structural: <cause>"`;
 3. projects each onto the ledger-entry shape (the `--final-review` projection's pattern) and flows through the SAME
    build/persist path;
 4. reports `captured N of M`; any candidate it could not build or persist makes the run exit non-zero, and it appends a
@@ -485,3 +490,4 @@ and counts per file, the `size:ratchet:gate` / `skills:size:gate` outputs, and o
 this audit, not convergence.** No round 4 was taken: `--past-cap` is outside this chip's authority to decide alone, and
 the R3 findings are design-completion detail that the Phase 2 code audit verifies against real code. The new system
 could not judge its own cap here: it does not exist until Phase 2 is built.
+| Final R1 (gemini-4-argon) | CONCERNS, blocked | 0/1/1 | — | G1 (rb) `--meta-decision` handled stop only, not structural → fixed in §2.7; G2 (LOW) `assessment` wire shape → fixed in §2.3 |
