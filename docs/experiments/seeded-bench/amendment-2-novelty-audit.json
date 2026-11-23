@@ -38,5 +38,13 @@
     "the frozen dataset, partition and seeds",
     "the $125 total / $100 pilot hard caps, metered per call",
     "human blind labelling of every finding the human is shown"
-  ]
+  ],
+  "signature": {
+    "signedBy": "Louis",
+    "signedAt": "2026-11-23",
+    "signedWords": "sign the amendment",
+    "context": "Said in the CES chat in answer to: replace the calibration gate with a pilot-time audit, hide a finding only when both judges say same, and record it as a new contract epoch with a deviation entry, keeping the old INCONCLUSIVE verdict on record.",
+    "provenance": "Relayed to this session by the CES coordinator; the session's own user had separately directed the same design (pilot-time audit, both judges, new epoch) in this session earlier on 2026-11-23.",
+    "condition": "Signed before any pilot data exists. Changing a tolerance, sample size or the approval after pilot data exists is not permitted under this signature."
+  }
 }

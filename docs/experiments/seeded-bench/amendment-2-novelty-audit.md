@@ -1,6 +1,6 @@
 # Amendment 2 — pilot-time novelty audit (epoch `seeded-bench-v2`)
 
-Approved by Louis in chat, 2026-11-23, after a one-round brainstorm with a debate (`brainstorm-recalibration-1795446244532`). Machine-readable twin:
+**Signed by Louis, 2026-11-23, before any pilot data exists** — his words in the CES chat: "sign the amendment" (in answer to: replace the calibration gate with a pilot-time audit, hide a finding only when both judges say same, and record it as a new contract epoch with a deviation entry, keeping the old INCONCLUSIVE verdict on record). The quote was relayed to this session by the CES coordinator; this session's own user had separately directed the same design earlier that day, after a one-round brainstorm with a debate (`brainstorm-recalibration-1795446244532`). The signature covers the amendment as it stands; changing a tolerance, sample size or the approval once pilot data exists is not permitted under it. Machine-readable twin:
 [`amendment-2-novelty-audit.json`](amendment-2-novelty-audit.json), which the tooling reads, validates against policy floors and binds to this approval by a content digest
 (`AMENDMENT_2_SHA256` in `pilot-novelty-audit.mjs`): changing a tolerance, sample size or the approval is a reviewed code change, never a quiet file edit.
 

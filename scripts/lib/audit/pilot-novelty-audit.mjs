@@ -78,7 +78,7 @@ export const canonicalSha256 = (o) => crypto.createHash('sha256').update(canon(o
  * The approved content of amendment 2. Any edit to the amendment file changes its digest, so changing a tolerance, a sample size or the approval
  * is a CODE change that is reviewed and audited, never a quiet file edit. The numeric floors below are the policy minimum even for a digest bump.
  */
-export const AMENDMENT_2_SHA256 = 'd54e67b4eddcec5a76a4cba127633d7355af21173367ba68d53b443427ced00c';
+export const AMENDMENT_2_SHA256 = '9a34e59c3935cb0c969e6fc78d925e978f05b2afc12bd6909a81dd056016a4eb';
 export const AMENDMENT_POLICY = Object.freeze({ minSample: 60, minConfidence: 0.95, maxUpperBound: 0.15 });
 
 /** A seeded finding-level sample of the hidden findings, STRATIFIED by arm: `size` is split evenly across the arms present (all of an arm when it has fewer). */
