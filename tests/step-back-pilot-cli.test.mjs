@@ -216,3 +216,12 @@ test('R7 G2: an interrupted novelty run leaves a checkpoint that reads INCOMPLET
   assert.equal(onDisk.incomplete, true, 'the partial checkpoint is not mistaken for a finished run');
   assert.ok(Object.keys(onDisk.byFinding).length > 0, 'control: the first chunk was kept');
 });
+
+test('A2 final gate G1: the worksheet carries only findings of VALID pairs', () => {
+  const amendment = readAmendment(AMENDMENT);
+  const mk = (arm, valid) => ({ runId: `r${arm}`, pointId: 'p1', arm, rep: 0, mode: 'code', valid, costUsd: 1, findings: [{ key: `${arm}:1`, severity: 'HIGH', file: 'a.mjs', lines: [1, 1], text: 't', affectedFiles: [] }] });
+  const nv = { stamps: {}, byFinding: { 'META:1': { opus: { novel: true }, pro: { novel: true } }, 'CONTINUE:1': { opus: { novel: true }, pro: { novel: true } } } };
+  const ds = { points: [{ pointId: 'p1', repo: 'r', checkpoint: 1 }] }; const snaps = { p1: { rounds: [], ledgerEntries: [] } };
+  assert.equal(buildWorksheet({ rows: [mk('META', true), mk('CONTINUE', true)], novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment }).counts.shown, 2);
+  assert.equal(buildWorksheet({ rows: [mk('META', false), mk('CONTINUE', true)], novelty: nv, seed: 's', dataset: ds, snapshots: snaps, amendment }).counts.shown, 0, 'an invalid META run excludes its valid CONTINUE partner too');
+});

@@ -105,7 +105,8 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });
   writeJson(path.join(dir, 'pilot1-score.json'), res);
-  writeJson(`${resultsPath}.audit-state.json`, { outcome: res.decision.outcome, at: key.seed });
+  // The persisted audit state only moves on a real audit verdict: INCOMPLETE must never erase a standing audit-failed.
+  if (res.decision.outcome === 'audit-failed' || (key.audit.all === true && res.decision.outcome !== 'INCOMPLETE')) writeJson(`${resultsPath}.audit-state.json`, { outcome: res.decision.outcome, at: key.seed });
   console.log(`step-back-replay score --pilot meta-ab: ${String(res.decision.outcome).toUpperCase()} (${res.decision.why})`);
   return ['INCOMPLETE', 'audit-failed'].includes(res.decision.outcome) ? 1 : 0; // keep/off/inconclusive/invalid are RESULTS (0); an unfinished score is not
 }

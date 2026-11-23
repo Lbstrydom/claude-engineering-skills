@@ -365,7 +365,9 @@ export function candidateEntries({ finding, snapshot, checkpoint, limit = 10, ju
  */
 export function buildWorksheet({ rows, novelty, seed, dataset, snapshots, amendment, auditAll = false }) {
   const shown = []; const hiddenKeys = []; const byKey = new Map();
-  for (const row of rows) for (const f of row.findings.filter(mediumPlus)) {
+  // Only findings of VALID pairs reach the human: an invalid pair is excluded from the decision, so its findings are neither scored nor audited.
+  const badPair = new Set(rows.filter((r) => r.valid !== true).map((r) => `${r.pointId}#${r.rep}`));
+  for (const row of rows) for (const f of (row.valid === true && !badPair.has(`${row.pointId}#${row.rep}`) ? row.findings : []).filter(mediumPlus)) {
     const nv = novelty.byFinding[f.key]; if (!isCovered(nv)) continue;
     const point = dataset.points.find((p) => p.pointId === row.pointId);
     const item = { key: f.key, f, mode: row.mode, repo: point?.repo, judges: nv, arm: row.arm, runId: row.runId, point };
