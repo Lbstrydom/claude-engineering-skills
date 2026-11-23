@@ -229,3 +229,19 @@ test('R8: Restates ids contain spaces (a timestamp); they split on commas only',
   const a = parseCalibrationAnswers(`### R001\n\nRestates: ${id1}, ${id2}\n\n### R002\n\nRestates: none\n`);
   assert.deepEqual(a.filterRecall, { R001: [id1, id2], R002: [] });
 });
+
+test('R8 H2: with the key, Restates matches whole known ids (comma, backtick, space inside an id) and surfaces unknown leftovers', async () => {
+  const { parseCalibrationAnswers } = await import('../scripts/lib/audit/step-back-pilot-cli.mjs');
+  const a = 'r|code|feat/a,b@2026-10-14 21:49:16+00|r6|aa'; const b = 'r|code|feat/`x`@2026-10-14 21:49:16+00|r6|bb'; const c = 'r|code|feat/plain@2026-10-14 21:49:16+00|r6|cc';
+  const md = `### R001
+
+Restates: ${a}, ${b}
+
+### R002
+
+Restates: ${c}, not-an-entry
+`;
+  const out = parseCalibrationAnswers(md, { R001: [a, b, c], R002: [a, b, c] });
+  assert.deepEqual(out.filterRecall.R001.sort(), [a, b].sort());
+  assert.deepEqual(out.filterRecall.R002.sort(), [c, 'not-an-entry'].sort(), 'a mistyped id is surfaced, not dropped');
+});
