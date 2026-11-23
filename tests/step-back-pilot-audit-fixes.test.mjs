@@ -245,3 +245,13 @@ Restates: ${c}, not-an-entry
   assert.deepEqual(out.filterRecall.R001.sort(), [a, b].sort());
   assert.deepEqual(out.filterRecall.R002.sort(), [c, 'not-an-entry'].sort(), 'a mistyped id is surfaced, not dropped');
 });
+
+test('R8 G1: an id wrapped in markdown backticks matches as a whole, leaving no stray backtick tokens', async () => {
+  const { parseCalibrationAnswers } = await import('../scripts/lib/audit/step-back-pilot-cli.mjs');
+  const a = 'r|code|feat/a@2026-10-14 21:49:16+00|r6|aa';
+  const out = parseCalibrationAnswers(`### R001
+
+Restates: \`${a}\`
+`, { R001: [a] });
+  assert.deepEqual(out.filterRecall.R001, [a]);
+});

@@ -240,7 +240,7 @@ export function parseCalibrationAnswers(md, knownIds = null) {
     if (!known) { answers.filterRecall[id] = v.split(/\s*,\s*/).map((x) => x.trim().replace(/^`|`$/g, '')).filter(Boolean); continue; }
     let rest = v; const found = [];
     for (const k of [...known].sort((a, b) => b.length - a.length)) {
-      for (const form of [k, `\`${k}\``]) { while (rest.includes(form)) { found.push(k); rest = rest.replace(form, '\u0000'); } }
+      for (const form of [`\`${k}\``, k]) { while (rest.includes(form)) { found.push(k); rest = rest.replace(form, '\u0000'); } }
     }
     const leftover = rest.split('\u0000').join(' ').split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean);
     answers.filterRecall[id] = [...new Set(found), ...leftover];
