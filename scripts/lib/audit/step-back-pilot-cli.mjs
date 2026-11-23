@@ -229,7 +229,7 @@ export function parseCalibrationAnswers(md) {
     if (id.startsWith('P')) { const v = /^Label:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim().toLowerCase(); if (v) answers.pairs[id] = v; }
     else {
       const v = /^Restates:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim();
-      if (v) answers.filterRecall[id] = /^none$/i.test(v) ? [] : v.split(/\s*,\s*/).map((s) => s.replace(/[`]/g, '').trim()).filter(Boolean) // ids contain spaces (a timestamp): commas separate, never whitespace;
+      if (v) answers.filterRecall[id] = /^none$/i.test(v) ? [] : v.split(/\s*,\s*/).map((s) => s.replace(/[`]/g, '').trim()).filter(Boolean); // ids contain spaces (a timestamp): commas separate, never whitespace
     }
   }
   return answers;
