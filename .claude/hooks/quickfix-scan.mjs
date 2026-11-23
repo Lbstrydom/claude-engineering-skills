@@ -74,6 +74,23 @@ async function loadPatternsModule(candidates = LIB_CANDIDATES) {
   return null;
 }
 
+// The host oracle (scripts/lib/hook-host.mjs), resolved across both layouts from this
+// file's own directory. Null means "run the legacy Claude-shape path".
+const HOST_LIB_CANDIDATES = Object.freeze([
+  path.join(REPO_ROOT, 'scripts', 'lib', 'hook-host.mjs'),
+  path.join(REPO_ROOT, 'scripts', '.claude-skills', 'lib', 'hook-host.mjs'),
+]);
+
+async function loadHookHost() {
+  for (const candidate of HOST_LIB_CANDIDATES) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      return await import(pathToFileURL(candidate).href);
+    } catch { /* try the next layout */ }
+  }
+  return null;
+}
+
 // Overridable so the hook's OWN integration tests (which spawn this file as a
 // subprocess against the real repo root) write to a throwaway path instead of
 // the live telemetry log. Without this the suite appends a hit per test run per
@@ -111,19 +128,35 @@ async function main() {
     process.exit(0);
   }
 
-  // Extract file_path + new content
-  const toolName = payload?.tool_name || '';
-  const toolInput = payload?.tool_input || {};
-  const filePath = toolInput.file_path || toolInput.filePath || '';
+  // Extract file_path + new content through the host oracle. If it cannot load,
+  // the legacy Claude-shape parse runs instead (observable on stderr).
+  const hostMod = await loadHookHost();
+  let host = 'unknown';
+  let toolName = '';
+  let filePath = '';
   let diffText = '';
 
-  if (toolName === 'Edit') {
-    diffText = toolInput.new_string || '';
-  } else if (toolName === 'Write') {
-    diffText = toolInput.content || '';
+  if (hostMod) {
+    host = hostMod.detectHookHost(payload);
+    const ev = hostMod.normaliseToolEvent(payload);
+    // Not a file edit/write (or Copilot with no Tier-2 mapping) — silently exit
+    if (ev?.kind !== 'file') process.exit(0);
+    toolName = ev.op === 'edit' ? 'Edit' : 'Write';
+    filePath = ev.filePath;
+    diffText = ev.text || '';
   } else {
-    // Not an Edit or Write — silently exit
-    process.exit(0);
+    process.stderr.write('  [quickfix-hook] hook-host unavailable — legacy Claude path\n');
+    toolName = payload?.tool_name || '';
+    const toolInput = payload?.tool_input || {};
+    filePath = toolInput.file_path || toolInput.filePath || '';
+    if (toolName === 'Edit') {
+      diffText = toolInput.new_string || '';
+    } else if (toolName === 'Write') {
+      diffText = toolInput.content || '';
+    } else {
+      // Not an Edit or Write — silently exit
+      process.exit(0);
+    }
   }
 
   if (!filePath || !diffText) {
@@ -228,7 +261,11 @@ async function main() {
   // Audit R2-M7: process.exit(0) can terminate before piped stdio fully
   // flushes. Use the write-callback to ensure the byte stream completes
   // before we exit.
-  process.stdout.write(JSON.stringify({ systemMessage }) + '\n', () => process.exit(0));
+  const out = hostMod
+    ? hostMod.formatHookOutput(host, 'PostToolUse', 'context', systemMessage)
+    : { systemMessage };
+  if (!out) process.exit(0);
+  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(0));
 }
 
 main().catch(err => {

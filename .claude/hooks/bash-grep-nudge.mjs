@@ -15,6 +15,26 @@
  * @module .claude/hooks/bash-grep-nudge
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Both tooling layouts, resolved from this file's own directory (never the cwd).
+const HOST_LIB_CANDIDATES = Object.freeze([
+  path.join(REPO_ROOT, 'scripts', 'lib', 'hook-host.mjs'),
+  path.join(REPO_ROOT, 'scripts', '.claude-skills', 'lib', 'hook-host.mjs'),
+]);
+
+/** @returns {Promise<object|null>} the hook-host module, or null (legacy Claude path). */
+async function loadHookHost() {
+  for (const candidate of HOST_LIB_CANDIDATES) {
+    if (!fs.existsSync(candidate)) continue;
+    try { return await import(pathToFileURL(candidate).href); } catch { /* try the next layout */ }
+  }
+  return null;
+}
+
 async function readStdin() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -39,15 +59,28 @@ function leadingGrepTool(cmd) {
     process.exit(0);
   }
 
-  if (payload?.tool_name !== 'Bash') process.exit(0);
-  const cmd = payload?.tool_input?.command;
-  if (typeof cmd !== 'string' || !cmd.trim()) process.exit(0);
+  // Host-normalised input. If the oracle cannot load, run the legacy Claude-shape
+  // path (the original inline parse) — observable on stderr, exit status unchanged.
+  const hostMod = await loadHookHost();
+  let host = 'unknown';
+  let cmd;
+  if (hostMod) {
+    host = hostMod.detectHookHost(payload);
+    const ev = hostMod.normaliseToolEvent(payload);
+    if (ev?.kind !== 'shell') process.exit(0);
+    cmd = ev.command;
+  } else {
+    process.stderr.write('  [bash-grep-nudge] hook-host unavailable — legacy Claude path\n');
+    if (payload?.tool_name !== 'Bash') process.exit(0);
+    cmd = payload?.tool_input?.command;
+    if (typeof cmd !== 'string' || !cmd.trim()) process.exit(0);
+  }
 
   const tool = leadingGrepTool(cmd);
   if (!tool) process.exit(0);
 
   const reason = [
-    `Bash leading command is \`${tool}\` — use the Grep tool instead.`,
+    `Bash leading command is \`${tool}\` — use the ${host === 'copilot' ? 'grep' : 'Grep'} tool instead.`,
     `Grep wraps ripgrep with correct permissions and supports`,
     `output_mode/head_limit/context/-A/-B/-C/glob/type filters,`,
     `which removes the need for \`| head\` and similar pipe shaping.`,
@@ -56,12 +89,11 @@ function leadingGrepTool(cmd) {
     `Disable per-session: BASH_GREP_NUDGE_DISABLE=1`,
   ].join(' ');
 
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'deny',
-      permissionDecisionReason: reason,
-    },
-  }));
-  process.exit(0);
+  const out = hostMod
+    ? hostMod.formatHookOutput(host, 'PreToolUse', 'deny', reason)
+    : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
+  // Exit from the write callback: a piped stdout is asynchronous on Windows and an
+  // immediate process.exit() can truncate the envelope.
+  if (out) process.stdout.write(JSON.stringify(out), () => process.exit(0));
+  else process.exit(0);
 })();

@@ -15,6 +15,7 @@ import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
 const HOOK_LIBRARY_ENTRIES = [
   'scripts/lib/sensitive-paths.mjs',   // .claude/hooks/syntax-check.mjs
   'scripts/lib/quickfix-patterns.mjs', // .claude/hooks/quickfix-scan.mjs
+  'scripts/lib/hook-host.mjs',         // all four hooks (quickfix-scan, syntax-check, bash-grep-nudge, arch-memory-check.sh)
 ];
 
 describe('every library a hook loads is in the consumer sync closure', () => {
