@@ -90,6 +90,25 @@ test('replayWindow takes PR squash commits first-parent from a pinned tip, honou
 
 test('kernelEstimate anchors every entry in AGENTS.md and the range is ordered', () => {
   const k = kernelEstimate({ repoRoot: REPO });
-  assert.deepEqual(k.unanchored, []);
+  // These five sentences LEFT AGENTS.md for path-scoped rules (docs/plans/path-scoped-context.md). pilot.mjs is a frozen
+  // instrument (checklist/frozen.mjs), so it is not taught the new location; instead the test proves each one is
+  // unanchored only because it moved: its anchor (copied from pilot.mjs ANCHORS) is in .claude/rules and not in AGENTS.md.
+  // Any OTHER unanchored entry still fails here.
+  const MOVED = {
+    'disposable-db-allowlist': '"Disposable" is an ALLOWLIST',
+    'durable-write-registration': 'Every audit-store write in',
+    'jsonb-write-seam': 'jsonb-safe write seam',
+    'schema-error-is-not-empty-result': 'A SCHEMA ERROR IS NOT AN EMPTY RESULT',
+    'sync-inventory-single-owner': "the sync layout's single source of truth is",
+  };
+  assert.deepEqual([...k.unanchored].sort(), Object.keys(MOVED).sort());
+  const rulesDir = path.join(REPO, '.claude', 'rules');
+  const rules = fs.readdirSync(rulesDir).filter((f) => f.endsWith('.md'))
+    .map((f) => fs.readFileSync(path.join(rulesDir, f), 'utf8')).join('\n');
+  const agents = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8');
+  for (const [id, anchor] of Object.entries(MOVED)) {
+    assert.ok(rules.includes(anchor), `${id}: its anchor is in no .claude/rules file`);
+    assert.ok(!agents.includes(anchor), `${id}: its anchor is back in AGENTS.md, so it should anchor there`);
+  }
   assert.ok(k.kernelRemainingMin < k.kernelRemainingMax && k.kernelRemainingMax < k.agentsMdChars);
 });

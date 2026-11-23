@@ -181,6 +181,10 @@
 > `/audit-plan` (Step 3) enforce both.
 
 > **Moved detail**: text cut from this file lives verbatim in [agents-md-dossiers.md](docs/reference/agents-md-dossiers.md) under the same H2 heading; the stub left here keeps the rule.
+> **Path-specific tripwires** live in `.claude/rules/<topic>.md` (Claude Code loads one
+> when a matching file is read or edited) and its byte-identical twin
+> `.github/instructions/<topic>.instructions.md` (Copilot), kept equal by
+> `tests/path-scoped-instructions-twins.test.mjs`. Edit both, or neither.
 
 ## Project Overview
 
@@ -324,31 +328,15 @@ instead of the named one (verified 2026-07-20).
 > `TEMP — pending upstream fix` and reconcile when the fix lands.
 > [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Blocked.
 
-> **Consumer divergence is DECLARED, never inferred — and the sync must never
-> revert it silently.** The **manifest hash, never HEAD**, is the three-way BASE;
-> standing divergence lives in the committed `.sync-overrides.json`
-> (`scripts/.claude-skills/**` is never claimable — that is an upstream report);
-> and the committed, append-only `.sync-receipt.json` is a deliberate
-> generated-artifact-policy exception, because its dirtiness is the only evidence
-> a sync ran. The three mechanics in full (refusal rules, `upstreamMoved`,
-> `--overwrite-diverged`) before you touch the sync:
-> [consumer-repo-layout.md](docs/reference/consumer-repo-layout.md) §Consumer
-> divergence · [Plan](docs/plans/consumer-sync-durability.md).
-
-### Sync mechanics — pointer
-
-Sync detail (isolated subdir, what-goes-where table, managed-gitignore block, `sync-*`
-modules): [`consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
-One invariant stays here: **the sync layout's single source of truth is
-[`sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** — never hand-compute one.
-
-**A consumer's package manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s
-answer, never a hardcoded `npm`/`npx`** — the managers are not swappable, so two
-lockfiles + no `packageManager` field is **ambiguous and left alone**, never
-guessed. Adjudicate an install by RE-PROBING `node_modules`, never the exit code
-(pnpm exits non-zero on `ERR_PNPM_IGNORED_BUILDS` after a successful install). The
-corepack/`.cmd` trap:
-[consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Your package manager.
+> **Sync code carries three path-scoped tripwires** that load when you touch
+> `scripts/sync-*.mjs`, `scripts/lib/sync-*.mjs`, the install code or
+> `.sync-overrides.json`/`.sync-receipt.json`: divergence is DECLARED and never reverted
+> silently (the manifest hash, never HEAD, is the BASE) · the layout's single source of
+> truth is [`sync-path-map.mjs`](scripts/lib/sync-path-map.mjs) · a consumer's package
+> manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s answer, never a
+> hardcoded `npm`. Text: [`.claude/rules/consumer-sync.md`](.claude/rules/consumer-sync.md)
+> (Claude Code) = `.github/instructions/consumer-sync.instructions.md` (Copilot); other
+> hosts: open it before editing the sync.
 
 ### CLI smoke contract (`--selfcheck-relocation`)
 
@@ -529,17 +517,6 @@ All model-reading env vars pass through `resolveModel()` ([model-resolver.mjs](s
 The cloud store talks to **Postgres directly via `pg`** (no supabase-js/PostgREST; Supabase vs self-hosted is
 just a connection string). **Load-bearing invariants**:
 
-- **Connect**: `AUDIT_DB_URL` + `AUDIT_DB_SSL_MODE=no-verify`, via the Supabase
-  **Session pooler (5432)**, **NOT the Transaction pooler (6543)** — 6543 drops
-  server-side prepared statements and the `search_path=public` pin the `db/` seam
-  needs. A role's credential is the access control (single-tenant, no separate
-  read/write keys); the runtime `pg.Pool` ([`db/client.mjs`](scripts/lib/db/client.mjs))
-  owns `public` or is a `BYPASSRLS` role with DML grants, so it **bypasses RLS** (correct here). In an
-  owner + least-privilege split the `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` line
-  is the one that gets forgotten. The schema is **`public`-only** in v1. Setup,
-  `--migrate`/`--adopt`/`--check-drift`: [postgres-parity.md](docs/runbooks/postgres-parity.md)
-  §Connecting, §Two roles, §Setup recipe; moving stores:
-  [moving-the-audit-store.md](docs/runbooks/moving-the-audit-store.md).
 - **Never use the dashboard as the routine migration path** — it reintroduces the
   silent drift the ledger exists to eliminate; make the source migration idempotent
   and retry `--migrate`.
@@ -548,23 +525,8 @@ just a connection string). **Load-bearing invariants**:
   Use `audited_sha`/`audited_tree` for target identity; NULL on both means
   unverifiable, never guess.
   [Plan](docs/plans/audit-target-identity-commit-sha-correction.md).
-- **jsonb-safe write seam — do NOT hand-`JSON.stringify` a jsonb column.**
-  `serializeWriteParam` auto-serializes a plain array bound to ANY column on the
-  write path (else node-postgres binds an ARRAY literal: `22P02` or a silent `{}`).
-  **Pass jsonb values raw**; a real `text[]`/`int[]` column opts OUT with
-  **`pgArray(value)`** — a jsonb writer that forgets is safe, a `text[]` writer that
-  forgets fails LOUDLY. [postgres-parity.md](docs/runbooks/postgres-parity.md) §jsonb write seam.
 - **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
   qualification or non-core reference outside the recorded baseline.
-- **Every audit-store write in `legacy-production-audit.mjs`'s cloud block goes
-  through `durableWrite`** ([durable-write.mjs](scripts/lib/durable-write.mjs)),
-  registered in [audit-store-writers.mjs](scripts/lib/audit-store-writers.mjs).
-  Four outcomes, not interchangeable: `written` · `spilled` · `lost` · `skipped`
-  (cloud off is a supported mode, not a failure); `lost` **or** `spilled` makes a
-  run `incomplete`. A new write-shaped export under `scripts/lib/store/**` must be
-  registered or exempted **with a reason** (`npm test` derives the set from the
-  filesystem). Semantics: [postgres-parity.md](docs/runbooks/postgres-parity.md) ·
-  [plan](docs/plans/audit-store-write-durability.md).
 - **`emit({ok:false})` sets a non-zero exit code** ([cli-io.mjs](scripts/lib/cli-io.mjs)).
   Without the coupling a CLI reports a failure in its envelope and exits 0, which
   every caller checking `$?` reads as success. Opt out only with
@@ -572,29 +534,15 @@ just a connection string). **Load-bearing invariants**:
   `npm run emit:exit:gate` ratchets the opt-out population, failing on growth AND
   on an unrecorded reduction.
   [Design](docs/plans/cross-skill-command-registry.md) §2b F4.
-- **A SCHEMA ERROR IS NOT AN EMPTY RESULT — and a bare `catch { return null }`
-  renders it as one.** Ask of any catch around a query: *can a broken query and an
-  absent row leave here as the same value?* `isSchemaFaultSqlstate` /
-  `describeSchemaFault` ([db/errors.mjs](scripts/lib/db/errors.mjs)) make a
-  read-path catch **degrade loudly**. Testing the pure decision is not enough:
-  **split it out AND put one assertion on a real Postgres** (a freshness cache was
-  dead through all-green pure tests, 2026-09-05).
-  [postgres-parity.md](docs/runbooks/postgres-parity.md).
-- **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
-  `isDisposableDbHost` / `assertDisposableDbUrl` ([db/client.mjs](scripts/lib/db/client.mjs))
-  guard the suites that `DROP SCHEMA public CASCADE` and the schema fixture.
-  **Never re-express this as "not $VENDOR"** (a denylist went inert the day the
-  store moved). Production identity is compared as host+port+database, never as a
-  DSN string; no env escape hatch, deliberately; **regenerate the fixture only from
-  a fresh replay** (`npm run db:local:regen`).
-  [postgres-parity.md](docs/runbooks/postgres-parity.md) §Incident + §Correction.
-- **Bound an RPC at the CALLER** — `SET statement_timeout` inside a function is
-  decorative. `CREATE OR REPLACE FUNCTION` resets **`proconfig`** (restate `SET
-  search_path`) but PRESERVES the ACL; **changing the argument list makes a
-  DIFFERENT function**, whose default ACL is `EXECUTE` to `PUBLIC` and which the
-  old `REVOKE` does not name. Verify by `has_function_privilege`, never by review
-  or by a `proacl` that reads `NULL`.
-  [memory-health-gate.md](docs/reference/memory-health-gate.md).
+- **Six more tripwires load when you touch store code** (`scripts/lib/db/**`,
+  `scripts/lib/store/**`, `supabase/migrations/**`, the DB suites, durable-write and setup files):
+  Session pooler 5432 never 6543 · through the `serializeWriteParam` write seam pass jsonb
+  raw and `pgArray` a `text[]`, never hand-`JSON.stringify` · every
+  store write through `durableWrite` · a schema error is not an empty result · "disposable"
+  is a loopback ALLOWLIST · bound an RPC at the caller. Text:
+  [`.claude/rules/postgres-store.md`](.claude/rules/postgres-store.md) (Claude Code) =
+  `.github/instructions/postgres-store.instructions.md` (Copilot); other hosts: open it
+  before editing those paths.
 
 → Design: [`postgres-parity.md`](docs/plans/postgres-parity.md) + [`schema-coupling`](docs/plans/postgres-parity-schema-coupling.md). Operations (setup, drift CLI, break-glass atomic-apply): [`runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
