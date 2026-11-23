@@ -139,6 +139,11 @@ function repairTornTail(fd) {
   fs.readSync(fd, chunk, 0, chunk.length, start);
   const nl = chunk.lastIndexOf(0x0a);
   if (nl < 0 && start > 0) throw new BudgetStopError('ledger-corrupt', 'ledger tail has no record boundary within 64KiB');
+  const fragment = chunk.subarray(nl + 1).toString('utf8');
+  // ONE tail policy with readEvents: a COMPLETE record that merely lacks its newline is kept (terminated), never deleted;
+  // only an unparseable fragment is a torn append.
+  let complete = false; try { JSON.parse(fragment); complete = true; } catch { /* torn */ }
+  if (complete) { fs.writeSync(fd, '\n', size); return; }
   fs.ftruncateSync(fd, nl < 0 ? 0 : start + nl + 1);
 }
 

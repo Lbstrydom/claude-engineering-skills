@@ -136,8 +136,11 @@ describe('runNovelty gate and resumption (R2 H1/M5/M8)', () => {
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal }), /not accept/);
     fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: 'OTHER' }));
     await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal }), /different dataset/);
-    fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: dataset.datasetHash }));
+    const stamps = { opus: { stamp: { sentinel: 'latest-opus', model: 'm' } }, pro: { stamp: { sentinel: 'latest-pro', model: 'm' } } };
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: dataset.datasetHash, judges: stamps }));
 
+    // a judge that resolves differently from the calibrated one is refused
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: { createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'DIFFERENT' } }), classifyNovelty: async () => ({ perFinding: [] }) } }), /recalibrate/);
     const state = { calls: [], fail: true };
     const first = await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
     assert.equal(first.incomplete, true);

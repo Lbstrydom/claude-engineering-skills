@@ -71,6 +71,10 @@ export function decideMetaPilot({ runs, plannedPairs = META_PILOT_RULE.plannedPa
   if (malformed.length) {
     return { branch: 1, outcome: 'invalid', why: `${malformed.length} run row(s) have a non-numeric or negative cost/count (${malformed.slice(0, 3).map((r) => `${r.pointId}/${r.arm}/${r.rep}`).join(', ')}); the dataset is incomplete`, figures: { malformed: malformed.length }, rule: R };
   }
+  // Run identity must be unique: a duplicate is silently overwritten when pairing but counted in completion.
+  const seen = new Set(); const dups = [];
+  for (const r of runs) { const k = `${r.pointId}#${r.rep}#${r.arm}`; if (seen.has(k)) dups.push(k); seen.add(k); }
+  if (dups.length) return { branch: 1, outcome: 'invalid', why: `duplicate run identities: ${dups.slice(0, 3).join(', ')}`, figures: { duplicates: dups.length }, rule: R };
   const pairs = pairRuns(runs);
   const valid = pairs.filter((p) => p.meta.valid && p.cont.valid);
   const completion = (arm) => {

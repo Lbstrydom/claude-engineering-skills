@@ -22,12 +22,23 @@ const sha256OfFile = (p) => crypto.createHash('sha256').update(fs.readFileSync(p
 const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); atomicWriteFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
 const DEFAULT_AUDIT_SCRIPT = fileURLToPath(new URL('../../openai-audit.mjs', import.meta.url));
 
+/** The repos file is hand-prepared: every id must be the store's own id for that name (read-only SELECT) before authorisation is believed. */
+export async function assertRepoIdsBound(reposFile, query = async (sql, params) => { const pool = await (await import('../db/client.mjs')).getPool(); if (!pool) throw new Error('no audit store configured (AUDIT_DB_URL): cannot verify the repo ids'); return pool.query(sql, params); }) {
+  const repos = JSON.parse(fs.readFileSync(reposFile, 'utf8'));
+  for (const [id, r] of Object.entries(repos)) {
+    const res = await query('SELECT name FROM audit_repos WHERE id = $1 LIMIT 1', [id]);
+    const name = (Array.isArray(res) ? res : res.rows)[0]?.name;
+    if (name !== r.name) throw new ArgvError(`repos file maps ${id} to ${r.name}, but the store names that id ${name ?? '(unknown)'}; refusing`);
+  }
+}
+
 /** @returns {Promise<number>} exit code */
 export async function runPilotCommand({ cmd, argv, flag }) {
   const need = (f) => { const v = flag(f); if (!v) throw new ArgvError(`step-back-replay ${cmd}: ${f} is required.`); return v; };
   const maxRaw = flag('--max-usd'); const maxUsd = maxRaw == null ? null : Number(maxRaw);
   if (maxRaw != null && !(Number.isFinite(maxUsd) && maxUsd > 0)) throw new ArgvError('step-back-replay: --max-usd must be a positive number.');
   if (cmd === 'freeze') {
+    await assertRepoIdsBound(need('--repos-file'));
     const d = runFreeze({ exports: need('--export').split(',').map((s) => s.trim()).filter(Boolean), reposFile: need('--repos-file'), seed: need('--seed'), out: need('--out') });
     console.log(`step-back-replay freeze --pilot meta-ab: ${d.counts.recoverable} recoverable points, ${d.counts.unrecoverable} unrecoverable; sets ${JSON.stringify(d.counts.bySet)}; hash ${d.datasetHash}`);
     return 0;

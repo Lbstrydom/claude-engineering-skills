@@ -111,7 +111,11 @@ export async function runContinue({ datasetPath, set, replicates, maxUsd, confir
   if (!['rehearsal', 'pilot', 'repeat'].includes(set)) throw new ArgvError('step-back-replay continue: --set must be rehearsal, pilot or repeat (calibration points are never run).');
   const { dataset, snapshots } = loadDataset(datasetPath);
   let points = pointsFor({ dataset, set, purpose: set });
-  if (only) points = points.filter((p) => only.includes(p.pointId));
+  if (only) {
+    const missing = only.filter((id) => !points.some((p) => p.pointId === id));
+    if (missing.length) throw new ArgvError(`--point names ${missing.join(', ')}, not in the ${set} set`);
+    points = points.filter((p) => only.includes(p.pointId));
+  }
   if (dryRun) {
     const rows = [];
     for (const p of points) rows.push({ pointId: p.pointId, repo: p.repo, mode: p.mode, trigger: p.trigger, ...(await validatePoint({ point: p, snapshot: snapshots[p.pointId], repoRoot: repoRootFor(dataset, p), deps })) });
@@ -161,19 +165,22 @@ const mediumPlus = (f) => ['HIGH', 'MEDIUM'].includes(String(f.severity).toUpper
 /** Calibration pairs come ONLY from calibration-set sessions: findings of round r against the ledger entries first seen before r. */
 export function calibrationMaterial({ dataset, snapshots }) {
   const findings = []; const ledger = [];
+  const done = new Set(); // (session, store finding id): a T2 and a later T1 point of one session share early rounds; count each once
   for (const p of dataset.points.filter((x) => x.status === 'recoverable' && x.set === 'calibration')) {
     const snap = snapshots[p.pointId];
-    const xs = ledgerTargets(snap);
-    const firstSeen = new Map(snap.ledgerEntries.map((e, i) => [String(xs[i].id), e.firstSeenRound]));
     for (const r of snap.rounds) {
       if (r.round < 2) continue;
+      // Targets are built from rounds BEFORE this one only: their text cannot come from a later re-raise of the concern.
+      const xs = ledgerTargets(snap, { upToRound: r.round - 1 });
+      const visible = xs.filter((x, i) => (snap.ledgerEntries[i].firstSeenRound ?? 99) < r.round);
+      const sessionId = `${p.sessionId}|r${r.round}`; // one visibility frame per (session, round)
       for (const f of r.findings.filter(mediumPlus)) {
-        const sessionId = `${p.pointId}|r${r.round}`; // one visibility frame per (point, round): a finding sees only the entries first seen before ITS round
-        const visible = xs.filter((x) => (firstSeen.get(String(x.id)) ?? 99) < r.round).map((x) => ({ ...x, id: `${sessionId}|${x.id}`, sessionId }));
-        const fid = `${p.pointId}|r${r.round}|${f.id}`;
-        findings.push({ id: fid, file: f._primaryFile ?? f.affectedFiles?.[0] ?? null, lines: null, severity: String(f.severity).toUpperCase(), text: [f.category, f.section, f.detail].filter(Boolean).join('\n'), arm: p.mode, sessionId });
-        for (const x of visible) if (!ledger.some((l) => l.id === x.id)) ledger.push(x);
+        const dedupe = `${p.sessionId}|${f.id}`;
+        if (done.has(dedupe)) continue;
+        done.add(dedupe);
+        findings.push({ id: `${sessionId}|${f.id}`, file: f._primaryFile ?? f.affectedFiles?.[0] ?? null, lines: null, severity: String(f.severity).toUpperCase(), text: [f.category, f.section, f.detail].filter(Boolean).join('\n'), arm: p.mode, sessionId });
       }
+      for (const x of visible) { const id = `${sessionId}|${x.id}`; if (!ledger.some((l) => l.id === id)) ledger.push({ ...x, id, sessionId }); }
     }
   }
   return { findings, ledger };
@@ -185,6 +192,7 @@ export function runCalibrateDraw({ datasetPath, seed, outDir, sizes }) {
   const sets = drawCalibrationSets({ findings, ledgerEntries: ledger, seed, ...(sizes ? { sizes } : {}) });
   const { worksheetMarkdown, key } = renderWorksheet(sets, { seed, ledgerEntries: ledger });
   fs.mkdirSync(outDir, { recursive: true });
+  for (const f of ['calibration-worksheet.md', 'calibration-key.json', 'calibration-material.json']) if (fs.existsSync(path.join(outDir, f))) throw new ArgvError(`${f} already exists in ${outDir}; a human may have labelled it. Draw into a new --out-dir.`);
   atomicWriteFileSync(path.join(outDir, 'calibration-worksheet.md'), worksheetMarkdown);
   writeJson(path.join(outDir, 'calibration-key.json'), key);
   writeJson(path.join(outDir, 'calibration-material.json'), { datasetHash: dataset.datasetHash, findings, ledger });
@@ -242,7 +250,7 @@ export function assertCalibrationAccepted({ calibrationPath, dataset }) {
 /** Novelty of every MEDIUM+ finding against its point's ledger, by BOTH judges (stamped once; a changed stamp refuses a repeat). */
 export async function runNovelty({ datasetPath, resultsPath, calibrationPath, deps = {} }) {
   const { dataset, snapshots } = loadDataset(datasetPath);
-  assertCalibrationAccepted({ calibrationPath, dataset });
+  const calibration = assertCalibrationAccepted({ calibrationPath, dataset });
   const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
   const outPath = `${resultsPath}.novelty.json`;
@@ -252,6 +260,8 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
   const judges = {};
   for (const [name, sentinel] of [['opus', 'latest-opus'], ['pro', 'latest-pro']]) {
     judges[name] = await (deps.createJudge || createJudge)({ sentinel });
+    const calibrated = calibration.judges?.[name]?.stamp;
+    if (!calibrated || stampMismatch(calibrated, judges[name].stamp)) throw new Error(`judge "${name}" resolves differently from the one that was calibrated; recalibrate before judging`);
     if (prior && stampMismatch(prior.stamps[name], judges[name].stamp)) throw new Error(`judge "${name}" resolves differently from the frozen stamp; refusing a repeat under a different judge`);
   }
   const out = prior ?? { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: dataset.datasetHash, resultsSha256: resultsSha, stamps: Object.fromEntries(Object.entries(judges).map(([n, j]) => [n, j.stamp])), byFinding: {}, incomplete: false };

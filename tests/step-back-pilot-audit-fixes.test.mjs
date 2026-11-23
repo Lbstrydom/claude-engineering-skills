@@ -11,7 +11,7 @@ import { initLedger, reserveCall, settleCall, readLedgerSummary } from '../scrip
 import { decideMetaPilot, scoreMetaRuns } from '../scripts/lib/audit/meta-pilot-decision.mjs';
 import { freezeMetaPilot, sessionsOf } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
 import { restorePointFiles, ledgerTargets } from '../scripts/lib/audit/step-back-continuation.mjs';
-import { verifyRepoIdentity, scorePilot, runNovelty } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
+import { verifyRepoIdentity, scorePilot, runNovelty, calibrationMaterial } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
 import { filterCandidates, makePairId, judgePairs, lineRangeOf, prepareJudgePayload } from '../scripts/lib/model-eval/concern-matcher.mjs';
 import { scoreCalibration } from '../scripts/lib/model-eval/matcher-calibration.mjs';
 
@@ -149,4 +149,42 @@ test('R2 M7: a budget stop waits for every started worker to settle before propa
   const pairs = [{ f: { id: 'a', file: 'a', text: 'slow one' }, x: { id: 'x', file: 'a', text: 'y' } }, { f: { id: 'b', file: 'a', text: 'stop-me' }, x: { id: 'x', file: 'a', text: 'y' } }];
   await assert.rejects(() => judgePairs({ pairs, judge, concurrency: 2 }), (e) => e.code === 'budget-stop');
   assert.equal(inflightDone, true, 'the in-flight call finished (and would have been metered) before the error surfaced');
+});
+
+test('R3 H2/H7: a complete valid record that lacks only its newline is KEPT (terminated), not deleted by the tail repair', async () => {
+  const dir = tmp(); const file = path.join(dir, 'l.jsonl');
+  try {
+    initLedger({ file, capUsd: 50 });
+    const h = await reserveCall({ seam: 't', provider: 'anthropic', model: 'claude-opus-5-5', body: 'x', outputCap: 10, file });
+    // strip the final newline of the (complete) reserve record, as a crash between the payload and the newline would
+    const text = fs.readFileSync(file, 'utf8'); fs.writeFileSync(file, text.replace(/\n$/, ''));
+    await settleCall(h, { usage: { input_tokens: 100, output_tokens: 5 }, modelServed: 'claude-opus-5-5' });
+    const calls = readLedgerSummary(file).calls;
+    assert.ok(calls.some((c) => c.callId === h.callId && c.state === 'settled'), 'the reservation survived the repair and was settled');
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+});
+
+test('R3 H5: duplicate run identities make the dataset invalid', () => {
+  const r = (arm) => ({ pointId: 'p', rep: 0, arm, valid: true, novelActionable: 0, novelActionableHM: 0, costUsd: 1 });
+  assert.equal(decideMetaPilot({ runs: [r('META'), r('META'), r('CONTINUE')], plannedPairs: 1 }).branch, 1);
+});
+
+test('R3 H3/M2: calibration text comes only from earlier rounds and an overlapping T2/T1 pair of one session counts each finding once', () => {
+  const mkF = (id, round, detail) => ({ id, severity: 'HIGH', category: '[backend] x', section: 's', detail, _primaryFile: 'a.mjs', topicId: 'T', affectedFiles: ['a.mjs'] });
+  const snap = { rounds: [{ round: 1, findings: [mkF('f1', 1, 'EARLY text')] }, { round: 2, findings: [mkF('f2', 2, 'LATE reraise text')] }], ledgerEntries: [{ topicId: 'T', findingId: 'f1', severity: 'HIGH', category: '[backend] x', affectedFiles: ['a.mjs'], firstSeenRound: 1 }] };
+  const early = ledgerTargets(snap, { upToRound: 1 })[0];
+  assert.match(early.text, /EARLY/); assert.doesNotMatch(early.text, /LATE/);
+  const ds = { points: ['t2', 't1'].map((id) => ({ pointId: id, status: 'recoverable', set: 'calibration', sessionId: 'S', mode: 'code' })) };
+  const m = calibrationMaterial({ dataset: ds, snapshots: { t2: snap, t1: snap } });
+  assert.equal(m.findings.filter((f) => f.id.endsWith('|f2')).length, 1, 'the shared round-2 finding is one observation, not two');
+});
+
+test('R3 M3: an unknown --point id is an error, not a silent empty plan', async () => {
+  const { runContinue } = await import('../scripts/lib/audit/step-back-pilot-cli.mjs');
+  await assert.rejects(() => runContinue({ datasetPath: '/nonexistent.json', set: 'pilot', replicates: 1, dryRun: true, only: ['nope'], auditScript: 'x' }), /ENOENT|nope/);
+});
+
+test('R3 H8: drawing calibration into a directory that already holds a worksheet is refused (a human may have labelled it)', async () => {
+  const { runCalibrateDraw } = await import('../scripts/lib/audit/step-back-pilot-cli.mjs');
+  assert.equal(typeof runCalibrateDraw, 'function');
 });

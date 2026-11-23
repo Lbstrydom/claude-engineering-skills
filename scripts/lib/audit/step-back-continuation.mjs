@@ -90,9 +90,10 @@ export function findingView(f, runKey, i) {
 }
 
 /** The ledger entries of a sealed snapshot as matcher targets X: the original finding's text where the snapshot holds it. */
-export function ledgerTargets(snapshot) {
+export function ledgerTargets(snapshot, { upToRound = Infinity } = {}) {
   const byId = new Map(); const byTopic = new Map();
-  for (const r of snapshot.rounds) for (const f of r.findings) { byId.set(f.id, f); byTopic.set(f.topicId ?? f._hash, f); }
+  // Text is resolved ONLY from rounds a reader at `upToRound` could have seen (no later re-raise overrides an earlier concern's text).
+  for (const r of snapshot.rounds) if (r.round <= upToRound) for (const f of r.findings) { byId.set(f.id, f); byTopic.set(f.topicId ?? f._hash, f); }
   return snapshot.ledgerEntries.map((e, i) => {
     const f = byId.get(e.findingId) ?? byTopic.get(e.topicId) ?? null;
     return {

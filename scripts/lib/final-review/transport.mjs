@@ -426,7 +426,8 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     // Budget seam (plan §2.6): inert unless AUDIT_BUDGET_LEDGER is set. The race sits INSIDE the reservation so a
     // timeout is recorded as failed-unknown (the provider may still have accepted and billed the request). The
     // reservation bounds the whole envelope (prompts + every schema/extra the adapter may add) and the enforced cap.
-    const raw = await withBudget(
+    // The deadline covers the WHOLE budgeted operation (reservation included), so a stalled ledger cannot outlast it.
+    const budgeted = withBudget(
       { seam: 'final-review.callReviewer', provider: BUDGET_PROVIDER_BY_TRANSPORT[transportKind] ?? transportKind, model,
         body: { systemPrompt, userPrompt, jsonSchema, toolSchema, openAiJsonSchema, requestExtras }, outputCap: MAX_OUTPUT_TOKENS },
       () => Promise.race([
@@ -435,6 +436,8 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
       ]),
       (r) => ({ usage: r?.usage, modelServed: model }),
     );
+    budgeted.catch?.(() => {}); // if the outer deadline wins, the inner settlement/rejection must not be unhandled
+    const raw = await Promise.race([budgeted, timeoutPromise]);
     const latencyMs = Date.now() - startMs;
     const billed = () => ({ ...raw.usage, latency_ms: latencyMs });
 
