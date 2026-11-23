@@ -26,7 +26,8 @@ import { classifyLaunchSpec } from './sync-pin-guard.mjs';
 export const ROOT_MCP_FEATURE = 'root-mcp-json';
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'];
+// npm precedence: an optionalDependencies entry overrides a dependencies entry of the same name.
+const DEP_FIELDS = ['optionalDependencies', 'dependencies', 'devDependencies'];
 
 /** `{absent:true}` (ENOENT), `{error}` (unreadable or malformed: a broken file, never read as an absent one) or `{value}`. */
 function readJsonState(file) {
@@ -198,6 +199,7 @@ export function planRootMcp({ consumerRoot, sourceRoot, syncOptIn, log = () => {
   const root = render('.mcp.json');
   const vscode = render('.vscode/mcp.json');
   const notes = root.notes.map((n) => `.mcp.json: ${n}`);
+  for (const n of vscode.notes) if (!root.notes.includes(n)) notes.push(`.vscode/mcp.json: ${n}`);
   if (root.text === null) notes.push('.mcp.json not shipped: no server is pinned, locked and installed here');
   return finish(
     new Set([...(root.text === null ? ['.mcp.json'] : []), ...(vscode.text === null ? ['.vscode/mcp.json'] : [])]),

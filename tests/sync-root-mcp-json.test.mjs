@@ -406,6 +406,10 @@ describe('renderConsumerMcp — what is left out, and why', () => {
       assert.equal(r.notes.length, 3);
     } finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
+  it('optionalDependencies overrides dependencies for the same name (npm precedence)', () => {
+    const r = render(tmpWith({ dependencies: { '@playwright/mcp': '0.0.84' }, optionalDependencies: { '@playwright/mcp': '0.0.85' } }, pw('0.0.85')));
+    assert.notEqual(r.text, null);
+  });
   it('a lockfile whose JSON is null is a rejection, not a crash', () => {
     assert.equal(render(withLock('package-lock.json', 'null')).text, null);
   });
