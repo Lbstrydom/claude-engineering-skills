@@ -1,0 +1,301 @@
+/**
+ * @fileoverview The `step-back-replay.mjs` Pilot 1 command bodies (docs/plans/seeded-defect-benchmark.md §1.4, §2, §6):
+ * `freeze --pilot meta-ab`, `continue`, `reconcile`, `calibrate-draw`, `calibrate-score`, `novelty`, `worksheet`, `score --pilot meta-ab`.
+ * Kept out of the CLI file so `step-back-replay.mjs` stays a thin dispatcher.
+ *
+ * Every spend goes through the provider-call seams under ONE budget ledger (`AUDIT_BUDGET_LEDGER`, `llm-budget.mjs`): the
+ * hard `--max-usd` is enforced per call from provider usage, never from a preflight estimate, and a run that hits its cap
+ * stops (exit 5). A paid `continue` refuses to run outside a `npm run fixture:create` worktree (a spend-bearing run pins its revision).
+ *
+ * Domain: audit-orchestration.
+ *
+ * @module scripts/lib/audit/step-back-pilot-cli
+ */
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { ArgvError } from '../cli-io.mjs';
+import { withCaseTree } from '../model-eval/case-tree.mjs';
+import { resolveMainRoot, defaultFixtureRoot } from '../pinned-worktree/paths.mjs';
+import { initLedger, readLedgerSummary, reconcileCall, BUDGET_LEDGER_ENV } from '../llm-budget.mjs';
+import { createJudge, judgePairs, classifyNovelty, stampMismatch } from '../model-eval/concern-matcher.mjs';
+import { drawCalibrationSets, renderWorksheet, joinWorksheetLabels, scoreCalibration } from '../model-eval/matcher-calibration.mjs';
+import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShuffle } from './step-back-pilot-freeze.mjs';
+import { runContinuation, ledgerTargets, restorePointFiles, validateTrigger, resolveScopeBase, sidFor, EXIT_BUDGET_STOP } from './step-back-continuation.mjs';
+import { decideMetaPilotBothJudges, scoreMetaRuns, SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
+
+export const PILOT = 'meta-ab';
+export const LABELS = Object.freeze(['REAL', 'WRONG', 'NOT_A_DEFECT', 'RIGOUR_CHASING', 'UNDETERMINED']);
+const sha256Hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
+const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
+const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
+export const snapshotsPathFor = (datasetPath) => datasetPath.replace(/\.json$/, '') + '.snapshots.json';
+
+/** Append + fsync: once this returns the record is on the device. */
+export function appendDurably(file, text) {
+  const fd = fs.openSync(file, 'a');
+  try { const buf = Buffer.from(text); let off = 0; while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+export function loadDataset(datasetPath) {
+  const dataset = readJson(datasetPath);
+  if (dataset.kind !== 'meta-ab') throw new ArgvError(`${datasetPath} is not a meta-ab pilot dataset`);
+  const snapshots = readJson(snapshotsPathFor(datasetPath));
+  verifySnapshots({ dataset, snapshots }); assertPartition(dataset);
+  return { dataset, snapshots };
+}
+
+/** A spend-bearing run pins its revision: the process must run inside a fixture (a sibling `<repo>-pinned/<name>`), never the shared tree. */
+export function assertPinnedFixture(cwd = process.cwd()) {
+  const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+  const root = defaultFixtureRoot(resolveMainRoot(cwd));
+  const rel = path.relative(root, path.resolve(top));
+  if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') throw new ArgvError(`a paid run must run from a pinned fixture under ${root} (npm run fixture:create); this tree is ${top}`);
+  return { top, head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim() };
+}
+
+// ── freeze ───────────────────────────────────────────────────────────────────────────────────────────
+
+export function runFreeze({ exports, reposFile, seed, out, targets }) {
+  if (!exports.length || !reposFile || !seed || !out) throw new ArgvError('step-back-replay freeze --pilot meta-ab: --export <csv>, --repos-file, --seed and --out are required.');
+  const merged = { runs: [], findings: [], events: [], exportedAt: null };
+  const hashes = [];
+  for (const p of exports) {
+    const bytes = fs.readFileSync(p); hashes.push(sha256Hex(bytes));
+    const e = JSON.parse(bytes);
+    merged.runs.push(...e.runs); merged.findings.push(...e.findings); merged.events.push(...e.events);
+    merged.exportedAt = [merged.exportedAt, e.exportedAt].filter(Boolean).sort().pop();
+  }
+  merged.exportSha256 = sha256Hex(hashes.sort().join('|'));
+  const { dataset, snapshots } = freezeMetaPilot({ exp: merged, repos: readJson(reposFile), seed, ...(targets ? { targets } : {}) });
+  writeJson(out, dataset); writeJson(snapshotsPathFor(out), snapshots);
+  return dataset;
+}
+
+// ── continue ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** Validate one point with NO provider call: tree, plan file, trigger and diff scope. */
+export async function validatePoint({ point, snapshot, repoRoot, deps = {} }) {
+  const withTree = deps.withTree || withCaseTree;
+  try {
+    return await withTree({ repoRoot, sha: point.treeSha }, async (dir) => {
+      if (!fs.existsSync(path.join(dir, point.planFile))) return { ok: false, reason: 'plan file absent from the tree' };
+      const t = validateTrigger({ point, snapshot, dir });
+      if (!t.ok) return t;
+      if (point.mode === 'code') { const b = resolveScopeBase({ repoRoot, treeSha: point.treeSha, firstSha: point.firstSha }); if (!b.ok) return b; }
+      restorePointFiles({ dir, point, snapshot, sid: sidFor({ pointId: point.pointId, arm: 'META', rep: 0 }) });
+      return { ok: true };
+    });
+  } catch (err) { return { ok: false, reason: String(err?.message || err).slice(0, 300) }; }
+}
+
+function repoRootFor(dataset, point) {
+  const p = dataset.repoPaths?.[point.repo];
+  if (!p || !fs.existsSync(p)) throw new ArgvError(`no local clone for ${point.repo} (dataset.repoPaths); the pilot cannot restore its points`);
+  return p;
+}
+
+export async function runContinue({ datasetPath, set, replicates, maxUsd, confirmSpend, resultsPath, dryRun, only = null, auditScript, deps = {} }) {
+  if (!['rehearsal', 'pilot', 'repeat'].includes(set)) throw new ArgvError('step-back-replay continue: --set must be rehearsal, pilot or repeat (calibration points are never run).');
+  const { dataset, snapshots } = loadDataset(datasetPath);
+  let points = pointsFor({ dataset, set, purpose: set });
+  if (only) points = points.filter((p) => only.includes(p.pointId));
+  if (dryRun) {
+    const rows = [];
+    for (const p of points) rows.push({ pointId: p.pointId, repo: p.repo, mode: p.mode, trigger: p.trigger, ...(await validatePoint({ point: p, snapshot: snapshots[p.pointId], repoRoot: repoRootFor(dataset, p), deps })) });
+    return { dryRun: true, set, planned: points.length * 2 * replicates, points: rows, datasetHash: dataset.datasetHash };
+  }
+  if (!(maxUsd > 0) || !confirmSpend || !resultsPath) throw new ArgvError('step-back-replay continue: a paid run needs --max-usd <n>, --confirm-spend and --results <file.jsonl> (--dry-run validates and plans without a call).');
+  const pin = deps.pin ?? assertPinnedFixture();
+  if (fs.existsSync(resultsPath)) throw new ArgvError(`--results ${resultsPath} already exists; a paid run never overwrites or appends to it.`);
+  fs.mkdirSync(path.dirname(path.resolve(resultsPath)), { recursive: true });
+  fs.writeFileSync(resultsPath, '', { flag: 'wx' });
+  const ledgerFile = `${resultsPath}.budget.jsonl`;
+  initLedger({ file: ledgerFile, capUsd: maxUsd });
+  const spentUsd = () => readLedgerSummary(ledgerFile).spentUsd;
+  const append = (rec) => appendDurably(resultsPath, `${JSON.stringify(rec)}\n`);
+  append({ type: 'header', epoch: SEEDED_BENCH_EPOCH, pilot: PILOT, set, replicates, maxUsd, datasetHash: dataset.datasetHash, revision: pin.head, ledger: ledgerFile, points: points.map((p) => p.pointId), startedAt: new Date().toISOString() });
+  const rows = []; let stopped = null;
+  outer: for (let rep = 0; rep < replicates; rep++) {
+    for (const point of points) {
+      for (const arm of ['META', 'CONTINUE']) {
+        const s = readLedgerSummary(ledgerFile);
+        if (s.indeterminate.length) { stopped = { reason: 'indeterminate-call', detail: `unreconciled calls: ${s.indeterminate.join(', ')}; run reconcile` }; break outer; }
+        if (s.remainingUsd <= 0) { stopped = { reason: 'max-usd', detail: `spent $${s.spentUsd.toFixed(4)} of $${maxUsd}` }; break outer; }
+        const row = await (deps.runContinuation || runContinuation)({ point, snapshot: snapshots[point.pointId], arm, rep, repoRoot: repoRootFor(dataset, point), auditScript, ledgerFile, runId: `${set}-${point.pointId}-${arm}-${rep}`, deps: { spentUsd, ...(deps.continuationDeps || {}) } });
+        row.set = set; rows.push(row); append(row);
+        if (row.invalidReason === 'budget-stop') { stopped = { reason: 'max-usd', detail: `a call was refused at the cap during ${row.runId}` }; break outer; }
+      }
+    }
+  }
+  const summary = readLedgerSummary(ledgerFile);
+  if (stopped) append({ type: 'stopped', ...stopped, spentUsd: summary.spentUsd });
+  append({ type: 'summary', spentUsd: summary.spentUsd, settledUsd: summary.settledUsd, outstandingUsd: summary.outstandingUsd, flagged: summary.flagged, runs: rows.length, valid: rows.filter((r) => r.valid).length });
+  return { set, rows, stopped, spentUsd: summary.spentUsd, exitCode: stopped ? EXIT_BUDGET_STOP : 0, ledgerFile };
+}
+
+export async function runReconcile({ ledger, callId, evidence, costUsd }) {
+  if (!ledger || !callId || !evidence || costUsd == null) throw new ArgvError('step-back-replay reconcile: --ledger, --call-id, --evidence and --cost-usd are required.');
+  return reconcileCall({ file: ledger, callId, evidence, costUsd: Number(costUsd) });
+}
+
+export const readRunRows = (resultsPath) => fs.readFileSync(resultsPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.type === 'run');
+
+// ── matcher calibration (§1.4) ───────────────────────────────────────────────────────────────────────
+
+const mediumPlus = (f) => ['HIGH', 'MEDIUM'].includes(String(f.severity).toUpperCase());
+
+/** Calibration pairs come ONLY from calibration-set sessions: findings of round r against the ledger entries first seen before r. */
+export function calibrationMaterial({ dataset, snapshots }) {
+  const findings = []; const ledger = [];
+  for (const p of dataset.points.filter((x) => x.status === 'recoverable' && x.set === 'calibration')) {
+    const snap = snapshots[p.pointId];
+    const xs = ledgerTargets(snap);
+    const firstSeen = new Map(snap.ledgerEntries.map((e, i) => [String(xs[i].id), e.firstSeenRound]));
+    for (const r of snap.rounds) {
+      if (r.round < 2) continue;
+      for (const f of r.findings.filter(mediumPlus)) {
+        const sessionId = `${p.sessionId}`;
+        const visible = xs.filter((x) => (firstSeen.get(String(x.id)) ?? 99) < r.round).map((x) => ({ ...x, id: `${p.pointId}|${x.id}`, sessionId }));
+        const fid = `${p.pointId}|r${r.round}|${f.id}`;
+        findings.push({ id: fid, file: f._primaryFile ?? f.affectedFiles?.[0] ?? null, lines: null, severity: String(f.severity).toUpperCase(), text: [f.category, f.section, f.detail].filter(Boolean).join('\n'), arm: p.mode, sessionId });
+        for (const x of visible) if (!ledger.some((l) => l.id === x.id)) ledger.push(x);
+      }
+    }
+  }
+  return { findings, ledger };
+}
+
+export function runCalibrateDraw({ datasetPath, seed, outDir, sizes }) {
+  const { dataset, snapshots } = loadDataset(datasetPath);
+  const { findings, ledger } = calibrationMaterial({ dataset, snapshots });
+  const sets = drawCalibrationSets({ findings, ledgerEntries: ledger, seed, ...(sizes ? { sizes } : {}) });
+  const { worksheetMarkdown, key } = renderWorksheet(sets, { seed, ledgerEntries: ledger });
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, 'calibration-worksheet.md'), worksheetMarkdown);
+  writeJson(path.join(outDir, 'calibration-key.json'), key);
+  writeJson(path.join(outDir, 'calibration-material.json'), { datasetHash: dataset.datasetHash, findings, ledger });
+  return { findings: findings.length, ledger: ledger.length, shortfalls: sets.shortfalls, pairs: Object.keys(key.pairs).length, recall: Object.keys(key.filterRecall).length };
+}
+
+/** Parse the filled worksheet: `Label: same` under `### P001`, `Restates: id1, id2` (or `none`) under `### R001`. */
+export function parseCalibrationAnswers(md) {
+  const answers = { pairs: {}, filterRecall: {} };
+  for (const block of String(md).split(/^### /m).slice(1)) {
+    const id = /^([PR]\d+)/.exec(block)?.[1]; if (!id) continue;
+    if (id.startsWith('P')) { const v = /^Label:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim().toLowerCase(); if (v) answers.pairs[id] = v; }
+    else {
+      const v = /^Restates:[ \t]*(\S.*)$/m.exec(block)?.[1]?.trim();
+      if (v) answers.filterRecall[id] = /^none$/i.test(v) ? [] : v.split(/[,\s]+/).map((s) => s.replace(/[`]/g, '')).filter(Boolean);
+    }
+  }
+  return answers;
+}
+
+/** Run both judges over the labelled pairs under their own hard cap, then score each against the human labels. */
+export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) {
+  const key = readJson(path.join(dir, 'calibration-key.json'));
+  const material = readJson(path.join(dir, 'calibration-material.json'));
+  const answers = parseCalibrationAnswers(fs.readFileSync(labelsFile, 'utf8'));
+  const joined = joinWorksheetLabels({ key, answers, findings: material.findings, ledgerEntries: material.ledger });
+  const ledgerFile = path.join(dir, 'calibration.budget.jsonl');
+  initLedger({ file: ledgerFile, capUsd: maxUsd });
+  process.env[BUDGET_LEDGER_ENV] = ledgerFile;
+  const out = { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: material.datasetHash, judges: {} };
+  for (const [name, sentinel] of [['opus', 'latest-opus'], ['pro', 'latest-pro']]) {
+    const judge = await (deps.createJudge || createJudge)({ sentinel });
+    const pairs = joined.labelled.map((l) => ({ pairId: l.pairId, f: l.f, x: l.x }));
+    const res = await (deps.judgePairs || judgePairs)({ pairs, judge });
+    out.judges[name] = { stamp: judge.stamp, counts: res.counts, score: scoreCalibration({ labelled: joined.labelled, judgeVerdicts: res.results.map((r) => ({ pairId: r.pairId, verdict: r.verdict })), filterRecallPairs: joined.filterRecallPairs }), verdicts: res.results };
+  }
+  const s = readLedgerSummary(ledgerFile);
+  out.spentUsd = s.spentUsd; out.flagged = s.flagged;
+  out.decision = Object.values(out.judges).every((j) => j.score.decision.status === 'accept') ? 'accept' : Object.values(out.judges).some((j) => j.score.decision.status === 'fail') ? 'fail' : 'inconclusive';
+  writeJson(path.join(dir, 'calibration-report.json'), out);
+  return out;
+}
+
+// ── novelty, worksheet, score ────────────────────────────────────────────────────────────────────────
+
+/** Novelty of every MEDIUM+ finding against its point's ledger, by BOTH judges (stamped once; a changed stamp refuses a repeat). */
+export async function runNovelty({ datasetPath, resultsPath, deps = {} }) {
+  const { dataset, snapshots } = loadDataset(datasetPath);
+  const ledgerFile = `${resultsPath}.budget.jsonl`;
+  process.env[BUDGET_LEDGER_ENV] = ledgerFile;
+  const outPath = `${resultsPath}.novelty.json`;
+  const prior = fs.existsSync(outPath) ? readJson(outPath) : null;
+  const judges = {};
+  for (const [name, sentinel] of [['opus', 'latest-opus'], ['pro', 'latest-pro']]) {
+    judges[name] = await (deps.createJudge || createJudge)({ sentinel });
+    if (prior && stampMismatch(prior.stamps[name], judges[name].stamp)) throw new Error(`judge "${name}" resolves differently from the frozen stamp; refusing a repeat under a different judge`);
+  }
+  const out = prior ?? { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: dataset.datasetHash, stamps: Object.fromEntries(Object.entries(judges).map(([n, j]) => [n, j.stamp])), byFinding: {}, incomplete: false };
+  for (const row of readRunRows(resultsPath)) {
+    const fs_ = row.findings.filter(mediumPlus);
+    if (!fs_.length) continue;
+    const snap = snapshots[row.pointId]; const point = dataset.points.find((p) => p.pointId === row.pointId);
+    for (const [name, judge] of Object.entries(judges)) {
+      const todo = fs_.filter((f) => !out.byFinding[f.key]?.[name]);
+      if (!todo.length) continue;
+      const r = await (deps.classifyNovelty || classifyNovelty)({ findings: todo.map((f) => ({ id: f.key, file: f.file, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
+      if (r.incomplete) out.incomplete = true;
+      for (const pf of r.perFinding) (out.byFinding[pf.id] ||= {})[name] = { novel: pf.novel, flags: pf.flags, sameOf: pf.sameOf ?? null, partialOf: pf.partialOf ?? null, notJudged: pf.notJudged ?? false };
+    }
+    writeJson(outPath, out);
+  }
+  writeJson(outPath, out);
+  return out;
+}
+
+/** The pooled, shuffled, SOURCE-BLINDED sheet a human labels. Every finding novel under EITHER judge is labelled (never a judge's say-so). */
+export function buildWorksheet({ rows, novelty, seed, dataset }) {
+  const items = [];
+  for (const row of rows) for (const f of row.findings.filter(mediumPlus)) {
+    const nv = novelty.byFinding[f.key] ?? {};
+    if (Object.values(nv).some((j) => j.novel)) items.push({ key: f.key, f, mode: row.mode, repo: dataset.points.find((p) => p.pointId === row.pointId)?.repo, judges: nv, arm: row.arm, runId: row.runId });
+  }
+  const shuffled = seededShuffle(items, `${seed}:worksheet`, (x) => x.key);
+  const key = { version: 1, seed, items: {} };
+  const md = ['# Pilot 1 adjudication worksheet (blind to arm)', '',
+    'For each finding write ONE label after `Label:`:', '',
+    '- `REAL` — a real defect and worth fixing NOW (a round would reasonably be spent on it)',
+    '- `RIGOUR_CHASING` — real but not worth a round',
+    '- `NOT_A_DEFECT` — not a defect in this code',
+    '- `WRONG` — factually wrong about the code',
+    '- `UNDETERMINED` — cannot tell (this blocks the score until resolved)', '', 'Judge opinions, arm and run are hidden on purpose.', ''];
+  shuffled.forEach((it, i) => {
+    const id = `W${String(i + 1).padStart(3, '0')}`;
+    key.items[id] = { key: it.key, arm: it.arm, runId: it.runId, judges: it.judges };
+    md.push(`### ${id}`, '', `- repo: ${it.repo} (${it.mode} audit) · file: ${it.f.file ?? '?'}${it.f.lines ? `:${it.f.lines[0]}` : ''} · severity: ${it.f.severity}`, '', String(it.f.text).split('\n').map((l) => `> ${l}`).join('\n'), '', 'Label: ', '');
+  });
+  return { markdown: md.join('\n'), key };
+}
+
+export function parseWorksheetLabels(md) {
+  const labels = new Map();
+  for (const block of String(md).split(/^### /m).slice(1)) {
+    const id = /^(W\d+)/.exec(block)?.[1]; const v = /^Label:[ \t]*(\S+)/m.exec(block)?.[1]?.trim().toUpperCase().replace(/[`.]/g, '');
+    if (id && v) labels.set(id, v);
+  }
+  return labels;
+}
+
+/** Score both judges against the human labels and apply the pre-registered rule. */
+export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
+  const labels = new Map();
+  for (const [wid, v] of labelsById) {
+    if (!LABELS.includes(v)) throw new Error(`worksheet ${wid}: unknown label "${v}"`);
+    if (key.items[wid]) labels.set(key.items[wid].key, v);
+  }
+  const unlabelled = Object.keys(key.items).filter((w) => !labelsById.has(w));
+  const byJudge = {}; const blocked = {};
+  for (const j of Object.keys(novelty.stamps)) {
+    const novelByFinding = new Map(Object.entries(novelty.byFinding).map(([k, v]) => [k, v[j]?.novel === true]));
+    const s = scoreMetaRuns({ runs: rows, novelByFinding, labels });
+    byJudge[j] = s.rows; blocked[j] = s.blocked;
+  }
+  const decision = decideMetaPilotBothJudges({ byJudge, plannedPairs });
+  const blockedAny = Object.values(blocked).some((b) => b.length) || unlabelled.length > 0 || novelty.incomplete;
+  return { decision: blockedAny ? { ...decision, outcome: 'INCOMPLETE', why: `unlabelled ${unlabelled.length}, blocked ${JSON.stringify(Object.fromEntries(Object.entries(blocked).map(([j, b]) => [j, b.length])))}, novelty incomplete ${novelty.incomplete}` } : decision, byJudge, blocked, unlabelled };
+}

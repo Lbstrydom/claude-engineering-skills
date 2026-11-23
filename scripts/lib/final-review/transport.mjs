@@ -32,6 +32,7 @@ import { sanitizeSchemaName, isResponseFormatUnsupported } from '../oss-structur
 import { normalizeGeminiUsage } from '../gemini-usage.mjs';
 import { geminiConfig, finalReviewConfig } from '../config.mjs';
 import { azureThrottle } from '../azure-throttle.mjs';
+import { withBudget, BudgetStopError } from '../llm-budget.mjs';
 import { ANTHROPIC_REVIEW_TOOL_NAME, truncateToSchema } from './output-schemas.mjs';
 
 const TIMEOUT_MS = geminiConfig.timeoutMs;
@@ -111,6 +112,9 @@ function parseReviewJson(text) {
  * arms, not identical compute — read a bake-off accordingly.
  */
 export const GEMINI_THINKING_BUDGET_BY_EFFORT = Object.freeze({ low: 4096, medium: 8192, high: 16384 });
+
+/** Budget-ledger provider label per transport (plan §2.6); a label only, never routing. */
+const BUDGET_PROVIDER_BY_TRANSPORT = { gemini: 'google', anthropic: 'anthropic', openai: 'openai-compat' };
 
 export const REVIEW_TRANSPORTS = {
   async gemini(client, { model, maxTokens, systemPrompt, userPrompt, jsonSchema, signal }) {
@@ -418,10 +422,18 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
   });
 
   try {
-    const raw = await Promise.race([
-      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal, requestExtras, openAiJsonSchema }),
-      timeoutPromise,
-    ]);
+    // Budget seam (plan §2.6): inert unless AUDIT_BUDGET_LEDGER is set. The race sits INSIDE the reservation so a
+    // timeout is recorded as failed-unknown (the provider may still have accepted and billed the request). The
+    // reservation bounds the whole envelope (prompts + every schema/extra the adapter may add) and the enforced cap.
+    const raw = await withBudget(
+      { seam: 'final-review.callReviewer', provider: BUDGET_PROVIDER_BY_TRANSPORT[transportKind] ?? transportKind, model,
+        body: { systemPrompt, userPrompt, jsonSchema, toolSchema, openAiJsonSchema, requestExtras }, outputCap: MAX_OUTPUT_TOKENS },
+      () => Promise.race([
+        adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal, requestExtras, openAiJsonSchema }),
+        timeoutPromise,
+      ]),
+      (r) => ({ usage: r?.usage, modelServed: model }),
+    );
     const latencyMs = Date.now() - startMs;
     const billed = () => ({ ...raw.usage, latency_ms: latencyMs });
 
@@ -478,6 +490,7 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     process.stderr.write(`  [${label}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out / ${usage.thinking_tokens} thinking)\n`);
     return { result, usage, latencyMs };
   } catch (err) {
+    if (err instanceof BudgetStopError) throw err; // a budget refusal is never relabelled as a provider failure
     const latencyMs = Date.now() - startMs;
     const isAbort = err.name === 'AbortError' || err.message?.toLowerCase().includes('abort') || err.message?.startsWith('Timeout after');
     // Redacted error normalization — surface provider status + message, NEVER

@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { openaiConfig, briefConfig } from './config.mjs';
 import { normalizeGeminiUsage } from './gemini-usage.mjs';
+import { withBudget, BudgetStopError } from './llm-budget.mjs';
 
 /**
  * Lazily construct + cache a single Gemini (`GoogleGenAI`) client for the
@@ -39,19 +40,24 @@ export async function safeCallGPT(openai, systemPrompt, userPrompt, schema, opti
   const { model = openaiConfig.model, maxOutputTokens = 8000, timeoutMs = 120000 } = options;
   const start = Date.now();
   try {
-    const response = await openai.responses.parse({
+    const request = {
       model,
       instructions: systemPrompt,
       input: userPrompt,
       text: { format: zodTextFormat(schema, 'result') },
       max_output_tokens: maxOutputTokens,
       timeout: timeoutMs
-    });
+    };
+    const response = await withBudget(
+      { seam: 'llm-wrappers.safeCallGPT', provider: 'openai', model, body: request, outputCap: maxOutputTokens },
+      () => openai.responses.parse(request),
+    );
 
     const parsed = response.output_parsed;
     const usage = response.usage || {};
     return { result: parsed, usage, latencyMs: Date.now() - start };
   } catch (err) {
+    if (err instanceof BudgetStopError) throw err; // a budget refusal stops the run; never degraded to null
     process.stderr.write(`  [llm-wrapper] GPT call failed: ${err.message}\n`);
     return null;
   }
@@ -70,7 +76,7 @@ export async function callGemini(ai, systemPrompt, userPrompt, jsonSchema, optio
   const { model = briefConfig.geminiModel, maxOutputTokens = 8000, timeoutMs = 120000, zodSchema = null } = options;
   const start = Date.now();
   try {
-    const response = await ai.models.generateContent({
+    const request = {
       model,
       contents: userPrompt,
       config: {
@@ -79,7 +85,12 @@ export async function callGemini(ai, systemPrompt, userPrompt, jsonSchema, optio
         responseMimeType: 'application/json',
         responseSchema: jsonSchema
       }
-    });
+    };
+    const response = await withBudget(
+      { seam: 'llm-wrappers.callGemini', provider: 'google', model, body: request, outputCap: maxOutputTokens },
+      () => ai.models.generateContent(request),
+      (r) => ({ usage: normalizeGeminiUsage(r?.usageMetadata), modelServed: model }),
+    );
 
     const parsed = JSON.parse(response.text);
 
@@ -102,6 +113,7 @@ export async function callGemini(ai, systemPrompt, userPrompt, jsonSchema, optio
     const usage = normalizeGeminiUsage(response.usageMetadata);
     return { result: parsed, usage, latencyMs: Date.now() - start };
   } catch (err) {
+    if (err instanceof BudgetStopError) throw err; // a budget refusal stops the run; never degraded to null
     process.stderr.write(`  [llm-wrapper] Gemini call failed: ${err.message}\n`);
     return null;
   }
@@ -126,12 +138,16 @@ export async function callClaude(anthropic, systemPrompt, userPrompt, schema, op
   const { model = briefConfig.claudeModel, maxTokens = 4000 } = options;
   const start = Date.now();
   try {
-    const response = await anthropic.messages.create({
+    const request = {
       model,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }]
-    });
+    };
+    const response = await withBudget(
+      { seam: 'llm-wrappers.callClaude', provider: 'anthropic', model, body: request, outputCap: maxTokens },
+      () => anthropic.messages.create(request),
+    );
 
     let text = response.content?.[0]?.text || '';
     // Extract JSON block if wrapped in markdown code fences or conversational text
@@ -148,6 +164,7 @@ export async function callClaude(anthropic, systemPrompt, userPrompt, schema, op
     const usage = response.usage || {};
     return { result: parsed, usage, latencyMs: Date.now() - start };
   } catch (err) {
+    if (err instanceof BudgetStopError) throw err; // a budget refusal stops the run; never degraded to null
     process.stderr.write(`  [llm-wrapper] Claude call failed: ${err.message}\n`);
     return null;
   }
