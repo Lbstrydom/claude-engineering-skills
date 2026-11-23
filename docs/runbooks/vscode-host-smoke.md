@@ -27,27 +27,32 @@ The old **Local** harness is removed in February 2027 and is not smoke-tested he
 ## 0. Rules for the whole run
 
 - **Nothing here is committed except the fixtures** you review in §6. Raw hook captures never enter the repo: they are
-  written to `$env:LOCALAPPDATA\ces-hook-capture\`, a per-user folder.
+  written to a per-run folder under `$env:LOCALAPPDATA\ces-hook-capture\`, locked to you, SYSTEM and Administrators.
+- **The run never touches a file it did not create.** Preflight (§1.3) refuses if the capture hook's config already
+  exists. Cleanup (§7) removes only what the **run record** lists, then checks that each of those paths is gone.
 - **Cleanup (§7) always runs**, even if you abandon the run half way. If you stop for any reason, jump straight to §7.
 - **Stop and ask the coordinator** if a step would need a secret, a deploy setting or a GitHub setting. None of the steps
   here does.
 - Every command is PowerShell. Run them from the repo root unless a step says otherwise. Keep ONE PowerShell window open
-  for the whole run: the variables set in §1 live in it.
+  for the whole run: the variables set in §1 (`$runId`, `$run`, `$record`) live in it.
+- Blocks that guard something are wrapped in `. { ... }` and end in a red error when they refuse. **A red error means
+  stop**: do not run the next block; read the message, and if you cannot fix it go to §7.
 
 ## 1. Before you start (once)
 
 ### 1.1 Use a clean checkout that contains this file
 
-Open the checkout you will run in. It must be clean, because the cleanup check in §7 is "git status prints nothing".
+Open the checkout you will run in. It must be clean, so that the cleanup check in §7 can mean something.
 
 ```powershell
 Set-Location C:\GIT\claude-engineering-skills
+$repo = (git rev-parse --show-toplevel)
 git status --porcelain
 Test-Path docs\runbooks\vscode-host-smoke.md
 ```
 
-The first command must print nothing and the second must print `True`. If the tree is not clean, use a fresh worktree
-(`git worktree add C:\tmp\ces-smoke main`) and run everything from there.
+The `git status` line must print nothing and the last line must print `True`. If the tree is not clean, use a fresh
+worktree (`git worktree add C:\tmp\ces-smoke main`) and run everything from there.
 
 ### 1.2 Record the versions
 
@@ -62,46 +67,106 @@ Write down the VS Code version (the first line), the Copilot, Copilot Chat and A
 `claude` resolves on PATH. The extension's bundled CLI is **not** on PATH, so an empty last line is normal and means
 the `claude --bg` steps in H3 need a standalone install (review §2c).
 
-### 1.3 Install the capture hook and the projection script
+### 1.3 Preflight, run folder, lockdown, scripts and hook (once)
 
-The two scripts are the fenced blocks marked `smoke-script` in §9 of this file. This block extracts them from the file
-you are reading, so you never copy JavaScript by hand. It writes them to the per-user capture folder, outside the repo.
+**Step A: preflight. It refuses, it never overwrites.** These are your files if they exist, so the run stops.
 
 ```powershell
-$capture = Join-Path $env:LOCALAPPDATA 'ces-hook-capture'
-New-Item -ItemType Directory -Force -Path $capture | Out-Null
-
-$md = Get-Content -Raw docs\runbooks\vscode-host-smoke.md
-$fence = ([string][char]96) * 3
-foreach ($name in 'capture.mjs', 'project.mjs') {
-  $pattern = '<!-- smoke-script: ' + [regex]::Escape($name) + ' -->\r?\n' + [regex]::Escape($fence) + 'js\r?\n(.*?)\r?\n' + [regex]::Escape($fence)
-  $found = [regex]::Match($md, $pattern, 'Singleline')
-  if (-not $found.Success) { throw "script $name not found in the runbook" }
-  $code = $found.Groups[1].Value -replace "`r`n", "`n"
-  [IO.File]::WriteAllText((Join-Path $capture $name), $code + "`n", [Text.UTF8Encoding]::new($false))
+$base = Join-Path $env:LOCALAPPDATA 'ces-hook-capture'
+$runId = (Get-Date -Format 'yyyyMMddTHHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+$run = Join-Path $base $runId
+$record = Join-Path $base ($runId + '.created.txt')
+$hookConfig = '.github\hooks\payload-capture.json'
+. {
+  if (Test-Path -LiteralPath $hookConfig) { throw "REFUSED: $hookConfig already exists. It is not this run's file: do not overwrite or delete it. Ask the coordinator." }
+  if (Test-Path -LiteralPath 'scratch') { throw 'REFUSED: scratch\ already exists in the repo. Move or rename it yourself, then start again.' }
+  if (Test-Path -LiteralPath $run) { throw "REFUSED: $run already exists." }
+  if (Test-Path -LiteralPath $record) { throw "REFUSED: $record already exists." }
+  "preflight ok: run id $runId"
 }
-Get-ChildItem $capture
 ```
 
-You should see `capture.mjs` and `project.mjs`. Now write the hook config. It lives in `.github/hooks/`, which is **not**
-ignored by git, so it shows up in `git status` until you delete it in §7. That is deliberate: a leftover cannot hide.
+**Step B: the run record.** Every artifact the run creates is written here first, and cleanup removes only these.
 
 ```powershell
-$hookDir = '.github\hooks'
-New-Item -ItemType Directory -Force -Path $hookDir | Out-Null
-$command = 'node "' + (Join-Path $capture 'capture.mjs') + '"'
-$entry = @(@{ matcher = ''; hooks = @(@{ type = 'command'; command = $command; timeout = 5 }) })
-$config = @{ hooks = @{ UserPromptSubmit = $entry; PreToolUse = $entry; PostToolUse = $entry } }
-$config | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 (Join-Path $hookDir 'payload-capture.json')
-Get-Content (Join-Path $hookDir 'payload-capture.json')
+New-Item -ItemType Directory -Force -Path $base | Out-Null
+$hookDirExisted = Test-Path -LiteralPath '.github\hooks'
+$lines = @("tree|$run", "file|$hookConfig", 'tree|scratch', 'verify-clean|.mcp.json', 'verify-clean|.mcp.json.off')
+if (-not $hookDirExisted) { $lines += 'emptydir|.github\hooks' }
+Set-Content -LiteralPath $record -Value $lines
+Get-Content -LiteralPath $record
 ```
 
-The capture script never prints, never blocks and never writes inside the repo. Set which harness you are about to test
-(you will change this word at the start of H1, H2 and H3):
+You will add one line per extra artifact later (`worktree|path`). Never edit the record by hand to remove a line.
+
+**Step C: create the run folder and lock it to you.** Nothing else on the machine may read your prompts.
 
 ```powershell
-Set-Content -NoNewline -Path (Join-Path $capture 'current-host.txt') -Value 'copilot'
+$operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+New-Item -ItemType Directory -Path $run | Out-Null
+icacls $run /inheritance:r /grant:r "*${operatorSid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+
+function Test-RunDirAcl {
+  param([string]$Dir, [string]$OperatorSid)
+  try {
+    $acl = Get-Acl -LiteralPath $Dir
+    if (-not $acl.AreAccessRulesProtected) { return $false }
+    if (@($acl.Access).Count -eq 0) { return $false }
+    $allowed = @($OperatorSid, 'S-1-5-18', 'S-1-5-32-544')
+    foreach ($rule in $acl.Access) {
+      $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+      if ($allowed -notcontains $sid) { return $false }
+    }
+    return $true
+  } catch { return $false }
+}
 ```
+
+**Step D: prove the check can refuse, then run it for real.** The negative control grants `Users:(R)` (SID
+`S-1-5-32-545`), requires the check to refuse, removes the grant, and requires the check to pass. If either does not
+happen the run stops before any capture.
+
+```powershell
+$aclOk = $false
+. {
+  icacls $run /grant '*S-1-5-32-545:(R)' | Out-Null
+  if (Test-RunDirAcl -Dir $run -OperatorSid $operatorSid) { throw 'STOP: the ACL check passed with Users:(R) granted, so it cannot be trusted. Go to section 7.' }
+  icacls $run /remove '*S-1-5-32-545' | Out-Null
+  if (-not (Test-RunDirAcl -Dir $run -OperatorSid $operatorSid)) { throw 'STOP: the run folder ACL is not restricted to you, SYSTEM and Administrators. Go to section 7.' }
+  $aclOk = $true
+  'acl ok: protected, and only the operator, S-1-5-18 and S-1-5-32-544 hold rules'
+}
+```
+
+**Step E: install the two scripts and the hook.** The scripts are the fenced blocks marked `smoke-script` in §9. This
+block extracts them from the file you are reading, so you never copy JavaScript by hand. It refuses unless step D passed.
+
+```powershell
+. {
+  if (-not $aclOk) { throw 'STOP: step D did not pass.' }
+  $md = Get-Content -Raw docs\runbooks\vscode-host-smoke.md
+  $fence = ([string][char]96) * 3
+  foreach ($name in 'capture.mjs', 'project.mjs') {
+    $pattern = '<!-- smoke-script: ' + [regex]::Escape($name) + ' -->\r?\n' + [regex]::Escape($fence) + 'js\r?\n(.*?)\r?\n' + [regex]::Escape($fence)
+    $found = [regex]::Match($md, $pattern, 'Singleline')
+    if (-not $found.Success) { throw "script $name not found in the runbook" }
+    $code = $found.Groups[1].Value -replace "`r`n", "`n"
+    [IO.File]::WriteAllText((Join-Path $run $name), $code + "`n", [Text.UTF8Encoding]::new($false))
+  }
+  New-Item -ItemType Directory -Force -Path '.github\hooks' | Out-Null
+  $command = 'node "' + (Join-Path $run 'capture.mjs') + '"'
+  $entry = @(@{ matcher = ''; hooks = @(@{ type = 'command'; command = $command; timeout = 5 }) })
+  $config = @{ hooks = @{ UserPromptSubmit = $entry; PreToolUse = $entry; PostToolUse = $entry } }
+  $config | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $hookConfig
+  Set-Content -NoNewline -Path (Join-Path $run 'current-host.txt') -Value 'copilot'
+  Get-ChildItem $run | Select-Object Name
+  Get-Content $hookConfig
+}
+```
+
+You should see `capture.mjs`, `project.mjs` and `current-host.txt`. The config is in `.github/hooks/`, which git does **not**
+ignore, so a leftover shows in `git status`. That is deliberate: it cannot hide. The capture script never prints, never
+blocks, and writes only under `$run`. Its capture word is `current-host.txt` (you change it at the start of each harness).
 
 ### 1.4 Quit VS Code completely, then relaunch with the arch-memory hook disabled
 
@@ -124,7 +189,7 @@ prompt you send would pay for an embedding and a store call (`arch-memory-check.
    code .
    ```
 
-Record in your results that `ARCH_MEMORY_HOOK_DISABLE=1` was set. §6 verifies that the hooks really saw it.
+Record in your results that `ARCH_MEMORY_HOOK_DISABLE=1` was set. §6.1 verifies that the hooks really saw it.
 
 ## 2. Checks to run in each harness
 
@@ -132,7 +197,7 @@ Run this whole section once for each of H1, H2 and H3, in a **new chat session**
 capture host word (change it to `claude-harness` for H2, `claude-extension` for H3):
 
 ```powershell
-Set-Content -NoNewline -Path (Join-Path $capture 'current-host.txt') -Value 'copilot'
+Set-Content -NoNewline -Path (Join-Path $run 'current-host.txt') -Value 'copilot'
 ```
 
 For each check, write down **what you saw**, not what you expected. Use these result words: `works`, `degraded` (say
@@ -177,19 +242,19 @@ only the second one. Check what the harness sees in each situation.
 
 **B. The consumer situation: only `.vscode/mcp.json`.** This simulates the file layout a consumer has today.
 
-```powershell
-Rename-Item -LiteralPath .mcp.json -NewName .mcp.json.off
-```
-
-Run `Developer: Reload Window`, then `MCP: List Servers` again. Record whether `playwright` and `mermaid` are still listed
-(they are, if the harness forwards `.vscode/mcp.json`). **Always undo it:**
+This block renames `.mcp.json` away, waits for you, and **always renames it back** (also if you press Ctrl+C):
 
 ```powershell
-Rename-Item -LiteralPath .mcp.json.off -NewName .mcp.json
-git status --porcelain
+. {
+  Rename-Item -LiteralPath .mcp.json -NewName .mcp.json.off
+  try { Read-Host 'In VS Code: Developer: Reload Window, then MCP: List Servers. Note the servers. Press Enter here when done' }
+  finally { Rename-Item -LiteralPath .mcp.json.off -NewName .mcp.json }
+  git status --porcelain -- .mcp.json .mcp.json.off
+}
 ```
 
-`git status` must print nothing. Reload the window once more so the harness is back to the real layout.
+Record whether `playwright` and `mermaid` were still listed (they are, if the harness forwards `.vscode/mcp.json`). The
+`git status` line must print nothing. Reload the window once more so the harness is back to the real layout.
 
 ### 2.6 Hooks fire, and what they are shown
 
@@ -210,7 +275,7 @@ For prompts 2-4 also record **which tool the agent used** (the chat usually show
 Now count what the capture hook caught (it does not print anything into VS Code itself):
 
 ```powershell
-Get-ChildItem (Join-Path $capture (Get-Content (Join-Path $capture 'current-host.txt'))) -Filter *.json |
+Get-ChildItem (Join-Path $run (Get-Content (Join-Path $run 'current-host.txt'))) -Filter *.json |
   Where-Object { $_.Name -notlike '*.meta.json' } | Measure-Object | Select-Object -ExpandProperty Count
 ```
 
@@ -219,7 +284,7 @@ on; that is a finding (it also means `.github/hooks` is not read there). Then ch
 `.claude/settings.json` hooks left a trace: `Get-Content .audit\quickfix-hits.jsonl -ErrorAction SilentlyContinue`.
 Record whether a new line mentioning `smoke-b.mjs` exists (that proves the quick-fix hook parsed that harness's payload).
 
-Delete the scratch files at the end of §7, not now: a half-removed set confuses the check.
+The `scratch` folder is in the run record, so §7 removes it. Leave it until then.
 
 ### 2.7 Agent sessions: create with a worktree, list, message
 
@@ -234,8 +299,17 @@ Finally tell me the EXACT name of the tool you used for each of the three action
 
 Record: for each of start, list and message, `worked` or `no tool`, and the exact tool name given. Note whether the
 new session shows in the Agents window with a worktree, and whether a rate-limit message appeared
-(`chat.agentHost.agentOrchestrationLimits`). When you finish, archive the new session in the Agents window and remove its
-worktree in §7.
+(`chat.agentHost.agentOrchestrationLimits`). When you finish, archive the new session in the Agents window, then record its worktree so §7 removes it (set `$path`
+to the new worktree's folder; `git worktree list` shows it):
+
+```powershell
+git worktree list
+$path = 'C:pathof	he
+ewworktree'
+Add-Content -LiteralPath $record -Value "worktree|$path"
+```
+
+Record **only** worktrees the agent created in this check.
 
 **H3 only** (the Claude Code extension; `ListAgents` and `SendMessage` need Claude Code v2.1.224, v2.1.234 on native
 Windows). Send: `Use ListAgents to list my sessions, then tell me what you saw. Then try to start one with claude --bg "reply pong".`
@@ -313,7 +387,9 @@ node scripts/fleet.mjs release --id smoke-a --abandoned
 node scripts/fleet.mjs release --id smoke-b --abandoned
 ```
 
-Then archive sessions A and B in the Agents window and remove their worktrees in §7.
+Then archive sessions A and B in the Agents window. Record each of their worktrees so §7 removes it, exactly as in §2.7:
+`Add-Content -LiteralPath $record -Value "worktree|$path"` with `$path` set to that worktree's folder. Record only the two
+you started for this check.
 
 ## 5. Can the Copilot harness run the repo's `.sh` hook on Windows?
 
@@ -325,22 +401,24 @@ hooks channel) and record any error mentioning `arch-memory-check.sh`, or `none 
 ## 6. Turn the captures into fixtures
 
 Raw captures contain your prompts and your paths. They are never committed. A fixture is made **only** by `project.mjs`,
-a fail-closed projection. What it does, so you can review it:
+a fail-closed projection driven by a **versioned allowlist**,
+[`tests/fixtures/hook-payloads/allowlist.json`](../../tests/fixtures/hook-payloads/allowlist.json)
+(`{version, events: {event: {key path: synthetic value}}}`). What it does, so you can review it:
 
-- It walks the payload against an enumerated list of allowed keys. **Any key not on the list is dropped** and its name
-  is printed to stderr for you to read. A nested object or array under a non-listed key is dropped whole.
-- No original string survives, except the event name and the tool name, which are checked against a closed list.
-  Everything else becomes a synthetic value: the timestamp becomes `2026-01-01T00:00:00.000Z`, `session_id` becomes
-  `fixture-session`, a path becomes `src/fixture.mjs`, a prompt becomes `fix the fixture bug`, a command becomes
-  `rg fixturePattern src`, and edited text becomes `try { x() } catch {}`.
-- The **key names inside `tool_input` are kept** (that is the whole point: nobody has published them), one level deep. A
-  key whose name is not a plain identifier, and any nested value under it, is dropped and reported.
-- It refuses (exit 2, no output file) on an unsupported event or an unknown tool name.
+- It walks the whole payload and lists every key path (`tool_input.command`, `tool_input.edits[].old_string`, ...).
+- **A key path that is not on the allowlist for that event REFUSES the whole payload**: exit 2, no fixture. It prints the
+  unknown **paths** to stderr, never their values. Nothing is dropped silently, so an unpublished field (exactly the
+  evidence Tier 2 needs) cannot be lost, and a fixture's key set always equals the recording's key set.
+- No original string survives, except `hook_event_name` and `tool_name`, which are checked against a closed list. Every
+  other value is replaced by the synthetic value its key path has in the allowlist (a path becomes `src/fixture.mjs`, a
+  prompt `fix the fixture bug`, a command `rg fixturePattern src`, edited text `try { x() } catch {}`, the timestamp
+  `2026-01-01T00:00:00.000Z`, the session id `fixture-session`).
+- It also refuses on an unsupported event, an unknown tool name, or an allowlist it cannot read.
 
 ### 6.1 Check the hooks really saw the disable flag
 
 ```powershell
-Get-ChildItem $capture -Recurse -Filter *.meta.json |
+Get-ChildItem $run -Recurse -Filter *.meta.json |
   ForEach-Object { (Get-Content -Raw $_.FullName | ConvertFrom-Json).archMemoryHookDisable } |
   Group-Object | Select-Object Name, Count
 ```
@@ -355,20 +433,34 @@ Run once per host folder that holds captures (`copilot`, `claude-harness`, `clau
 ```powershell
 $hostName = 'copilot'
 $root = 'tests\fixtures\hook-payloads'
-$raw = Get-ChildItem (Join-Path $capture $hostName) -Filter *.json | Where-Object { $_.Name -notlike '*.meta.json' }
+$raw = Get-ChildItem (Join-Path $run $hostName) -Filter *.json | Where-Object { $_.Name -notlike '*.meta.json' }
 $refused = 0
 foreach ($file in $raw) {
-  node (Join-Path $capture 'project.mjs') --host $hostName --root $root --in $file.FullName
+  node (Join-Path $run 'project.mjs') --host $hostName --root $root --in $file.FullName
   if ($LASTEXITCODE -ne 0) { $refused++ }
 }
 "projected: $(@($raw).Count - $refused) refused: $refused"
 ```
 
 The script prints the fixture path it wrote, one line per payload, and skips one that already exists (a fixture is
-named after the event and tool, for example `pretooluse.bash.json`). **Read stderr.** A line `dropped key: ...` names something the allowlist did not know. Do
-not add it blindly: paste the names into your results, and the coordinator decides.
+named after the event and tool, for example `pretooluse.bash.json`).
 
-### 6.3 Review before anything is committed
+### 6.3 A refusal is the expected first result: approve the paths, then re-project
+
+The first projection of a tool event **will refuse**: the allowlist ships with the documented envelope fields only, and
+nobody has published Copilot's `tool_input` keys. stderr then lists lines like `unknown key path: tool_input.command`.
+
+1. Read the printed **paths** privately. They hold no values. Decide, path by path, whether it is safe to keep. A path is
+   safe when its synthetic value says nothing about you.
+2. Open `tests\fixtures\hook-payloads\allowlist.json`. Under **each event** where the path appeared (`PreToolUse`,
+   `PostToolUse`), add `"path": "synthetic value"`. The refusal prints a suggested synthetic value beside each path; use
+   it or your own. **Then raise `version` by one.** The two edits are one step: a path added without a version bump is
+   not an approval.
+3. Re-run §6.2 on the same raw captures. Repeat until the refusals stop or you decide a path must not be kept.
+4. A path you do not approve means **no fixture for that event**. Leave it refused, write the path in your results, and
+   the raw capture is deleted at cleanup.
+
+### 6.4 Review before anything is committed
 
 ```powershell
 git status --short tests/fixtures/hook-payloads
@@ -377,12 +469,13 @@ Get-ChildItem tests\fixtures\hook-payloads -Recurse -File |
   Select-String -Pattern '[A-Za-z]:[\\/]', 'Users[\\/]', 'AppData', '/home/', $env:USERNAME
 ```
 
-Read every fixture. The last command must print **nothing**; any line it prints is a leak, so delete that fixture and tell
-the coordinator. The fixtures should hold only the synthetic values listed above.
+Read every fixture and the allowlist diff. The last command must print **nothing**; any line it prints is a leak, so
+delete that fixture and tell the coordinator.
 
-### 6.4 Where the fixtures land (Cluster D reads them from here)
+### 6.5 Where the fixtures land (Cluster D reads them from here)
 
 ```text
+tests/fixtures/hook-payloads/allowlist.json
 tests/fixtures/hook-payloads/copilot/
 tests/fixtures/hook-payloads/claude-harness/
 tests/fixtures/hook-payloads/claude-extension/
@@ -390,8 +483,9 @@ tests/fixtures/hook-payloads/claude-extension/
 
 Cluster D's Tier 2 (the quick-fix, syntax and grep hooks reading Copilot's tool input) needs, under `copilot/`:
 `pretooluse.bash.json` or `pretooluse.powershell.json` (the shell command), `posttooluse.edit.json` or
-`posttooluse.str_replace_editor.json` (an edit), `posttooluse.create.json` (a write) and `userpromptsubmit.json`. If those are missing when Cluster D starts, it
-ships Tier 1 only and reports "Tier 2 deferred: no recorded fixtures". Commit only after §7 passes:
+`posttooluse.str_replace_editor.json` (an edit), `posttooluse.create.json` (a write) and `userpromptsubmit.json`. If those
+are missing when Cluster D starts, it ships Tier 1 only and reports "Tier 2 deferred: no recorded fixtures". Commit only
+after §7 passes, and only these paths by name:
 
 ```powershell
 git switch -c vscode-hook-fixtures
@@ -404,35 +498,57 @@ Do not push to `main`. Tell the CES coordinator the branch name; it lands the PR
 
 ## 7. Cleanup — always run this, even if a step failed
 
-It removes the capture hook, its scripts, the raw captures and everything the checks created, then **checks each removal**.
+It removes **only what the run record lists** (`$runId.created.txt`), then checks every one of those paths. It leaves any
+other file under `.github/hooks/` or `ces-hook-capture\` alone. If you lost the window, set `$runId` to the run folder
+name (list them with `Get-ChildItem $env:LOCALAPPDATA\ces-hook-capture`) and run `Set-Location` to the repo root first.
+
+Archive any agent sessions and the fleet sessions in the Agents window first, so their worktrees are not in use.
 
 ```powershell
-$capture = Join-Path $env:LOCALAPPDATA 'ces-hook-capture'
-Remove-Item -LiteralPath '.github\hooks\payload-capture.json' -Force -ErrorAction SilentlyContinue
-if (Test-Path '.github\hooks') { if (-not (Get-ChildItem '.github\hooks' -Force)) { Remove-Item -LiteralPath '.github\hooks' -Force } }
-Remove-Item -LiteralPath $capture -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath scratch -Recurse -Force -ErrorAction SilentlyContinue
-if (Test-Path .mcp.json.off) { Rename-Item -LiteralPath .mcp.json.off -NewName .mcp.json }
-Remove-Item Env:ARCH_MEMORY_HOOK_DISABLE -ErrorAction SilentlyContinue
+$base = Join-Path $env:LOCALAPPDATA 'ces-hook-capture'
+. {
+  if (-not $runId) { Get-ChildItem $base -Filter *.created.txt | Select-Object Name; throw 'Set $runId to a run folder name above (without .created.txt), then run this block again.' }
+  $record = Join-Path $base ($runId + '.created.txt')
+  if (-not (Test-Path -LiteralPath $record)) { throw "no run record at $record" }
+  $failed = @()
+  $repoPaths = @()
+  foreach ($line in (Get-Content -LiteralPath $record)) {
+    $kind, $target = $line -split '\|', 2
+    if (-not $target) { continue }
+    if (($kind -in 'file', 'tree') -and -not [IO.Path]::IsPathRooted($target)) { $repoPaths += $target }
+    switch ($kind) {
+      'file' { Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath $target) { $failed += $target } }
+      'tree' { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath $target) { $failed += $target } }
+      'worktree' { git worktree remove --force $target 2>$null; if (Test-Path -LiteralPath $target) { $failed += $target } }
+      'emptydir' {
+        if ((Test-Path -LiteralPath $target) -and -not (Get-ChildItem -LiteralPath $target -Force)) { Remove-Item -LiteralPath $target -Force }
+        if ((Test-Path -LiteralPath $target) -and -not (Get-ChildItem -LiteralPath $target -Force)) { $failed += $target }
+      }
+      'verify-clean' { if (git status --porcelain -- $target) { $failed += $target } }
+    }
+  }
+  if ($repoPaths) {
+    $status = git status --porcelain --ignored -- @($repoPaths)
+    if ($status) { $failed += $status }
+  }
+  Remove-Item -LiteralPath $record -Force -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $record) { $failed += $record }
+  Remove-Item Env:ARCH_MEMORY_HOOK_DISABLE -ErrorAction SilentlyContinue
+  if ($failed) { Write-Host 'CLEANUP FAILED for:' -ForegroundColor Red; $failed; throw 'cleanup failed: fix each item above, then run this block again.' }
+  'cleanup ok: every recorded path is gone, the record is removed, and git status shows nothing for the recorded repo paths'
+}
+```
+
+It checks, for every recorded path and for the record itself, that `Test-Path` is `False`; and
+`git status --porcelain --ignored --` over only the recorded repo paths must print nothing. **If it prints
+`CLEANUP FAILED`, or the block ends in a red error, cleanup failed: stop here, fix each listed item by hand, and run this
+section again before you paste anything back.** Fixtures you generated in §6 are not in the record and are not touched.
+
+Then confirm the worktrees you made are gone, and finish:
+
+```powershell
 git worktree list
 ```
-
-`git worktree list` shows the worktrees the agent sessions created in §2.7 and §4. Remove each one you made with
-`git worktree remove --force $path` (set `$path` to the one listed) after archiving its session, and only those.
-Then the checks:
-
-```powershell
-Test-Path '.github\hooks\payload-capture.json'
-Test-Path (Join-Path $capture 'capture.mjs')
-Test-Path $capture
-git status --porcelain --ignored -- .github/hooks
-git status --porcelain -- scratch .mcp.json .mcp.json.off
-```
-
-The first three must each print `False`. The last two must print **nothing**.
-
-**If any prints `True` or any text, cleanup failed: stop here, fix it, and run this section again before you paste anything back.** (Fixtures you generated in §6
-show in `git status --short tests/fixtures`; that is expected and is not part of this check.)
 
 Finally quit and relaunch VS Code normally, so the next session is not running with the disable flag.
 
@@ -446,20 +562,22 @@ do not run it.
 
 ## 9. The two scripts
 
-`capture.mjs` is the diagnostic hook: it stores each raw payload outside the repo and never blocks. `project.mjs` is the
-fail-closed projection. Both are extracted by §1.3 from the fences below (the marker comment on the line before each
-fence is what the extraction matches, so do not edit it). Their own tests are in
+`capture.mjs` is the diagnostic hook: it stores each raw payload under the run folder it lives in (outside the repo) and
+never blocks. `project.mjs` is the fail-closed projection. Both are extracted by §1.3 step E from the fences below (the
+marker comment on the line before each fence is what the extraction matches, so do not edit it). Their own tests are in
 [`tests/vscode-host-smoke-scripts.test.mjs`](../../tests/vscode-host-smoke-scripts.test.mjs), which extracts the same fences.
 
 <!-- smoke-script: capture.mjs -->
 ```js
-// capture.mjs - diagnostic hook. Stores the raw hook payload OUTSIDE the repo. Never prints, never blocks (exit 0).
+// capture.mjs - diagnostic hook. Stores the raw hook payload in the run folder it lives in, OUTSIDE the repo.
+// Never prints, never blocks (exit 0). CES_CAPTURE_DIR overrides the folder (tests only) and must be absolute.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const base = process.env.CES_CAPTURE_DIR || (process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'ces-hook-capture') : '');
-if (!base || !isAbsolute(base)) {
-  process.stderr.write('[capture] no absolute capture dir; nothing written\n');
+const base = process.env.CES_CAPTURE_DIR || dirname(fileURLToPath(import.meta.url));
+if (!isAbsolute(base)) {
+  process.stderr.write('[capture] capture dir is not absolute; nothing written\n');
   process.exit(0);
 }
 try {
@@ -489,9 +607,10 @@ process.exit(0);
 
 <!-- smoke-script: project.mjs -->
 ```js
-// project.mjs - fail-closed schema projection of ONE raw hook payload into a committable fixture.
-// usage: node project.mjs --host copilot|claude-harness|claude-extension --root tests/fixtures/hook-payloads --in raw.json [--name slug]
-// Exit 0 = wrote (or skipped an existing) fixture; exit 2 = refused, nothing written. Dropped key names go to stderr.
+// project.mjs - fail-closed, allowlist-driven projection of ONE raw hook payload into a committable fixture.
+// usage: node project.mjs --host copilot|claude-harness|claude-extension --root tests/fixtures/hook-payloads --in raw.json
+//        [--allowlist file] [--name slug]      (allowlist defaults to ROOT/allowlist.json)
+// Exit 0 = wrote (or skipped an existing) fixture. Exit 2 = refused, nothing written. stderr carries key PATHS, never values.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -499,28 +618,20 @@ const EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'userPromptSubm
 const TOOLS = ['Bash', 'Edit', 'Write', 'MultiEdit', 'Read', 'Grep', 'Glob', 'Agent', 'Task',
   'bash', 'powershell', 'edit', 'str_replace_editor', 'apply_patch', 'create', 'view', 'grep', 'glob', 'task'];
 const HOSTS = ['copilot', 'claude-harness', 'claude-extension'];
-const FIXED_TIME = '2026-01-01T00:00:00.000Z';
-// Allowed envelope keys, each with the synthetic string that replaces its value. null = checked verbatim against a closed list.
-const ENVELOPE = {
-  hook_event_name: null, tool_name: null, timestamp: FIXED_TIME, session_id: 'fixture-session', cwd: '/fixture/repo',
-  transcript_path: 'fixture-transcript.jsonl', permission_mode: 'default', prompt: 'fix the fixture bug', tool_use_id: 'fixture-tool-use',
-};
-const ROLES = [
-  [/^(file_?path|path|file|file_?name|target_?file)$/i, 'src/fixture.mjs'],
-  [/^(command|cmd|script|shell_?command)$/i, 'rg fixturePattern src'],
-  [/^(old_?str(ing)?|old_?text)$/i, 'fixture old text'],
-  [/^(new_?str(ing)?|content|file_?text|text|insert_?text|code|patch|input)$/i, 'try { x() } catch {}'],
-];
 const KEY_SHAPE = /^[A-Za-z_][A-Za-z0-9_]{0,39}$/;
+// Suggestions are computed from the key NAME only, never from a value.
+const SUGGEST = [
+  [/(^|\.)(file_?path|path|file|file_?name|target_?file)$/i, 'src/fixture.mjs'],
+  [/(^|\.)(command|cmd|script|shell_?command)$/i, 'rg fixturePattern src'],
+  [/(^|\.)(old_?str(ing)?|old_?text)$/i, 'fixture old text'],
+  [/(^|\.)(new_?str(ing)?|content|file_?text|text|insert_?text|code|patch|input)$/i, 'try { x() } catch {}'],
+  [/(^|\.)prompt$/i, 'fix the fixture bug'],
+];
 
-function refuse(why) { process.stderr.write('[project] refused: ' + why + '\n'); process.exit(2); }
-const dropped = [];
-function drop(path) { dropped.push(path); process.stderr.write('dropped key: ' + path + '\n'); }
-function scalar(value, text) {
-  if (typeof value === 'string') return text;
-  if (typeof value === 'number') return 0;
-  if (typeof value === 'boolean' || value === null) return value;
-  return undefined; // object or array: caller drops it whole
+function refuse(why, lines = []) {
+  for (const l of lines) process.stderr.write(l + '\n');
+  process.stderr.write('[project] refused: ' + why + '\n');
+  process.exit(2);
 }
 
 const args = process.argv.slice(2);
@@ -533,55 +644,81 @@ if (!HOSTS.includes(host)) refuse('--host must be one of ' + HOSTS.join(', '));
 if (!root || !input) refuse('--root and --in are required');
 if (name !== undefined && !/^[a-z0-9][a-z0-9.-]{0,60}$/.test(name)) refuse('--name must match [a-z0-9][a-z0-9.-]*');
 
+let allow;
+const allowFile = opt('--allowlist') || join(root, 'allowlist.json');
+try { allow = JSON.parse(readFileSync(allowFile, 'utf8')); } catch { refuse('cannot read the allowlist ' + allowFile); }
+if (!allow || !Number.isInteger(allow.version) || allow.version < 1 || typeof allow.events !== 'object' || allow.events === null) {
+  refuse('allowlist must be {"version": integer >= 1, "events": {...}}');
+}
+
 let payload;
 try { payload = JSON.parse(readFileSync(input, 'utf8')); } catch { refuse('input is not valid JSON'); }
 if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) refuse('payload is not an object');
-if (!EVENTS.includes(payload.hook_event_name)) refuse('unsupported event ' + JSON.stringify(String(payload.hook_event_name).slice(0, 40)));
-const isTool = /tooluse/i.test(payload.hook_event_name);
+const event = payload.hook_event_name;
+if (!EVENTS.includes(event)) refuse('unsupported event ' + JSON.stringify(String(event).slice(0, 40)));
+const spec = Object.hasOwn(allow.events, event) ? allow.events[event] : null;
+if (!spec || typeof spec !== 'object') refuse('event ' + event + ' is not in the allowlist');
+const isTool = /tooluse/i.test(event);
 if (isTool && !TOOLS.includes(payload.tool_name)) refuse('unknown tool_name ' + JSON.stringify(String(payload.tool_name).slice(0, 40)));
 if (!isTool && payload.tool_name !== undefined && !TOOLS.includes(payload.tool_name)) refuse('unknown tool_name ' + JSON.stringify(String(payload.tool_name).slice(0, 40)));
 
-const out = {};
-for (const [key, value] of Object.entries(payload)) {
-  if (key === 'tool_input') continue;
-  if (!(key in ENVELOPE)) { drop(key); continue; }
-  if (ENVELOPE[key] === null) { out[key] = value; continue; } // event and tool names: validated above
-  const kept = scalar(value, ENVELOPE[key]);
-  if (kept === undefined) { drop(key); continue; }
-  out[key] = key === 'timestamp' && typeof value === 'number' ? 1767225600000 : kept;
+const unknown = [];
+function leaf(path) {
+  if (Object.hasOwn(spec, path)) return spec[path];
+  unknown.push(path);
+  return undefined;
 }
-if ('tool_input' in payload) {
-  const ti = payload.tool_input;
-  if (ti === null || typeof ti !== 'object' || Array.isArray(ti)) refuse('tool_input is not an object');
-  out.tool_input = {};
-  for (const [key, value] of Object.entries(ti)) {
-    if (!KEY_SHAPE.test(key)) { drop('tool_input.(unsafe key name)'); continue; }
-    const role = ROLES.find(([re]) => re.test(key));
-    const kept = scalar(value, role ? role[1] : 'fixture-value');
-    if (kept === undefined) { drop('tool_input.' + key); continue; }
-    out.tool_input[key] = kept;
+function project(value, path) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return leaf(path);
+    return value.map((v) => project(v, path + '[]'));
   }
+  if (value !== null && typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (keys.length === 0) return leaf(path);
+    const out = Object.create(null);
+    for (const key of keys) {
+      if (!KEY_SHAPE.test(key)) { unknown.push((path ? path + '.' : '') + '(unsafe-key)'); continue; }
+      out[key] = project(value[key], path ? path + '.' + key : key);
+    }
+    return out;
+  }
+  return leaf(path);
 }
 
-if (name === undefined) name = (payload.hook_event_name + (payload.tool_name ? '.' + payload.tool_name : '')).toLowerCase().replace(/[^a-z0-9.]+/g, '-');
+const out = Object.create(null);
+for (const key of Object.keys(payload)) {
+  if (key === 'hook_event_name' || key === 'tool_name') { out[key] = payload[key]; continue; } // validated above
+  if (!KEY_SHAPE.test(key)) { unknown.push('(unsafe-key)'); continue; }
+  out[key] = project(payload[key], key);
+}
+if (unknown.length) {
+  const paths = [...new Set(unknown)];
+  refuse(paths.length + ' key path(s) are not on the allowlist for ' + event +
+    '; approve each by adding it to the allowlist and raising its version, then run again',
+  paths.map((p) => 'unknown key path: ' + p + (SUGGEST.find(([re]) => re.test(p)) ? '   (suggested value: ' + JSON.stringify(SUGGEST.find(([re]) => re.test(p))[1]) + ')' : '')));
+}
+
+if (name === undefined) name = (event + (payload.tool_name ? '.' + payload.tool_name : '')).toLowerCase().replace(/[^a-z0-9.]+/g, '-');
 const dir = join(root, host);
 const file = join(dir, name + '.json');
 if (existsSync(file) && opt('--name') === undefined) { process.stdout.write('exists, skipped ' + file + '\n'); process.exit(0); }
 mkdirSync(dir, { recursive: true });
 writeFileSync(file, JSON.stringify(out, null, 2) + '\n');
-process.stdout.write('wrote ' + file + '\n');
+process.stdout.write('wrote ' + file + ' (allowlist version ' + allow.version + ')\n');
 ```
 
 ## 10. What to paste back
 
 Paste this table, filled in, into the chat with the CES coordinator. One block per harness; use the result words from §2
 and quote the exact tool names and message text you saw. Nothing in it should contain a prompt of yours, a path to your
-home folder, or a secret.
+home folder, or a secret. The unknown key **paths** that `project.mjs` printed are safe to paste: they hold no values.
 
 ```text
-Run date:
+Run date / run id:
 VS Code version:            Copilot / Copilot Chat / Anthropic extension versions:
 ARCH_MEMORY_HOOK_DISABLE=1 set before launch: yes/no     §6.1 result (all rows 1?):
+Preflight (§1.3 A) passed: yes/no     ACL check and its Users:(R) negative control passed: yes/no
 Machine (home or work):     Enterprise policy limiting harnesses: yes/no/unknown
 
 Harness: H1 Copilot / H2 Claude harness / H3 Claude extension (or unavailable)
@@ -600,9 +737,9 @@ Harness: H1 Copilot / H2 Claude harness / H3 Claude extension (or unavailable)
 Fleet (§4) harness used:
   both claims in status / overlap refused exit 3 / second heavy job waited / job outlived turn /
   state survived reload / shipping asked for go-ahead:
-Dropped key names printed by project.mjs (§6.2):
-Fixtures written (the file list from §6.4) and the §6.3 leak scan result:
-Cleanup (§7): all three Test-Path False? last two commands printed nothing?
+Unknown key paths printed by project.mjs (§6.3), and which you approved (allowlist version after):
+Fixtures written (the file list from §6.5) and the §6.4 leak scan result:
+Cleanup (§7): printed "cleanup ok"? (or the CLEANUP FAILED list)
 Anything that surprised you:
 ```
 
