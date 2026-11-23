@@ -1,6 +1,6 @@
 # Plan: Automatic meta step-back at the audit round cap (plan + code)
 - **Date**: 2026-11-23
-- **Status**: Draft
+- **Status**: Approved
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`; CLI + library + skill prose)
 - **Target domain(s)**: `audit-orchestration`
@@ -484,10 +484,11 @@ and counts per file, the `size:ratchet:gate` / `skills:size:gate` outputs, and o
 | GPT R1 | SIGNIFICANT_GAPS | 7/1/0 | 100% (8/8) | stop guard, debt capture, admission identity, log concurrency, T2 override, plan data flow, spend, test isolation — all fixed |
 | GPT R2 | NEEDS_REVISION | 4/1/0 | 100% (5/5) | store egress projection, torn-tail append, attempt-id identity, manual path, spend estimate — all fixed |
 | GPT R3 | NEEDS_REVISION | 3/2/0 | 100% (5/5) | structural route + HIGHs, header egress, `--meta-override` wiring, session budget, independence — all fixed |
+| Final R1 (gemini-4-argon) | CONCERNS, blocked | 0/1/1 | — | G1 (rb) `--meta-decision` handled stop only, not structural → fixed in §2.7; G2 (LOW) `assessment` wire shape → fixed in §2.3 |
+| Final R2 (gemini-4-argon) | APPROVE | 0/0/0 | — | gate approve, blocking 0, debt 0 |
 
 **Cap call (round 3, soft cap).** `audit-structural-card.mjs --mode plan --round 4` printed **⚠ AT THE CAP WHILE PRODUCTIVE**
 (round 3 acceptance 100% of 5 · HIGH 7→4→3) with 0 structural clusters (3 unclassifiable, 4 polish). **The cap stopped
 this audit, not convergence.** No round 4 was taken: `--past-cap` is outside this chip's authority to decide alone, and
 the R3 findings are design-completion detail that the Phase 2 code audit verifies against real code. The new system
 could not judge its own cap here: it does not exist until Phase 2 is built.
-| Final R1 (gemini-4-argon) | CONCERNS, blocked | 0/1/1 | — | G1 (rb) `--meta-decision` handled stop only, not structural → fixed in §2.7; G2 (LOW) `assessment` wire shape → fixed in §2.3 |
