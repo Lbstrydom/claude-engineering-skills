@@ -232,13 +232,15 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
   const joined = joinWorksheetLabels({ key, answers, findings: material.findings, ledgerEntries: material.ledger });
   const ledgerFile = path.join(dir, 'calibration.budget.jsonl');
   initLedger({ file: ledgerFile, capUsd: maxUsd });
+  const priorEnv = process.env[BUDGET_LEDGER_ENV];
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
+  try {
   const out = { version: 1, epoch: SEEDED_BENCH_EPOCH, datasetHash: material.datasetHash, judges: {} };
   for (const [name, sentinel] of [['opus', 'latest-opus'], ['pro', 'latest-pro']]) {
     const judge = await (deps.createJudge || createJudge)({ sentinel });
     const pairs = joined.labelled.map((l) => ({ pairId: l.pairId, f: l.f, x: l.x }));
     const res = await (deps.judgePairs || judgePairs)({ pairs, judge });
-    out.judges[name] = { stamp: judge.stamp, counts: res.counts, score: scoreCalibration({ labelled: joined.labelled, judgeVerdicts: res.results.map((r) => ({ pairId: r.pairId, verdict: r.verdict })), filterRecallPairs: joined.filterRecallPairs }), verdicts: res.results };
+    out.judges[name] = { stamp: judge.stamp, counts: res.counts, score: scoreCalibration({ labelled: joined.labelled, judgeVerdicts: res.results.map((r) => ({ pairId: r.pairId, verdict: r.verdict })), filterRecallPairs: joined.filterRecallPairs, shortfalls: key.shortfalls ?? { 'shortfalls-not-recorded': 1 } }), verdicts: res.results };
   }
   const s = readLedgerSummary(ledgerFile);
   out.spentUsd = s.spentUsd; out.flagged = s.flagged;
@@ -246,6 +248,7 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
   out.decision = short.length ? 'inconclusive' : Object.values(out.judges).every((j) => j.score.decision.status === 'accept') ? 'accept' : Object.values(out.judges).some((j) => j.score.decision.status === 'fail') ? 'fail' : 'inconclusive';
   writeJson(path.join(dir, 'calibration-report.json'), out);
   return out;
+  } finally { if (priorEnv === undefined) delete process.env[BUDGET_LEDGER_ENV]; else process.env[BUDGET_LEDGER_ENV] = priorEnv; }
 }
 
 // ── novelty, worksheet, score ────────────────────────────────────────────────────────────────────────
@@ -264,7 +267,9 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
   const { dataset, snapshots } = loadDataset(datasetPath);
   const calibration = assertCalibrationAccepted({ calibrationPath, dataset });
   const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
+  const priorEnv = process.env[BUDGET_LEDGER_ENV];
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
+  try {
   const outPath = `${resultsPath}.novelty.json`;
   if (readHeader(resultsPath).datasetHash !== dataset.datasetHash) throw new ArgvError('the results file was produced from a different dataset');
   const resultsSha = sha256Hex(fs.readFileSync(resultsPath));
@@ -297,6 +302,7 @@ export async function runNovelty({ datasetPath, resultsPath, calibrationPath, de
   out.incomplete = Object.values(out.byFinding).some((j) => Object.values(j).some((e) => e.notJudged)); // recomputed from the CURRENT state
   writeJson(outPath, out);
   return out;
+  } finally { if (priorEnv === undefined) delete process.env[BUDGET_LEDGER_ENV]; else process.env[BUDGET_LEDGER_ENV] = priorEnv; }
 }
 
 /** The pooled, shuffled, SOURCE-BLINDED sheet a human labels. Every finding novel under EITHER judge is labelled (never a judge's say-so). */

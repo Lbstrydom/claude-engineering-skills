@@ -133,7 +133,7 @@ export function jaccardControlVerdict(f, x) {
  *   bar?: Partial<typeof ACCEPT_BAR>
  * }} args
  */
-export function scoreCalibration({ labelled, judgeVerdicts, filterRecallPairs = [], bar = {} }) {
+export function scoreCalibration({ labelled, judgeVerdicts, filterRecallPairs = [], bar = {}, shortfalls = {} }) {
   const B = { ...ACCEPT_BAR, ...bar };
   const verdicts = toVerdictMap(judgeVerdicts);
   const reasons = [];
@@ -191,6 +191,8 @@ export function scoreCalibration({ labelled, judgeVerdicts, filterRecallPairs = 
   // ── decision ──
   // An unjudged, missing or unrecognised verdict is NOT a negative prediction: it leaves the calibration incomplete.
   const invalid = labelled.filter((r) => { const v = verdicts.get(r.pairId); return v !== NOT_JUDGED && !['same', 'partial', 'different'].includes(v); }).length;
+  // The drawn samples must have reached their requested sizes: a decision on a fraction of the plan's evidence is not a decision.
+  for (const [k, n] of Object.entries(shortfalls)) if (n > 0) inconclusive.push(`${k}-sample-short-by-${n}`);
   if (notJudged > 0) inconclusive.push(`${notJudged}-labelled-pairs-not-judged`);
   if (invalid > 0) inconclusive.push(`${invalid}-labelled-pairs-with-missing-or-invalid-verdict`);
   const prec = judge.prevalence.precision;
@@ -284,7 +286,7 @@ export function drawCalibrationSets({ findings, ledgerEntries, seed, sizes = {},
   const easy = [];
   const allPairs = [];
   for (const f of fs) for (const x of xs) {
-    if (fileKey(f.file) !== fileKey(x.file) && !taken.has(makePairId(f.id, x.id))) allPairs.push({ f, x });
+    if (filterCandidates([f], [x], { window: Number.MAX_SAFE_INTEGER }).length === 0 && !taken.has(makePairId(f.id, x.id))) allPairs.push({ f, x }); // no shared file under the canonical file/files union
   }
   for (const { f, x } of sampleN(allPairs, counts['easy-negative'], rng)) {
     easy.push({ pairId: makePairId(f.id, x.id), fId: String(f.id), xId: String(x.id), f, x });

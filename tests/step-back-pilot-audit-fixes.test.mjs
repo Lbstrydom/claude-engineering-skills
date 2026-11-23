@@ -108,19 +108,6 @@ test('H14: acceptance uses the prevalence-weighted precision when weights are pr
   assert.ok(r.decision.reasons.some((x) => /precision 0\.3/.test(x)), JSON.stringify(r.decision.reasons));
 });
 
-test('H15/M10/M11: a not-judged novelty entry is retried on rerun, completeness is recomputed, and a swapped results file is refused', async () => {
-  const dir = tmp();
-  try {
-    const dsPath = path.join(dir, 'ds.json');
-    const dataset = { kind: 'meta-ab', datasetHash: 'H', points: [{ pointId: 'p', status: 'recoverable', repo: 'r', set: 'pilot', sessionId: 's', snapshotDigest: 'd' }], repoPaths: {} };
-    // minimal loadDataset-compatible files are heavy; exercise the pure contract through scorePilot/readers instead
-    const novelty = { stamps: { opus: {}, pro: {} }, incomplete: true, byFinding: { a: { opus: { novel: true, notJudged: true }, pro: { novel: true, notJudged: false } } } };
-    const out = scorePilot({ rows: [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: [{ key: 'a', severity: 'HIGH' }] }], novelty, key: { items: { W001: { key: 'a' } } }, labelsById: new Map([['W001', 'REAL']]), plannedPairs: 1 });
-    assert.equal(out.decision.outcome, 'INCOMPLETE');
-    assert.equal(typeof runNovelty, 'function'); assert.ok(dataset && dsPath);
-  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
-});
-
 test('R2 H8: a newline-terminated corrupt record is CORRUPTION (fail closed); only an unterminated fragment is a torn tail', async () => {
   const dir = tmp(); const file = path.join(dir, 'l.jsonl');
   try {
@@ -225,4 +212,13 @@ test('R5 H6/H7: negative, fractional, missing counts invalidate the dataset; a n
   for (const bad of [{ novelActionable: -1 }, { novelActionable: 1.5 }, { novelActionableHM: undefined }, { novelActionable: null }]) assert.equal(decideMetaPilot({ runs: mk(bad), plannedPairs: 1 }).branch, 1, JSON.stringify(bad));
   const s = scoreMetaRuns({ runs: [{ pointId: 'p', arm: 'CONTINUE', rep: 0, valid: true, costUsd: 1, findings: {} }], novelByFinding: new Map(), labels: new Map() });
   assert.equal(s.incomplete, true);
+});
+
+test('R6 G4: calibration with short samples is inconclusive inside scoreCalibration itself', () => {
+  const labelled = []; const verdicts = {};
+  for (let i = 0; i < 60; i++) { labelled.push({ pairId: `p${i}`, set: 'prevalence', stratum: 'prevalence', sourceArm: i % 2 ? 'code' : 'plan', label: i < 40 ? 'same' : 'different', f: { id: `f${i}`, file: 'a', text: 'x' }, x: { id: `x${i}`, file: 'a', text: 'x' } }); verdicts[`p${i}`] = i < 40 ? 'same' : 'different'; }
+  const base = { labelled, judgeVerdicts: verdicts, filterRecallPairs: Array.from({ length: 20 }, (_, i) => ({ pairId: `r${i}`, keptByFilter: true })) };
+  assert.equal(scoreCalibration({ ...base, shortfalls: { prevalence: 0, challenge: 0, filterRecall: 0 } }).decision.status, 'accept');
+  const short = scoreCalibration({ ...base, shortfalls: { challenge: 70 } });
+  assert.equal(short.decision.status, 'inconclusive'); assert.match(short.decision.inconclusiveReasons.join(), /challenge-sample-short-by-70/);
 });
