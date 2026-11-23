@@ -7,6 +7,7 @@
  * @module scripts/lib/audit/step-back-pilot-dispatch
  */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ArgvError } from '../cli-io.mjs';
@@ -17,6 +18,7 @@ import {
 } from './step-back-pilot-cli.mjs';
 
 export const PILOT_COMMANDS = Object.freeze(['freeze', 'continue', 'reconcile', 'calibrate-draw', 'calibrate-score', 'novelty', 'worksheet', 'score']);
+const sha256OfFile = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const writeJson = (p, o) => { fs.mkdirSync(path.dirname(p), { recursive: true }); atomicWriteFileSync(p, `${JSON.stringify(o, null, 2)}\n`); };
 const DEFAULT_AUDIT_SCRIPT = fileURLToPath(new URL('../../openai-audit.mjs', import.meta.url));
 
@@ -60,7 +62,8 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   }
   const datasetPath = need('--dataset'); const resultsPath = need('--results');
   if (cmd === 'novelty') {
-    const r = await runNovelty({ datasetPath, resultsPath });
+    if (!argv.includes('--confirm-spend')) throw new ArgvError('step-back-replay novelty: judging spends from the pilot ledger; pass --confirm-spend (the hard cap is the ledger\'s, metered per call).');
+    const r = await runNovelty({ datasetPath, resultsPath, calibrationPath: flag('--calibration') });
     console.log(`step-back-replay novelty: ${Object.keys(r.byFinding).length} findings judged by both judges${r.incomplete ? ' - INCOMPLETE (a pair was not judged; a rerun retries it)' : ''}`);
     return r.incomplete ? 1 : 0;
   }
@@ -77,6 +80,7 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const dir = need('--out-dir');
   const key = JSON.parse(fs.readFileSync(path.join(dir, 'pilot1-worksheet.key.json'), 'utf8'));
   const labelsById = parseWorksheetLabels(fs.readFileSync(need('--labels'), 'utf8'));
+  if (novelty.datasetHash !== dataset.datasetHash || novelty.resultsSha256 !== sha256OfFile(resultsPath)) throw new ArgvError('the novelty file does not match this dataset and results file; rerun novelty');
   const planned = readHeader(resultsPath).plannedPairs; // the FROZEN schedule, never what happened to be recorded
   if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
   const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });

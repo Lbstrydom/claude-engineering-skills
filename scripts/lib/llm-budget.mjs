@@ -146,7 +146,10 @@ function appendLine(file, obj) {
   const fd = fs.openSync(file, 'r+');
   try {
     repairTornTail(fd);
-    fs.writeSync(fd, `${JSON.stringify(obj)}\n`, fs.fstatSync(fd).size, 'utf8'); // r+ has no append offset: write at the end explicitly
+    // r+ has no append offset: write at the end explicitly, in a CHECKED loop (a short write must never leave a record unterminated).
+    const buf = Buffer.from(`${JSON.stringify(obj)}\n`, 'utf8');
+    let off = 0; const base = fs.fstatSync(fd).size;
+    while (off < buf.length) { const n = fs.writeSync(fd, buf, off, buf.length - off, base + off); if (!(n > 0)) throw new BudgetStopError('ledger-corrupt', 'ledger write made no progress'); off += n; }
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -163,8 +166,9 @@ function readEvents(file) {
   const events = [];
   for (let i = 0; i < lines.length; i++) {
     try { events.push(JSON.parse(lines[i])); } catch {
-      // A torn LAST line is a crash mid-append: a reserve is appended before send, so it never reached the wire.
-      if (i === lines.length - 1) break;
+      // Only an UNTERMINATED last fragment is a crash mid-append (a reserve is appended before send, so it never reached the wire).
+      // A newline-terminated record that does not parse is corruption: it may have been a real reservation.
+      if (i === lines.length - 1 && !text.endsWith('\n')) break;
       throw new BudgetStopError('ledger-corrupt', `ledger ${file} line ${i + 1} is not valid JSON`);
     }
   }

@@ -421,6 +421,7 @@ export async function callReviewer(client, { transportKind, model, systemPrompt,
     }, TIMEOUT_MS);
   });
 
+  timeoutPromise.catch(() => {}); // a stalled reservation may outlast the timer: its rejection must never be unhandled
   try {
     // Budget seam (plan §2.6): inert unless AUDIT_BUDGET_LEDGER is set. The race sits INSIDE the reservation so a
     // timeout is recorded as failed-unknown (the provider may still have accepted and billed the request). The

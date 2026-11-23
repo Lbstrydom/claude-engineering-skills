@@ -168,8 +168,8 @@ export function calibrationMaterial({ dataset, snapshots }) {
     for (const r of snap.rounds) {
       if (r.round < 2) continue;
       for (const f of r.findings.filter(mediumPlus)) {
-        const sessionId = `${p.sessionId}`;
-        const visible = xs.filter((x) => (firstSeen.get(String(x.id)) ?? 99) < r.round).map((x) => ({ ...x, id: `${p.pointId}|${x.id}`, sessionId }));
+        const sessionId = `${p.pointId}|r${r.round}`; // one visibility frame per (point, round): a finding sees only the entries first seen before ITS round
+        const visible = xs.filter((x) => (firstSeen.get(String(x.id)) ?? 99) < r.round).map((x) => ({ ...x, id: `${sessionId}|${x.id}`, sessionId }));
         const fid = `${p.pointId}|r${r.round}|${f.id}`;
         findings.push({ id: fid, file: f._primaryFile ?? f.affectedFiles?.[0] ?? null, lines: null, severity: String(f.severity).toUpperCase(), text: [f.category, f.section, f.detail].filter(Boolean).join('\n'), arm: p.mode, sessionId });
         for (const x of visible) if (!ledger.some((l) => l.id === x.id)) ledger.push(x);
@@ -230,9 +230,19 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
 
 // ── novelty, worksheet, score ────────────────────────────────────────────────────────────────────────
 
+/** No novelty or score without an ACCEPTED matcher calibration of THIS dataset (plan §1.4: below the bar the pilots stop). */
+export function assertCalibrationAccepted({ calibrationPath, dataset }) {
+  if (!calibrationPath) throw new ArgvError('--calibration <calibration-report.json> is required: novelty needs an accepted matcher calibration');
+  const rep = readJson(calibrationPath);
+  if (rep.decision !== 'accept') throw new ArgvError(`the matcher calibration decision is "${rep.decision}", not accept; the pilot stops (§1.4)`);
+  if (rep.datasetHash !== dataset.datasetHash) throw new ArgvError('the calibration report was made from a different dataset');
+  return rep;
+}
+
 /** Novelty of every MEDIUM+ finding against its point's ledger, by BOTH judges (stamped once; a changed stamp refuses a repeat). */
-export async function runNovelty({ datasetPath, resultsPath, deps = {} }) {
+export async function runNovelty({ datasetPath, resultsPath, calibrationPath, deps = {} }) {
   const { dataset, snapshots } = loadDataset(datasetPath);
+  assertCalibrationAccepted({ calibrationPath, dataset });
   const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
   const outPath = `${resultsPath}.novelty.json`;
@@ -255,8 +265,8 @@ export async function runNovelty({ datasetPath, resultsPath, deps = {} }) {
       if (!todo.length) continue;
       const r = await (deps.classifyNovelty || classifyNovelty)({ findings: todo.map((f) => ({ id: f.key, file: f.file, files: f.affectedFiles?.length ? f.affectedFiles : undefined, lines: f.lines, severity: f.severity, text: f.text, _priorRuling: f.priorRuling })), ledgerEntries: ledgerTargets(snap), judge, repoRoot: dataset.repoPaths?.[point.repo] ?? undefined });
       for (const pf of r.perFinding) (out.byFinding[pf.id] ||= {})[name] = { novel: pf.novel, flags: pf.flags, sameOf: pf.sameOf ?? null, partialOf: pf.partialOf ?? null, notJudged: pf.notJudged ?? false };
+      writeJson(outPath, out); // after EVERY judge batch: a budget stop or crash keeps what was already paid for
     }
-    writeJson(outPath, out);
   }
   out.incomplete = Object.values(out.byFinding).some((j) => Object.values(j).some((e) => e.notJudged)); // recomputed from the CURRENT state
   writeJson(outPath, out);

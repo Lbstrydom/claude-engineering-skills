@@ -50,7 +50,7 @@ const bigSpec = () => [
 ];
 
 describe('freeze + partition (§2.1)', () => {
-  const a = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1' });
+  const a = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }) });
 
   test('a work repo and an ambiguous branch are excluded, never sampled', () => {
     assert.ok(a.dataset.points.every((p) => p.repo !== 'louis-strydom_wartsila/storyline'));
@@ -75,9 +75,9 @@ describe('freeze + partition (§2.1)', () => {
     const sets = new Map(); for (const p of a.dataset.points.filter((x) => x.status === 'recoverable')) { const s = sets.get(p.sessionId); assert.ok(!s || s === p.set); sets.set(p.sessionId, p.set); }
   });
   test('deterministic: the same export, repos and seed freeze byte-identically; another seed repartitions', () => {
-    const b = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1' });
+    const b = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }) });
     assert.equal(b.dataset.datasetHash, a.dataset.datasetHash);
-    assert.notEqual(freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's2' }).dataset.datasetHash, a.dataset.datasetHash);
+    assert.notEqual(freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's2', verifyRepo: () => ({ ok: true }) }).dataset.datasetHash, a.dataset.datasetHash);
     assert.deepEqual(seededShuffle(['a', 'b', 'c', 'd'], 'k'), seededShuffle(['d', 'c', 'b', 'a'], 'k'), 'input order never matters');
   });
   test('the loader refuses a purpose/set mismatch and a tampered sidecar or dataset', () => {
@@ -91,14 +91,14 @@ describe('freeze + partition (§2.1)', () => {
     assert.throws(() => verifySnapshots({ dataset: ds, snapshots: a.snapshots }), /recorded hash/);
   });
   test('a next run with no audited_sha, a session that ends at the checkpoint, and a missing plan file are not points', () => {
-    const r = freezeMetaPilot({ exp: makeExport([{ repo: 'rCES', branch: 'a', mode: 'plan', n: 4, noShaAt: 4 }, { repo: 'rCES', branch: 'b', mode: 'plan', n: 3 }, { repo: 'rCES', branch: 'c', mode: 'plan', n: 4, noPlan: true }]), repos: REPOS, seed: 's' });
+    const r = freezeMetaPilot({ exp: makeExport([{ repo: 'rCES', branch: 'a', mode: 'plan', n: 4, noShaAt: 4 }, { repo: 'rCES', branch: 'b', mode: 'plan', n: 3 }, { repo: 'rCES', branch: 'c', mode: 'plan', n: 4, noPlan: true }]), repos: REPOS, seed: 's', verifyRepo: () => ({ ok: true }) });
     assert.equal(r.dataset.counts.recoverable, 0);
     assert.equal(r.dataset.points.length, 2); assert.ok(r.dataset.points.every((p) => p.status === 'unrecoverable'));
   });
 });
 
 describe('the continuation contract (§2.1) against the REAL gate', () => {
-  const frozen = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1' });
+  const frozen = freezeMetaPilot({ exp: makeExport(bigSpec()), repos: REPOS, seed: 's1', verifyRepo: () => ({ ok: true }) });
   const pt = (mode, trigger) => frozen.dataset.points.find((p) => p.mode === mode && p.trigger === trigger && p.status === 'recoverable');
 
   function gateHarness({ point, arm }) {

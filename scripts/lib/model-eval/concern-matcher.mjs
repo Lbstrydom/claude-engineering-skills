@@ -66,7 +66,7 @@ function filesOf(item) {
  */
 export function lineRangeOf(item) {
   if (!item) return null;
-  if (Array.isArray(item.files) && item.files.length > 1) return null;
+  if (filesOf(item).length > 1) return null;
   const raw = item.lines ?? item.line ?? (item.startLine != null ? [item.startLine, item.endLine ?? item.startLine] : null);
   const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
   if (raw == null) return null;
@@ -175,7 +175,8 @@ const JUDGE_TOOL = Object.freeze({
 const TEXT_FIELDS = ['id', 'file', 'severity', 'text'];
 
 function sideFiles(side) {
-  return (Array.isArray(side.files) ? side.files : [side.file]).filter((f) => typeof f === 'string' && f);
+  // The SAME union as filesOf (egress must validate every file the matcher can pair on), un-normalised for display.
+  return [...new Set([...(Array.isArray(side.files) ? side.files : []), side.file].filter((f) => typeof f === 'string' && f))];
 }
 
 /**
@@ -405,7 +406,10 @@ export async function judgePairs({ pairs, judge, repoRoot, fs: fsMod, concurrenc
       try { results[i] = await one(list[i]); } catch (err) { halted = true; throw err; }
     }
   });
-  await Promise.all(workers);
+  // Settle EVERY started worker before propagating (a budget stop must not leave paid calls in flight, unaccounted).
+  const settled = await Promise.allSettled(workers);
+  const failed = settled.find((s) => s.status === 'rejected');
+  if (failed) throw failed.reason;
 
   const counts = { same: 0, partial: 0, different: 0, notJudged: 0 };
   for (const r of results) {

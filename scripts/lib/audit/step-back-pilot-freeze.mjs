@@ -87,7 +87,8 @@ export function sessionsOf(exp) {
  * @param {string[]} [a.authorisedRepos]
  * @returns {{dataset: object, snapshots: object}}
  */
-export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, authorisedRepos = AUTHORISED_REPOS, verifyRepo = () => ({ ok: true }) }) {
+export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, authorisedRepos = AUTHORISED_REPOS, verifyRepo }) {
+  if (typeof verifyRepo !== 'function') throw new Error('freezeMetaPilot: a verifyRepo(repo) function is required; authorisation never defaults to trusting the supplied name');
   if (!seed) throw new Error('freezeMetaPilot: a seed is required (it is recorded in the dataset)');
   // Authorisation binds to a VERIFIED repository identity: the caller-supplied name must match the clone's own origin.
   for (const [id, r] of Object.entries(repos)) {
@@ -145,6 +146,9 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
   codeFirst(targets.pilot, targets.minPilotCode);
   take('rehearsal', targets.rehearsal, () => true);
   take('calibration', targets.calibration, () => true);
+  const pilotCode = sets.pilot.filter((id) => recoverable.get(id)?.mode === 'code').length;
+  const codeAvailable = [...recoverable.values()].filter((p) => p.mode === 'code').length;
+  if (pilotCode < Math.min(targets.minPilotCode, codeAvailable)) throw new Error(`the partition could not reach the pilot's code floor (${pilotCode} of ${targets.minPilotCode}) although ${codeAvailable} code points exist; re-freeze with another seed`);
   for (const s of sessionRows) if (!used.has(s.sessionId)) { sets.repeat.push(...s.pointIds); used.add(s.sessionId); }
   const setOf = Object.fromEntries(Object.entries(sets).flatMap(([name, ids]) => ids.map((id) => [id, name])));
   for (const p of points) p.set = setOf[p.pointId] ?? null;

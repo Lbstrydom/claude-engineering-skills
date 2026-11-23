@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { freezeMetaPilot } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
-import { runContinue, runFreeze, buildWorksheet, parseWorksheetLabels, parseCalibrationAnswers, scorePilot, snapshotsPathFor, readRunRows, appendDurably } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
+import { runNovelty, runContinue, runFreeze, buildWorksheet, parseWorksheetLabels, parseCalibrationAnswers, scorePilot, snapshotsPathFor, readRunRows, appendDurably } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
 import { reserveCall, settleCall, readLedgerSummary } from '../scripts/lib/llm-budget.mjs';
 
 const T0 = Date.parse('2026-11-01T10:00:00Z');
@@ -114,4 +114,41 @@ test('appendDurably appends whole records', () => {
   assert.equal(fs.readFileSync(f, 'utf8'), 'a\nb\n'); fs.rmSync(f, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   assert.ok(snapshotsPathFor('x/ds.json').endsWith('ds.snapshots.json'));
   assert.ok(typeof freezeMetaPilot === 'function' && typeof readLedgerSummary === 'function');
+});
+
+describe('runNovelty gate and resumption (R2 H1/M5/M8)', () => {
+  const mkResults = (dir, dataset) => {
+    const res = path.join(dir, 'r.jsonl');
+    const p = dataset.points.find((x) => x.status === 'recoverable');
+    const rows = [{ type: 'header', plannedPairs: 1 }, { type: 'run', pointId: p.pointId, arm: 'CONTINUE', rep: 0, findings: [{ key: 'k1', severity: 'HIGH', file: 'a.mjs', lines: null, text: 't', affectedFiles: [] }] }];
+    fs.writeFileSync(res, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return res;
+  };
+  const judgeDeps = (state) => ({ createJudge: async ({ sentinel }) => ({ stamp: { sentinel, model: 'm' } }), classifyNovelty: async ({ findings }) => { state.calls.push(findings.map((f) => f.id)); const notJudged = state.fail; return { perFinding: findings.map((f) => ({ id: f.id, novel: true, flags: [], notJudged })) }; } });
+
+  test('refused without an ACCEPTED calibration of this dataset; with one, a not-judged entry is retried on rerun and a swapped results file is refused', async () => {
+    const dir = setup();
+    const dsPath = path.join(dir, 'ds.json'); const dataset = JSON.parse(fs.readFileSync(dsPath, 'utf8'));
+    const res = mkResults(dir, dataset);
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res }), /--calibration/);
+    const cal = path.join(dir, 'cal.json');
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'inconclusive', datasetHash: dataset.datasetHash }));
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal }), /not accept/);
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: 'OTHER' }));
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal }), /different dataset/);
+    fs.writeFileSync(cal, JSON.stringify({ decision: 'accept', datasetHash: dataset.datasetHash }));
+
+    const state = { calls: [], fail: true };
+    const first = await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
+    assert.equal(first.incomplete, true);
+    state.fail = false; state.calls.length = 0;
+    const second = await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
+    assert.equal(state.calls.length, 2, 'both judges retried the not-judged finding');
+    assert.equal(second.incomplete, false, 'completeness is recomputed from the current state');
+    state.calls.length = 0;
+    await runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) });
+    assert.equal(state.calls.length, 0, 'settled judgments are not re-paid');
+    fs.appendFileSync(res, JSON.stringify({ type: 'run', pointId: 'x', findings: [] }) + '\n');
+    await assert.rejects(() => runNovelty({ datasetPath: dsPath, resultsPath: res, calibrationPath: cal, deps: judgeDeps(state) }), /different dataset or results file/);
+  });
 });

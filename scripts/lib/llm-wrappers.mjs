@@ -147,7 +147,7 @@ export async function callClaude(anthropic, systemPrompt, userPrompt, schema, op
     };
     const response = await withBudget(
       { seam: 'llm-wrappers.callClaude', provider: 'anthropic', model, body: request, outputCap: maxTokens },
-      () => anthropic.messages.create(request),
+      () => anthropic.messages.create(request, isBudgetActive() ? { maxRetries: 0 } : undefined),
     );
 
     let text = response.content?.[0]?.text || '';

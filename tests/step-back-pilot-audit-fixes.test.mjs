@@ -12,7 +12,7 @@ import { decideMetaPilot, scoreMetaRuns } from '../scripts/lib/audit/meta-pilot-
 import { freezeMetaPilot, sessionsOf } from '../scripts/lib/audit/step-back-pilot-freeze.mjs';
 import { restorePointFiles, ledgerTargets } from '../scripts/lib/audit/step-back-continuation.mjs';
 import { verifyRepoIdentity, scorePilot, runNovelty } from '../scripts/lib/audit/step-back-pilot-cli.mjs';
-import { filterCandidates, makePairId, judgePairs } from '../scripts/lib/model-eval/concern-matcher.mjs';
+import { filterCandidates, makePairId, judgePairs, lineRangeOf, prepareJudgePayload } from '../scripts/lib/model-eval/concern-matcher.mjs';
 import { scoreCalibration } from '../scripts/lib/model-eval/matcher-calibration.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'sb-fix-'));
@@ -60,10 +60,10 @@ test('H18: a repo mapping must match the clone\'s own origin; a mismatch refuses
   assert.throws(() => freezeMetaPilot({ exp: { runs: [], findings: [], events: [] }, repos: { R: { name: 'Lbstrydom/wine-cellar-app', localPath: 'x' } }, seed: 's', verifyRepo: () => ({ ok: false, reason: 'its clone\'s origin is acme/x' }) }), /refusing to read it under that authorisation/);
 });
 
-test('H6: a symlink at .audit in a historical tree is refused before anything is written through it', () => {
+test('H6: a symlink at .audit in a historical tree is refused before anything is written through it', (t) => {
   const dir = tmp(); const elsewhere = tmp();
   try {
-    try { fs.symlinkSync(elsewhere, path.join(dir, '.audit'), 'junction'); } catch { return; } // cannot create links here: nothing to assert
+    try { fs.symlinkSync(elsewhere, path.join(dir, '.audit'), 'junction'); } catch (err) { if (['EPERM', 'EACCES', 'ENOSYS', 'ENOTSUP'].includes(err.code)) return t.skip(`cannot create links here (${err.code})`); throw err; }
     assert.throws(() => restorePointFiles({ dir, point: { snapshotDigest: 'x', checkpoint: 1, checkpointSha: 'a' }, snapshot: { rounds: [], ledgerEntries: [] }, sid: 's' }), /symlink/);
     assert.deepEqual(fs.readdirSync(elsewhere), [], 'nothing was written through the link');
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(elsewhere, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
@@ -119,4 +119,34 @@ test('H15/M10/M11: a not-judged novelty entry is retried on rerun, completeness 
     assert.equal(out.decision.outcome, 'INCOMPLETE');
     assert.equal(typeof runNovelty, 'function'); assert.ok(dataset && dsPath);
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+});
+
+test('R2 H8: a newline-terminated corrupt record is CORRUPTION (fail closed); only an unterminated fragment is a torn tail', async () => {
+  const dir = tmp(); const file = path.join(dir, 'l.jsonl');
+  try {
+    initLedger({ file, capUsd: 50 });
+    const h = await reserveCall({ seam: 't', provider: 'anthropic', model: 'claude-opus-5-5', body: 'x', outputCap: 10, file });
+    await settleCall(h, { usage: { input_tokens: 100, output_tokens: 5 }, modelServed: 'claude-opus-5-5' });
+    fs.appendFileSync(file, '{"type":"reserve","callId":"lost","reser\n'); // terminated but unparseable: could have been a real reservation
+    assert.throws(() => readLedgerSummary(file), /not valid JSON/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+});
+
+test('R2 H3: freezeMetaPilot refuses to run without a repo-identity verifier (authorisation never defaults to trust)', () => {
+  assert.throws(() => freezeMetaPilot({ exp: { runs: [], findings: [], events: [] }, repos: {}, seed: 's' }), /verifyRepo/);
+});
+
+test('R2 H7/H11/M4: ONE canonical file set drives matching, line ambiguity and egress', () => {
+  assert.equal(lineRangeOf({ file: 'a.js', files: ['b.js'], lines: [3, 4] }), null, 'file + files = two files: no single line frame');
+  assert.deepEqual(lineRangeOf({ file: 'a.js', files: [], lines: [3, 4] }), [3, 4]);
+  const p = prepareJudgePayload({ f: { id: 'f', file: '.env', files: [], text: 't' }, x: { id: 'x', file: 'a.js', text: 't' } }, {});
+  assert.equal(p.ok, false, 'a sensitive file named in file with an empty files[] is still refused');
+});
+
+test('R2 M7: a budget stop waits for every started worker to settle before propagating', async () => {
+  let inflightDone = false;
+  const judge = { stamp: {}, call: async ({ user }) => { if (/stop-me/.test(user)) { const e = new Error('cap'); e.code = 'budget-stop'; throw e; } await new Promise((r) => setTimeout(r, 60)); inflightDone = true; return { verdict: 'different', quote: '', reason: 'r' }; } };
+  const pairs = [{ f: { id: 'a', file: 'a', text: 'slow one' }, x: { id: 'x', file: 'a', text: 'y' } }, { f: { id: 'b', file: 'a', text: 'stop-me' }, x: { id: 'x', file: 'a', text: 'y' } }];
+  await assert.rejects(() => judgePairs({ pairs, judge, concurrency: 2 }), (e) => e.code === 'budget-stop');
+  assert.equal(inflightDone, true, 'the in-flight call finished (and would have been metered) before the error surfaced');
 });
