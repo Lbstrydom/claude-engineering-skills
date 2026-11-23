@@ -128,7 +128,7 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
       if (!snap.ok) { points.push({ ...base, status: 'unrecoverable', reason: snap.reason }); continue; }
       if (!(next.plan_file || snap.snapshot.planFile)) { points.push({ ...base, status: 'unrecoverable', reason: `${s.mode} audit with no recorded plan_file (the invocation cannot be re-issued)` }); continue; }
       // Runtime prerequisites are checked at FREEZE (cheap git lookups, no checkout), so a frozen set is runnable: a point that fails is unrecoverable, never silently shrunk later.
-      const planFile = next.plan_file ?? snap.snapshot.planFile ?? null;
+      const planFile = next.plan_file || snap.snapshot.planFile || null;
       const pre = precheck ? precheck({ repo, point: { ...base, treeSha: next.audited_sha, planFile, firstSha: s.runs[0].audited_sha ?? null } }) : { ok: true };
       if (!pre.ok) { points.push({ ...base, status: 'unrecoverable', reason: pre.reason }); continue; }
       const sealed = { rounds: snap.snapshot.rounds, ledgerEntries: snap.snapshot.ledgerEntries };
@@ -136,7 +136,7 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
       snapshots[pointId] = { ...sealed, digest };
       points.push({
         ...base, status: 'recoverable', checkpointSha: snap.snapshot.auditedSha, treeSha: next.audited_sha, firstSha: s.runs[0].audited_sha ?? null,
-        planFile: next.plan_file ?? snap.snapshot.planFile ?? null, runIds: s.runs.slice(0, N + 1).map((r) => r.id), snapshotDigest: digest,
+        planFile: next.plan_file || snap.snapshot.planFile || null, runIds: s.runs.slice(0, N + 1).map((r) => r.id), snapshotDigest: digest,
         rounds: N, findingsAtCheckpoint: sealed.rounds.reduce((n, r) => n + r.findings.length, 0), ledgerEntries: sealed.ledgerEntries.length,
       });
       mine.push(pointId);
@@ -171,7 +171,7 @@ export function freezeMetaPilot({ exp, repos, seed, targets = DEFAULT_TARGETS, a
   const sorted = (xs, k) => [...xs].sort((a, b) => String(a[k]).localeCompare(String(b[k])));
 
   const dataset = {
-    version: PILOT_DATASET_VERSION, kind: PILOT_KIND, source: 'store-export', scope: PILOT_SCOPE, excludedTriggers: EXCLUDED_TRIGGERS, deviation: 'deviation-1', seed, targets, authorisedRepos: [...authorisedRepos],
+    version: PILOT_DATASET_VERSION, kind: PILOT_KIND, source: 'store-export', ...(shapes.every((p) => p.trigger === 'T1') ? { scope: PILOT_SCOPE, excludedTriggers: EXCLUDED_TRIGGERS, deviation: 'deviation-1' } : { scope: 'unscoped' }), seed, targets, authorisedRepos: [...authorisedRepos],
     exportSha256: exp.exportSha256 ?? null, exportedAt: exp.exportedAt ?? null,
     repoPaths: Object.fromEntries(Object.values(repos).filter((r) => authorisedRepos.includes(r.name)).map((r) => [r.name, r.localPath ?? null])),
     counts: {

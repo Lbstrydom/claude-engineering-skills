@@ -76,7 +76,14 @@ export function verifyRepoIdentity(r, { git = (cwd, args) => execFileSync('git',
 /** Freeze-time runnability: the plan file exists in the tree the round audits, and a code point has a diff base. Cheap `git` lookups, no checkout. */
 export function gitPrecheck({ repo, point }, { git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } = {}) {
   if (!repo.localPath) return { ok: false, reason: 'no local clone to check the tree against' };
-  try { git(repo.localPath, ['cat-file', '-e', `${point.treeSha}:${point.planFile}`]); } catch { return { ok: false, reason: 'plan file absent from the tree the round audits' }; }
+  // `cat-file -t` names the object kind: a plan path that is a DIRECTORY (a tree) is not a plan file. Only git's own "no such object" (exit 128) is
+  // absence; a spawn failure or any other status is a freeze failure, never a quietly excluded point.
+  let kind;
+  try { kind = git(repo.localPath, ['cat-file', '-t', `${point.treeSha}:${point.planFile}`]); } catch (err) {
+    if (err?.status === 128) return { ok: false, reason: 'plan file absent from the tree the round audits' };
+    throw new Error(`git precheck failed for ${point.planFile} (${err?.code ?? `status ${err?.status}`}): the freeze cannot decide this point`);
+  }
+  if (kind !== 'blob') return { ok: false, reason: `plan path is a ${kind}, not a file, in the tree the round audits` };
   if (point.mode === 'code') { const b = resolveScopeBase({ repoRoot: repo.localPath, treeSha: point.treeSha, firstSha: point.firstSha }); if (!b.ok) return { ok: false, reason: b.reason }; }
   return { ok: true };
 }
@@ -292,7 +299,7 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
  * been accepted (it was inconclusive; that is the amendment's premise) but it must be of THIS dataset, and its judge stamps
  * pin the judges the audit relies on.
  */
-export function assertAmendment({ amendmentPath, calibrationPath, deviationPath = null, dataset }) {
+export function assertAmendment({ amendmentPath, calibrationPath, deviationPath = null, deviationDigest, dataset }) {
   if (!amendmentPath) throw new ArgvError('--amendment <amendment-2.json> is required: novelty and scoring run under the signed v2 amendment');
   if (!calibrationPath) throw new ArgvError('--calibration <calibration-report.json> is required (the amended gate\'s evidence and the judge stamps)');
   const amendment = readAmendment(amendmentPath);
@@ -300,7 +307,7 @@ export function assertAmendment({ amendmentPath, calibrationPath, deviationPath 
   // The calibration was drawn on the dataset frozen BEFORE deviation 1. It is accepted for the T1-only dataset only through the signed, digest-bound bridge.
   if (rep.datasetHash !== dataset.datasetHash) {
     if (!deviationPath) throw new ArgvError('the calibration report was made from a different dataset; pass --deviation <deviation-1.json> to bridge it explicitly');
-    try { readDeviation(deviationPath, { dataset, calibration: rep }); } catch (err) { throw new ArgvError(String(err.message)); }
+    try { readDeviation(deviationPath, { dataset, calibration: rep, ...(deviationDigest ? { digest: deviationDigest } : {}) }); } catch (err) { throw new ArgvError(String(err.message)); }
   }
   if (!['accept', 'fail', 'inconclusive'].includes(rep.decision) || !Number.isFinite(rep.spentUsd) || !rep.judges?.opus?.stamp || !rep.judges?.pro?.stamp) throw new ArgvError('the calibration report is malformed (it needs a decision, spentUsd and both judge stamps)');
   return { amendment, calibration: rep };

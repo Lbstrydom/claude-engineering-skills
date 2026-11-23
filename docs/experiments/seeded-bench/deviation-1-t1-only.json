@@ -10,6 +10,7 @@
   "alsoChanged": "The freeze now checks, with cheap git lookups and no checkout, that a point's plan file exists in the tree its round audits and that a code point has a diff base; points that fail are unrecoverable at freeze instead of surfacing at run time. This removed 40 further points from the 143 versus 183 recoverable.",
   "bridge": {
     "fromDatasetHash": "49d48e93bdcae74d937e138952b097182b4ede0b50cf20eda871b97733855a9d",
+    "fromReportSha256": "f32ab70d6f08b15369d74ceb0d338a20f59f95f67f906e20d492f001230a6dbc",
     "toDatasetHash": "da95b2392e9ab4fa7b4f7af8e8cdd1355b802d23eb45b6e5b171cd863302f01f",
     "seed": "seeded-bench-v1-pilot1",
     "note": "The calibration labels (260) and its INCONCLUSIVE report were drawn and scored on the earlier dataset. They are evidence only under amendment 2 (nothing is tuned on them), so the new partition's reshuffle of sessions does not invalidate them; the novelty step accepts the report for the new dataset only through this record."
