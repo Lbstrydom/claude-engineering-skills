@@ -316,7 +316,7 @@
       "reason": "Pointer to cycle's own generated copy of the shared gemini-gate.md degradation ladder; the mandatory consolidated gate itself is dispositioned by consolidated-gemini-gate-mandatory. This line adds no new gate."
     },
     {
-      "line": "| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate — building the transcript, OR no `GEMINI_API_KEY` and the degradation ladder decides the substitute. |",
+      "line": "| `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Autonomous mode's consolidated Gemini gate, OR no `GEMINI_API_KEY` (the ladder picks the substitute). |",
       "reason": "Reference-index row (the Summary column must byte-match the file's summary frontmatter). Verb match is the gate's NAME, not an enforcement claim."
     },
     {
@@ -398,6 +398,10 @@
     {
       "line": "report; never demote to the dirty-aware default (it widens the range).",
       "reason": "Continuation of the 3a instruction (validate clusterStartRef with git merge-base --is-ancestor before using it as a diff base): a caller-behaviour step, not a gate /cycle exits on; the rationale is references/clustered-execution.md §3a."
+    },
+    {
+      "line": "| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |",
+      "reason": "Reference-index row: names the file, its summary and when to read it. Gate is a section name here, not an enforcement claim; nothing exits on this row."
     }
   ]
 }
