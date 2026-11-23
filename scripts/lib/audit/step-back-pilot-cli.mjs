@@ -25,6 +25,7 @@ import { drawCalibrationSets, renderWorksheet, joinWorksheetLabels, scoreCalibra
 import { freezeMetaPilot, assertPartition, pointsFor, verifySnapshots, seededShuffle } from './step-back-pilot-freeze.mjs';
 import { runContinuation, ledgerTargets, restorePointFiles, validateTrigger, resolveScopeBase, sidFor, EXIT_BUDGET_STOP } from './step-back-continuation.mjs';
 import { decideMetaPilot, scoreMetaRuns, SEEDED_BENCH_EPOCH, HUMAN_LABELS } from './meta-pilot-decision.mjs';
+import { readDeviation } from './pilot-deviation.mjs';
 import { isSuppressed, isCovered, auditVerdict, stratifiedAuditSample, readAmendment, maxFalseSuppressions } from './pilot-novelty-audit.mjs';
 
 export const PILOT = 'meta-ab';
@@ -72,7 +73,22 @@ export function verifyRepoIdentity(r, { git = (cwd, args) => execFileSync('git',
 
 // ── freeze ───────────────────────────────────────────────────────────────────────────────────────────
 
-export function runFreeze({ exports, reposFile, seed, out, targets, verifyRepo = verifyRepoIdentity }) {
+/** Freeze-time runnability: the plan file exists in the tree the round audits, and a code point has a diff base. Cheap `git` lookups, no checkout. */
+export function gitPrecheck({ repo, point }, { git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } = {}) {
+  if (!repo.localPath) return { ok: false, reason: 'no local clone to check the tree against' };
+  // `cat-file -t` names the object kind: a plan path that is a DIRECTORY (a tree) is not a plan file. Only git's own "no such object" (exit 128) is
+  // absence; a spawn failure or any other status is a freeze failure, never a quietly excluded point.
+  let kind;
+  try { kind = git(repo.localPath, ['cat-file', '-t', `${point.treeSha}:${point.planFile}`]); } catch (err) {
+    if (err?.status === 128) return { ok: false, reason: 'plan file absent from the tree the round audits' };
+    throw new Error(`git precheck failed for ${point.planFile} (${err?.code ?? `status ${err?.status}`}): the freeze cannot decide this point`);
+  }
+  if (kind !== 'blob') return { ok: false, reason: `plan path is a ${kind}, not a file, in the tree the round audits` };
+  if (point.mode === 'code') { const b = resolveScopeBase({ repoRoot: repo.localPath, treeSha: point.treeSha, firstSha: point.firstSha }); if (!b.ok) return { ok: false, reason: b.reason }; }
+  return { ok: true };
+}
+
+export function runFreeze({ exports, reposFile, seed, out, targets, verifyRepo = verifyRepoIdentity, precheck = gitPrecheck }) {
   if (!exports.length || !reposFile || !seed || !out) throw new ArgvError('step-back-replay freeze --pilot meta-ab: --export <csv>, --repos-file, --seed and --out are required.');
   const merged = { runs: [], findings: [], events: [], exportedAt: null };
   const hashes = [];
@@ -87,7 +103,7 @@ export function runFreeze({ exports, reposFile, seed, out, targets, verifyRepo =
     merged.exportedAt = [merged.exportedAt, e.exportedAt].filter(Boolean).sort().pop();
   }
   merged.exportSha256 = sha256Hex(hashes.sort().join('|'));
-  const { dataset, snapshots } = freezeMetaPilot({ exp: merged, repos: readJson(reposFile), seed, verifyRepo, ...(targets ? { targets } : {}) });
+  const { dataset, snapshots } = freezeMetaPilot({ exp: merged, repos: readJson(reposFile), seed, verifyRepo, precheck, ...(targets ? { targets } : {}) });
   writeJson(out, dataset); writeJson(snapshotsPathFor(out), snapshots);
   return dataset;
 }
@@ -283,20 +299,24 @@ export async function runCalibrateScore({ dir, labelsFile, maxUsd, deps = {} }) 
  * been accepted (it was inconclusive; that is the amendment's premise) but it must be of THIS dataset, and its judge stamps
  * pin the judges the audit relies on.
  */
-export function assertAmendment({ amendmentPath, calibrationPath, dataset }) {
+export function assertAmendment({ amendmentPath, calibrationPath, deviationPath = null, deviationDigest, dataset }) {
   if (!amendmentPath) throw new ArgvError('--amendment <amendment-2.json> is required: novelty and scoring run under the signed v2 amendment');
   if (!calibrationPath) throw new ArgvError('--calibration <calibration-report.json> is required (the amended gate\'s evidence and the judge stamps)');
   const amendment = readAmendment(amendmentPath);
   const rep = readJson(calibrationPath);
-  if (rep.datasetHash !== dataset.datasetHash) throw new ArgvError('the calibration report was made from a different dataset');
+  // The calibration was drawn on the dataset frozen BEFORE deviation 1. It is accepted for the T1-only dataset only through the signed, digest-bound bridge.
+  if (rep.datasetHash !== dataset.datasetHash) {
+    if (!deviationPath) throw new ArgvError('the calibration report was made from a different dataset; pass --deviation <deviation-1.json> to bridge it explicitly');
+    try { readDeviation(deviationPath, { dataset, calibration: rep, ...(deviationDigest ? { digest: deviationDigest } : {}) }); } catch (err) { throw new ArgvError(String(err.message)); }
+  }
   if (!['accept', 'fail', 'inconclusive'].includes(rep.decision) || !Number.isFinite(rep.spentUsd) || !rep.judges?.opus?.stamp || !rep.judges?.pro?.stamp) throw new ArgvError('the calibration report is malformed (it needs a decision, spentUsd and both judge stamps)');
   return { amendment, calibration: rep };
 }
 
 /** Novelty of every MEDIUM+ finding against its point's ledger, by BOTH judges (stamped once; a changed stamp refuses a repeat). */
-export async function runNovelty({ datasetPath, resultsPath, calibrationPath, amendmentPath, deps = {} }) {
+export async function runNovelty({ datasetPath, resultsPath, calibrationPath, amendmentPath, deviationPath = null, deps = {} }) {
   const { dataset, snapshots } = loadDataset(datasetPath);
-  const { calibration } = assertAmendment({ amendmentPath, calibrationPath, dataset });
+  const { calibration } = assertAmendment({ amendmentPath, calibrationPath, deviationPath, dataset });
   const ledgerFile = path.resolve(`${resultsPath}.budget.jsonl`);
   const priorEnv = process.env[BUDGET_LEDGER_ENV];
   process.env[BUDGET_LEDGER_ENV] = ledgerFile;
@@ -410,7 +430,7 @@ export function parseWorksheetLabels(md) {
  * `audit-failed` (the upper bound of false suppressions exceeds the amendment's tolerance, so the decision is NOT reported until
  * ALL hidden findings are labelled: rebuild the worksheet with `--audit all`), else the pre-registered rule's decision.
  */
-export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
+export function scorePilot({ rows, novelty, key, labelsById, plannedPairs, scope = null }) {
   const labels = new Map();
   for (const [wid, v] of labelsById) {
     if (!HUMAN_LABELS.includes(v)) throw new Error(`worksheet ${wid}: unknown label "${v}"`);
@@ -447,5 +467,5 @@ export function scorePilot({ rows, novelty, key, labelsById, plannedPairs }) {
     const worst = Object.entries(perArm).filter(([, v]) => !v.pass).map(([a, v]) => `${a}: ${v.f} of ${v.n} (upper bound ${v.upperBound.toFixed(3)})`);
     decision = { ...base, outcome: 'audit-failed', why: `false suppressions exceed the pre-registered tolerance (pooled ${pooled.f} of ${pooled.n}, upper bound ${pooled.upperBound.toFixed(3)} vs ${pooled.upperBoundMax}${worst.length ? `; failing arms ${worst.join(', ')}` : ''}); the instrument is not trusted: rebuild the worksheet with --audit all and label every hidden finding` };
   }
-  return { decision, rows: s.rows, blocked: s.blocked, unlabelled, audit: { ...pooled, hiddenTotal: key.audit.hidden, all: full, perArm, pass: auditPass, maxFalseAllowed: maxFalseSuppressions({ n: pooled.n, upperBoundMax: pooled.upperBoundMax, confidence: pooled.confidence }) } };
+  return { scope, decision, rows: s.rows, blocked: s.blocked, unlabelled, audit: { ...pooled, hiddenTotal: key.audit.hidden, all: full, perArm, pass: auditPass, maxFalseAllowed: maxFalseSuppressions({ n: pooled.n, upperBoundMax: pooled.upperBoundMax, confidence: pooled.confidence }) } };
 }

@@ -75,7 +75,7 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   const datasetPath = need('--dataset'); const resultsPath = need('--results');
   if (cmd === 'novelty') {
     if (!argv.includes('--confirm-spend')) throw new ArgvError('step-back-replay novelty: judging spends from the pilot ledger; pass --confirm-spend (the hard cap is the ledger\'s, metered per call).');
-    const r = await runNovelty({ datasetPath, resultsPath, calibrationPath: flag('--calibration'), amendmentPath: flag('--amendment') });
+    const r = await runNovelty({ datasetPath, resultsPath, calibrationPath: flag('--calibration'), amendmentPath: flag('--amendment'), deviationPath: flag('--deviation') });
     console.log(`step-back-replay novelty: ${Object.keys(r.byFinding).length} findings judged by both judges${r.incomplete ? ' - INCOMPLETE (a pair was not judged; a rerun retries it)' : ''}`);
     return r.incomplete ? 1 : 0;
   }
@@ -103,10 +103,11 @@ export async function runPilotCommand({ cmd, argv, flag }) {
   if (fs.existsSync(statePath) && JSON.parse(fs.readFileSync(statePath, 'utf8')).outcome === 'audit-failed' && key.audit.all !== true) throw new ArgvError('the last score was audit-failed: score only the --audit all worksheet (a sampled worksheet can no longer be scored)');
   const planned = readHeader(resultsPath).plannedPairs; // the FROZEN schedule, never what happened to be recorded
   if (!Number.isInteger(planned) || planned <= 0) throw new ArgvError('the results header records no plannedPairs; refusing to score');
-  const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned });
+  const scope = dataset.scope ? { scope: dataset.scope, excludedTriggers: dataset.excludedTriggers ?? null, deviation: dataset.deviation ?? null } : null; // the T2 limitation travels with every result
+  const res = scorePilot({ rows, novelty, key, labelsById, plannedPairs: planned, scope });
   writeJson(path.join(dir, 'pilot1-score.json'), res);
   // The persisted audit state only moves on a real audit verdict: INCOMPLETE must never erase a standing audit-failed.
   if (res.decision.outcome === 'audit-failed' || (key.audit.all === true && res.decision.outcome !== 'INCOMPLETE')) writeJson(`${resultsPath}.audit-state.json`, { outcome: res.decision.outcome, at: key.seed });
-  console.log(`step-back-replay score --pilot meta-ab: ${String(res.decision.outcome).toUpperCase()} (${res.decision.why})`);
+  console.log(`step-back-replay score --pilot meta-ab: ${String(res.decision.outcome).toUpperCase()} (${res.decision.why})${scope ? ` [scope: ${scope.scope}; T2 excluded: ${scope.excludedTriggers?.T2 ?? 'n/a'}]` : ''}`);
   return ['INCOMPLETE', 'audit-failed'].includes(res.decision.outcome) ? 1 : 0; // keep/off/inconclusive/invalid are RESULTS (0); an unfinished score is not
 }

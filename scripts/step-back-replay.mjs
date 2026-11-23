@@ -33,7 +33,7 @@ import { claudeAvailability } from './lib/anthropic-client.mjs';
 import { runPilotCommand, PILOT_COMMANDS } from './lib/audit/step-back-pilot-dispatch.mjs';
 import { runReplay, scoreReplay, renderDryRun, renderScoreTable, readResultsJsonl, verifyDatasetInputs, sha256Hex, REPLAY_ARMS } from './lib/audit/step-back-replay.mjs';
 
-const KNOWN_FLAGS = ['--pilot', '--seed', '--repos-file', '--set', '--replicates', '--point', '--ledger', '--call-id', '--evidence', '--cost-usd', '--out-dir', '--labels', '--calibration', '--amendment', '--audit', '--audit-script', '--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--pilot', '--seed', '--repos-file', '--set', '--replicates', '--point', '--ledger', '--call-id', '--evidence', '--cost-usd', '--out-dir', '--labels', '--calibration', '--amendment', '--deviation', '--audit', '--audit-script', '--spec', '--out', '--dataset', '--arms', '--max-usd', '--dry-run', '--confirm-spend', '--branches', '--since', '--export', '--results', '--repo-id', '--json', '--selfcheck-relocation'];
 export const EXIT_BUDGET_STOP = 5;
 
 /** Append + fsync the descriptor: once this returns, the record has been handed to the OS and flushed to the device (fsync), not merely buffered in this process. A power loss mid-call can still lose the call in flight, never an earlier one. */

@@ -1,0 +1,33 @@
+{
+  "deviation": 1,
+  "epoch": "seeded-bench-v2",
+  "scope": "T1-only",
+  "title": "Re-freeze Pilot 1 as T1-only; bridge the calibration report to the new dataset hash",
+  "reason": "The T2 trigger (code round 4, admitted) needs the checkpoint-3 round signals to fire. A store-era reconstruction leaves reopenRate, severityDrift and retired unmeasured and an unmeasured signal never fires, so no T2 point can be reproduced. Measured by the free dry-run on 2026-11-23 on a pinned main: 0 of 14 T2 points in the rehearsal and pilot sets could run, leaving 1 of 5 rehearsal points and 6 of 16 pilot points runnable, below the pre-registered floor of 24 valid pairs.",
+  "excludedTriggers": {
+    "T2": "the checkpoint-3 round signals cannot be reproduced from store-era data"
+  },
+  "alsoChanged": "The freeze now checks, with cheap git lookups and no checkout, that a point's plan file exists in the tree its round audits and that a code point has a diff base; points that fail are unrecoverable at freeze instead of surfacing at run time. This removed 40 further points from the 143 versus 183 recoverable.",
+  "bridge": {
+    "fromDatasetHash": "49d48e93bdcae74d937e138952b097182b4ede0b50cf20eda871b97733855a9d",
+    "fromReportSha256": "f32ab70d6f08b15369d74ceb0d338a20f59f95f67f906e20d492f001230a6dbc",
+    "toDatasetHash": "da95b2392e9ab4fa7b4f7af8e8cdd1355b802d23eb45b6e5b171cd863302f01f",
+    "seed": "seeded-bench-v1-pilot1",
+    "note": "The calibration labels (260) and its INCONCLUSIVE report were drawn and scored on the earlier dataset. They are evidence only under amendment 2 (nothing is tuned on them), so the new partition's reshuffle of sessions does not invalidate them; the novelty step accepts the report for the new dataset only through this record."
+  },
+  "unchanged": [
+    "amendment 2 and every number in it (both-judges-same, 80 audited stratified by arm, upper bound 0.15)",
+    "the Pilot 1 decision rule and its thresholds (plan section 2.3)",
+    "the $125 total and $100 pilot hard caps, metered per call",
+    "human blind labelling"
+  ],
+  "reportingRequirement": "The pilot's report states in its first lines that it measures the T1 decision only and that T2 is excluded, with the reason above.",
+  "signature": {
+    "signedBy": "Louis",
+    "signedAt": "2026-11-23",
+    "signedWords": "T1-only pilot - yes proceed - I approve",
+    "context": "Typed by Louis directly in this session (not a relay), in answer to the T1-only re-freeze after he had earlier withdrawn the relayed signature pending the T2 investigation (which found T2 degraded but rebuildable-but-rare; fixes for it proceed separately).",
+    "provenance": "Typed by the user in this session on 2026-11-23.",
+    "condition": "Signed before any pilot data exists. Changing the scope, the bridge or any number after pilot data exists is not permitted under this signature."
+  }
+}
