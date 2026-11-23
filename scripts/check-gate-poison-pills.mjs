@@ -728,6 +728,7 @@ export const ACKNOWLEDGED_COMPUTED_IMPORTS = Object.freeze({
   'install.mjs': { calls: 1, fingerprint: 'be7abfda9f2a', targets: ['scripts/lib/install/legacy-surfaces.mjs'], reason: 'loads scripts/lib/install/legacy-surfaces.mjs through a path.join of literal segments; the target is followed' },
   'scripts/lib/sync-isolation-verify.mjs': { calls: 1, fingerprint: 'bd83a782dd43', reason: 'imports the consumer-sync verification target; a sync tool no pill executes' },
   'scripts/lib/store/population-ambient.mjs': { calls: 1, fingerprint: '09fccb1ce039', reason: 'sourceOnly(rel) loads sibling store modules named at its own call sites' },
+  'scripts/learning/replay.mjs': { calls: 1, fingerprint: '7025ae54e1ad', reason: 'loadPolicy imports the operator-supplied --policy module path; reached only because check-help-readonly.mjs imports the cross-skill registry, and no pill executes a replay policy' },
   'scripts/sync-to-repos.mjs': { calls: 1, fingerprint: 'd6768e049235', reason: 'the word in a log message, no dynamic import call' },
 });
 
