@@ -131,7 +131,7 @@ import { finalizeRun } from './run-finalization.mjs';
 import {
   PASS_BACKEND_RUBRIC, PASS_FRONTEND_RUBRIC, PASS_SUSTAINABILITY_RUBRIC, buildClassificationRubric,
 } from '../prompt-seeds.mjs';
-import { getActiveRevisionId } from '../prompt-registry.mjs';
+import { getActiveRevisionId } from '../prompt-registry.mjs'; import { runStartIdentity } from './audit-identity.mjs';
 import { incrementRunCounter } from '../llm-auditor.mjs';
 
 // ── Code Audit Pass Schemas (moved from openai-audit.mjs — tiered-recall
@@ -458,7 +458,7 @@ async function runLegacyProductionAuditImpl(ctx) {
       // which was not happening, and would have masked a genuine future throw.
       // Same removal, same reasoning, as the `recordDiffComplexity` call below.
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
-        scopeMode, commitSha, branch, planId, runId, auditSessionId: auditIdentity?.auditSessionId, auditRound: auditIdentity?.auditRound,
+        scopeMode, commitSha, branch, planId, runId, ...runStartIdentity(auditIdentity),
       });
       (await import('./bind-call-log.mjs')).bindAuditCallLog({ runId: cloudRunId, repoId: cloudRepoId, branch: ctx?.auditedBranch ?? branch, auditedTree: ctx?.auditedTree ?? null, auditBaseCommit });
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity
@@ -1535,7 +1535,7 @@ export async function buildAuditRunContext(cliArgs) {
     changedFiles = [], auditBaseCommit = null, repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
-    sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
+    sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, auditIdentity = null, allowInfraScope = false,
     outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null, __runAdjacencyAnalysis = null,
     coverageChanged = null, coverageExcluded = null, requiredSubjects = null,
     // docs/plans/stage0-evidence-relevance-split.md decision #5: the tiered
@@ -1671,7 +1671,7 @@ export async function buildAuditRunContext(cliArgs) {
     planContent, projectContext, historyContext,
     passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, __runAdjacencyAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
-    escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
+    escalateRecurring, scopeMode, planFile, runId, auditIdentity, allowInfraScope,
     outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty, coverageChanged, coverageExcluded, requiredSubjects,
     generatorOutcomes: [],
     // `anthropicReadiness` travels WITH the client so a downstream consumer can

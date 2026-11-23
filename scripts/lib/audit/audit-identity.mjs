@@ -36,6 +36,16 @@ export function resolveAuditIdentity({ sessionFlag = null, roundFlag = null, out
   };
 }
 
+/**
+ * The `recordRunStart` options for a resolved identity. The code writer takes them from `ctx.auditIdentity`, which
+ * `buildAuditRunContext` must carry (it once dropped it: 0 of 1,213 code runs had a session id).
+ * @param {{auditSessionId?: string|null, auditRound?: number|null}|null|undefined} identity
+ * @returns {{auditSessionId: string|undefined, auditRound: number|undefined}}
+ */
+export function runStartIdentity(identity) {
+  return { auditSessionId: identity?.auditSessionId ?? undefined, auditRound: identity?.auditRound ?? undefined };
+}
+
 let _sentinelWarned = false;
 
 /**
