@@ -74,7 +74,18 @@ Left resident, and why:
 - Upstream-owned / not-on-one-store / file-the-report / blocked / ownership-oracle / CLI smoke contract: they apply
   while investigating a consumer or writing any CLI, not while editing a path set.
 
-## 4. Not done (scope boundary)
+## 4. Knock-on: the checklist pilot's kernel estimate
+
+`kernelEstimate` (`scripts/lib/checklist/pilot.mjs`) anchors each checklist entry to an AGENTS.md sentence. Five of
+those sentences moved here (`disposable-db-allowlist`, `durable-write-registration`, `jsonb-write-seam`,
+`schema-error-is-not-empty-result`, `sync-inventory-single-owner`), so it now reports them `unanchored`. `pilot.mjs` is a
+**hash-frozen instrument** (`scripts/lib/checklist/frozen.mjs`, `--verify-frozen`), so it is deliberately NOT edited:
+re-freezing an experiment's instrument is not this change's call. `tests/checklist-gen-pilot.test.mjs` instead asserts
+that the unanchored set is exactly those five and that each anchor is in `.claude/rules/` and absent from AGENTS.md;
+any other unanchored entry still fails. The checklist entries themselves (`.audit-loop/checklist.json`) are untouched
+and still fire on a matching diff.
+
+## 5. Not done (scope boundary)
 
 No gate deleted or relaxed; no ratchet, no dashboard. Further candidates for the same mechanism, unscheduled:
 §Sensitive paths + VCS contract (`sensitive-paths.mjs`, `vcs.mjs`, `subprocess.mjs`), §Azure AI Foundry Work Profile,

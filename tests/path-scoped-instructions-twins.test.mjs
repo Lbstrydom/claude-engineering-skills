@@ -19,34 +19,56 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalizeEol } from '../scripts/lib/file-io.mjs';
+import { parse as parseYaml } from 'yaml';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RULES = '.claude/rules';
 const INSTRUCTIONS = '.github/instructions';
 const SUFFIX = '.instructions.md';
 
+/** Both hosts discover recursively, so the census does too: `/`-separated paths relative to `dir`. */
 function listMd(dir) {
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort();
+  return fs.readdirSync(dir, { recursive: true })
+    .map(f => String(f).split(path.sep).join('/'))
+    .filter(f => f.endsWith('.md') && fs.statSync(path.join(dir, f)).isFile())
+    .sort();
 }
 
-function frontmatter(text) {
-  const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
-  if (!m) return null;
-  const lines = m[1].split('\n');
-  const paths = [];
-  let applyTo = null;
-  let inPaths = false;
-  for (const line of lines) {
-    if (/^paths:\s*$/.test(line)) { inPaths = true; continue; }
-    const item = inPaths && /^\s+-\s+["']?(.*?)["']?\s*$/.exec(line);
-    if (item) { paths.push(item[1]); continue; }
-    inPaths = false;
-    const a = /^applyTo:\s*["']?(.*?)["']?\s*$/.exec(line);
-    if (a) applyTo = a[1].split(',').map(s => s.trim()).filter(Boolean);
+/** `applyTo` is comma-separated, but a comma inside a `{a,b}` brace group belongs to the glob. */
+function splitApplyTo(s) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === '{') depth++;
+    else if (ch === '}') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += ch;
   }
-  return { paths, applyTo };
+  out.push(cur);
+  return out.map(x => x.trim()).filter(Boolean);
+}
+
+/**
+ * The YAML header, parsed by a real YAML parser: a malformed header is a problem,
+ * never a best-effort extraction. Returns { error } or { paths, applyTo }.
+ * EOLs are folded for PARSING only; the twin comparison below is on raw bytes.
+ */
+function frontmatter(text) {
+  const m = /^---\n([\s\S]*?)\n---\n/.exec(text.replace(/\r\n/g, '\n'));
+  if (!m) return { error: 'no YAML frontmatter' };
+  let doc;
+  try { doc = parseYaml(m[1]); } catch (e) { return { error: `frontmatter is not valid YAML (${e.message.split('\n')[0]})` }; }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return { error: 'frontmatter is not a mapping' };
+  const { paths, applyTo } = doc;
+  if (paths !== undefined && !(Array.isArray(paths) && paths.every(p => typeof p === 'string' && p.trim()))) {
+    return { error: 'paths: must be a list of non-empty strings' };
+  }
+  if (applyTo !== undefined && typeof applyTo !== 'string') return { error: 'applyTo: must be a string' };
+  return {
+    paths: paths ?? [],
+    applyTo: applyTo === undefined ? null : splitApplyTo(applyTo),
+  };
 }
 
 /** Every reason the two directories under `root` are not a faithful twin set. */
@@ -59,11 +81,15 @@ function twinProblems(root) {
   for (const t of instrTopics) if (!ruleTopics.has(t)) problems.push(`${t}: no ${RULES}/${t}.md twin`);
   for (const t of ruleTopics) {
     if (!instrTopics.has(t)) { problems.push(`${t}: no ${INSTRUCTIONS}/${t}${SUFFIX} twin`); continue; }
-    const a = canonicalizeEol(fs.readFileSync(path.join(root, RULES, `${t}.md`)));
-    const b = canonicalizeEol(fs.readFileSync(path.join(root, INSTRUCTIONS, `${t}${SUFFIX}`)));
+    // Raw bytes: "byte-identical" is the contract. Both files are .md under the
+    // same EOL policy, so a checkout converts them alike and only a real
+    // difference (including an EOL-only one) fails.
+    const a = fs.readFileSync(path.join(root, RULES, `${t}.md`));
+    const b = fs.readFileSync(path.join(root, INSTRUCTIONS, `${t}${SUFFIX}`));
     if (!a.equals(b)) problems.push(`${t}: twins differ`);
     const fm = frontmatter(a.toString('utf8'));
-    if (!fm || fm.paths.length === 0) { problems.push(`${t}: no paths: list (an unscoped rule loads every session)`); continue; }
+    if (fm.error) { problems.push(`${t}: ${fm.error}`); continue; }
+    if (fm.paths.length === 0) { problems.push(`${t}: no paths: list (an unscoped rule loads every session)`); continue; }
     if (!fm.applyTo || fm.applyTo.length === 0) { problems.push(`${t}: no applyTo: (Copilot would never attach it)`); continue; }
     if ([...fm.paths].sort().join('\n') !== [...fm.applyTo].sort().join('\n')) {
       problems.push(`${t}: paths and applyTo name different globs`);
@@ -91,26 +117,46 @@ test('every .claude/rules file has a byte-identical .github/instructions twin wi
   assert.deepEqual(twinProblems(REPO), []);
 });
 
-test('positive control: a faithful pair has no problems, CRLF on one side included', () => {
-  const dir = fixture({ [`${RULES}/x.md`]: GOOD, [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD.replace(/\n/g, '\r\n') });
-  assert.deepEqual(twinProblems(dir), []);
+test('positive control: a faithful pair has no problems, LF or CRLF alike', () => {
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/x.md`]: GOOD, [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD })), []);
+  const crlf = GOOD.replace(/\n/g, '\r\n');
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/x.md`]: crlf, [`${INSTRUCTIONS}/x${SUFFIX}`]: crlf })), []);
+  const braces = "---\napplyTo: '**/*.{js,ts}, b.mjs'\npaths:\n  - \"**/*.{js,ts}\"\n  - \"b.mjs\"\n---\nbody\n";
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/x.md`]: braces, [`${INSTRUCTIONS}/x${SUFFIX}`]: braces })), []);
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/db/x.md`]: GOOD, [`${INSTRUCTIONS}/db/x${SUFFIX}`]: GOOD })), []);
 });
 
 test('negative controls: each defect is named', () => {
+  const pair = body => fixture({ [`${RULES}/x.md`]: body, [`${INSTRUCTIONS}/x${SUFFIX}`]: body });
+
   const differ = fixture({ [`${RULES}/x.md`]: GOOD, [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD.replace('body', 'bodY') });
   assert.deepEqual(twinProblems(differ), ['x: twins differ']);
 
-  const lonelyRule = fixture({ [`${RULES}/x.md`]: GOOD });
-  assert.deepEqual(twinProblems(lonelyRule), [`x: no ${INSTRUCTIONS}/x${SUFFIX} twin`]);
+  const eolOnly = fixture({ [`${RULES}/x.md`]: GOOD, [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD.replace(/\n/g, '\r\n') });
+  assert.deepEqual(twinProblems(eolOnly), ['x: twins differ']);
 
-  const lonelyInstr = fixture({ [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD });
-  assert.deepEqual(twinProblems(lonelyInstr), [`x: no ${RULES}/x.md twin`]);
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/x.md`]: GOOD })), [`x: no ${INSTRUCTIONS}/x${SUFFIX} twin`]);
+  assert.deepEqual(twinProblems(fixture({ [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD })), [`x: no ${RULES}/x.md twin`]);
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/db/x.md`]: GOOD })), [`db/x: no ${INSTRUCTIONS}/db/x${SUFFIX} twin`]);
+  assert.deepEqual(twinProblems(fixture({ [`${RULES}/db/x.md`]: GOOD, [`${INSTRUCTIONS}/x${SUFFIX}`]: GOOD })),
+    [`x: no ${RULES}/x.md twin`, `db/x: no ${INSTRUCTIONS}/db/x${SUFFIX} twin`]);
 
-  const unscoped = '---\napplyTo: \'a/**\'\n---\nbody\n';
-  const noPaths = fixture({ [`${RULES}/x.md`]: unscoped, [`${INSTRUCTIONS}/x${SUFFIX}`]: unscoped });
-  assert.deepEqual(twinProblems(noPaths), ['x: no paths: list (an unscoped rule loads every session)']);
+  assert.deepEqual(twinProblems(pair("---\napplyTo: 'a/**'\n---\nbody\n")),
+    ['x: no paths: list (an unscoped rule loads every session)']);
 
-  const skew = GOOD.replace("'a/**, b.mjs'", "'a/**'");
-  const globSkew = fixture({ [`${RULES}/x.md`]: skew, [`${INSTRUCTIONS}/x${SUFFIX}`]: skew });
-  assert.deepEqual(twinProblems(globSkew), ['x: paths and applyTo name different globs']);
+  assert.deepEqual(twinProblems(pair('---\npaths:\n  - "a/**"\n---\nbody\n')),
+    ['x: no applyTo: (Copilot would never attach it)']);
+
+  // Unterminated quote: a line-regex parser extracted this happily.
+  assert.match(twinProblems(pair("---\napplyTo: 'a/**\npaths:\n  - \"a/**\"\n---\nbody\n")).join('\n'),
+    /^x: frontmatter is not valid YAML/);
+
+  assert.deepEqual(twinProblems(pair("---\napplyTo: 'a/**'\npaths: 'a/**'\n---\nbody\n")),
+    ['x: paths: must be a list of non-empty strings']);
+  assert.deepEqual(twinProblems(pair("---\napplyTo: ['a/**']\npaths:\n  - \"a/**\"\n---\nbody\n")),
+    ['x: applyTo: must be a string']);
+
+  assert.deepEqual(twinProblems(pair("---\napplyTo: 'a/**'\npaths:\n  - \"a/**\"\n  - \"b.mjs\"\n---\nbody\n")),
+    ['x: paths and applyTo name different globs']);
 });
+

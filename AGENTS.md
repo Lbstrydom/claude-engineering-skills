@@ -535,8 +535,9 @@ just a connection string). **Load-bearing invariants**:
   on an unrecorded reduction.
   [Design](docs/plans/cross-skill-command-registry.md) §2b F4.
 - **Six more tripwires load when you touch store code** (`scripts/lib/db/**`,
-  `scripts/lib/store/**`, `supabase/migrations/**`, the durable-write and setup files):
-  Session pooler 5432 never 6543 · jsonb values raw, `pgArray` for `text[]` · every
+  `scripts/lib/store/**`, `supabase/migrations/**`, the DB suites, durable-write and setup files):
+  Session pooler 5432 never 6543 · through the `serializeWriteParam` write seam pass jsonb
+  raw and `pgArray` a `text[]`, never hand-`JSON.stringify` · every
   store write through `durableWrite` · a schema error is not an empty result · "disposable"
   is a loopback ALLOWLIST · bound an RPC at the caller. Text:
   [`.claude/rules/postgres-store.md`](.claude/rules/postgres-store.md) (Claude Code) =

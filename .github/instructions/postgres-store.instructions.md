@@ -1,6 +1,6 @@
 ---
 description: 'Postgres audit-store tripwires: connecting, jsonb writes, durable writes, schema faults, disposable DBs, RPC bounds.'
-applyTo: 'scripts/lib/db/**, scripts/lib/store/**, supabase/migrations/**, scripts/lib/durable-write.mjs, scripts/lib/audit-store-writers.mjs, scripts/lib/audit/legacy-production-audit.mjs, scripts/setup-postgres.mjs, scripts/db-test-container.mjs'
+applyTo: 'scripts/lib/db/**, scripts/lib/store/**, supabase/migrations/**, scripts/lib/durable-write.mjs, scripts/lib/audit-store-writers.mjs, scripts/lib/audit/legacy-production-audit.mjs, scripts/setup-postgres.mjs, scripts/db-test-container.mjs, tests/db-*.test.mjs, tests/*-db.test.mjs, tests/*postgres*.test.mjs, tests/fixtures/expected-schema.json, scripts/check-db-suite-enrolment.mjs, scripts/db-suites-gate.mjs'
 paths:
   - "scripts/lib/db/**"
   - "scripts/lib/store/**"
@@ -10,6 +10,12 @@ paths:
   - "scripts/lib/audit/legacy-production-audit.mjs"
   - "scripts/setup-postgres.mjs"
   - "scripts/db-test-container.mjs"
+  - "tests/db-*.test.mjs"
+  - "tests/*-db.test.mjs"
+  - "tests/*postgres*.test.mjs"
+  - "tests/fixtures/expected-schema.json"
+  - "scripts/check-db-suite-enrolment.mjs"
+  - "scripts/db-suites-gate.mjs"
 ---
 
 # Postgres-Parity Store — path-scoped tripwires
