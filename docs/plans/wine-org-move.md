@@ -578,17 +578,25 @@ transfer decision and its own look at the host-lock work in the sibling notes. N
 
 - **D0**: decided, option A (Creathyst on Team, 2026-11-23).
 - **D1**: decided, `Creathyst`.
-- **D2**: structural view migration (step 2S, recommended) or the operator rename inside the freeze (step
-  10F). Exactly one.
+- **D2**: decided 2026-11-23, **structural** (step 2S). Landed in CES #506; the migration is applied to the NAS
+  store, and both views return identical rows before and after.
 - **D4**: Blacksmith with a card on file (it requires one), the $25 alert, eu-west by support request (§6).
-- **D5**: GitHub Support's answer on transferring back into a retired name (step 4); if "no", accept forward
-  recovery only, or do not transfer.
-- **Freeze window**: a date and length agreed with WCA (step 6). WCA's calendar (2026-11-23): an alpha
-  release candidate is cut around 24 Nov (the `release` branch, its ruleset and Railway's source switch), live
-  participant testing starts 1 Dec, alpha invites go out 8 Dec. A transfer touches exactly those three
-  things, so WCA advises **no transfer before 8 Dec, preferably after the participant-testing window**. In
-  flight at the time: three Dependabot PRs and one owner-held promotion PR, all to merge or park before the
-  freeze.
+- **D5**: decided 2026-11-23, **forward recovery only** (no transfer-back path is relied on; Support is not asked).
+- **Freeze window**: decided 2026-11-23. Louis chose to transfer first and let wine's own dates flex. WCA's
+  first advice (no transfer before 8 Dec) is superseded. The agreed calendar, confirmed by Louis in WCA's chat
+  ("Yes, that order"):
+
+  | When | What |
+  |---|---|
+  | Mon 23 – Tue 24 Nov | wine #1421 may merge (docs and tooling only: no `release` branch, ruleset or Railway switch yet). WCA runs the step 3 baseline and the 5W `benchmark.yml` fix. The Dependabot PRs are parked or merged. Louis confirms a recovery source for each secret. |
+  | Wed 25 Nov, evening | **Go/no-go**. Go needs all four: the baseline is complete, every secret has a recovery source, 5W is merged, and Creathyst's Actions defaults are set (step 5). |
+  | **Thu 26 Nov, 08:00–13:00 CET** | Freeze, transfer, then steps 6–16 (rulesets, runner, negative control, restores). The afternoon is buffer. |
+  | Fri 27 Nov | Cut alpha-rc1 from Creathyst: create `release`, Louis creates its ruleset, Railway's source switches to `release`, then one clean promotion. |
+  | Sat 28 – Mon 30 Nov | Buffer and stability. |
+  | 1 Dec / 8 Dec | RQ4 live testing / alpha invites, both unchanged. |
+
+  If the go/no-go fails, the whole chain slips day for day, and RQ4 moves so that it keeps three clean days
+  after the RC. The owner-held promotion PR stays held unless Louis merges it first.
 
 ## Audit trail
 
