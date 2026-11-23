@@ -24,9 +24,9 @@
   "signature": {
     "signedBy": "Louis",
     "signedAt": "2026-11-23",
-    "signedWords": "sign the re-freeze as a deviation",
-    "context": "Said in the CES chat in answer to the option to re-freeze Pilot 1 as T1-only and record it as a deviation (the alternative was to rehearse only the single runnable point).",
-    "provenance": "Relayed to this session by the CES coordinator; not independently confirmed in this session.",
+    "signedWords": "T1-only pilot - yes proceed - I approve",
+    "context": "Typed by Louis directly in this session (not a relay), in answer to the T1-only re-freeze after he had earlier withdrawn the relayed signature pending the T2 investigation (which found T2 degraded but rebuildable-but-rare; fixes for it proceed separately).",
+    "provenance": "Typed by the user in this session on 2026-11-23.",
     "condition": "Signed before any pilot data exists. Changing the scope, the bridge or any number after pilot data exists is not permitted under this signature."
   }
 }

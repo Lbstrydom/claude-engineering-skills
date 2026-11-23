@@ -21,7 +21,7 @@ const RM = (d) => fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, re
 
 test('the signed deviation validates for exactly its two dataset hashes and carries the signature and the reporting requirement', () => {
   const d = readDeviation(DEV, { dataset: ds, calibration: cal });
-  assert.equal(d.signature.signedWords, 'sign the re-freeze as a deviation'); assert.match(d.signature.condition, /before any pilot data/);
+  assert.equal(d.signature.signedWords, 'T1-only pilot - yes proceed - I approve'); assert.match(d.signature.condition, /before any pilot data/);
   assert.match(d.reportingRequirement, /T1 decision only/); assert.equal(canonicalSha256(d), DEVIATION_1_SHA256);
 });
 

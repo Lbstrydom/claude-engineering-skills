@@ -12,7 +12,7 @@ import { canonicalSha256 } from './pilot-novelty-audit.mjs';
 import { SEEDED_BENCH_EPOCH } from './meta-pilot-decision.mjs';
 
 /** The approved content of deviation 1. A new freeze (a new dataset hash) is a new deviation: this digest then changes with it. */
-export const DEVIATION_1_SHA256 = '3f56e1da9a91830c1a61f5457cfbc8fecaa707d384f75cf499c43b8579e9c03e';
+export const DEVIATION_1_SHA256 = '2a222c642176cf51218e38872d7d00214bd47047b0683243da057e7059dd1589';
 
 /** Load and validate the deviation against ONE dataset and ONE calibration report. */
 export function readDeviation(file, { dataset, calibration, readText = (p) => fs.readFileSync(p, 'utf8') }) {

@@ -1,7 +1,6 @@
 # Deviation 1 — Pilot 1 is re-frozen as T1-only (epoch `seeded-bench-v2`)
 
-**Signed by Louis, 2026-11-23, before any pilot data exists** — his words in the CES chat: "sign the re-freeze as a deviation". The quote was relayed to this
-session by the CES coordinator and is not independently confirmed here. Machine-readable twin: [`deviation-1-t1-only.json`](deviation-1-t1-only.json), validated and
+**Signed by Louis, 2026-11-23, before any pilot data exists** — his words, typed in this session: "T1-only pilot - yes proceed - I approve". (An earlier relayed signature was withdrawn on 2026-11-23 pending the T2 investigation; this one is typed by Louis directly.) Machine-readable twin: [`deviation-1-t1-only.json`](deviation-1-t1-only.json), validated and
 bound to this approval by a content digest (`DEVIATION_1_SHA256` in `pilot-deviation.mjs`).
 
 ## What changed and why
