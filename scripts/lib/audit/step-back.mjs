@@ -59,19 +59,59 @@ export const STEP_BACK_SYSTEM_PROMPT = [
  * @returns {{ok: true, output: object}|{ok: false, error: string}}
  */
 export function parseStepBackOutput(raw, { knownTopics = null } = {}) {
+  return parseAgainst(StepBackSchema, raw, knownTopics, (o) => (o.action === 'stop' ? o.items.map((i) => i.topicId) : o.action === 'defect' ? [o.topicId] : []));
+}
+
+/** Shared by v1 and v2: JSON (optionally fenced) → schema → every named topic must be known. */
+function parseAgainst(schema, raw, knownTopics, namedTopics) {
   let value = raw;
   if (typeof raw === 'string') {
     const t = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
     try { value = JSON.parse(t); } catch (err) { return { ok: false, error: `not JSON (${err.message})` }; }
   }
-  const r = StepBackSchema.safeParse(value);
+  const r = schema.safeParse(value);
   if (r.success && knownTopics) {
     const known = knownTopics instanceof Set ? knownTopics : new Set(knownTopics);
-    const named = r.data.action === 'stop' ? r.data.items.map((i) => i.topicId) : r.data.action === 'defect' ? [r.data.topicId] : [];
-    const unknown = named.filter((t) => !known.has(t));
+    const unknown = namedTopics(r.data).filter((t) => !known.has(t));
     if (unknown.length) return { ok: false, error: `unknown topicId(s) not in the checkpoint: ${unknown.slice(0, 5).join(', ')}` };
   }
   return r.success ? { ok: true, output: r.data } : { ok: false, error: r.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ').slice(0, 400) };
+}
+
+// ── (a2) the v2 META-REVIEW contract (docs/plans/meta-step-back-at-cap.md §2.3) ──────────────────────
+// v1 above stays frozen for the replay harness and the manual --step-back path. v2 is the automatic
+// meta-review at the round cap: admit / stop / structural, each with an `assessment`. There is still no
+// bare `continue`: `admit` must name open topics.
+
+export const META_REVIEW_VERSION = 2;
+export const META_STOP_KINDS = Object.freeze(['rigour-chasing', 'settled', 'marginal', 'false-premise']);
+export const META_REVIEW_ACTIONS = Object.freeze(['admit', 'stop', 'structural']);
+
+const assessment = z.strictObject({ sustainability: nonEmpty, efficiency: nonEmpty, effectiveness: nonEmpty });
+
+export const MetaReviewSchema = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('admit'), assessment, rounds: z.union([z.literal(1), z.literal(2)]), topics: z.array(nonEmpty).min(1), reason: nonEmpty }),
+  z.strictObject({ action: z.literal('stop'), assessment, items: z.array(z.strictObject({ topicId: nonEmpty, kind: z.enum(META_STOP_KINDS), premise: nonEmpty })).min(1), reason: nonEmpty }),
+  z.strictObject({ action: z.literal('structural'), assessment, cause: nonEmpty, evidence: z.array(z.strictObject({ file: nonEmpty, why: nonEmpty })).min(1), proposedFix: nonEmpty, reason: nonEmpty }),
+]);
+
+export const META_REVIEW_SYSTEM_PROMPT = [
+  'You are a senior reviewer stepping back from an audit loop that has reached its round cap or shows a spinning signal.',
+  'You are not another auditor. Your interest is the repository\'s sustainability, efficiency and effectiveness, not rigour for its own sake. Decide whether more rounds pay off.',
+  '- Rigour-chasing is findings that polish wording or a spec, re-raise a concern the ledger already ruled, or trade one marginal concern for another. Name it and stop it.',
+  '- Structural: if several findings share a cause in the repository, such as a missing shared primitive, a seam that keeps breaking, or a stale doc that misleads each round, name that cause with evidence (files and why) and propose the structural fix as its own plan or PR. Fixing symptoms round by round is not effective.',
+  '- Admit more rounds only when named open findings are real defects that the next round can close. Give the topics and the smallest number of rounds (1 or 2).',
+  'A stop must list EVERY open topic in the inventory you are given, each with its kind (rigour-chasing, settled, marginal or false-premise) and the premise. A HIGH topic you call settled must be one the ledger already ruled.',
+  'Every topicId you name must appear in the ledger or rounds you were given.',
+  'Reply with ONLY one JSON object, with "action", an "assessment" object {"sustainability","efficiency","effectiveness"} (one sentence each), and that action\'s fields:',
+  '{"action":"admit","assessment":{...},"rounds":1,"topics":["topicId"],"reason":"..."}',
+  '{"action":"stop","assessment":{...},"items":[{"topicId":"...","kind":"settled","premise":"..."}],"reason":"..."}',
+  '{"action":"structural","assessment":{...},"cause":"...","evidence":[{"file":"path","why":"..."}],"proposedFix":"...","reason":"..."}',
+].join('\n');
+
+/** Validate a v2 reply; every topic it names (admit.topics, stop items) must be known. */
+export function parseMetaReviewOutput(raw, { knownTopics = null } = {}) {
+  return parseAgainst(MetaReviewSchema, raw, knownTopics, (o) => (o.action === 'admit' ? o.topics : o.action === 'stop' ? o.items.map((i) => i.topicId) : []));
 }
 
 // ── (b) the context pack ─────────────────────────────────────────────────────

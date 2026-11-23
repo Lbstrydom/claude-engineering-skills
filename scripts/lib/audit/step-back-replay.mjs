@@ -38,13 +38,10 @@ import { assertNoDuplicates } from './step-back-dataset.mjs';
 import { buildExportSnapshot } from './step-back-export.mjs';
 import { createRevisionFs } from './step-back-gitfs.mjs';
 import { buildStepBackPack, initialStepBackRecord, runStepBack, STEP_BACK_SYSTEM_PROMPT } from './step-back.mjs';
-import { createStepBackProvider, STEP_BACK_MAX_OUTPUT_TOKENS } from './step-back-provider.mjs';
+import { createStepBackProvider, estimateCostUsd, STEP_BACK_MAX_OUTPUT_TOKENS } from './step-back-provider.mjs';
 
-/** Cost of a metered call in USD, or null when the model is unpriced (tier-aware: input tokens are forwarded). */
-export function estimateCostUsd({ modelId, inputTokens, outputTokens }) {
-  const rate = priceFor(modelId, { inputTokens });
-  return rate ? (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000 : null;
-}
+/** Moved to the provider seam so the live meta-review and the replay price a call one way; re-exported here. */
+export { estimateCostUsd };
 
 /**
  * PREFLIGHT bound of one call's cost: input = chars / 2 tokens (conservative) at the input price + the output ceiling at the

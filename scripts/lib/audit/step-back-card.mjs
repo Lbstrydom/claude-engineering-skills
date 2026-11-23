@@ -105,7 +105,7 @@ export async function buildCheckpointSection({ sid, mode, round, planFile = null
   return { checkpoint, signals, record, pack, usage, lines };
 }
 
-function defaultRepoFiles(cwd) {
+export function defaultRepoFiles(cwd) {
   return execFileSync('git', ['ls-files'], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\n').filter(Boolean);
 }
 

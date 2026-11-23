@@ -31,7 +31,7 @@ import path from 'node:path';
 import { generateTopicId, populateFindingMetadata } from '../ledger.mjs';
 
 /** A finding's ledger topic, derived on a COPY exactly as write-ledger-entries derives it (never mutates the input). */
-function topicOf(finding) {
+export function topicOf(finding) {
   const f = { ...finding };
   populateFindingMetadata(f, f._pass);
   return generateTopicId(f);
