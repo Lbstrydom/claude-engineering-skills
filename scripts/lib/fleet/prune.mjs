@@ -64,7 +64,7 @@ import { applyDetached, emptyDetached, planDetached, renderDetached, renderDetac
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The agent step no CLI can perform, printed at the end of every prune run (plan §2.6 y). */
-export const SESSION_LIST_CHECK = 'Before --apply: confirm in the desktop session list that no session, pinned or dormant included, uses these directories or branches';
+export const SESSION_LIST_CHECK = 'Before --apply: confirm in the host\'s session list that no session, pinned or dormant included, uses these directories or branches and, for any session on another host or with no recorded host, get the user\'s confirmation';
 
 const REMOTE_TIMEOUT_MS = 30_000;
 /** Cap on one review diff. Under a deadline it is clipped further to the time left. */

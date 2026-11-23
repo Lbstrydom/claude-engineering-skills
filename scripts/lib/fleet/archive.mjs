@@ -46,7 +46,7 @@ export const ARCHIVE_MAX_BYTES = 50 * 1024 * 1024;
 export const SNAPSHOT_IDENTITY = Object.freeze({ name: 'fleet archive', email: 'fleet-archive@localhost' });
 export const SNAPSHOT_MESSAGE = 'fleet archive: snapshot of uncommitted work';
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const SESSION_LIST_CHECK = 'Before --apply: confirm in the desktop session list that no session, pinned or dormant included, uses this directory or branch';
+export const SESSION_LIST_CHECK = 'Before --apply: confirm in the host\'s session list that no session, pinned or dormant included, uses this directory or branch and, for any session on another host or with no recorded host, get the user\'s confirmation';
 
 /** A detached worktree's tag stem: every character git may refuse becomes `-`; nothing left → `detached`. */
 export function sanitiseTagStem(name) {

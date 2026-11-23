@@ -11,8 +11,8 @@ the bracketed lines that do not apply. Cite this file rather than restating it. 
 coordinator rule it comes from; its why is in `references/coordination-rationale.md`.
 
 ```text
-TITLE. Set the session title to "PREFIX: SHORT TASK" (add the PR number once there is one) with set_session_title,
-session_id "self". [rule 6]
+TITLE. Set the session title to "PREFIX: SHORT TASK" (add the PR number once there is one) with the host's title tool where
+it has one (desktop: set_session_title, session_id "self"); otherwise lead your first message with it. [rule 6]
 
 AUTHORITY. Pre-authorised at launch by the user (this chip click is the approval): create branches, write and audit a
 plan, implement, run /audit-code and the final-review gate, commit, push your own branch at any time, and open PRs ONLY when

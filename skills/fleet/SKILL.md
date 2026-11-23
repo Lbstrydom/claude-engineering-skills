@@ -112,11 +112,11 @@ args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
 - **Removing a worktree is the user's decision.** `archive --apply` deletes one:
   show the dry run, apply only on the user's go-ahead in chat. Before removing
   ANY worktree (`archive --apply`, or a command `prune` printed), check the
-  desktop session list, pinned and dormant sessions included, for a session whose
-  cwd is it; if one exists, do not remove it. Both verbs also refuse
-  while another worktree's `core.hooksPath` points inside it: run the printed re-point command first.
+  host's session list (pinned, dormant included) for a session whose cwd is it, and ask the user about other hosts'
+  sessions (`references/hosts.md`); if one may exist, do not remove it.
+  Both verbs also refuse while another worktree's `core.hooksPath` points inside it: run the printed re-point command first.
 - Each `FYI` line in `next` or the footer (prune counts, unregistered work, pending proposals, upstream issues) and the
-  machine lease line are information, not a `DO`: relay them; never claim, archive or prune on one alone.
+  machine lease line are information, not a `DO`: relay them; never claim, archive or prune on one.
 - Coordinating, not participating (chip authority, routing, ship-ready end state, consumer sync, titles, sweeps, push lanes): `references/coordination.md`; the why: `references/coordination-rationale.md`.
 - **Background runs** go under `node scripts/run-heartbeat.mjs run …`, with `watch` armed on Monitor; STALE or UNKNOWN is never healthy, an expired watcher is no verdict: `references/background-runs.md`.
 - pr-mode `land --approve` prints a plan ONLY when every PR's required checks passed (a skipped check never ran; pending, missing and unknown refuse, with no plan): relay the refusal, approve again when green, and prefer `--serial`, which re-assesses before each merge. A head moved since `ready` reads `ready (stale)`: re-run `ready`. Interrupted `land`/`--serial`/`restack`: `references/landing.md`.
