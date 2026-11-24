@@ -1,5 +1,5 @@
 /**
- * @fileoverview /ship Step 6.8's "the pushed commit" row must describe a
+ * @fileoverview /ship-checked Step 6.8's "the pushed commit" row must describe a
  * verification that can actually reproduce the pre-push run.
  *
  * Upstream report 94345e35 (wine-cellar-app, 2026-09-29), measured on one sha:
@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SKILL = fs.readFileSync(path.join(REPO_ROOT, 'skills', 'ship', 'SKILL.md'), 'utf-8');
+const SKILL = fs.readFileSync(path.join(REPO_ROOT, 'skills', 'ship-checked', 'SKILL.md'), 'utf-8');
 
 /** The table row whose first cell is exactly `artifact`, within Step 6.8. */
 function step68Row(artifact) {
@@ -30,7 +30,7 @@ function step68Row(artifact) {
   return row;
 }
 
-describe('/ship Step 6.8 — the pushed-commit row reproduces the pre-push run', () => {
+describe('/ship-checked Step 6.8 — the pushed-commit row reproduces the pre-push run', () => {
   const row = step68Row('the pushed commit');
 
   it('provisions a detached worktree at the sha and hydrates the tooling tree', () => {

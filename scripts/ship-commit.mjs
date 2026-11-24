@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Deterministic commit helper for /ship — validates structured
+ * @fileoverview Deterministic commit helper for /ship-checked — validates structured
  * provenance input, appends the AI-* trailer block, and performs the commit.
  * The LLM agent never formats trailers; it supplies values, this CLI
  * validates against a closed grammar and refuses on semantic ambiguity.
@@ -200,7 +200,7 @@ async function main() {
   // MUTUALLY EXCLUSIVE, not a presence check. A bare `argv.includes(...)` means
   // any invocation that happens to carry the flag exits 0 having committed
   // NOTHING — a silent success, in the one binary whose entire purpose is now to
-  // refuse rather than quietly do the wrong thing. `/ship` reads exit 0 as
+  // refuse rather than quietly do the wrong thing. `/ship-checked` reads exit 0 as
   // "committed" and would push. Standalone behaviour is unchanged, so the
   // relocation smoke test still passes exactly as before.
   if (process.argv.includes('--selfcheck-relocation')) {
@@ -222,7 +222,7 @@ async function main() {
   // that commits nothing must not be combined with commit arguments, or a
   // caller could misread "the check passed" as "the commit happened").
   //
-  // Exists so /ship can surface an unapplied-migration block during Step 0.5,
+  // Exists so /ship-checked can surface an unapplied-migration block during Step 0.5,
   // BEFORE the doc-update and pre-push-hook work that follows it — not just at
   // Step 6.3, after that work is already done. The gate itself stays enforced
   // ONLY in the commit path below: a SKILL step is an instruction to an agent
@@ -294,7 +294,7 @@ async function main() {
   if (opts.preauthorised && opts.noTests) {
     inputErrors.push({
       field: '--preauthorised',
-      custom: 'AGENT FIX: --preauthorised: cannot be combined with --no-tests (it skips the hooks and caps AI-Gate at waived/not-run). Drop --no-tests, or stop and ask the user to type /ship. Example: --preauthorised --gate converged',
+      custom: 'AGENT FIX: --preauthorised: cannot be combined with --no-tests (it skips the hooks and caps AI-Gate at waived/not-run). Drop --no-tests, or stop and ask the user to type /ship-checked. Example: --preauthorised --gate converged',
     });
   }
 
@@ -600,7 +600,7 @@ async function main() {
       // a directory, so writing a temp index inside it fails: `git read-tree`
       // exits 128 with "Unable to create …/.git/<name>.lock: No such file or
       // directory". `committedTree` then stayed null, which refuses BOTH
-      // verified gates — and since /ship's guard A makes `--path` MANDATORY,
+      // verified gates — and since /ship-checked's guard A makes `--path` MANDATORY,
       // that made `passed` structurally unreachable for every scoped commit in
       // every worktree. This repo's sessions routinely run in worktrees, so the
       // reachable population was far smaller than the 2-of-735 `passed` count
@@ -676,7 +676,7 @@ async function main() {
       for (const line of renderPreauthConditions(verdict)) err(line);
       err(
         'AGENT FIX: --preauthorised: this ship is not pre-authorised: ' + verdict.refusals.map((r) => r.split(':')[0]).join(', ')
-        + '. Stop and tell the user to type /ship <plan> in this session once it is idle; do not hand-write evidence or re-run to find a pass.',
+        + '. Stop and tell the user to type /ship-checked <plan> in this session once it is idle; do not hand-write evidence or re-run to find a pass.',
       );
       process.exit(2);
     }
@@ -686,7 +686,7 @@ async function main() {
   if (opts.record) { // a docs-only RECORD commit under a standing decision; the change itself is judged against HEAD
     const rec = checkRecordCommit({ repoRoot, git: gitRun, paths: opts.paths, decisionId: opts.decision, gate: values.gate, flags: opts });
     for (const line of rec.lines) err(line);
-    if (!rec.ok) { err('AGENT FIX: --record: this commit is not a record-only change. Commit code through /ship, or fix what is REFUSED above.'); process.exit(2); }
+    if (!rec.ok) { err('AGENT FIX: --record: this commit is not a record-only change. Commit code through /ship-checked, or fix what is REFUSED above.'); process.exit(2); }
     values.shipAuthority = 'record-catchup'; values.decision = rec.decisionId;
   }
 
@@ -867,7 +867,7 @@ async function main() {
   // pushed — and the fix was byte-for-byte inert because nobody ran `--migrate`. The drift
   // checker existed and was wired to nothing.
   //
-  // Enforced HERE, in the binary, not in `/ship`'s SKILL.md: a SKILL step is an instruction
+  // Enforced HERE, in the binary, not in `/ship-checked`'s SKILL.md: a SKILL step is an instruction
   // to an agent and cannot block. This is the same place an unevidenced `AI-Gate: passed`
   // is refused.
   //

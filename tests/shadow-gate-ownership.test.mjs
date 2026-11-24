@@ -87,11 +87,11 @@ describe('compareSkillSurfaces — ownership is the predicate', () => {
 
 describe('check-stale-skill-surface --gate (source-repo enforcement)', () => {
   it('blocks when one of OUR skills is shadowed in .agents/skills', () => {
-    skill(tmp, LIVE_SURFACE, 'ship', 'a\nb\nc\n');
-    skill(tmp, AGENTS_SURFACE, 'ship', 'a\n');
+    skill(tmp, LIVE_SURFACE, 'ship-checked', 'a\nb\nc\n');
+    skill(tmp, AGENTS_SURFACE, 'ship-checked', 'a\n');
     const r = run(BACKSTOP, ['--gate', '--repo', tmp]);
     assert.equal(r.code, 1);
-    assert.match(r.out, /ship/);
+    assert.match(r.out, /ship-checked/);
     // The remedy must name the right directory — with two shadowing roots, a
     // hardcoded `.github/skills` message would be wrong half the time.
     assert.match(r.out, /\.agents[\\/]skills[\\/]ship/);
@@ -142,18 +142,18 @@ describe('check-stale-skill-surface --gate (source-repo enforcement)', () => {
   // The companion: same name, DIFFERENT directories, one of ours → must block.
   // Without this, the alias rule above could silently swallow real shadows.
   it('still blocks when the two copies are genuinely different directories', () => {
-    skill(tmp, LIVE_SURFACE, 'ship', 'live\n');
-    skill(tmp, AGENTS_SURFACE, 'ship', 'other\n');
+    skill(tmp, LIVE_SURFACE, 'ship-checked', 'live\n');
+    skill(tmp, AGENTS_SURFACE, 'ship-checked', 'other\n');
     const r = run(BACKSTOP, ['--gate', '--repo', tmp, '--format', 'json']);
     assert.equal(r.code, 1);
     const agents = JSON.parse(r.out).surfaces.find((x) => x.surface === AGENTS_SURFACE);
-    assert.deepEqual(agents.shadowed.map((s) => s.name), ['ship']);
+    assert.deepEqual(agents.shadowed.map((s) => s.name), ['ship-checked']);
     assert.deepEqual(agents.aliased, []);
   });
 
   it('reports the staleness delta, per surface', () => {
-    skill(tmp, LIVE_SURFACE, 'ship', 'a\nb\nc\nd\ne\n');
-    skill(tmp, AGENTS_SURFACE, 'ship', 'a\nb\n');
+    skill(tmp, LIVE_SURFACE, 'ship-checked', 'a\nb\nc\nd\ne\n');
+    skill(tmp, AGENTS_SURFACE, 'ship-checked', 'a\nb\n');
     const r = run(BACKSTOP, ['--gate', '--repo', tmp]);
     // Regression: compareSkillSurfaces requests content with the literal
     // STALE_SURFACE constant, so a naive passthrough read `.github/skills/...`

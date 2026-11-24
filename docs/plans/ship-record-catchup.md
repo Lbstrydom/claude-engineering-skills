@@ -36,12 +36,12 @@ plan re-derives the per-repo numbers through the new `status` verb, which is the
 
 ### Code Trace (pinned to `88bf43ee`)
 
-- **/ship record half** — `skills/ship/SKILL.md` Step 2 `:559-585 (88bf43ee)` picks the entry location by ONE marker,
+- **/ship record half** — `skills/ship-checked/SKILL.md` Step 2 `:559-585 (88bf43ee)` picks the entry location by ONE marker,
   `docs/status/entries/README.md`; Step 2b `:587-602` pastes `node scripts/backlog-snapshot.mjs`'s line (never written by a script);
   Step 5 `:646-674` appends a plan `## Implementation Log` block; Step 6.3 `:804-865` commits via `ship-commit.mjs` with
   `--path` (mandatory) and `--expect-head/--expect-branch`; Step 7 `:1053-1082` emits `record-ship-event` with outcome in
   `shipped|blocked|warned|overridden|aborted`.
-- **Train gate** — `skills/ship/SKILL.md:1088-1095 (88bf43ee)` and `skills/ship/references/train-mode.md:7-11` — the gate is
+- **Train gate** — `skills/ship-checked/SKILL.md:1088-1095 (88bf43ee)` and `skills/ship-checked/references/train-mode.md:7-11` — the gate is
   PROSE ("say so and stop"); `scripts/ship-train.mjs` has no package-name check, but `realContext` `:92-206` imports
   `lib/sync-inventory.mjs` (`closure`, `:137`) and the pinned-worktree publication path, neither of which a consumer has.
   `scripts/lib/sync-entry-lists.mjs` `CORE_ENTRY` `:20` lists `scripts/fleet.mjs` `:91` and `scripts/ship-commit.mjs` `:174`
@@ -69,9 +69,9 @@ plan re-derives the per-repo numbers through the new `status` verb, which is the
 - **Chip/coordinator contract** — `skills/fleet/references/chip-preamble.md:47-59 (88bf43ee)` STOP POINT (chips never ship) and
   the bracketed PRE-AUTHORISED SHIP block; `skills/fleet/references/coordination-rationale.md` §Rule 8 (push lanes: per-entry
   files make the status lane unnecessary).
-- **Status format** — `skills/ship/references/status-md-format.md:10-21` (marker-present = one immutable file per entry,
+- **Status format** — `skills/ship-checked/references/status-md-format.md:10-21` (marker-present = one immutable file per entry,
   `<YYYY-MM-DD>-<HHMMSS>-<kebab-slug>.md`, one `## ` heading, date equals file name); `docs/status/entries/README.md` (the
-  CES marker and contract); `skills/ship/references/flow-rationale.md` §Step 2b — **"Never let a script write `status.md`: PR #87
+  CES marker and contract); `skills/ship-checked/references/flow-rationale.md` §Step 2b — **"Never let a script write `status.md`: PR #87
   destroyed 19,257 lines of it that way."**
 - **Domain map** — `.audit-loop/domain-map.json` `allowedDeps`: `fleet: [shared-lib]`, `ship: [fleet, shared-lib, stores]`;
   rule `scripts/ship*.mjs → ship`, `scripts/lib/ship-train/** → ship`.
@@ -406,10 +406,10 @@ state (`init` → `floor --write` → `catchup --write` → `status --fetch` for
 | `scripts/lib/fleet/land.mjs` | modify | post-merge record nudge line | — |
 | `scripts/lib/sync-entry-lists.mjs` | modify | add `scripts/ship-record.mjs` to `CORE_ENTRY` (consumers receive it) | — |
 | `.audit-loop/domain-map.json` | modify | rule `scripts/lib/ship-record/** → ship` | — |
-| `skills/ship/references/record-catchup.md` | create | runbook: verbs, the floor, the commit, cadence, what stays human | — |
-| `skills/ship/SKILL.md` | modify | ≤3-line pointer beside Train mode + reference-index row; net size ≤ baseline (trim elsewhere) | — |
-| `skills/ship/references/status-md-format.md` | modify | per-PR and floor entry templates; consumer `init` | — |
-| `skills/ship/references/train-mode.md` | modify | why the gate stays; pointer to record catch-up | — |
+| `skills/ship-checked/references/record-catchup.md` | create | runbook: verbs, the floor, the commit, cadence, what stays human | — |
+| `skills/ship-checked/SKILL.md` | modify | ≤3-line pointer beside Train mode + reference-index row; net size ≤ baseline (trim elsewhere) | — |
+| `skills/ship-checked/references/status-md-format.md` | modify | per-PR and floor entry templates; consumer `init` | — |
+| `skills/ship-checked/references/train-mode.md` | modify | why the gate stays; pointer to record catch-up | — |
 | `skills/fleet/SKILL.md` | modify | `decision` verb in usage; net size ≤ baseline | — |
 | `skills/fleet/references/coordinator-playbook.md` | modify | §Record catch-up: owner, cadence, launch-time `fleet decision record` | — |
 | `skills/fleet/references/chip-preamble.md` | modify | chips never run catch-up (one owner) | — |
@@ -447,8 +447,8 @@ Backlog line, and the plan-log suggestions (the script never writes a plan). Fil
 (modify), `scripts/lib/fleet/land.mjs` (modify), `tests/fleet-record-count.test.mjs` (create).
 
 **Phase 7 — Distribution + docs**: sync entry, skill prose and references within the size gates. Files:
-`scripts/lib/sync-entry-lists.mjs` (modify), `skills/ship/references/record-catchup.md` (create), `skills/ship/SKILL.md`
-(modify), `skills/ship/references/status-md-format.md` (modify), `skills/ship/references/train-mode.md` (modify),
+`scripts/lib/sync-entry-lists.mjs` (modify), `skills/ship-checked/references/record-catchup.md` (create), `skills/ship-checked/SKILL.md`
+(modify), `skills/ship-checked/references/status-md-format.md` (modify), `skills/ship-checked/references/train-mode.md` (modify),
 `skills/fleet/SKILL.md` (modify), `skills/fleet/references/coordinator-playbook.md` (modify),
 `skills/fleet/references/chip-preamble.md` (modify), `skills/fleet/references/coordination-rationale.md` (modify).
 
@@ -559,7 +559,7 @@ shrink), `npm run size:ratchet:gate`, `npm run bundle:deps`, `npm run guards:pre
   `scripts/lib/fleet/decisions.mjs` + `decisions-cmd.mjs` (`fleet decision record | revoke | list`),
   `scripts/lib/ship-record/authority.mjs`, `ship-commit.mjs --record --decision`, `AI-Ship-Authority: record-catchup` +
   `AI-Decision` trailers. Cluster C — `scripts/lib/fleet/record-count.mjs` (status/next/footer/land), the runbook
-  `skills/ship/references/record-catchup.md`, ship/fleet skill prose, `CORE_ENTRY` + `CLI_SMOKE_SET` + CLI catalog.
+  `skills/ship-checked/references/record-catchup.md`, ship/fleet skill prose, `CORE_ENTRY` + `CLI_SMOKE_SET` + CLI catalog.
 - **Audits**: A — 6 GPT rounds (H 11→3→1→0→2→1), stopped at the cap while productive (every finding fixed with a regression
   test). B — 5 rounds, converged at R5 (PASS, H0 M2, both then fixed). C — 6 rounds; see the audit trail. Every dismissal
   went through deliberation (B H6/M3/M5, C H1/M4/L1) or is a tooling coverage notice.

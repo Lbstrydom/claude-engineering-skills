@@ -4,7 +4,7 @@
 hash of the content it ran against, and later answers one word: `reusable`,
 `invalidated` or `unknown`. It exists for the long suite (a 3h27m rerun after a
 documentation-only change is the case that earned it). **It never skips a test.**
-No hook, `/ship` step or `--no-tests` path consults it; a person or an
+No hook, `/ship-checked` step or `--no-tests` path consults it; a person or an
 orchestration reads the verdict and decides. `unknown` always means rerun.
 
 **When you need it.** Before rerunning an expensive suite, or when a ship report

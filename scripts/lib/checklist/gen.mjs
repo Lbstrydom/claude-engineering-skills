@@ -181,7 +181,7 @@ gated('skill-markdown-size-ratchet', 'skills-size-ratchet', {
   lead: 'Skill markdown over 12,000 chars may not grow; move detail to references/.',
   context: 'AGENTS.md: "**@@.** `npm run skills:size:gate` ratchets every `skills/**/*.md` (and the canonical shared references, never the generated copies) in characters against `.skill-size-baseline.json`."',
   incident: NOINC('skills:size:gate'),
-  control: { path: 'skills/ship/SKILL.md', text: 'An added paragraph in an oversized SKILL.md.' } });
+  control: { path: 'skills/ship-checked/SKILL.md', text: 'An added paragraph in an oversized SKILL.md.' } });
 gated('exit-after-stdout-must-drain', 'stdout-flush-gate', {
   trigger: { paths: ['scripts/lib/cli-io.mjs', 'scripts/check-stdout-flush.mjs'], patterns: ['\\bprocess\\.exit\\('] },
   lead: 'After writing to stdout, exit through `await finishAndExit(code)`, never `process.exit()`.',

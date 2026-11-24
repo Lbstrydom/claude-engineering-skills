@@ -95,7 +95,7 @@ export async function resolveRepoScope({ resolveRepoUuid, getRepoIdByUuid, expli
   //
   //   invalid input syntax for type uuid: "{"id":"22865de8-…","name":"…"}"
   //
-  // That killed `persona-outcomes summary` (and with it /ship's Step 0.5a UX
+  // That killed `persona-outcomes summary` (and with it /ship-checked's Step 0.5a UX
   // gate) in a consumer repo on 2026-08-01. It survived because the unit test
   // stubbed this resolver as `async () => 'id-v4'` — a bare string the real
   // implementation never returns, so the fixture was more generous than

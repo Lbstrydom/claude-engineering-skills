@@ -357,7 +357,7 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
   }
   // A READY member whose PR is still open (docs/plans/coordinator-aggregate-ship.md section 2.2): a coordinator's re-check of a shipped head
   // re-check reads this worktree's gitignored `.audit/` markers, and archiving destroys them, so the member would then wait
-  // for the user's /ship. Not a loss of commits (the unpushed probe above covers those): a reason the verdict is not CLEAN.
+  // for the user's /ship-checked. Not a loss of commits (the unpushed probe above covers those): a reason the verdict is not CLEAN.
   const owedEvidence = shipEvidenceOwed(session, pr);
   if (owedEvidence) unverified.push(owedEvidence);
   const atRisk = Object.values(risks).some((l) => l.length);
@@ -371,7 +371,7 @@ export function archiveReport(ctx, { session = null, branch = session?.source?.b
 /**
  * Why a READY member with an open PR must not be archived yet, or null (docs/plans/coordinator-aggregate-ship.md section 2.2).
  * Pure. A coordinator's re-check of a shipped head (`ship-commit.mjs --check-shipped-head`) reads this worktree's gitignored `.audit/` markers, and archiving destroys
- * them, so the member would then wait for the user's `/ship`. A PR whose state could not be queried (`pr.unknown`) is UNCERTAIN, and
+ * them, so the member would then wait for the user's `/ship-checked`. A PR whose state could not be queried (`pr.unknown`) is UNCERTAIN, and
  * a ready member under uncertainty is not clear to archive either.
  * @param {{ready?: object|null}|null} session
  * @param {{number?: number, unknown?: string}|null} pr

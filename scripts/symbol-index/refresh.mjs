@@ -12,7 +12,7 @@
  *        - full: walk all repo source files
  *        - incremental: `git diff --name-status <since>` UNION
  *                        `git ls-files --others --exclude-standard`
- *          (Gemini G1 — no `..HEAD`; /ship runs before commit)
+ *          (Gemini G1 — no `..HEAD`; /ship-checked runs before commit)
  *   4. extract symbols (ts-morph) + layering violations (dep-cruiser)
  *   5. summarise (Haiku) + embed (Gemini, concrete model id resolved once)
  *   6. upsert symbol_definitions (returns definition id map)

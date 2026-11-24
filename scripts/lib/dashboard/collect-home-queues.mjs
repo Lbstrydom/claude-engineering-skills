@@ -9,7 +9,7 @@
  * count fields — never `rows.length`, never `0` for an unasked question.
  *
  * Trend: the previous value comes from the newest `Backlog …` line in `status.md`
- * (`/ship` pastes it), parsed by `parseBacklogLine`.
+ * (`/ship-checked` pastes it), parsed by `parseBacklogLine`.
  *
  * **A windowed queue carries NO previous value.** Q1 and Q2 read views that are
  * rolling windows on `audit_runs.created_at` (14 days; a 7–30 day band), so two

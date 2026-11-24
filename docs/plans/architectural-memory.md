@@ -84,7 +84,7 @@ mapping. Major shape changes:
 - Snapshot publication via `refresh_runs` + `active_refresh_id` (H1)
 - Explicit refresh modes with file-level inventory (H2)
 - Dedicated query-embedding module `scripts/lib/neighbourhood-query.mjs` (H3)
-- `/ship` advisory integration via `skills/ship/SKILL.md` change (H4)
+- `/ship` advisory integration via `skills/ship-checked/SKILL.md` change (H4)
 - Service-role writes + threat model documented; per-repo RLS predicates as Phase F (H5)
 - `scripts/lib/repo-identity.mjs` resolves stable `repo_id` (H6)
 - `signature_hash` composes name + signature + body checksum (M1)
@@ -137,7 +137,7 @@ Treat any unqualified `lib/*` reference in this document as
   but doesn't persist — we don't replace it; we add a persistence layer.
 - **No traditional UI**: human surfaces are committed Markdown +
   Mermaid + GH issue bodies.
-- **Existing /ship skill**: lives in `skills/ship/SKILL.md`. Already
+- **Existing /ship skill**: lives in `skills/ship-checked/SKILL.md`. Already
   has a "Step 0.5b" pattern for cross-skill checks (unlocked-fixes).
   Adding an advisory `arch:refresh` + `arch:render` step there is the
   natural integration point.
@@ -209,7 +209,7 @@ sensitive** than memory-health's anonymous metric counts. Threat model:
   layer and the presentation layer.
 - `docs/architecture-map.md` — committed, regenerated on `/ship`.
 - `.github/workflows/architectural-drift.yml` — weekly sweep.
-- `skills/ship/SKILL.md` — advisory `arch:refresh` + `arch:render` step.
+- `skills/ship-checked/SKILL.md` — advisory `arch:refresh` + `arch:render` step.
 
 ### Known user-visible issues
 
@@ -822,7 +822,7 @@ returns full data + flags.
 | `skills/plan-backend/SKILL.md` | Phase 1 pre-step: shell out to `cross-skill.mjs get-neighbourhood`; inline returned `markdown` field as callout near top of plan output. Add "Full neighbourhood" appendix at end. Empty-state, cloud-off, and error-state copy per §2 failure matrix. |
 | `skills/plan-frontend/SKILL.md` | Same change as plan-backend, with frontend `kind` filter. |
 | `skills/audit-code/SKILL.md` | When `--scope=full`, fetch `symbol_index` for repo's `active_refresh_id` and inline a "Symbol catalogue (top N by domain)" section. Cap at `ARCH_AUDIT_FULL_TOPN` (default 200). Ranking: by domain alphabetical, then within domain by similarity to the diff's centroid (computed via the same embedding model), tie-break by alphabetical symbol_name. Truncation noted in the inlined section header. |
-| `skills/ship/SKILL.md` | New advisory step "Step 0.5c — Architectural Memory Refresh": run `npm run arch:refresh --since-commit <last-shipped>` and `npm run arch:render`. If `docs/architecture-map.md` changed, stage it. Always advisory — never blocks ship. Cloud-off / error → print warning, skip. (Responds to H4.) |
+| `skills/ship-checked/SKILL.md` | New advisory step "Step 0.5c — Architectural Memory Refresh": run `npm run arch:refresh --since-commit <last-shipped>` and `npm run arch:render`. If `docs/architecture-map.md` changed, stage it. Always advisory — never blocks ship. Cloud-off / error → print warning, skip. (Responds to H4.) |
 | `package.json` | New scripts: `arch:refresh`, `arch:refresh:full`, `arch:render`, `arch:drift`, `arch:prune`. New deps: `dependency-cruiser ^17` (file-to-file graph + layering rules), `ts-morph ^25` (AST symbol extraction — per Gemini-R2 G2). |
 | `AGENTS.md` | New env-var rows including `SUPABASE_AUDIT_SERVICE_ROLE_KEY`; new "Architectural Memory" subsection under "Cross-Skill Data Loop"; link to `docs/architecture-map.md`; one-paragraph "How to read this"; threat-model summary referencing §1 of this plan. |
 | `.env.example` | New env vars: `ARCH_INDEX_SUMMARY_MODEL`, `ARCH_INDEX_EMBED_MODEL`, `ARCH_INDEX_EMBED_DIM`, `ARCH_INDEX_LLM_CONCURRENCY`, `ARCH_INDEX_BATCH_SIZE`, `ARCH_DRIFT_SCORE_THRESHOLD`, `ARCH_DRIFT_SIM_DUP`, `ARCH_DRIFT_SIM_NAME`, `ARCH_DRIFT_NAME_LEVENSHTEIN`, `ARCH_AUDIT_FULL_TOPN`, `SUPABASE_AUDIT_SERVICE_ROLE_KEY`, `ARCH_INTENT_EMBED_CACHE_TTL_MS`, `ARCH_REFRESH_INCREMENTAL_DEFAULT`. Each with one-line comment. |
@@ -942,7 +942,7 @@ Six sequential phases. Each is an independently mergeable change.
 | C — Skill integration | SKILL.md changes for plan-backend, plan-frontend, audit-code; `npm run skills:regenerate` | /plan-* output gains "Neighbourhood considered" callout (read-pinned to active embedding model per R2 H9); /audit-code --scope=full inlines symbol catalogue |
 | D — Drift sweep + retention | `drift.mjs` + `prune.mjs` + `architectural-drift.yml` (drift + prune as two jobs sharing one workflow); manual workflow_dispatch test | Weekly drift report; sticky issue when threshold crossed; published-snapshot pruning runs weekly |
 | E — Frontend artifact | `lib/arch-render.mjs` + `render-mermaid.mjs` + `tests/arch-render.test.mjs`; first `docs/architecture-map.md` generated | `docs/architecture-map.md` becomes a regenerated artifact |
-| F — Hardening + /ship integration + per-repo RLS | `skills/ship/SKILL.md` advisory step; per-repo predicate RLS via JWT claims; embedding-model swap procedure documented + smoke-tested with non-destructive backfill flow | /ship regenerates and stages map; multi-developer Supabase projects safe; embedding model swap is a routine, non-destructive operation |
+| F — Hardening + /ship integration + per-repo RLS | `skills/ship-checked/SKILL.md` advisory step; per-repo predicate RLS via JWT claims; embedding-model swap procedure documented + smoke-tested with non-destructive backfill flow | /ship regenerates and stages map; multi-developer Supabase projects safe; embedding model swap is a routine, non-destructive operation |
 
 ### Backward compatibility
 
@@ -1243,7 +1243,7 @@ Each R1 finding mapped to where this revision addresses it:
 | H1 — Snapshot isolation | HIGH | §2 "Snapshot publication model"; §5 schema (`refresh_runs`, `active_refresh_id`); §9 acceptance (3 P0 + 1 P1 criteria) |
 | H2 — Refresh lifecycle | HIGH | §2 "Refresh modes" + sequencing rule; §5 schema (file inventory in refresh_runs); §9 acceptance (3 P0 criteria) |
 | H3 — Query embedding path | HIGH | §3 "Query path for plan-time consultation"; §5 new file `scripts/lib/neighbourhood-query.mjs`; §9 acceptance (3 P0 criteria) |
-| H4 — /ship integration | HIGH | §1 (existing /ship pattern); §5 modified `skills/ship/SKILL.md`; §8 Phase F; §9 acceptance (2 P0 criteria) |
+| H4 — /ship integration | HIGH | §1 (existing /ship pattern); §5 modified `skills/ship-checked/SKILL.md`; §8 Phase F; §9 acceptance (2 P0 criteria) |
 | H5 — RLS | HIGH | §1 "Sensitivity & access model" with threat model; §5 schema (anon-read-only, service-role-write); §6 R12; §9 acceptance (2 P0 criteria); §8 Phase F for per-repo predicates |
 | H6 — Stable repo identity | HIGH | §2 "Repository identity"; §5 new file `scripts/lib/repo-identity.mjs`; §9 acceptance (2 P0 criteria) |
 | M1 — Cache invalidation | MEDIUM | §3 decision #4 + §6 R4 update (composes body checksum); §9 (test coverage in `tests/symbol-index.test.mjs`) |
@@ -1270,4 +1270,4 @@ R1 ambiguities resolved:
 - Model resolution: `scripts/lib/model-resolver.mjs`
 - LLM wrapper pattern: `scripts/lib/llm-wrappers.mjs`
 - Atomic writes: `scripts/lib/file-io.mjs`
-- Existing /ship skill: `skills/ship/SKILL.md`
+- Existing /ship skill: `skills/ship-checked/SKILL.md`

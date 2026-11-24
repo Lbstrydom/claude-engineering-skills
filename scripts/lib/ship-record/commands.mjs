@@ -3,7 +3,7 @@
  * `floor`, `init`. Under lib/ so tests drive them through an injected context (runners, fs root, clock, backlog,
  * events) without importing the CLI.
  *
- * The record half of /ship, without its push/merge authority: these verbs write NEW files under docs/status/entries/ and
+ * The record half of /ship-checked, without its push/merge authority: these verbs write NEW files under docs/status/entries/ and
  * nothing else; they never commit, push or merge. Committing is `ship-commit.mjs --record`; merging stays the user's.
  *
  * @module scripts/lib/ship-record/commands

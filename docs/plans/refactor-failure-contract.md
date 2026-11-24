@@ -420,7 +420,7 @@ graph TD
   collide with or repurpose any existing code, and that nothing outside
   this repo's own tests/docs shell-branches on this script's specific exit
   codes (`grep` across the repo: 16 references, all tests, docs, or the
-  script itself — `skills/ship/SKILL.md`'s Step 5.6 invocation is executed
+  script itself — `skills/ship-checked/SKILL.md`'s Step 5.6 invocation is executed
   by an AI agent reading prose, not a shell pipeline gating on `$?`, and
   already documents "skip silently if... the audit-store is offline" as
   an accepted, AI-interpreted outcome — a new distinguishable non-zero

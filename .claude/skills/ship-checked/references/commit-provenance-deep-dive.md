@@ -36,7 +36,7 @@ partial commit of an audited worktree differs from the audited tree, so it
 is `converged` territory, never `passed`.
 
 **`passed` is rare BY DESIGN, and its rarity is not a defect to engineer
-around.** `/ship`'s own Steps 2–5 write `status.md`, sometimes CLAUDE.md, and
+around.** `/ship-checked`'s own Steps 2–5 write `status.md`, sometimes CLAUDE.md, and
 the plan's Implementation Log *after* the audit and *before* the commit — so
 even a zero-finding, converged, otherwise-untouched audit moves the tree and
 lands on `converged`. Measured over this repo's history when `converged` was
@@ -111,7 +111,7 @@ boundary that would prevent post-commit drift is `docs/plans/ship-commit-transac
 ## Continuing work after a squash merge
 
 **Rebase, never merge.** If a follow-up branch shares history with a
-`/ship`-created branch whose PR was **squash-merged**, `git merge
+`/ship-checked`-created branch whose PR was **squash-merged**, `git merge
 origin/<base>` reports a **false conflict** on that file even when the
 content is byte-identical — a squash merge creates a new commit on `<base>`
 with no parent relationship to the original, so the 3-way merge treats an

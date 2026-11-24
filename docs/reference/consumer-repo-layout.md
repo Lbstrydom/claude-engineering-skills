@@ -65,7 +65,7 @@ unless the target is inside `skills/`. Gate: `npm run docs:synced-links:gate`.
 
 ### 7. A synced SKILL.md resolving its own subject through the SHELL
 
-`/ship` Step 0.5a read the persona P0 gate as
+`/ship-checked` Step 0.5a read the persona P0 gate as
 `persona-outcomes summary --repo "$PERSONA_TEST_REPO_NAME"`. A Claude Code
 session inherits neither the consumer's `.env` nor `~/.audit-loop.env`, so the
 variable was unset in the shell and the flag arrived **empty**; on Windows the
@@ -106,7 +106,7 @@ No gate; the shape is pinned by `tests/cross-skill-store-calls.test.mjs`
 
 A consumer files into whatever store ITS `AUDIT_DB_URL` names — not this repo's.
 So a single-store read is blind to a consumer *and renders that blindness as good
-news*: `/ship` printed `0 open` against a consumer holding **8** open reports,
+news*: `/ship-checked` printed `0 open` against a consumer holding **8** open reports,
 four of them HIGH. **An unasked question must never render as an empty result.**
 
 `npm run upstream:queues` (and `npm run stores:drift`) fan out over every
@@ -163,7 +163,7 @@ freeze the bug locally for one consumer while leaving it live everywhere else.
 Once upstream's version of a held path changes, the sync reports `upstreamMoved`
 on every run. Review those rather than letting an override go quietly stale — an
 override whose justification has been fixed upstream is exactly the state a
-`/ship` should retire (measured 2026-09-07: storyline's `.claude/settings.json`
+`/ship-checked` should retire (measured 2026-09-07: storyline's `.claude/settings.json`
 hold, whose stated reason named a shell-expansion defect that upstream had since
 removed).
 

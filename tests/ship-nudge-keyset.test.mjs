@@ -2,10 +2,10 @@
  * @fileoverview Keyset paging for the two /ship-nudge readers
  * (`list-unlocked-fixes`, `list-unremediated-acceptances`).
  *
- * The /ship workflow is "verify each row, then close it", and closing a row
+ * The /ship-checked workflow is "verify each row, then close it", and closing a row
  * removes it from the view. `--offset N` counts positions in a set that has
  * since shrunk, so after closing k rows of page 1, `--offset 20` skipped k
- * unread rows — while /ship's own SKILL.md told the operator its pages "neither
+ * unread rows — while /ship-checked's own SKILL.md told the operator its pages "neither
  * repeat nor skip a row" (audit finding 5fbd8fec). `--after <cursor>` names a
  * position in the ORDER, which a removed row cannot move.
  *
@@ -155,8 +155,8 @@ describe('a failed page read is a FAILURE, never the end of the list', () => {
 
 // The SKILL.md example is what an agent copies. A placeholder that does not decode makes the
 // documented command fail BAD_INPUT on the first try — and nothing else reads that prose.
-describe('skills/ship/SKILL.md: the documented --after example is a cursor the command accepts', () => {
-  const skill = readFileSync(new URL('../skills/ship/SKILL.md', import.meta.url), 'utf8');
+describe('skills/ship-checked/SKILL.md: the documented --after example is a cursor the command accepts', () => {
+  const skill = readFileSync(new URL('../skills/ship-checked/SKILL.md', import.meta.url), 'utf8');
 
   it('list-unremediated-acceptances: every --after literal decodes', () => {
     const examples = [...skill.matchAll(/list-unremediated-acceptances[^\n]*--after\s+([A-Za-z0-9_-]+)/g)].map((m) => m[1]);

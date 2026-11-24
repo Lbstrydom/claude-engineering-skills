@@ -126,7 +126,7 @@ async function explicitRequired({ explicitRepoId, explicitRepoName }, deps) {
  * READ-side chain: `--repo` (or its env stand-in) → ambient git identity →
  * `unresolved`. Never used by a write.
  *
- * **Why this exists.** `/ship` Step 0.5a's persona gate reached the store as
+ * **Why this exists.** `/ship-checked` Step 0.5a's persona gate reached the store as
  * `--repo "$PERSONA_TEST_REPO_NAME"`, a SHELL expansion — and a Claude Code
  * session inherits neither the consumer's `.env` nor `~/.audit-loop.env`, so in
  * every consumer that had not exported the variable into the shell the flag

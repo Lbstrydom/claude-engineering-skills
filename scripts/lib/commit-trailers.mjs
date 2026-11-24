@@ -19,6 +19,7 @@ import path from 'node:path';
 import { resolveAndClassify } from './sensitive-paths.mjs';
 import { GIT_OBJECT_ID_RE } from './worktree-identity.mjs';
 import { isWorkItemId } from './ledger/work-item.mjs';
+import { canonicalSkillName } from './skill-reserved-names.mjs';
 
 export const GATE_VALUES = Object.freeze(['passed', 'converged', 'waived', 'not-run']);
 
@@ -52,7 +53,7 @@ export const FINAL_REVIEW_TRAILER_VALUES = Object.freeze(Object.assign(Object.cr
  * the tree by construction, so `passed` was unreachable and `not-run` illegal
  * (fresh evidence), leaving only `waived` — which means "shipped past a gate".
  * Measured over this repo's history at the time: 647 not-run, 86 waived, 2
- * passed. `/ship`'s own mandatory doc steps move the tree too, so even a
+ * passed. `/ship-checked`'s own mandatory doc steps move the tree too, so even a
  * zero-finding converged audit lost `passed`.
  *
  * What `converged` does NOT claim, deliberately: that the delta is
@@ -323,13 +324,14 @@ export function validateTrailerInput(input, { skillNames }) {
   const sortedSkills = [...skillNames].sort();
 
   // --skill
-  const skill = String(input.skill ?? '').trim().toLowerCase();
+  // A legacy name (`--skill ship`, from a SKILL.md synced before the rename) is written as today's name.
+  const skill = canonicalSkillName(String(input.skill ?? '').trim().toLowerCase());
   if (!SKILL_NAME_RE.test(skill) || !skillNames.includes(skill)) {
     errors.push({
       field: '--skill',
       expected: `one of [${sortedSkills.join('|')}] (skills/ directory names)`,
       got: String(input.skill ?? ''),
-      example: '--skill ship',
+      example: '--skill ship-checked',
     });
   } else {
     values.skill = skill;
@@ -372,7 +374,7 @@ export function validateTrailerInput(input, { skillNames }) {
     for (const t of findReservedTrailers(input.messageText)) {
       errors.push({
         field: 'reserved-trailer',
-        custom: `AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "${t.key}: ${t.value}" at message line ${t.line}. Example: remove the line and pass --skill ship`,
+        custom: `AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "${t.key}: ${t.value}" at message line ${t.line}. Example: remove the line and pass --skill ship-checked`,
       });
     }
   }
@@ -593,7 +595,7 @@ export function formatTrailerBlock(v) {
   if (v.runId && Object.hasOwn(FINAL_REVIEW_TRAILER_VALUES, v.finalReview ?? '')) {
     lines.push(`AI-Final-Review: ${FINAL_REVIEW_TRAILER_VALUES[v.finalReview]}`);
   }
-  // A pre-authorised ship (the user pre-approved it in the chip's launch prompt rather than typing /ship). Set ONLY by
+  // A pre-authorised ship (the user pre-approved it in the chip's launch prompt rather than typing /ship-checked). Set ONLY by
   // ship-commit's `--preauthorised` path, after every condition in lib/ship-preauth.mjs held; the single literal value
   // keeps it queryable (`git log --grep` / trailers) and impossible to spell differently by hand (the AI-* namespace is
   // reserved, so a hand-typed one is rejected as `reserved-trailer`).

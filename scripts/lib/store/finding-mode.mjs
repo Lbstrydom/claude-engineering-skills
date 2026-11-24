@@ -33,7 +33,7 @@
  * bootstrap entry point"` and `"plan file inventory — migration and verification
  * deliverables"`. Smaller, same defect.
  *
- * It matters because `/ship` Step 0.5b tells the agent to report `byMode.code` as
+ * It matters because `/ship-checked` Step 0.5b tells the agent to report `byMode.code` as
  * `missing_spec_count`, and the split exists precisely because a plan row has no code
  * artifact and **no lock of any kind can ever exist for it**. A consumer therefore burns
  * time discovering, per row, that a "code" finding cannot be actioned — the reporter lost

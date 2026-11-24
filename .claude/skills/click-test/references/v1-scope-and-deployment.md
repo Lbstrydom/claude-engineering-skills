@@ -6,14 +6,14 @@ summary: Why v1 has no persistence, the R3-deferred v2 concerns, and the maintai
 
 ## Phase 7 — Persistence (Out of Scope for v1)
 
-Persisting click-test findings to the shared cross-skill store (so `/ship`
+Persisting click-test findings to the shared cross-skill store (so `/ship-checked`
 can surface P0s as pre-push warnings) is **deferred to v2**. The v1 skill
 is authoritative purely from its local report — print, read, fix, re-run.
 
 Why deferred:
 - The required `node scripts/cross-skill.mjs record-click-test` subcommand
   doesn't exist yet, nor does the typed payload schema, table mapping,
-  or `/ship` read path.
+  or `/ship-checked` read path.
 - Declaring "graceful no-op when subcommand missing" would ship a dead
   integration path that silently never works — worse than no integration.
 - The local Phase 6 report covers the immediate use case (run, fix, ship).
@@ -21,7 +21,7 @@ Why deferred:
 **v2 work item** (when the integration matters): add a new
 `record-click-test` subcommand with Zod-validated payload, decide table
 strategy (new `click_test_runs` table vs reusing `regression_specs` with
-a discriminator), update `/ship` to surface unresolved P0s, add tests.
+a discriminator), update `/ship-checked` to surface unresolved P0s, add tests.
 Tracked in docs/plans/click-test-v2-persistence.md (planned) — file to be
 created when v2 starts; not a v1 blocker.
 

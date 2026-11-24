@@ -519,9 +519,9 @@ describe('pruneStale — topicIds 7949a7c28e1c, a1b7f50d0277, d19c7f929169, f19a
   });
 });
 
-describe('CONSUMER_HYDRATE_NPM_SCRIPT — the one-liner /ship documents, run for real', () => {
+describe('CONSUMER_HYDRATE_NPM_SCRIPT — the one-liner /ship-checked documents, run for real', () => {
   // `pruneStale` above pins the repo's own `skills-hydrate.mjs`. A consumer
-  // never runs that: /ship's Worktree preflight hands them this inline
+  // never runs that: /ship-checked's Worktree preflight hands them this inline
   // `node -e` one-liner (checkDocumentedRecipes pins the SKILL.md copy to the
   // constant). Audit finding 4bb97a47 (2026-09-13): the one-liner was a bare
   // recursive overlay, so a file deleted upstream survived every re-hydration,

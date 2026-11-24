@@ -1,6 +1,6 @@
 /**
  * @fileoverview The cursor value-domain validators shared by `final-review-pending` and the two
- * /ship nudge readers (`scripts/lib/cross-skill/validators.mjs`).
+ * /ship-checked nudge readers (`scripts/lib/cross-skill/validators.mjs`).
  *
  * The defect pinned here (audit round 3 on the keyset change): `isPgTimestamptzText` accepted a
  * timestamp with NO UTC offset. It validated with `Date.parse` in the PROCESS timezone while the

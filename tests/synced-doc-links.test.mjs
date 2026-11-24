@@ -90,8 +90,8 @@ test('resolveAtDest applies the CONSUMER depth, which is one level deeper', () =
 test('findUnfollowableLinks passes an in-closure target and flags an out-of-closure one', () => {
   const destPaths = new Set(['.claude/skills/audit-code/examples/scaffold.md']);
   const findings = findUnfollowableLinks({
-    sourceRel: 'skills/ship/references/v.md',
-    destRel: '.claude/skills/ship/references/v.md',
+    sourceRel: 'skills/ship-checked/references/v.md',
+    destRel: '.claude/skills/ship-checked/references/v.md',
     text: [
       '[in](../../audit-code/examples/scaffold.md)',
       '[out](../../../docs/plans/p.md)',
@@ -99,7 +99,7 @@ test('findUnfollowableLinks passes an in-closure target and flags an out-of-clos
     destPaths,
   });
   assert.deepEqual(findings, [{
-    sourceRel: 'skills/ship/references/v.md',
+    sourceRel: 'skills/ship-checked/references/v.md',
     line: 2,
     href: '../../../docs/plans/p.md',
     resolved: '.claude/docs/plans/p.md',
@@ -108,9 +108,9 @@ test('findUnfollowableLinks passes an in-closure target and flags an out-of-clos
 
 test('renderForTarget keeps an intra-skills link relative and URL-ifies the rest', () => {
   const canonical = path.join(ROOT, 'docs', 'audit', 'shared-references', 'c.md');
-  const target = path.join(ROOT, 'skills', 'ship', 'references', 'c.md');
+  const target = path.join(ROOT, 'skills', 'ship-checked', 'references', 'c.md');
   const out = renderForTarget(
-    '[plan](../../plans/p.md) and [sib](../../../skills/ship/examples/e.md)',
+    '[plan](../../plans/p.md) and [sib](../../../skills/ship-checked/examples/e.md)',
     canonical, target, ROOT,
   );
   assert.match(out, /\[plan\]\(https:\/\/github\.com\/Lbstrydom\/claude-engineering-skills\/blob\/main\/docs\/plans\/p\.md\)/);

@@ -43,8 +43,8 @@
 ### Code Trace (reconnaissance evidence — what exists today)
 
 F1 seam (commit composition):
-- `/ship` Step 6.2 commit-message convention → [skills/ship/SKILL.md:417-429](../../skills/ship/SKILL.md#L417-L429);
-  Step 6.3 runs a plain `git commit -m "<message>"` → [skills/ship/SKILL.md:431-439](../../skills/ship/SKILL.md#L431-L439).
+- `/ship` Step 6.2 commit-message convention → [skills/ship-checked/SKILL.md:417-429](../../skills/ship-checked/SKILL.md#L417-L429);
+  Step 6.3 runs a plain `git commit -m "<message>"` → [skills/ship-checked/SKILL.md:431-439](../../skills/ship-checked/SKILL.md#L431-L439).
   The message is composed by the LLM agent following markdown instructions — no
   deterministic step exists between "agent writes prose" and "git history".
 - The only provenance join today is one-way and DB-resident:
@@ -262,7 +262,7 @@ git show -s --format='%(trailers)' <sha>
    ```bash
    node scripts/ship-commit.mjs \
      --message-file .claude/tmp/ship-commit-msg-<epoch>.txt \
-     --skill ship \
+     --skill ship-checked \
      --models claude,gpt,gemini \
      --gate passed
    ```
@@ -413,11 +413,11 @@ AGENT FIX: <field>: expected <grammar>; got "<value>". Example: <valid-example>
 One example per rejection class (frozen — this is an API for our own agents):
 
 ```text
-AGENT FIX: --skill: expected one of [audit-code|audit-loop|...|ship] (skills/ directory names); got "shipping". Example: --skill ship
+AGENT FIX: --skill: expected one of [audit-code|audit-loop|...|ship] (skills/ directory names); got "shipping". Example: --skill ship-checked
 AGENT FIX: --models: expected comma-separated tokens matching ^[a-z][a-z0-9.-]*$; got "claude gpt". Example: --models claude,gpt
 AGENT FIX: --gate: expected one of passed|waived|not-run; got "green". Example: --gate passed
 AGENT FIX: --message-file: expected a readable non-empty file; got ".claude/tmp/missing.txt" (ENOENT). Example: --message-file .claude/tmp/ship-commit-msg-1784022000000.txt
-AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "AI-Skill: ship" at message line 7. Example: remove the line and pass --skill ship
+AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "AI-Skill: ship" at message line 7. Example: remove the line and pass --skill ship-checked
 AGENT FIX: gate-evidence: an audit ran after HEAD (.audit/last-audit-run.json ts 2026-07-14T09:41:00Z) but --gate is "not-run"; pass --gate passed|waived, or --no-run-id --gate not-run if that audit was unrelated. Example: --gate passed
 AGENT FIX: gate-evidence: no fresh audit evidence exists but --gate is "passed"; only not-run is legal without evidence. Example: --gate not-run
 ```
@@ -438,8 +438,8 @@ ambiguity).
 | `scripts/ship-commit.mjs` | new | CLI: arg parse, `--selfcheck-relocation` handler validating layout resolution without git side effects (§F1.3c), layout resolver (source vs consumer via own-location + repoRoot), skill-enum per layout, staged-set check, `git commit -F`, the full §F1.4 taxonomy |
 | `tests/commit-trailers.test.mjs` | new | unit: every grammar rule; every rejection-class string (byte-asserts the pinned `AGENT FIX` formats); evidence table rows (fresh/stale/absent/override/malformed); message normalization cases (§F1.3a list); model canonicalisation |
 | `tests/ship-commit-cli.test.mjs` | new | spawn against a temp git repo (existing `gitInit` test idiom): asserts **every row of the §F1.4 taxonomy** (exit code + stderr family + commit-attempted), plus a parse-back through `git interpret-trailers --parse` on the happy path |
-| `skills/ship/SKILL.md` | modify | Step 6.2/6.3 rewritten to the helper invocation (BOTH layout paths stated) + consumer fallback; §"Reminders" line |
-| `.claude/skills/ship/SKILL.md` | regenerated | `npm run skills:regenerate` (never hand-edited) |
+| `skills/ship-checked/SKILL.md` | modify | Step 6.2/6.3 rewritten to the helper invocation (BOTH layout paths stated) + consumer fallback; §"Reminders" line |
+| `.claude/skills/ship-checked/SKILL.md` | regenerated | `npm run skills:regenerate` (never hand-edited) |
 | `scripts/sync-to-repos.mjs` + `scripts/lib/sync-inventory.mjs` | modify | add `scripts/ship-commit.mjs` to BOTH lock-step `CORE_ENTRY` lists (the actual entry-point seam — `sync-path-map.mjs`'s generic `scripts/*` rule needs no change; transitive `lib/commit-trailers.mjs` closure auto-resolved) |
 | `scripts/lib/sync-isolation-verify.mjs` | modify | add `ship-commit.mjs` to `CLI_SMOKE_SET` — the single source both relocation tests iterate, so they inherit the new entry with no test-file edit (R2-H3 mechanism, discovered at implementation) |
 | `tests/sync-path-map.test.mjs` | modify | assert the new entry point + its transitive closure (`commit-trailers.mjs`) map to the consumer destination + round-trip (R2-H3) |
@@ -490,7 +490,7 @@ node --test tests/commit-trailers.test.mjs tests/ship-commit-cli.test.mjs   # al
 node --test tests/sync-path-map.test.mjs tests/sync-rewriter.test.mjs \
   tests/relocation-guard.test.mjs tests/relocation-selfcheck-smoke.test.mjs  # sync contract green (R2-H3)
 node scripts/ship-commit.mjs --selfcheck-relocation                          # prints OK
-node scripts/ship-commit.mjs --message-file /nonexistent --skill ship \
+node scripts/ship-commit.mjs --message-file /nonexistent --skill ship-checked \
   --models claude --gate passed; echo "exit=$?"                              # AGENT FIX line + exit=2
 npm run skills:check                                                         # regenerated ship copy is fresh
 # after the first real /ship post-adoption:
@@ -930,8 +930,8 @@ scripts/sync-to-repos.mjs (modify), scripts/lib/sync-inventory.mjs (modify),
 scripts/lib/sync-isolation-verify.mjs (modify), tests/sync-path-map.test.mjs (modify),
 tests/sync-rewriter.test.mjs (modify).
 **Phase 3 — F1 adoption**: route /ship through the helper + document. Files:
-skills/ship/SKILL.md (modify), AGENTS.md (modify), docs/reference/commit-provenance.md (create),
-.claude/skills/ship/SKILL.md (modify).
+skills/ship-checked/SKILL.md (modify), AGENTS.md (modify), docs/reference/commit-provenance.md (create),
+.claude/skills/ship-checked/SKILL.md (modify).
 **Phase 4 — F2 framework**: schema/loader/suite/fixtures + packaging seam. Files:
 scripts/lib/gate-honesty/schema.mjs (create), scripts/lib/gate-honesty/loader.mjs (create),
 tests/gate-honesty.test.mjs (create), tests/fixtures/gate-honesty/lying-skill/** (create),

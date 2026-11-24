@@ -3,7 +3,7 @@
  * you to CLOSE must project every key the closing command requires.
  *
  * THE DEFECT THIS LOCKS (upstream 23544fca + da67a8c1, filed from a consumer
- * 2026-08-04). `/ship` Step 0.5e reads `unremediated_acceptances` and nudges the
+ * 2026-08-04). `/ship-checked` Step 0.5e reads `unremediated_acceptances` and nudges the
  * operator to close each row. The only command that can close one,
  * `cross-skill.mjs final-review-record-fix`, hard-requires `--run-id` AND
  * `--fingerprint`. The view projected `audit_finding_id` and no fingerprint, so
@@ -43,7 +43,7 @@ const SCHEMA = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tests/fixtures/e
 const CLOSE_CONTRACTS = [
   {
     view: 'unremediated_acceptances',
-    step: '/ship Step 0.5e',
+    step: '/ship-checked Step 0.5e',
     closer: 'final-review-record-fix',
     requires: ['audit_run_id', 'finding_fingerprint'],
     // Closes against the BASE table by (run_id, finding_fingerprint, bucket),
@@ -54,7 +54,7 @@ const CLOSE_CONTRACTS = [
   },
   {
     view: 'unlocked_fixes',
-    step: '/ship Step 0.5b',
+    step: '/ship-checked Step 0.5b',
     closer: 'lock-with-test',
     requires: ['audit_finding_id'],
     // The read's `--all-ages` hands back rows from `unlocked_fixes_all`; the
@@ -84,8 +84,8 @@ describe('view → writer key contract', () => {
   }
 });
 
-describe('/ship Step 0.5e names a command that can actually close the rows', () => {
-  const SKILL = fs.readFileSync(path.join(REPO_ROOT, 'skills/ship/SKILL.md'), 'utf-8');
+describe('/ship-checked Step 0.5e names a command that can actually close the rows', () => {
+  const SKILL = fs.readFileSync(path.join(REPO_ROOT, 'skills/ship-checked/SKILL.md'), 'utf-8');
   // Bound the assertion to the step, not the whole file: `finalize-outcomes` is
   // a real command and may legitimately be named elsewhere.
   const step = SKILL.slice(
@@ -94,7 +94,7 @@ describe('/ship Step 0.5e names a command that can actually close the rows', () 
   );
 
   it('locates the step (guards against the slice silently matching nothing)', () => {
-    assert.ok(step.length > 200, 'Step 0.5e not found in skills/ship/SKILL.md — the assertions below would be vacuous');
+    assert.ok(step.length > 200, 'Step 0.5e not found in skills/ship-checked/SKILL.md — the assertions below would be vacuous');
   });
 
   it('the printed remedy is the command that accepts the view\'s keys', () => {
@@ -119,7 +119,7 @@ describe('/ship Step 0.5e names a command that can actually close the rows', () 
  * The block above asks "does the read hand back the KEYS the writer needs".
  * That is necessary and not sufficient. `unlocked_fixes` projects
  * `audit_finding_id` perfectly — and `lock-with-test` still refused every one
- * of the 125 rows `/ship` Step 0.5b had just told the operator to lock, because
+ * of the 125 rows `/ship-checked` Step 0.5b had just told the operator to lock, because
  * `findUnlockedFixInRepo` re-looked the id up in the WINDOWED view while the
  * nudge sourced its keys from `unlocked_fixes_all` via `--all-ages`. The read
  * and the writer agreed about the key and disagreed about the ROW SET.

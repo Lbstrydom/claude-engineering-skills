@@ -67,7 +67,7 @@ not null. Prose cannot police symmetry; a detector can.
   returns a result carrying `source`/`trusted` — already the evidence-receipt shape GPT
   proposed, implemented once, for one consumer.
 - **`/ship` Step 0.5 is the existing pre-ship gate-query block**
-  ([`skills/ship/SKILL.md:48`](../../skills/ship/SKILL.md#L48)), already running four
+  ([`skills/ship-checked/SKILL.md:48`](../../skills/ship-checked/SKILL.md#L48)), already running four
   credentialed store queries (0.5a/0.5b/0.5e/0.5f).
 - **`/audit-code`'s triage → fix → verify loop** is Steps 3 / 4 / 5
   ([`skills/audit-code/SKILL.md:211`](../../skills/audit-code/SKILL.md#L211), :377, :401).
@@ -406,9 +406,9 @@ generator would produce uniform fixtures that prove nothing.
 - **`scripts/ship-commit.mjs`** (modify) — refuse the commit when migrations are unapplied,
   with the exact `--migrate` command, in the same `AGENT FIX:` shape it already uses for an
   unevidenced gate. *Why*: the SKILL step documents, the binary enforces (R1-H2).
-- **`skills/ship/SKILL.md`** (modify) — Step 0.5g documenting the realization gate as
+- **`skills/ship-checked/SKILL.md`** (modify) — Step 0.5g documenting the realization gate as
   unconditional-when-cloud-on, and what `unmeasured` means.
-- **`skills/ship/gate-contract.json`** (modify) — declare the realization gate.
+- **`skills/ship-checked/gate-contract.json`** (modify) — declare the realization gate.
 - **`scripts/gate-contracts/`** (create, dir) — one `<gate>.json` per contracted CLI gate,
   mirroring `skills/<name>/gate-contract.json`'s layout.
 - **`scripts/check-gate-contracts.mjs`** (modify) — accept CLI-gate contracts as a second
@@ -448,8 +448,8 @@ generator would produce uniform fixtures that prove nothing.
 `tests/schema-realization.test.mjs` (create), `tests/write-path-fail-closed.test.mjs` (create).
 
 **Phase 2 — Ship-time realization gate (enforced in the binary)**: Files:
-`scripts/ship-commit.mjs` (modify), `skills/ship/SKILL.md` (modify),
-`skills/ship/gate-contract.json` (modify).
+`scripts/ship-commit.mjs` (modify), `skills/ship-checked/SKILL.md` (modify),
+`skills/ship-checked/gate-contract.json` (modify).
 
 **Phase 3 — Poison-pill protocol**: contracts for the five Category-B gates named in §2
 dec. 3, exemptions recorded for the other thirteen. Files:

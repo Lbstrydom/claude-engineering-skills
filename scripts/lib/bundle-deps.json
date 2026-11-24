@@ -139,6 +139,7 @@
         "scripts/.claude-skills/lib/friction/retro/memory-tripwires.mjs",
         "scripts/.claude-skills/lib/memory-paths.mjs",
         "scripts/.claude-skills/lib/skill-frontmatter-layout.mjs",
+        "scripts/.claude-skills/lib/skill-reserved-names.mjs",
         "scripts/.claude-skills/lib/skills-index.mjs"
       ]
     },

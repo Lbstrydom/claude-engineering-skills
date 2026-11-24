@@ -8,9 +8,9 @@ const SKILLS_DIR = path.resolve('skills');
 // 2026-05-02; audit-loop folded into `/cycle`. The deprecated alias shims
 // were removed on 2026-05-19 — planning content lives in `skills/plan/`,
 // the orchestrator flow in `skills/cycle/`.
-const ALL_SKILLS = ['plan', 'ship'];
+const ALL_SKILLS = ['plan', 'ship-checked'];
 // Skills that must hold the full Phase 0 stack-detection + Python profile content.
-const PYTHON_SKILLS = ['plan', 'ship'];
+const PYTHON_SKILLS = ['plan', 'ship-checked'];
 // No deprecation shims remain — every skill carries real `##`-heading content.
 const HEADING_EXEMPT_SKILLS = new Set();
 

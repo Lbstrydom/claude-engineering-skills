@@ -8,7 +8,7 @@
  * marker was THERE; nothing proved the command it names could RUN, and in this
  * repo it could not: no such npm script existed, so following the instruction
  * produced `npm error Missing script: "skills:hydrate"` (found 2026-08-14 while
- * running `/ship` from a worktree). That is precisely the class the gate was
+ * running `/ship-checked` from a worktree). That is precisely the class the gate was
  * built to stop — *the instruction ships and the tool does not* — reappearing
  * one level up, in the remedy rather than the subject.
  *

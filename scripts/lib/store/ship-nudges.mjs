@@ -63,7 +63,7 @@ import { EFFECTIVE_MODE_SQL } from './finding-mode.mjs';
  * omitted argument is not a safety gate.
  *
  * EVERY view in this family routes through here. `getUnremediatedAcceptances`
- * did not, and reproduced the identical defect one `/ship` step later (0.5e):
+ * did not, and reproduced the identical defect one `/ship-checked` step later (0.5e):
  * invoked with no flags it returned rows spanning multiple repos, which the
  * skill then told the operator to count as `unremediated_count` for THIS repo.
  * A new repo-bearing reader added to this module belongs on this fence too —
@@ -149,7 +149,7 @@ export function resolveNudgePage(opts = {}) {
  * can see that rows are missing but has no way to ever read one of them.
  *
  * `opts.after` is the keyset alternative to `offset`, and the one to use while
- * rows are being CLOSED between page reads (the /ship workflow): an offset
+ * rows are being CLOSED between page reads (the /ship-checked workflow): an offset
  * counts positions in a set that shrank, so it skips one unread row per row
  * closed. Each row carries `fixed_at_cursor` (`fixed_at::text`, microsecond-
  * exact — a JS Date would truncate a tie) for building the next cursor.
@@ -240,7 +240,7 @@ export async function getUnlockedFixes(scope, opts = {}) {
  * CLOSE path, and an obligation does not expire just because the reminder
  * stopped printing it. Scoped to the windowed view, it refused every row past
  * 14 days: measured on this repo, all 125 `agedOut` rows (73 code / 52 plan)
- * that `/ship` Step 0.5b had just told the operator to "lock, or write off"
+ * that `/ship-checked` Step 0.5b had just told the operator to "lock, or write off"
  * were unclosable by the only command the step names. The step's own
  * "waiting is not a way to clear this gate" line was therefore unfollowable —
  * waiting was the only thing that could happen to them.
@@ -273,7 +273,7 @@ export async function findUnlockedFixInRepo({ repoId, findingId }) {
  * `getUnlockedFixes` cannot report.
  *
  * That function caps at `LIMIT 20`, so a caller counting its rows cannot tell
- * 20 obligations from 232. On 2026-07-29 the real total WAS 232 and /ship had
+ * 20 obligations from 232. On 2026-07-29 the real total WAS 232 and /ship-checked had
  * been reporting "20" — an undercount by an order of magnitude, in a nudge
  * whose entire job is to convey scale.
  *
@@ -417,13 +417,13 @@ export async function countAgedUnlockedFixes(scope) {
  *
  * **Scope is mandatory and explicit** — see `resolveExplicitRepoScope`. This
  * reader carried the pre-fix `if (repoId) … else every repository` shape until
- * 2026-07-30: `/ship` Step 0.5e invokes it with no flags, so a live run
+ * 2026-07-30: `/ship-checked` Step 0.5e invokes it with no flags, so a live run
  * returned rows spanning two repos and the skill told the operator to record
  * the count as this repo's `unremediated_count`. It is the same defect as the
  * 207-vs-0 unlocked-fix incident, one step later in the same gate.
  *
  * Same failure contract as getUnlockedFixes: cloud-off and query failure both
- * return `[]` — this is a non-blocking /ship nudge and must never break a push.
+ * return `[]` — this is a non-blocking /ship-checked nudge and must never break a push.
  * Note that an INVALID SCOPE still throws: a programming error must not be
  * laundered into an empty nudge, which is what "no obligations" would read as.
  *
@@ -433,7 +433,7 @@ export async function countAgedUnlockedFixes(scope) {
  * arbitrary-page fix — the third one-sibling-only divergence this file records.
  * It LOOKED correct because `unremediated_acceptances` happens to define an
  * inner `ORDER BY CASE severity … , r.created_at ASC`, and measured on the live
- * store the planner does keep that Sort node under the outer LIMIT, so /ship
+ * store the planner does keep that Sort node under the outer LIMIT, so /ship-checked
  * really was getting HIGH rows first (15 HIGH of 44 total, all inside the page).
  * That is a property of the VIEW TEXT, not of this read: Postgres does not
  * guarantee a subquery's ORDER BY survives into an outer query, and the sibling
@@ -547,7 +547,7 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
  *
  * The exact defect `countUnlockedFixes` was built for, in the sibling view, two
  * days later and unnoticed because only the `unlocked_fixes` half was fixed.
- * Measured 2026-07-31: `getUnremediatedAcceptances` caps at `LIMIT 20`, /ship
+ * Measured 2026-07-31: `getUnremediatedAcceptances` caps at `LIMIT 20`, /ship-checked
  * reported `rows.length`, and the real total was **129** — a 6x undercount in a
  * nudge whose entire job is to convey scale. The count was then repeated back to
  * the operator as the size of the backlog they were deciding whether to work.
@@ -616,7 +616,7 @@ export async function countUnremediatedAcceptances(scope, opts = {}) {
         ? await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY 1`, [repoId])
         : await many(`SELECT ${EFFECTIVE_MODE_SQL} AS effective_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY 1`));
     // A FOURTH site, which upstream report fe1ff38a did not name (it cited three). It is
-    // the one feeding /ship Step 0.5e's `unremediated_count`, so leaving it would have
+    // the one feeding /ship-checked Step 0.5e's `unremediated_count`, so leaving it would have
     // fixed the lock backlog's arithmetic and left the acceptance backlog's wrong — the
     // more visible of the two. Found by grepping the module for the defect's SHAPE rather
     // than working the reported line numbers.

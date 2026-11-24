@@ -20,7 +20,7 @@ import { rewriteCommandSurface } from '../scripts/lib/sync-rewriter.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const MODULE_REL = 'scripts/lib/skill-frontmatter-layout.mjs';
-const SKILLS = ['cycle', 'plan', 'ship'];
+const SKILLS = ['cycle', 'plan', 'ship-checked'];
 const config = { ownedSourceTails: new Set(['cross-skill.mjs']) };
 const rewrite = (relPath, content) => rewriteCommandSurface({ relPath, content, config }).rewritten;
 

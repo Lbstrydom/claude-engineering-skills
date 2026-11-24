@@ -40,7 +40,7 @@ Flags, paths and sub-commands are read **only** from the source above. Never
 from earlier turns, and never from surrounding prose that happens to mention
 something plausible.
 
-This clause is load-bearing rather than decorative. `/ship` accepts
+This clause is load-bearing rather than decorative. `/ship-checked` accepts
 `--no-tests`, `--ignore-p0` and `--skip-ux-lock`, each of which **disables a
 gate**; a conversation that mentions skipping tests must never become an
 argument that skips them. The same reasoning covers any destructive or
@@ -76,7 +76,7 @@ The sites are not one kind, and a reader needs to know which they are looking at
 |---|---|---|
 | `free-text` | prose; no parsing beyond trimming | `/plan`, `/brainstorm` |
 | `subcommand` | first token selects a branch | `/persona-test`, `/ux-lock`, `/ai-context-management` |
-| `path+flags` | a path, plus optional flags | `/ship`, `/audit-code`, `/audit-plan`, `/click-test` |
+| `path+flags` | a path, plus optional flags | `/ship-checked`, `/audit-code`, `/audit-plan`, `/click-test` |
 
 ## 5. Every site, not just the first
 

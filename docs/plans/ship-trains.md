@@ -5,7 +5,7 @@
 - **Scope**: backend (CLI + skill prose + docs; no UI)
 - **Target domain(s)**: `ship`, `fleet`, `shared-lib`, `skills-content`
 - ⚠ **Cross-domain work** — touches >1 domain. The crossings are intentional: `ship` gains a caller of `fleet`'s serial landing (one new seam, §2.4), and `shared-lib`'s gate decision gains a second caller. No new edge runs *into* `ship`.
-- **Depends on**: none recorded as a plan. Two **path holds**, not plan dependencies (§11): the `/cycle` session on `claude/fleet-unclaimed-work-impl` owns `scripts/lib/fleet/**`, `scripts/fleet.mjs` and `skills/fleet/**` until its four clusters merge, and the keyset PR (`fix/ship-nudge-keyset-paging`) holds `skills/ship/SKILL.md`. Cluster A touches neither.
+- **Depends on**: none recorded as a plan. Two **path holds**, not plan dependencies (§11): the `/cycle` session on `claude/fleet-unclaimed-work-impl` owns `scripts/lib/fleet/**`, `scripts/fleet.mjs` and `skills/fleet/**` until its four clusters merge, and the keyset PR (`fix/ship-nudge-keyset-paging`) holds `skills/ship-checked/SKILL.md`. Cluster A touches neither.
 
 ---
 
@@ -15,7 +15,7 @@
 
 ### 1.1 The problem, measured
 
-`/ship` is `disable-model-invocation: true` (`skills/ship/SKILL.md:14` (5157ff65)), so only the user can run it, in each session separately. With several sessions working concurrently that left two bad options, and on 2026-10-11 we took both:
+`/ship` is `disable-model-invocation: true` (`skills/ship-checked/SKILL.md:14` (5157ff65)), so only the user can run it, in each session separately. With several sessions working concurrently that left two bad options, and on 2026-10-11 we took both:
 
 - **One manual `/ship` per PR per chat.** PRs #202–#206 each waited for a separate human `/ship` in a separate session.
 - **Merge without `/ship`.** #200 and #201 were merged with no `/ship` at all. They skipped the status.md entry, the `AI-*` trailers, the AGENTS drift check, Steps 6.5–6.8 and the consumer sync.
@@ -69,11 +69,11 @@ Consumer sync has the same shape. It fires only from `.githooks/pre-push` §2 (`
 - It includes `.claude/skills/**`, `supabase/migrations/**`, `scripts/lib/fleet/serial.mjs`, `scripts/ship-commit.mjs`, `scripts/lib/store/**`, and some `tests/fixtures/**` (the `--adopt` schema contract).
 - It excludes `skills/**` (the authoring copy), `docs/reference/**` and `scripts/sync-to-repos.mjs`.
 
-**status.md is written by the model, never by a script.** See `skills/ship/SKILL.md:713-715` (5157ff65): in PR #87 a script write destroyed 19,257 lines. Each `/ship` prepends one entry, so several sessions shipping in parallel all conflict on it.
+**status.md is written by the model, never by a script.** See `skills/ship-checked/SKILL.md:713-715` (5157ff65): in PR #87 a script write destroyed 19,257 lines. Each `/ship` prepends one entry, so several sessions shipping in parallel all conflict on it.
 
 ### 1.3 Neighbourhood considered
 
-`get-neighbourhood` over `scripts/lib/fleet/train.mjs`, `scripts/ship-commit.mjs`, `scripts/lib/commit-trailers.mjs` and `skills/ship/SKILL.md`, intent "verify per-PR audit provenance, classify PR impact, land PRs, one consumer sync":
+`get-neighbourhood` over `scripts/lib/fleet/train.mjs`, `scripts/ship-commit.mjs`, `scripts/lib/commit-trailers.mjs` and `skills/ship-checked/SKILL.md`, intent "verify per-PR audit provenance, classify PR impact, land PRs, one consumer sync":
 
 | Band | Symbol | Decision |
 |---|---|---|
@@ -138,7 +138,7 @@ Sessions stop at **ship-ready**: audited, PR open, `fleet ready`. They do **not*
 |---|---|---|
 | T0 | Pre-ship nudges, once per train | `/ship` Step 0.5 queries, unchanged. Not per PR: the store questions are repo-wide. |
 | T1 | **Plan** | `node scripts/ship-train.mjs plan --composer <line> [--pr …] [overrides] --json` (read-only). For each ready session with an open PR it reports: the tier (§2.5), the provenance binding (§2.3), the **planned gate**, any refusal, and whether a train is **due** (§2.6). Not due → stop, naming the missing trigger. |
-| T2 | Refusals | A PR with a refusal (no bound converged run on a non-ride-along, an unverifiable store, a ride-along-only set) stops the train. The only overrides are invocation flags: `--waive <n,…>`, `--allow-unaudited <n,…>` and `--end-of-day`. They are read **only** from the `/ship --train` invocation, the same rule `/ship` applies to its existing override flags (`skills/ship/SKILL.md:536-543` (5157ff65)). The coordinator passes the SAME flags to `land` (T5); nothing carries them between steps except that invocation. |
+| T2 | Refusals | A PR with a refusal (no bound converged run on a non-ride-along, an unverifiable store, a ride-along-only set) stops the train. The only overrides are invocation flags: `--waive <n,…>`, `--allow-unaudited <n,…>` and `--end-of-day`. They are read **only** from the `/ship --train` invocation, the same rule `/ship` applies to its existing override flags (`skills/ship-checked/SKILL.md:536-543` (5157ff65)). The coordinator passes the SAME flags to `land` (T5); nothing carries them between steps except that invocation. |
 | T3 | **Train log** | On a branch `ship/train-<YYYYMMDD>-<lowest PR>` in the coordinator's worktree, the model writes **one** status.md entry by hand, using the train template (§7, Phase 7). The entry is titled with the date and the PR list, and its gate column says **planned** (T1's output). It runs the AGENTS drift check (`/ship` Step 4) and commits through `ship-commit.mjs --gate not-run`. It pushes, opens a PR, and runs `fleet claim` + `fleet ready` on that branch. The log is an ordinary ride-along source; fleet decides its landing position. |
 | T4 | **Build** | `node scripts/fleet.mjs land --select <sources…,log>`: the existing train build with one combined test run. Fleet writes its immutable manifest, which pins every source's PR number and head oid, the base and the destination. Not `approvable` → stop. |
 | T5 | **Land** | `node scripts/ship-train.mjs land --train <trainId> --composer <line> [overrides]` reads the fleet manifest (§2.8), refuses unless it is fleet-approvable, and drives fleet's **serial** landing. Fleet calls `messageFor` per PR **at merge time**, after any update-branch. `messageFor` decides the gate **fresh** on that exact head (§2.3), so there is no persisted message to keep consistent. A source whose fresh decision is a refusal is **not merged**; serial stops there and the output names it. |
@@ -162,8 +162,8 @@ The cost is that the entry is written before the merge shas exist, and before T5
 | `scripts/lib/store/train-provenance.mjs` | store read | `findCodeRunCandidates({trees, oids})`: one parameterised `SELECT` over `audit_runs`, scoped to the current repo and to code-mode runs, returning each row's match kind. Read-only, so it is not a durable-write registration. |
 | `scripts/ship-train.mjs` | CLI | `plan` (read-only), `land [--resume]`, `verify`, `sync`, plus a read-only `message --pr <n>` for inspection. It persists no state of its own (§2.8). It follows the `--selfcheck-relocation` contract, uses `assertKnownFlags`, and exits through `emit` / `finishAndExit`. |
 | `scripts/lib/fleet/serial.mjs` | seam (+~20 lines) | An optional `messageFor({source, headOid, baseOid}) → {subject, body} \| {stop: reason} \| null` on the serial run options. A message adds `--subject` and `--body-file` to the merge call; `{stop}` ends the run before that merge. When it is absent, behaviour is byte-identical to today. |
-| `skills/ship/references/train-mode.md` | prose | The T0–T9 runbook, its refusals and override flags, and the laundering rationale (§2.7). |
-| `skills/ship/SKILL.md` | prose (+~12 lines) | A `--train` usage row and a pointer section to the reference above. |
+| `skills/ship-checked/references/train-mode.md` | prose | The T0–T9 runbook, its refusals and override flags, and the laundering rationale (§2.7). |
+| `skills/ship-checked/SKILL.md` | prose (+~12 lines) | A `--train` usage row and a pointer section to the reference above. |
 
 Why a sibling CLI and not a `ship-commit --train` mode: covered in §1.3. In short, `ship-commit` is bound to *this* worktree and marker and always commits. The train never commits locally and verifies *other* commits against the store. Folding those together would add a second evidence source to a file whose whole design is one evidence source.
 
@@ -508,10 +508,10 @@ A metric failure therefore never changes `verify`'s other fields, `sync`'s clear
     - Fault injection (`tests/ship-train-recovery.test.mjs`) runs against REAL fleet serial landing with a scripted `gh`. The decision under test is the real `decideTrainGate` + `composeSquashMessage` over a canned binding; only the store read is canned. Negative controls: a cross-attempt message cache fails 3 of the 5 tests, and dropping the head comparison fails 2.
 
   Files: `scripts/ship-train.mjs` (modify), `scripts/lib/ship-train/commands.mjs` (modify), `tests/ship-train-cli.test.mjs` (modify), `tests/ship-train-recovery.test.mjs` (create), `.audit-loop/domain-map.json` (modify).
-- **Phase 6 — `/ship --train` skill surface**: a usage row, a pointer section and the reference doc, plus a one-line cross-reference from fleet's landing doc. Files: `skills/ship/SKILL.md` (modify), `skills/ship/references/train-mode.md` (create), `skills/fleet/references/landing.md` (modify).
+- **Phase 6 — `/ship --train` skill surface**: a usage row, a pointer section and the reference doc, plus a one-line cross-reference from fleet's landing doc. Files: `skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/references/train-mode.md` (create), `skills/fleet/references/landing.md` (modify).
   - *Amended during implementation (Cluster C):* the one-line cross-reference in `skills/fleet/references/landing.md` is **dropped from this cluster** (coordinator ruling: `skills/fleet/**` belongs to the fleet docs chip, which adds it). Cluster C therefore touches no `skills/fleet/**`.
   - *Amended during implementation (Cluster C):* **`ship-train` is source-repo-only, so it is NOT added to the sync lists or `CLI_SMOKE_SET`** (this supersedes the Phase 3 note that moved membership here). Its tier oracle `getSyncClosure()` and its publication step are the source repository's own, and syncing it pulled `scripts/lib/sync-inventory.mjs` and `scripts/lib/consumer-repos.mjs` into the consumer closure, where `tests/relocation-guard.test.mjs` correctly rejects their `path.resolve(import.meta.dirname, "..")`. `/ship`'s other source-only steps (0.5h, 0.5i) use the same gating, so SKILL.md's Train mode section and `train-mode.md` open with a `Source-repo-gated` line, and the fleet doc names the tool as source-repository only.
-- **Phase 7 — Records and invariants docs**: the status.md train-entry template (titled by date + PR list, with a planned-gate and `identityProvable` column); in the provenance reference, the second emission point, the content-binding rule, the server-pin precondition for `passed` on squash, and `converged`'s widened reading; AGENTS.md's provenance paragraph ("written only by" → two emission points, one renderer, one evaluator; `converged` = "not asserted equal"). Files: `skills/ship/references/status-md-format.md` (modify), `docs/reference/commit-provenance.md` (modify), `AGENTS.md` (modify).
+- **Phase 7 — Records and invariants docs**: the status.md train-entry template (titled by date + PR list, with a planned-gate and `identityProvable` column); in the provenance reference, the second emission point, the content-binding rule, the server-pin precondition for `passed` on squash, and `converged`'s widened reading; AGENTS.md's provenance paragraph ("written only by" → two emission points, one renderer, one evaluator; `converged` = "not asserted equal"). Files: `skills/ship-checked/references/status-md-format.md` (modify), `docs/reference/commit-provenance.md` (modify), `AGENTS.md` (modify).
 
 - **Phase 8 — Train-run thinness metric** (§2.10 train side; PROPOSED):
   - `ship-train verify` reports whether the train's combined run failed on a test the branch tier did not select, reading fleet's run record and the gate-cost plan's selection for each PR head.
@@ -549,7 +549,7 @@ A metric failure therefore never changes `verify`'s other fields, `sync`'s clear
 | `scripts/lib/ship-train/provenance.mjs` | `bindAuditRun`, `decideTrainGate`, `composeSquashMessage`, `modelsFromRun` | `commit-trailers.mjs`, `model-resolver.mjs` (`modelFamily`) | `ship-train.mjs` |
 | `scripts/lib/ship-train/verify.mjs` | `verifyTrain`, `checkClaimTruth`, `readAiTrailers`, `publicationClearance` | `commit-trailers.mjs` | `commands.mjs` |
 | `scripts/lib/store/train-provenance.mjs` | `findCodeRunCandidates` | `db/client.mjs`, `db/errors.mjs`, `store/repo.mjs` | `ship-train.mjs` |
-| `scripts/ship-train.mjs` | CLI only | the modules above, `sync-inventory.mjs`, `fleet/serial.mjs`, `fleet/registry.mjs`, `pinned-worktree/manage.mjs` (`provisionNodeModules`), `cli-io.mjs` | `skills/ship/references/train-mode.md` (prose) |
+| `scripts/ship-train.mjs` | CLI only | the modules above, `sync-inventory.mjs`, `fleet/serial.mjs`, `fleet/registry.mjs`, `pinned-worktree/manage.mjs` (`provisionNodeModules`), `cli-io.mjs` | `skills/ship-checked/references/train-mode.md` (prose) |
 
 ## 8. Risk & Trade-off Register
 
@@ -664,7 +664,7 @@ A metric failure therefore never changes `verify`'s other fields, `sync`'s clear
 - **Cluster B** — Phases 4–5 — fix-gate: yes
   - Coupling: the seam and its only caller. `messageFor` (fleet) and `ship-train land` (ship) must be audited across the boundary, since the post-update-head timing is the correctness claim. **Unblocked 2026-10-12**: the fleet A-D PR (#216) merged and released the claim on `scripts/lib/fleet/**`. Claimed as `claude/ship-trains-b`. If a claim ever reports BLOCKED, stop and report; never `--override`.
 - **Cluster C** — Phases 6–7 — fix-gate: final
-  - Coupling: the human-facing surface and the invariant docs. They describe A+B and must agree with the CLI as built. **Unblocked 2026-10-12**: the keyset PR (#218, 44c4bbda) merged and released `skills/ship/SKILL.md`, and the fleet claim on `skills/fleet/**` was released with #216.
+  - Coupling: the human-facing surface and the invariant docs. They describe A+B and must agree with the CLI as built. **Unblocked 2026-10-12**: the keyset PR (#218, 44c4bbda) merged and released `skills/ship-checked/SKILL.md`, and the fleet claim on `skills/fleet/**` was released with #216.
 - **Cluster D** — Phase 8 — fix-gate: yes
   - Coupling: the metric reads fleet's combined-run record (needs Cluster B) and the branch tier's selection (needs the gate-cost plan), so it lands after both.
   - **Built 2026-11-13** on `claude/ship-trains-d`, after a focused `/audit-plan` of §2.10's train side (§2.10a, Audit Trail). Both prerequisites were met: Cluster B is on main, and the gate-cost plan published `test-tier select`.
@@ -683,7 +683,7 @@ A metric failure therefore never changes `verify`'s other fields, `sync`'s clear
   - R2 H1, R3 H3, R4 H2, R5 H3, R6 H2: all accepted and fixed.
   - R2–R6 were each propagation from the previous round's fix in the verify/publication path: interleaving enforcement → re-verify freshness → refusal persistence → revocation record + compare-and-swap → verification bound to the receipt state it judged.
   - Every fix landed with a test that was reverted to confirm it fails, then restored (`scripts/lib/ship-train/**`, 127 tests in the five ship-train suites).
-  - Deferred-declared, not gating Cluster A: `skills/ship/references/train-mode.md` (Cluster C); `tests/ship-train-recovery.test.mjs` (Cluster B); `tests/ship-train-provenance.db.test.mjs` plus its two enrolment lists (held for the keyset PR; already 12/12 on a disposable Postgres).
+  - Deferred-declared, not gating Cluster A: `skills/ship-checked/references/train-mode.md` (Cluster C); `tests/ship-train-recovery.test.mjs` (Cluster B); `tests/ship-train-provenance.db.test.mjs` plus its two enrolment lists (held for the keyset PR; already 12/12 on a disposable Postgres).
   - Coverage: R1 PARTIAL (7 of 14 files head-cut by the pass budget); R2–R6 COMPLETE on the 8 source files (windowed reads).
   - Census: structure, wiring, be-services and sustainability `completed`; frontend `ineligible` (backend-only diff); quickfix `completed`; adjacency **incomplete** (`ADJACENCY_INCOMPLETE`, maxContainers=20); arch-memory `ineligible` (`--scope diff`).
   - Not converged by the 2-stable-rounds rule: R6 raised 2 HIGH, fixed after it, and there is no R7.
@@ -697,7 +697,7 @@ A metric failure therefore never changes `verify`'s other fields, `sync`'s clear
   - R2 (verify + commands): H1 accepted. A PR's commits are now measured from the squash's first parent, so an update-branch can't lend one PR another's run.
   - R3 (5 files), R4 (2 files), R5 (all 7): **PASS, H:0 M:0 L:0**, coverage COMPLETE every round. Converged.
   - Every fix was proven red, then green. That includes the held real-Postgres suite (6/6), where removing the repo-scope clause turns its new `findCodeRunForRepo` test red.
-  - Deferred-declared (not gating A): `tests/ship-train-recovery.test.mjs` (Cluster B), `skills/ship/references/train-mode.md` (Cluster C), and the DB suite's two-list enrolment (held for the keyset PR).
+  - Deferred-declared (not gating A): `tests/ship-train-recovery.test.mjs` (Cluster B), `skills/ship-checked/references/train-mode.md` (Cluster C), and the DB suite's two-list enrolment (held for the keyset PR).
 - **Cluster A final gate** (Gemini `latest-pro`, stateless code): **APPROVE**, round 1. Disposition `approve`, 0 blocking, 0 debt, 0 new, 0 wrongly dismissed. Its envelope reported `Code: PARTIAL, changed lines unmeasured for 6 file(s)`, so the APPROVE covers what it examined.
 - **Cluster D focused `/audit-plan`** (2026-11-13, SID `audit-plan-1794548828260-128892`). It was run over a verbatim excerpt of §2.10, §2.10a, Phase 8 and §11's Cluster D, because the rest of the plan was already at its caps and built.
   - R1 (run `4ab2e008`), H3 M3, 6/6 accepted: an exhaustive verdict table; explicit per-pair classification with `absent`; a total error boundary; `thin` read as an observation; selector identity documented; a regression suite for the shared parser.

@@ -162,7 +162,7 @@ The disposition is meaningless for that view, not merely unhandled.
 - `list-unremediated-acceptances` → emit `byDisposition: {open, acceptedPermanent}`,
   where `open === total` (one number, two names).
 
-**`skills/ship/SKILL.md`** (modify)
+**`skills/ship-checked/SKILL.md`** (modify)
 - 0.5e prints `N open · M permanently accepted` and states that the second is a
   recorded decision, not a backlog.
 

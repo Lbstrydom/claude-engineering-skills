@@ -2,7 +2,7 @@
  * @fileoverview Close ONE audit finding by row id, from outside a live audit
  * round — the writer behind `cross-skill.mjs close-finding`.
  *
- * `/ship` Step 0.5e prints `final-review-record-fix` as the way to close an
+ * `/ship-checked` Step 0.5e prints `final-review-record-fix` as the way to close an
  * unremediated acceptance, but that command (and `final-review-adjudicate`)
  * is scoped to `pass_name IN ('final-review','final-review-shadow')`. Every
  * row the `unremediated_acceptances` view returned on 2026-10-02 — 142 of

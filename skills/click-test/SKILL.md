@@ -548,7 +548,7 @@ OVERALL VERDICT RULES (deterministic precedence — first match wins):
       in the FINDINGS block, not the verdict.
     - The verdict precedence is independent of coverage — a Broken+Incomplete
       run with one P0 and one auth-required route is more severe than either
-      alone and gets its own label so /ship can gate appropriately.
+      alone and gets its own label so /ship-checked can gate appropriately.
 ```
 
 Sort findings P0 first, then by `kind` alphabetical so similar issues group.
@@ -587,7 +587,7 @@ which R3 audit concerns were deferred, or how this skill is deployed.
 | `references/dom-scanner.md` | The full browser_evaluate scanner JS — every assertion's implementation, selector-stringifier helpers, severity mapping. | About to run Phase 4 or Phase 4b. |
 | `references/scan-rules-detail.md` | Why the scan rules are what they are — perceivability, touch-target regions, severity intuition, FP notes, prep JSON. | A finding's severity or perceivability is disputed, a touch-target finding looks false, OR the prep contract shape is unclear. |
 | `references/phase6-output-sample.md` | Full Phase 6 output sample — finding entries, single-device and matrix ROUTE COVERAGE, CROSS-DEVICE, DYNAMIC SURFACES. | About to render the Phase 6 report. |
-| `references/v1-scope-and-deployment.md` | Why v1 has no persistence, the R3-deferred v2 concerns, and the maintainer deployment recipe + acceptance checks. | Asked about persistence, /ship integration or v2 scope, OR deploying/syncing this skill. |
+| `references/v1-scope-and-deployment.md` | Why v1 has no persistence, the R3-deferred v2 concerns, and the maintainer deployment recipe + acceptance checks. | Asked about persistence, /ship-checked integration or v2 scope, OR deploying/syncing this skill. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /click-test —

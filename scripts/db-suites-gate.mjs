@@ -22,7 +22,7 @@
  * false-pass/false-block problem `prepush-check.mjs` exists to eliminate.
  *
  * UNSCOPED by default, PATH-SCOPED only for a branch-tier push (gate census L-2, approved by Louis 2026-11-22). `npm run
- * check`, `/ship`, every push to the default branch and the `full` tier still run this gate in full. Only the pre-push
+ * check`, `/ship-checked`, every push to the default branch and the `full` tier still run this gate in full. Only the pre-push
  * sandbox sets `AUDIT_PREPUSH_GATE_SCOPE=path`, and only when the tier ORACLE itself chose the branch tier for a push that
  * does not update the default branch (`scopeFromOracle`: a stale heavy list or a changed selector makes it full, and an
  * inherited value is cleared). Then the gate runs only when the explicit push range (`push-range.mjs`, never inferred)

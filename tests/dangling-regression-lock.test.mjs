@@ -80,7 +80,7 @@ function makeCtx({ recorded = [], repoId = 'repo-1', cloud = true, payload = {} 
   };
 }
 
-describe('the /ship lock nudge reports locks whose spec_path no longer resolves', () => {
+describe('the /ship-checked lock nudge reports locks whose spec_path no longer resolves', () => {
   it('counts a citation naming a missing file, and leaves a real one alone', async () => {
     assert.ok(fs.existsSync(path.join(REPO_ROOT, REAL_SPEC)), 'the control file must really exist');
     assert.ok(!fs.existsSync(path.join(REPO_ROOT, GONE_SPEC)), 'the subject file must really be absent');

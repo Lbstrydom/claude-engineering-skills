@@ -6,7 +6,7 @@
  * a `## ` heading that does not match is COUNTED and surfaced (`skippedHeadings`),
  * never silently dropped — a format drift would otherwise read as "fewer ships".
  *
- * `latestBacklogLine` returns the newest `Backlog <ISO>Z: …` line (the one `/ship`
+ * `latestBacklogLine` returns the newest `Backlog <ISO>Z: …` line (the one `/ship-checked`
  * pastes from `renderBacklogSnapshot`); `parseBacklogLine` in
  * `lib/store/backlog-snapshot.mjs` is its reader.
  *

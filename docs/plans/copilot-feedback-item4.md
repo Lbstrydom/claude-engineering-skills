@@ -137,7 +137,7 @@ The consumer asks for five facts. Each is weighed separately against the rule th
 | Required-subject coverage | (Cluster A) | Carried inside the disposition: a non-FULL required subject makes it `blocked` (A5). No separate trailer. |
 | Accepted debt | debt entries carry `deferredRun` = the run id | **Document** the join (`AI-Run-ID` → debt ledger). Depends on the `deferredRun` length fix in items 1-3 (R05); noted in §8. |
 | Test evidence / skipped test gate | `--no-tests` visible only as the `AI-Gate` cap and `ship_events.override_flag` | **Defer** to Cluster C's promotion trigger (§2.3, C5). |
-| Explicit human ship authority | a typed `/ship` IS the approval (`skills/ship/SKILL.md`); `AI-Ship-Authority: launch-prompt` already records the pre-authorised case | **Drop**: an `AI-Ship-Authority: user` value would be written by the agent on the user's behalf — a declaration, indistinguishable from a forged one. The commit author and the PR merge are the authority record. |
+| Explicit human ship authority | a typed `/ship` IS the approval (`skills/ship-checked/SKILL.md`); `AI-Ship-Authority: launch-prompt` already records the pre-authorised case | **Drop**: an `AI-Ship-Authority: user` value would be written by the agent on the user's behalf — a declaration, indistinguishable from a forged one. The commit author and the PR merge are the authority record. |
 
 **B1. Persist the disposition.** `buildFinalReviewMarker` takes `disposition` (`approve | approve_with_debt | blocked`, from `result.gateDisposition`) and writes it beside `verdict`; `recordFinalReviewMarker` passes it from `gemini-review.mjs:1049`. The reader parses a marker without `disposition` as well-formed and reports `disposition: null` (#18), so the two consumers can each decide: no trailer (B3), and a named refusal at the pre-authorised check (B2b). A marker whose `disposition` is present but not one of the three values is `malformed`, as today. No new writer, no new file, same lock and revocation lifecycle.
 
@@ -269,7 +269,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 | `scripts/lib/vcs.mjs` | modify: `gitWorktreeTree` accepts an optional `excludePathspecs` and then returns `{tree, filteredTree}` from ONE temp index (`write-tree`, `git rm --cached`, `write-tree` again); without the option its return value is byte-identical to today, which the `AI-Audited-Tree` callers rely on | #1, #18 |
 | `scripts/lib/sync-inventory.mjs` (+ `scripts/lib/bundle-deps.json` regenerated) | modify: add the CLI to the synced closure | — |
 | `docs/runbooks/test-evidence.md` | **create**: usage, three answers, the gitignored-input limit, PowerShell-safe examples | — |
-| `skills/ship/references/` (one row) | modify: how to cite a `reusable` check in the ship report; names the tool by path, not an npm alias | — |
+| `skills/ship-checked/references/` (one row) | modify: how to cite a `reusable` check in the ship report; names the tool by path, not an npm alias | — |
 
 ### 6b. Implementation Phases
 
@@ -285,7 +285,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 
 **Phase 6 — Test-evidence library**: Files: `scripts/lib/test-evidence.mjs` (create), `scripts/lib/vcs.mjs` (modify), `tests/test-evidence.test.mjs` (create), `tests/fixtures/test-evidence/junit-pytest.xml` (create), `tests/fixtures/test-evidence/junit-node.xml` (create).
 
-**Phase 7 — Test-evidence CLI, sync and docs**: Files: `scripts/test-evidence.mjs` (create), `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/bundle-deps.json` (modify, regenerated), `tests/test-evidence-cli.test.mjs` (create), `tests/relocation-guard.test.mjs` (modify), `docs/runbooks/test-evidence.md` (create), `skills/ship/references/` (modify).
+**Phase 7 — Test-evidence CLI, sync and docs**: Files: `scripts/test-evidence.mjs` (create), `scripts/lib/sync-inventory.mjs` (modify), `scripts/lib/bundle-deps.json` (modify, regenerated), `tests/test-evidence-cli.test.mjs` (create), `tests/relocation-guard.test.mjs` (modify), `docs/runbooks/test-evidence.md` (create), `skills/ship-checked/references/` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate`, `npm run bundle:deps`, `npm run plans:index`, `npm run guards:preflight`; the CI full suite on each PR.
 
@@ -297,7 +297,7 @@ The three clusters are independent: no shared state, no ordering requirement exc
 | Commit-provenance contract, same-commit tests | — | **yes** | — | named by the brief; trailers ship to every consumer |
 | Tier 3 (b) consumer sync / relocation, same-commit tests | — | — | **yes** | new synced CLI |
 | `size:ratchet:gate` (oversized files may not grow; a shrink must be re-baselined) | `openai-audit.mjs` (1325), `gemini-review.mjs` (1090), possibly `legacy-production-audit.mjs` (1709): logic lives in the new module; wiring is paid for by moving an equal block out | `gemini-review.mjs`; `ship-commit.mjs` is at 986 and must not cross 1000 | — | measured `wc -l` at `65630905`; re-read the baseline at implementation time |
-| `skills:size:gate` | `skills/audit-code/SKILL.md` (57,201 chars) may not grow: prose goes to `references/`, and the index row is paid for by condensing in the same file | — | `skills/ship/SKILL.md` (70,110) likewise | |
+| `skills:size:gate` | `skills/audit-code/SKILL.md` (57,201 chars) may not grow: prose goes to `references/`, and the index row is paid for by condensing in the same file | — | `skills/ship-checked/SKILL.md` (70,110) likewise | |
 | `skills:check` (reference `summary:` byte-match) | yes | — | yes | |
 | CLI contract: `assertKnownFlags`, `--selfcheck-relocation`, `CLI_SMOKE_SET`, `isInvokedAsScript` census, `stdout:flush:gate`, `emit:exit:gate` | flag only | — | **yes** (new CLI) | memory: a new npm script also trips the CLI catalog and rmsync guards — no npm script is planned |
 | `bundle:deps:check`, sync-inventory parity tests | — | — | yes | |

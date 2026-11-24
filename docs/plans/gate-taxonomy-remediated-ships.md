@@ -106,12 +106,12 @@ section header, not line, per verification-discipline §1: `status.md` is
 append-newest-first). The last says *"the mechanical verification did not
 hold, and that state has a name"*. It does not. It has `waived`'s name.
 
-**(e) A separable docs↔binary contradiction.** `skills/ship/SKILL.md` §6.2
+**(e) A separable docs↔binary contradiction.** `skills/ship-checked/SKILL.md` §6.2
 states *"`not-run` on a fix-heavy ship is the honest answer, not a failure."*
 The binary refuses exactly that whenever evidence is fresh. The escape is
 `--no-run-id`, and:
 
-- `rg -n "no-run-id" skills/ship/SKILL.md` → **no output**. The flag appears
+- `rg -n "no-run-id" skills/ship-checked/SKILL.md` → **no output**. The flag appears
   **zero times** in the skill an agent actually reads. It exists only in the
   binary's `AGENT FIX` stderr string and in the v1 plan document.
 - Its documented meaning is *"declares the audit unrelated"* — **false** on a
@@ -241,7 +241,7 @@ predicate in the code is `evidenceMs > headCommitTs * 1000`
 not to an operator sitting. A value that opens by overclaiming its own
 temporal scope could not credibly refuse the name `remediated` two paragraphs
 later. The same substitution is made everywhere the value is documented — the
-enum description, `skills/ship/SKILL.md`, `docs/reference/commit-provenance.md`
+enum description, `skills/ship-checked/SKILL.md`, `docs/reference/commit-provenance.md`
 and the decision table below — so the phrase never re-enters through a copy.
 If genuine same-session semantics are wanted later, that needs a durable
 run-to-ship binding, not a timestamp used as a proxy; it is out of scope here
@@ -464,7 +464,7 @@ and per AGENTS.md, that claim is verified mechanically by
 New structure is on the table (a permanent enum member in a synced contract),
 so this section is required and is the plan's central decision.
 
-**Band-aid extreme.** Reword `skills/ship/SKILL.md` so it stops promising
+**Band-aid extreme.** Reword `skills/ship-checked/SKILL.md` so it stops promising
 `not-run`, document `--no-run-id`, and leave the taxonomy alone. Cost: near
 zero. Why it is a band-aid: the workflow's own best outcome still labels
 itself a bypass, the 86-row `waived` bucket stays undifferentiated, and the
@@ -584,11 +584,11 @@ over-engineering cliff.
 | `tests/commit-trailers.test.mjs` | New cases: `converged` legal on fresh+converged+differing tree; **refused** when the store says non-converged; **refused** when cloud is off; **refused** on a null `committedTree`; `passed` still refused on a delta; `not-run` still refused on fresh. Update the byte-pinned `expected` string at `:70`. | negative controls — a gate is untrustworthy until seen to fail (verification-discipline §3) |
 | `tests/ship-commit-cli.test.mjs` | End-to-end row: a real commit carrying `AI-Gate: converged` and **no** `AI-Audited-Tree`, parsed back through `git interpret-trailers --parse`. Plus the two directions the gate must NOT fire: a non-converged run cannot obtain `converged`, and an equal-tree commit cannot under-claim `converged`. | the §F1.4 taxonomy is asserted row-by-row here; a new accept state needs a row |
 | `tests/gate-evidence-tree-identity.test.mjs` | Assert the E1 refusals still name a legal alternative now that there are two (`:57` currently matches `/--gate waived/`). | prevents the refusal text drifting away from the grammar |
-| `skills/ship/SKILL.md` | §6.2: add `converged` to the `--gate` description; replace the "**To earn `passed`**" callout with one that names both verified values and says plainly that `/ship`'s own Steps 2–5 move the tree; **fix the `not-run` contradiction**; **document `--no-run-id`** (currently zero mentions) with its true meaning. | the prose↔code seam has no compiler; the SKILL.md is what the agent reads |
-| `skills/ship/gate-contract.json` | **Add a distinct sibling entry `gate-converged-requires-verified-divergence`; leave `gate-passed-refused-without-evidence` untouched.** Decided here, not left to the implementer (audit R2 M2): the existing entry's `reason` is specifically about `passed`'s evidence requirement, so widening it would blur two independently-traceable claims into one. New entry, **and its field set is dictated by the schema, not chosen**: `DocumentOnlyGateSchema` (`scripts/lib/gate-honesty/schema.mjs:142-151`) is `.strict()` and permits **only** `{id, kind, reason, statedIn?, stated?}` — so the entry is exactly `kind: "document-only"`, `statedIn: "skills/ship/SKILL.md"`, `stated: "converged requires a store-verified converged verdict AND a committed tree that differs from the audited tree"`, plus a `reason` recording that — exactly like its `passed` sibling — the refusal's exit code depends on the git + `.audit/last-audit-run.json` evidence state, so a hermetic fixture cannot bind it deterministically. **Do NOT add `implementation`/`tests` keys**: they are legal only on the executable branch and `.strict()` rejects them here (checked against the emitted schema, not assumed). `executable` is not available either — its `cli-exit` oracle draws its `scenario` from the closed `CLI_EXIT_SCENARIOS` enum (`schema.mjs:46`, `:138`), which has no `converged` member, and inventing one would assert a determinism the evidence-state dependency denies. Verify with `npm run gates:check`. | gate honesty: a stated gate binds to enforcing code + test, and one entry per declared gate state keeps each claim independently traceable |
+| `skills/ship-checked/SKILL.md` | §6.2: add `converged` to the `--gate` description; replace the "**To earn `passed`**" callout with one that names both verified values and says plainly that `/ship`'s own Steps 2–5 move the tree; **fix the `not-run` contradiction**; **document `--no-run-id`** (currently zero mentions) with its true meaning. | the prose↔code seam has no compiler; the SKILL.md is what the agent reads |
+| `skills/ship-checked/gate-contract.json` | **Add a distinct sibling entry `gate-converged-requires-verified-divergence`; leave `gate-passed-refused-without-evidence` untouched.** Decided here, not left to the implementer (audit R2 M2): the existing entry's `reason` is specifically about `passed`'s evidence requirement, so widening it would blur two independently-traceable claims into one. New entry, **and its field set is dictated by the schema, not chosen**: `DocumentOnlyGateSchema` (`scripts/lib/gate-honesty/schema.mjs:142-151`) is `.strict()` and permits **only** `{id, kind, reason, statedIn?, stated?}` — so the entry is exactly `kind: "document-only"`, `statedIn: "skills/ship-checked/SKILL.md"`, `stated: "converged requires a store-verified converged verdict AND a committed tree that differs from the audited tree"`, plus a `reason` recording that — exactly like its `passed` sibling — the refusal's exit code depends on the git + `.audit/last-audit-run.json` evidence state, so a hermetic fixture cannot bind it deterministically. **Do NOT add `implementation`/`tests` keys**: they are legal only on the executable branch and `.strict()` rejects them here (checked against the emitted schema, not assumed). `executable` is not available either — its `cli-exit` oracle draws its `scenario` from the closed `CLI_EXIT_SCENARIOS` enum (`schema.mjs:46`, `:138`), which has no `converged` member, and inventing one would assert a determinism the evidence-state dependency denies. Verify with `npm run gates:check`. | gate honesty: a stated gate binds to enforcing code + test, and one entry per declared gate state keeps each claim independently traceable |
 | `docs/reference/commit-provenance.md` | Schema table (`:36-38`): add `converged`. `AI-Audited-Tree`'s "**`passed` only**" wording is **unchanged** (§2.3) — add one sentence saying it is deliberately not emitted on `converged`, and why (the synthetic tree is unreachable and undistributable), so the omission reads as a decision rather than an oversight. Add a `converged` query to the cookbook, and a short subsection recording **why `passed` is rare** (§5.2). | the convention doc is the durable reference; §1(d) shows its absence costs a re-derivation each time |
 | `docs/plans/provenance-trailers-and-gate-honesty.md` | Update the §F1.3b evidence table (`:295-330`) to the four-value grammar; annotate the V2 `--gate-reason` row (`:995`) with this plan's adjudication so the option is not silently re-proposed. | the v1 plan is the cited source of truth for §F1.3b; leaving it stale creates two disagreeing tables |
-| `.claude/skills/ship/**` | **Generated** — `npm run skills:regenerate`; byte-verified by `npm run skills:check`. Never hand-edited. | Category B generated artifact |
+| `.claude/skills/ship-checked/**` | **Generated** — `npm run skills:regenerate`; byte-verified by `npm run skills:check`. Never hand-edited. | Category B generated artifact |
 
 ### 7b. Implementation Phases
 
@@ -625,8 +625,8 @@ Files: `tests/commit-trailers.test.mjs` (modify),
 `tests/gate-evidence-tree-identity.test.mjs` (modify).
 
 **Phase 4 — Agent-facing prose + the separable contradiction fix.**
-Files: `skills/ship/SKILL.md` (modify),
-`skills/ship/gate-contract.json` (modify).
+Files: `skills/ship-checked/SKILL.md` (modify),
+`skills/ship-checked/gate-contract.json` (modify).
 
 **Phase 5 — Durable reference + plan reconciliation.**
 Files: `docs/reference/commit-provenance.md` (modify),
@@ -768,7 +768,7 @@ them.
     documents. They must be written against the grammar as built, not as
     designed, which is why they follow A rather than run beside it. This
     cluster also carries the separable §1(e) contradiction fix.
-  - Additional files: `.claude/skills/ship/SKILL.md` (modify — generated by
+  - Additional files: `.claude/skills/ship-checked/SKILL.md` (modify — generated by
     `skills:regenerate`, never hand-edited)
   - author-tier: standard
 - **Final gate**: one consolidated Gemini review over the union diff.
@@ -851,7 +851,7 @@ named.
   guards, because the failure it prevents is silent.
 - **Phase 3** (three test files): the accept path, five refusal directions, the
   `AI-Audited-Tree` **absence**, and the `--no-tests` cap.
-- **Phase 4** (`skills/ship/SKILL.md`, `skills/ship/gate-contract.json`): the
+- **Phase 4** (`skills/ship-checked/SKILL.md`, `skills/ship-checked/gate-contract.json`): the
   four-value table, the rarity-by-design note, `--no-run-id` documented for the
   first time, the `--no-tests` cap, and a distinct `document-only` contract
   entry whose field set is dictated by `DocumentOnlyGateSchema`.

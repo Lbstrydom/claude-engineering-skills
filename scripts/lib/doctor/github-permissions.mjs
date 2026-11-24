@@ -4,7 +4,7 @@
  *
  * ## Why this exists
  *
- * Every consumer repo that runs `/ship`, `/audit-code` or `scripts/cross-skill.mjs`
+ * Every consumer repo that runs `/ship-checked`, `/audit-code` or `scripts/cross-skill.mjs`
  * eventually hits a `gh` command that fails with a bare `403`, and each one
  * rediscovers by trial and error which token permission was missing. GitHub
  * already answers that question on every REST response — it just isn't printed
@@ -96,12 +96,12 @@ export const READ_PROBES = Object.freeze([
   {
     id: 'check-runs',
     path: ({ slug, branch }) => `/repos/${slug}/commits/${encodeURIComponent(branch)}/check-runs`,
-    reason: '`gh pr checks` — /ship reads CI status after pushing',
+    reason: '`gh pr checks` — /ship-checked reads CI status after pushing',
   },
   {
     id: 'pulls',
     path: ({ slug }) => `/repos/${slug}/pulls?per_page=1`,
-    reason: '`gh pr view|list|checks` — /ship\'s PR flow in consumer repos',
+    reason: '`gh pr view|list|checks` — /ship-checked\'s PR flow in consumer repos',
   },
   {
     id: 'issues',
@@ -132,8 +132,8 @@ export const READ_PROBES = Object.freeze([
  * @type {ReadonlyArray<{permission:string, scope:string, reason:string}>}
  */
 export const WRITE_REQUIREMENTS = Object.freeze([
-  { permission: 'contents=write', scope: 'repo', reason: '`git push` over HTTPS when the token is the git credential — /ship' },
-  { permission: 'pull_requests=write', scope: 'repo', reason: '`gh pr create` — /ship opening a PR in a consumer repo' },
+  { permission: 'contents=write', scope: 'repo', reason: '`git push` over HTTPS when the token is the git credential — /ship-checked' },
+  { permission: 'pull_requests=write', scope: 'repo', reason: '`gh pr create` — /ship-checked opening a PR in a consumer repo' },
   { permission: 'issues=write', scope: 'repo', reason: '`cross-skill.mjs upstream report` filing an upstream bug' },
   { permission: 'workflows=write', scope: 'workflow', reason: 'pushing a commit that touches `.github/workflows/**`' },
   { permission: 'administration=write', scope: 'repo', reason: '`npm run ensure-branch-protection` applying a ruleset change' },

@@ -49,8 +49,8 @@
       "reason": "The continuation line of the state-relative caveat above; same disposition — an interpretation rule for the reader, not an enforceable gate."
     },
     {
-      "line": "> **Scope note — this is NOT a release-gate fix.** `/ship` does **not** gate on",
-      "reason": "A NEGATIVE claim recording that no /ship gate consumes click-test P0s (persistence is deferred in Phase 7; no record-click-test subcommand, table or read path exists). It exists precisely to stop a future reader re-asserting the false release-gate premise a prior audit round disproved. There is no mechanism to contract — the honest gate would be the absence of one."
+      "line": "> **Scope note — this is NOT a release-gate fix.** `/ship-checked` does **not** gate on",
+      "reason": "A NEGATIVE claim recording that no /ship-checked gate consumes click-test P0s (persistence is deferred in Phase 7; no record-click-test subcommand, table or read path exists). It exists precisely to stop a future reader re-asserting the false release-gate premise a prior audit round disproved. There is no mechanism to contract — the honest gate would be the absence of one."
     },
     {
       "line": "> cannot turn a cosmetic wrong into a real false gate.",
@@ -79,6 +79,10 @@
     {
       "line": "consumers). Edit the canonical, never a copy. Both used to be cited across skill",
       "reason": "Describes the shared-reference authoring convention for browser-tool-detection.md and auth-bootstrap.md (edit the canonical, not the generated copy) — enforced by sync-shared-audit-refs.mjs drift detection, not by this skill's own execution."
+    },
+    {
+      "line": "alone and gets its own label so /ship-checked can gate appropriately.",
+      "reason": "Rename 2026-11-24 (/ship -> /ship-checked): the enforcement-verb match is the \"check\" inside the skill NAME ship-checked, not a gate this skill enforces. The sentence was dispositionless before the rename because it named /ship; its meaning is unchanged."
     }
   ]
 }

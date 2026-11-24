@@ -45,7 +45,7 @@ function bashFenceLines() {
 describe('audit skill shell recipes', () => {
   test('every audit-code/audit-plan BASE= diff-base assignment is dirty-aware, never an unconditional HEAD', () => {
     // Scoped to the audit skills, whose base must MATCH openai-audit.mjs's own
-    // dirty-aware --scope diff resolution. /ship's merge-base is a different,
+    // dirty-aware --scope diff resolution. /ship-checked's merge-base is a different,
     // deliberate contract (the whole branch), not this one.
     const assigns = bashFenceLines().filter((l) => /^skills\/audit-(code|plan)\//.test(l.rel)
       && /\bBASE=/.test(l.text) && !/^\s*#/.test(l.text));

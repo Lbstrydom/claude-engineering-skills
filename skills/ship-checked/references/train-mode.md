@@ -1,8 +1,8 @@
 ---
-summary: /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery.
+summary: /ship-checked --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery.
 ---
 
-# `/ship --train` — landing a batch of ship-ready PRs
+# `/ship-checked --train` — landing a batch of ship-ready PRs
 
 **Source-repo-gated** — use this ONLY when `package.json.name === "claude-engineering-skills"`;
 in any other repository say so and stop. `ship-train` is not part of the synced consumer
@@ -14,32 +14,32 @@ ship_event), and that is `references/record-catchup.md` — no train needed. Lif
 the cause (`--train` is still human-typed) and would mean syncing ship-train, its store reader and fleet's
 serial callback; squash-trailer coverage is now measured per record entry, as evidence for that later call.
 
-One human `/ship --train` lands several already-audited PRs together: one
+One human `/ship-checked --train` lands several already-audited PRs together: one
 `status.md` entry, per-PR provenance written into each squash commit, ONE
 combined test run (fleet), and ONE consumer sync. Without it, each PR needs its
-own `/ship`, and GitHub's squash replaces the commit message — so the `AI-*`
-block is lost (measured 2026-10-11: of 80 merged PRs, 54 never ran `/ship` and
+own `/ship-checked`, and GitHub's squash replaces the commit message — so the `AI-*`
+block is lost (measured 2026-10-11: of 80 merged PRs, 54 never ran `/ship-checked` and
 9 lost the trailer on the squash).
 
 ## Who runs what
 
 Sessions stop at **ship-ready**: audited, PR open, `fleet ready`. They do **not**
-run `/ship` and do **not** write `status.md`. When a train is due, the user types
-`/ship --train` **once**, in the coordinator session, and that session runs the
+run `/ship-checked` and do **not** write `status.md`. When a train is due, the user types
+`/ship-checked --train` **once**, in the coordinator session, and that session runs the
 steps below.
 
-**This is a human-only gate, never self-invoked.** `/ship` keeps
+**This is a human-only gate, never self-invoked.** `/ship-checked` keeps
 `disable-model-invocation`, and `--train` does not relax it: a train merges PRs
 and publishes to consumers, so an agent holding that authority standing would be
 exactly the laundering path the gate exists to close. If the user only said a
-train "sounds good", offer `/ship --train` and stop.
+train "sounds good", offer `/ship-checked --train` and stop.
 
 ## Overrides: read only from the invocation
 
 `--waive <n,…>` (declare a gate for a PR whose evidence is only partial),
 `--allow-unaudited <n,…>` (land a PR no audit run covers) and `--end-of-day`
 (make a small train due). They are honoured **only** when the user typed them on
-this `/ship --train` invocation. Pass the **same** flags to `plan` and `land`;
+this `/ship-checked --train` invocation. Pass the **same** flags to `plan` and `land`;
 nothing carries them between steps, and a conversation that merely mentions
 skipping a gate is never one. Adding one on your own initiative to get past a
 refusal is the gate working, not a defect.
@@ -64,7 +64,7 @@ state: fleet's train manifest, GitHub, git and the audit store.
 | T6 | **Verify**: every landed claim must be TRUE (trailers parse; git and the store support each one); derives the final merge OID and any interleaved foreign commits; `--write-note` files the actual gates for the next entry | `node scripts/ship-train.mjs verify --train <id> --write-note` |
 | T7 | Post-land advisories, once per train | SKILL.md Steps 6.5–6.7 |
 | T8 | **Consumer sync**: re-verifies in the same invocation, then publishes the final merge OID from a clean detached worktree (`sync-to-repos`, then `sync-pr`) | `node scripts/ship-train.mjs sync --train <id>` |
-| T9 | Ship event: ONE `record-ship-event` per `/ship --train` invocation (a train finished across two invocations records two, each true of its own) | SKILL.md Step 7 |
+| T9 | Ship event: ONE `record-ship-event` per `/ship-checked --train` invocation (a train finished across two invocations records two, each true of its own) | SKILL.md Step 7 |
 
 ## Refusals in `plan` and `land`
 

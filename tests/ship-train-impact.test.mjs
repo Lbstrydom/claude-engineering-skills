@@ -11,7 +11,7 @@ import {
 const CLOSURE = new Set([
   'scripts/ship-commit.mjs',
   'scripts/lib/store/runs-findings.mjs',
-  '.claude/skills/ship/SKILL.md',
+  '.claude/skills/ship-checked/SKILL.md',
   'tests/fixtures/expected-schema.json',
   'supabase/migrations/20260101000000_x.sql',
 ]);
@@ -94,7 +94,7 @@ describe('classifyPrImpact', () => {
   });
 
   test('a rename OUT of the closure is urgent (the old endpoint is evaluated)', () => {
-    assert.equal(cls([{ status: 'R', path: 'docs/moved-away.md', oldPath: '.claude/skills/ship/SKILL.md' }]).tier, 'urgent');
+    assert.equal(cls([{ status: 'R', path: 'docs/moved-away.md', oldPath: '.claude/skills/ship-checked/SKILL.md' }]).tier, 'urgent');
   });
 
   test('a rename INTO the closure is urgent', () => {

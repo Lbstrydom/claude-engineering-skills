@@ -148,7 +148,7 @@ const EXPECTED_EXPORTS = [
   // plans-ship (22 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery + 1 CCR)
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
-  'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
+  'countUnlockedFixes', // denominator for the /ship-checked lock nudge — rows are LIMIT-capped (2026-07-29)
   'countAgedUnlockedFixes', // what the 14-day window DROPPED — the denominator's blind spot (2026-08-11)
   'countAgedUnremediatedAcceptances', // same, for the 30d ceiling + 7d floor (2026-08-11)
   'countAcceptedPermanent', // the DISPOSITION axis — decided, not forgotten (2026-08-11)
@@ -166,7 +166,7 @@ const EXPECTED_EXPORTS = [
   // arbitrary 20 cross-repo rows, so a real finding usually was not among
   // them AND its foreign repo_id could be written into a regression spec.
   'findUnlockedFixInRepo',
-  'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
+  'getUnremediatedAcceptances', // accepted-but-never-remediated /ship-checked nudge (2026-07-27)
   // remediation-state verification reconciler read side
   // (docs/plans/remediation-state-verification-reconciler.md) — a THIRD reader
   // over this view family, unbounded by age, ordered by the reconciler's OWN
@@ -222,7 +222,7 @@ const EXPECTED_EXPORTS = [
   'unnestReachabilityRows',
   // persona-test-candidates: RETIRED 2026-08-11 (migration 20260811070000).
   // WS-PIPE1's aggregation table was superseded by the regression_specs path
-  // /ship Step 5.6 actually promotes from. `git log -S` over every skill
+  // /ship-checked Step 5.6 actually promotes from. `git log -S` over every skill
   // surface returned 0 commits for all three CLI verbs across their entire
   // history, no FK referenced the table, nothing was ever promoted from it,
   // and its only two rows were smoke-test fixtures.
@@ -463,7 +463,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // its 10000-row pragma-reconciliation candidate pool is truncated,
     // rather than silently reconciling against a partial snapshot.
     // 178 → 179: getUnremediatedAcceptances added 2026-07-27 — reads the
-    // `unremediated_acceptances` view for /ship Step 0.5e. Sibling of
+    // `unremediated_acceptances` view for /ship-checked Step 0.5e. Sibling of
     // getUnlockedFixes one step earlier in the lifecycle: that one asks "this
     // was fixed — is the fix locked?", this asks "this was accepted — was it
     // ever fixed at all?". Measured that day: only 3 of 10 accepted
@@ -471,14 +471,14 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 179 → 180: recordFinalReviewFix — shadow A/B fix-outcome writeback
     // (the remediation axis this file's 178 → 179 entry exists to surface).
     // 180 → 181: countUnlockedFixes added 2026-07-29. getUnlockedFixes caps at
-    // LIMIT 20, so /ship counted its rows and reported "20" when the real
+    // LIMIT 20, so /ship-checked counted its rows and reported "20" when the real
     // backlog was 232 — and 113 of those were plan-mode findings that can
     // never carry a regression spec. The nudge needed a denominator it could
     // not compute from a capped row list.
     // 181 → 182: findUnlockedFixInRepo added 2026-07-30 (cross-tenant write fence).
     // 182 → 183: countUnremediatedAcceptances added 2026-07-31 — the SAME
     // capped-rows undercount as 180 → 181, in the sibling view, unnoticed
-    // because only the unlocked_fixes half was fixed. /ship reported "20"
+    // because only the unlocked_fixes half was fixed. /ship-checked reported "20"
     // against a real 129 and the operator was asked to plan work off it.
     // 183 → 184: resolveCandidateStatesByFingerprint added 2026-08-09
     // (docs/plans/learning-persona-quickfix-honest-failure.md item 7). It is the
@@ -492,7 +492,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // re-export, because this surface is store OPERATIONS and constants are
     // excluded by design.
     // 184 → 185: resolveNudgePage added 2026-08-10 (upstream report 96a829f8).
-    // Both /ship nudge readers now take `limit`/`offset` so their tail is
+    // Both /ship-checked nudge readers now take `limit`/`offset` so their tail is
     // reachable — a consumer measured 44 obligations of which 24 could not be
     // enumerated by ANY invocation, because `--limit` was a registered flag no
     // handler read. The clamp is exported rather than duplicated in the CLI so
@@ -600,7 +600,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 235 rows. Existence is not answerable in SQL, so the reader hands citations to the
     // caller and `classifyTestPath` resolves them.
     // 201 → 204: the WRITE half of the dangling-lock loop (upstream 429683ac,
-    // 2026-09-07). `getRecordedSpecPaths` above gave /ship the ability to REPORT
+    // 2026-09-07). `getRecordedSpecPaths` above gave /ship-checked the ability to REPORT
     // a lock whose test file is gone; nothing could act on the report.
     // `lock-with-test` refuses an already-locked finding, and
     // `recordRegressionSpec` cannot re-point one either — its unit-test arbiter

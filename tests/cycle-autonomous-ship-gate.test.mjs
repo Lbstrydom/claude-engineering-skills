@@ -3,7 +3,7 @@
  * unless `--ship` is passed.
  *
  * ai-organiser, 2026-11-15: an autonomous run whose brief said "do not push"
- * pushed and opened PR #111, and a side session it started opened #112. `/ship`
+ * pushed and opened PR #111, and a side session it started opened #112. `/ship-checked`
  * itself was already uninvocable (`disable-model-invocation`), but nothing in the
  * skill stopped the agent from running `git push` / `gh pr create` directly, and
  * Step 7 even opened with "A pushed PR: …" as if pushing were routine.

@@ -2,7 +2,7 @@
  * @fileoverview The SQL half of keyset paging for the /ship-nudge readers
  * (`getUnlockedFixes`, `getUnremediatedAcceptances`) — against real Postgres.
  *
- * The defect (audit finding 5fbd8fec): /ship's workflow closes rows between
+ * The defect (audit finding 5fbd8fec): /ship-checked's workflow closes rows between
  * page reads, and `OFFSET` counts positions in a set that has since shrunk, so
  * page 2 skipped one unread row per row closed on page 1. The cursor predicate
  * continues strictly after the last row READ, which a removed row cannot move.
@@ -89,7 +89,7 @@ describe('nudge readers — keyset paging survives rows closed between reads (di
       // `after` would pass the post-close assertion below by returning the new
       // first page, which happens to be the right answer there).
       assert.deepEqual(ids(await read({ after: cursorOf('unremediated', page1[1]) })), before.slice(2, 4));
-      // Close page 1 the way /ship does — the rows leave the view.
+      // Close page 1 the way /ship-checked does — the rows leave the view.
       await pool.query(`UPDATE audit_findings SET remediation_state = 'fixed' WHERE id = ANY($1::uuid[])`, [ids(page1)]);
       try {
         const viaOffset = ids(await read({ offset: 2 }));

@@ -152,7 +152,7 @@ export function getActiveStoreDescriptor() {
  * The `last_audited_at` write, in ONE place.
  *
  * Only a profile-bearing call is a real audit. A profile-less call is a pure id
- * lookup (cross-skill reads, /ship, persona-test) and must not touch the
+ * lookup (cross-skill reads, /ship-checked, persona-test) and must not touch the
  * column, or "last audited" degrades into "last touched" on every read
  * (Gemini-r2 finding). Spreading `{}` omits the column entirely.
  *

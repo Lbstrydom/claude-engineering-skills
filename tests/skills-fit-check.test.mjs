@@ -137,8 +137,8 @@ describe('applyRules — Next.js + Playwright fixture', () => {
   const profile = detectShape(fixture('nextjs-with-playwright'));
   const verdicts = applyRules(profile);
 
-  it('/plan, /audit-plan, /audit-code, /ship → FITS', () => {
-    for (const skill of ['/plan', '/audit-plan', '/audit-code', '/ship']) {
+  it('/plan, /audit-plan, /audit-code, /ship-checked → FITS', () => {
+    for (const skill of ['/plan', '/audit-plan', '/audit-code', '/ship-checked']) {
       assert.equal(verdictFor(verdicts, skill).label, 'FITS', skill);
     }
   });
@@ -230,8 +230,8 @@ describe('applyRules — Obsidian plugin (ai-organiser shape)', () => {
     assert.equal(v.label, 'MISMATCH');
     assert.match(v.reason, /HTTP boundary/);
   });
-  it('/ship Step 5.6 → MISMATCH (depends on consistency adoption)', () => {
-    assert.equal(verdictFor(verdicts, '/ship Step 5.6 (consistency promotion)').label, 'MISMATCH');
+  it('/ship-checked Step 5.6 → MISMATCH (depends on consistency adoption)', () => {
+    assert.equal(verdictFor(verdicts, '/ship-checked Step 5.6 (consistency promotion)').label, 'MISMATCH');
   });
 });
 

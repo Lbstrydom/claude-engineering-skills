@@ -1,8 +1,8 @@
 ---
-summary: Why /ship's own flow is shaped as it is — the explicit-invocation bar, numbering, and Steps 0.5b-6.8 rationale.
+summary: Why /ship-checked's own flow is shaped as it is — the explicit-invocation bar, numbering, and Steps 0.5b-6.8 rationale.
 ---
 
-# /ship flow rationale — moved out of SKILL.md
+# /ship-checked flow rationale — moved out of SKILL.md
 
 `SKILL.md` keeps each rule in one line at the step that applies it. This file
 carries the reasoning and history those lines were cut from, verbatim. Read a

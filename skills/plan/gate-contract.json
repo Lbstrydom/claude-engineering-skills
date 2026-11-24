@@ -55,7 +55,8 @@
     {
       "line": "server, where the repo registers it. Pass the block as",
       "reason": "Descriptive design-rationale prose (the \"why\" behind a fix or contract), not a claim that this skill's own execution enforces anything. Enforcement-verb words appear because the prose explains a defect or a rule in English, the same class as the pre-existing ignoredCandidates entries in this file."
-    },{
+    },
+    {
       "line": "- **MCP not available** → **skip and proceed, never fail.** The Mermaid MCP",
       "reason": "Phase 6.5 optional-validation prose: when the Mermaid MCP is absent the model skips validation, says so once and proceeds, never failing. It is behaviour the model follows while authoring; /plan has no CLI, so no exit code can assert it, and nothing refuses or blocks (the point is that nothing does). Same class as the neighbouring Phase 6.5 entries."
     },
@@ -126,6 +127,10 @@
     {
       "line": "| `references/campaign.md` | Campaign mode — the C1-C12 contract an evaluation or test campaign plan must carry, and the dress-rehearsal gate. | `--campaign` was passed, OR the plan's output is a measurement (eval, test set, experiment). |",
       "reason": "Reference-index row (summary byte-matches the reference frontmatter). The contract it names is enforced by scripts/campaign-contract-check.mjs, run by /audit-plan, and tested by tests/campaign-contract.test.mjs; the row itself is an index entry."
+    },
+    {
+      "line": "**Section 10 acceptance criteria are what `/ux-lock verify` grades** for frontend/full-stack — a **report, not a gate**: verify exits 0 even when criteria fail, and `/ship-checked` does not read `plan_satisfaction`. Write them to be gradeable, not because they block a ship (they don't)",
+      "reason": "Rename 2026-11-24 (/ship -> /ship-checked): the enforcement-verb match is the \"check\" inside the skill NAME ship-checked, not a gate this skill enforces. The sentence was dispositionless before the rename because it named /ship; its meaning is unchanged."
     }
   ]
 }

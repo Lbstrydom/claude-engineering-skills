@@ -1,7 +1,7 @@
 /**
  * @fileoverview What a RECORD commit may contain — `ship-commit.mjs --record` (docs/plans/ship-record-catchup.md §2.6).
  *
- * The record half of /ship has no gate to launder: it writes the session log and nothing else. So an agent may commit it
+ * The record half of /ship-checked has no gate to launder: it writes the session log and nothing else. So an agent may commit it
  * under a standing decision — but only if the commit IS a record. That is decided here, from the change itself judged
  * against HEAD, never from the path names or the decision: the decision is a declaration (no code can verify a user's
  * origin), the scope check below is the safety. Merging the record PR stays the user's.

@@ -28,6 +28,7 @@ import { getPersonaSessionWindowCounts } from './persona.mjs';
 import { getNavAuditWindowCounts } from './nav-audit.mjs';
 import { getRegressionSpecWindowCounts } from './regression-specs.mjs';
 import { getFleetEventWindowCounts } from './fleet-events.mjs';
+import { canonicalSkillName } from '../skill-reserved-names.mjs';
 
 /** The eight read-only/meta skills whose ONLY signal is the git trailer proxy.
  *  harness-retro has no table (v1 writes only local artifacts), so its usage signal
@@ -38,14 +39,14 @@ const TRAILER_ONLY_SKILLS = Object.freeze([
 ]);
 
 /** Skills with a DB table, in the order their rows are built. */
-const DB_SKILLS = Object.freeze(['audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock', 'fleet']);
+const DB_SKILLS = Object.freeze(['audit-code', 'audit-plan', 'plan', 'ship-checked', 'persona-test', 'nav-audit', 'ux-lock', 'fleet']);
 
 /** No DB table at all, by deliberate design; still get a trailer-proxy fallback row. */
 const NO_TABLE_SKILLS = Object.freeze(['click-test', 'visual-audit']);
 
 /** All eighteen skill names, in the bundle's own documented order. */
 export const ALL_SKILLS = Object.freeze([
-  'audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock',
+  'audit-code', 'audit-plan', 'plan', 'ship-checked', 'persona-test', 'nav-audit', 'ux-lock',
   'click-test', 'visual-audit',
   ...TRAILER_ONLY_SKILLS, 'fleet',
 ]);
@@ -108,7 +109,8 @@ export function parseTrailerCommits(root) {
     );
     const commits = out.split('\n').filter(Boolean).map((line) => {
       const [sha, committerDate, trailerField] = line.split('\t');
-      const skills = (trailerField || '').split('\x1f').map((s) => s.trim()).filter(Boolean);
+      // Legacy names fold onto today's (`AI-Skill: ship` → ship-checked): history keeps the old value.
+      const skills = (trailerField || '').split('\x1f').map((s) => canonicalSkillName(s)).filter(Boolean);
       return { sha, committerDate, skills };
     });
     return { ok: true, commits };
@@ -226,10 +228,10 @@ const SKILL_BUILDERS = {
       effectiveSince: null, counts, caveat: 'row count of plans authored via /plan; excludes skill=\'manual\' rows.',
     });
   },
-  async ship({ repoId, bounds }) {
+  async 'ship-checked'({ repoId, bounds }) {
     const counts = await getShipEventWindowCounts(repoId, bounds);
     return dbRow({
-      skill: 'ship', signalSource: 'ship_events', signalQuality: 'caller-checked',
+      skill: 'ship-checked', signalSource: 'ship_events', signalQuality: 'caller-checked',
       effectiveSince: null, counts, caveat: 'row count of recorded ship outcomes.',
     });
   },

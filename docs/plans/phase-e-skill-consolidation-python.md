@@ -98,7 +98,7 @@ copy, verification happens via normal skill invocation in any repo (see §4).
 
 1. **plan-backend**: copy `~/.claude/skills/plan-backend/SKILL.md` → `skills/plan-backend/SKILL.md` verbatim
 2. **plan-frontend**: copy → `skills/plan-frontend/SKILL.md` verbatim
-3. **ship**: copy → `skills/ship/SKILL.md` verbatim
+3. **ship**: copy → `skills/ship-checked/SKILL.md` verbatim
 4. **audit**: copy → `skills/audit/SKILL.md` verbatim
 5. **audit-loop**: copy `.claude/skills/audit-loop/SKILL.md` → `skills/audit-loop/SKILL.md` verbatim (this is the only skill already in the repo)
 
@@ -378,7 +378,7 @@ repo changes.
 | `skills/audit-loop/SKILL.md` | **Copy** from `.claude/skills/audit-loop/SKILL.md` (already in repo) |
 | `skills/plan-backend/SKILL.md` | **Copy** from `~/.claude/skills/plan-backend/SKILL.md` + add Python profile |
 | `skills/plan-frontend/SKILL.md` | **Copy** from `~/.claude/skills/plan-frontend/SKILL.md` + add Python profile |
-| `skills/ship/SKILL.md` | **Copy** from `~/.claude/skills/ship/SKILL.md` + add Python profile |
+| `skills/ship-checked/SKILL.md` | **Copy** from `~/.claude/skills/ship-checked/SKILL.md` + add Python profile |
 | `skills/audit/SKILL.md` | **Copy** from `~/.claude/skills/audit/SKILL.md` + add Python profile |
 | `package.json` | Rename `name` field: `claude-audit-loop` → `claude-engineering-skills` |
 | `README.md` | Rewrite for bundle scope + link to mega-plan + Python support |
@@ -414,7 +414,7 @@ loads in practice, the operator must manually sync once:
 # One-time manual install (Phase F automates this)
 cp skills/plan-backend/SKILL.md ~/.claude/skills/plan-backend/SKILL.md
 cp skills/plan-frontend/SKILL.md ~/.claude/skills/plan-frontend/SKILL.md
-cp skills/ship/SKILL.md ~/.claude/skills/ship/SKILL.md
+cp skills/ship-checked/SKILL.md ~/.claude/skills/ship-checked/SKILL.md
 cp skills/audit/SKILL.md ~/.claude/skills/audit/SKILL.md
 ```
 

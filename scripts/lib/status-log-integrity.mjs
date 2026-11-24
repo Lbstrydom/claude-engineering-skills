@@ -18,7 +18,7 @@
  *
  * **Why two laws, not one.** "No digest may disappear" would ban appending to
  * the current entry, because a full-span digest changes on every edit. That is
- * ordinary work — and this repo's own `/ship` appends a backlog line to the
+ * ordinary work — and this repo's own `/ship-checked` appends a backlog line to the
  * entry it just wrote. So:
  *   - **archived** entries (frozen, in `docs/status/`) — exact digest identity;
  *   - **root** entries (live) — heading-presence plus append-only: a retained
@@ -85,7 +85,7 @@ export function monthOf(entry) {
  * The law for a LIVE entry is *nothing is removed*, not *text may only be added
  * at the very end*. A real append lands inside the entry — above its trailing
  * `---` separator — so a literal `startsWith` check would reject the ordinary
- * case it is meant to allow, including `/ship`'s own Step 2b backlog line.
+ * case it is meant to allow, including `/ship-checked`'s own Step 2b backlog line.
  *
  * A subsequence check permits insertion anywhere while still catching deletion
  * and rewriting, which is exactly the property worth guarding. Blank lines are

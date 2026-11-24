@@ -92,12 +92,12 @@ const CLI_SMOKE_SET = [
   'own-model-coverage.mjs', // own-model telemetry coverage gate — resolves config/fixture/migrations by LAYOUT; declared in sync-entry-lists.mjs
   'capture-completeness.mjs', // own-model capture report/canary/ledger flush, run against the consumer's own store; declared in sync-entry-lists.mjs CORE_ENTRY
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
-  'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
+  'ship-commit.mjs', // deterministic /ship-checked commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'ship-record.mjs', // ship record catch-up; declared in sync-entry-lists.mjs CORE_ENTRY (verified before adding); fleet spawns it as a sibling
   'test-evidence.mjs', // hash-bound test-evidence record/check; declared in sync-to-repos.mjs
   'ensure-branch-protection.mjs', // strengthen-only main-branch ruleset tool — declared in sync-to-repos.mjs entries; a cloned consumer self-applies
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
-  'remediation-reconcile.mjs', // remediation-state verification reconciler — spawned by maintenance-checks.mjs AND /ship Step 0.5e (the call lives in skills/ship/SKILL.md, NOT in lib/cross-skill/commands/ship.mjs; a consumer grepped the .mjs, found nothing, and reported the cadence as dropped); declared in sync-to-repos.mjs CORE_ENTRY
+  'remediation-reconcile.mjs', // remediation-state verification reconciler — spawned by maintenance-checks.mjs AND /ship-checked Step 0.5e (the call lives in skills/ship-checked/SKILL.md, NOT in lib/cross-skill/commands/ship.mjs; a consumer grepped the .mjs, found nothing, and reported the cadence as dropped); declared in sync-to-repos.mjs CORE_ENTRY
   // Self-hosted-runner doctor — already declared in sync-to-repos.mjs (plan's
   // Context Summary); its --selfcheck-relocation handler existed but was
   // unverified in consumers until Cluster B (self-hosted-runner-management.md).

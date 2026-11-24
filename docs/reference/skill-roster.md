@@ -35,7 +35,7 @@ deploy to Railway / live URL
 /click-test + /persona-test + /nav-audit + /visual-audit → four lenses: page DOM ∥ journey narrative ∥ system IA/nav ∥ paint/visual
   (structural)  (narrative)   (system)    (paint)        Disjoint coverage — run on UI PRs. nav-audit + visual-audit are static (--verify <url> confirms against the live app).
         ↓
-/ship                            → commit + push (with UX P0 warning from persona-test)
+/ship-checked                            → commit + push (with UX P0 warning from persona-test)
 ```
 
 Which lens, not how it works — every mode, flag and mechanism is in the roster:

@@ -1,17 +1,17 @@
 ---
-summary: Record catch-up — /ship's record half for PRs merged without it: one entry per PR, docs-only commit, human merge.
+summary: Record catch-up — the ship record for PRs merged without it: one entry per PR, docs-only commit, human merge.
 ---
 
 # Record catch-up (`ship-record.mjs`)
 
-Fleet coordinators land PRs with `gh pr merge` or `fleet land`, which bypasses `/ship`, so its **record half** — the
+Fleet coordinators land PRs with `gh pr merge` or `fleet land`, which bypasses `/ship-checked`, so its **record half** — the
 session-log entry, the plan's Implementation Log line, the `Backlog:` line and the `ship_event` — never happens (measured
 2026-11-16: storyline's `status.md` untouched for 325 commits, wine-cellar-app's for 394). `ship-record.mjs` does the record
-half on its own, **without** `/ship`'s push or merge authority: it only CREATES files under `docs/status/entries/`.
+half on its own, **without** `/ship-checked`'s push or merge authority: it only CREATES files under `docs/status/entries/`.
 
 **A chip that shipped itself** (`ship-commit.mjs --preauthorised`) needs no entry here: its own ship commit added its status entry
 file (the only change a re-check allows after the audit), and the plan's Implementation Log line is added HERE, after the merge. A coordinator can re-check such a head with
-`ship-commit.mjs --check-shipped-head`; landing a whole batch from it is still pending (a follow-up PR). `/ship` stays user-only.
+`ship-commit.mjs --check-shipped-head`; landing a whole batch from it is still pending (a follow-up PR). `/ship-checked` stays user-only.
 
 ## Who runs it
 
@@ -74,7 +74,7 @@ node scripts/fleet.mjs decision record --scope record-catchup --words-file -
 captured before you started, `$ENTRY` each file (one `--path` per file):
 
 ```bash
-node scripts/ship-commit.mjs --record --decision $DECISION --gate not-run --no-run-id --skill ship --models claude --message-file - --expect-head $HEAD_SHA --expect-branch $BRANCH --path $ENTRY
+node scripts/ship-commit.mjs --record --decision $DECISION --gate not-run --no-run-id --skill ship-checked --models claude --message-file - --expect-head $HEAD_SHA --expect-branch $BRANCH --path $ENTRY
 ```
 
 Pass one `--path` per file the record commit carries — every new entry file (per-PR, run, floor, the init marker) and
@@ -87,11 +87,11 @@ merge, a push or an override.
 
 ## ship_event
 
-Per recorded PR: outcome `warned`, `blockReasons: ["merged-without-ship"]` — never `shipped`, which would claim /ship's gates
+Per recorded PR: outcome `warned`, `blockReasons: ["merged-without-ship"]` — never `shipped`, which would claim /ship-checked's gates
 ran. Reconciled every run (a lost write is retried). **At-least-once**: count these by `(repo_id, commit_sha)`; database
 uniqueness is the prerequisite before any reader decides on their cardinality.
 
-## Why `/ship --train` stays source-repo-gated
+## Why `/ship-checked --train` stays source-repo-gated
 
 It would not fix the cause: `--train` is still human-typed, and its consumer value was the record half (this) and squash
 trailers (now measured per entry: `Squash-commit trailers: …`). Lifting it means syncing ship-train, its store reader and fleet's

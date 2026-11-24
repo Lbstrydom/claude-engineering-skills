@@ -310,7 +310,7 @@ test('collectCli entry points: a reference file counts, a missing file and opt-o
     writePkg(tmp, { x: 'node scripts/x.mjs' });
     touchScript(tmp, 'scripts/ship-commit.mjs');
     writeSkill(tmp, 'ship', 'no commands here', {
-      'step6.md': 'node scripts/ship-commit.mjs --skill ship\nnode scripts/ghost.mjs',
+      'step6.md': 'node scripts/ship-commit.mjs --skill ship-checked\nnode scripts/ghost.mjs',
     });
     const names = collectCli(tmp).entries.filter((e) => e.kind === 'entry-point').map((e) => e.name);
     assert.deepEqual(names, ['scripts/ship-commit.mjs'], 'a named script that does not exist is not listed');

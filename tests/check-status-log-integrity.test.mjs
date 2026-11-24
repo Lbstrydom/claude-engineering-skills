@@ -10,7 +10,7 @@
  *   - counting instead of identity (delete N, invent N, total unchanged);
  *   - digesting the heading instead of the entry (gut the body, heading kept);
  *   - banning appends (which would block ordinary work — and this repo's own
- *     /ship appends a backlog line to the entry it just wrote);
+ *     /ship-checked appends a backlog line to the entry it just wrote);
  *   - trusting the manifest that vouches for the archives (delete an archive
  *     AND its record together, and every other law still passes).
  *
@@ -96,7 +96,7 @@ describe('checkConservation — PR #87', () => {
 
 describe('checkConservation — appending is ordinary work', () => {
   test('APPENDING to the newest entry PASSES', () => {
-    // /ship itself does this: Step 2 writes the entry, Step 2b appends a
+    // /ship-checked itself does this: Step 2 writes the entry, Step 2b appends a
     // Backlog line. A naive "no digest may disappear" rule would ban it.
     const appended = LOG.replace('## 2026-09-03 — work\n\nnewest\n',
       '## 2026-09-03 — work\n\nnewest\nBacklog 2026-09-04T09:14Z: Q1 26c/25p\n');
@@ -434,7 +434,7 @@ describe('an empty commit range is not an empty comparison', () => {
    *
    * `perEntry` adds the marker + one entry record, reproducing THIS repo's
    * current layout, and leaves HEAD on a fresh branch with no upstream — the
-   * exact shape a `/ship` is in when `guards:preflight` runs: branch cut at the
+   * exact shape a `/ship-checked` is in when `guards:preflight` runs: branch cut at the
    * default-branch tip, new status entry on disk, nothing committed yet.
    */
   const makeFixture = ({ perEntry = false } = {}) => {
@@ -521,7 +521,7 @@ describe('an empty commit range is not an empty comparison', () => {
 
   test('THE FIX, other way — empty range, a legal APPEND on disk PASSES', () => {
     // The gate must not simply fail whenever the tree is dirty: appending is
-    // ordinary work (this repo's own /ship appends), and a gate that blocked it
+    // ordinary work (this repo's own /ship-checked appends), and a gate that blocked it
     // would be a worse regression than the one being fixed.
     const { work } = fixture;
     try {
@@ -559,7 +559,7 @@ describe('an empty commit range is not an empty comparison', () => {
    * `origin/main` IS HEAD at that moment. An explicit base does not help: the
    * gate is being asked before HEAD has moved past the branch point.
    *
-   * That is not a rare state. It is every CES `/ship`: branch cut at the
+   * That is not a rare state. It is every CES `/ship-checked`: branch cut at the
    * default-branch tip, the new status entry written to disk, preflight run
    * BEFORE the commit. A gate exiting 2 is `EXIT_CANNOT_RUN`
    * (scripts/lib/guards-preflight.mjs), so preflight counted it unmeasured.
@@ -567,7 +567,7 @@ describe('an empty commit range is not an empty comparison', () => {
    * After the fix the entry on disk IS the delta, so the gate measures — and
    * the three negative controls below prove that measurement is not vacuous.
    */
-  describe('the live /ship shape: fresh branch, new entry on disk, nothing committed', () => {
+  describe('the live /ship-checked shape: fresh branch, new entry on disk, nothing committed', () => {
     let ship;
     before(() => { ship = makeFixture({ perEntry: true }); });
     after(() => {

@@ -361,7 +361,7 @@ async function collectPersonaTests(root) {
       correlations = { total: corr.total, byType: corr.byType };
     }
 
-    // The OUTCOME LEDGER for the latest session — the same summary /ship and the CLI read. Raw
+    // The OUTCOME LEDGER for the latest session — the same summary /ship-checked and the CLI read. Raw
     // session counts alone made fixed-and-labelled P1s read as still open (persona-test
     // 2026-10-10). A failed read is said, never rendered as zero.
     let outcomes;

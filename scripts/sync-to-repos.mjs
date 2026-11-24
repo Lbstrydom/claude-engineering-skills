@@ -1417,8 +1417,8 @@ async function main() {
       priorFiles, intendedDests, toolingDir: LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR,
       exists: (rel) => fs.existsSync(path.join(repo.path, rel)),
       probe: (rel) => hashConsumerFile(repo.path, rel), // a retired file the consumer EDITED is held, as the write path never overwrites one
-      // Retired migrations (.audit-loop/migrations/): unedited -> deleted, edited or override-declared -> held (lib/sync-gc.mjs).
-      retirePrefixes: [LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX],
+      // Retired migrations and synced skills (e.g. ship -> ship-checked): unedited -> deleted, edited/declared -> held (lib/sync-gc.mjs).
+      retirePrefixes: [LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX, LAYOUT_CONSTANTS.SKILLS_DEST_PREFIX],
       isDeclaredDivergence: (rel) => matchOverride(rel, overridesDoc.overrides) != null,
     });
     const { orphanedTracked } = gcPlan;
@@ -1438,7 +1438,7 @@ async function main() {
     if (gcRun.length && DRY_RUN) {
       console.log(`  ${D}gc dry-run: ${gcRun.length} file(s) would be deleted${X}`);
     } else if (gcRun.length) {
-      gcResult = executeGarbageCollection({ root: repo.path, deletions: gcRun, expectHash: Object.fromEntries(gcRun.map((rel) => [rel, gcPlan.probedHash[rel]])) });
+      gcResult = executeGarbageCollection({ root: repo.path, deletions: gcRun, expectHash: Object.fromEntries(gcRun.map((rel) => [rel, gcPlan.probedHash[rel]])), pruneEmptyDirsUnder: [LAYOUT_CONSTANTS.SKILLS_DEST_PREFIX] });
       repoGcDeletions = gcResult.deleted.length;
       if (repoGcDeletions) console.log(`  ${D}gc: removed ${repoGcDeletions} stale file(s)${X}`);
       for (const rel of gcResult.deleted) if (gcPlan.divergedHeld.includes(rel)) receiptDivergedOverwritten.push({ path: rel, reason: 'diverged-retired-upstream' });

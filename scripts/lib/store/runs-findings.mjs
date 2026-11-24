@@ -1701,7 +1701,7 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50, after = n
       // `f.remediation_state` (final-review-credit-and-cheap-shadow §2.1): the
       // outcome classification reads BOTH axes, and this projection carried only
       // `user_action`. Without it a fixed-but-unadjudicated finding is
-      // indistinguishable from a never-touched one — so the `/ship` credit card
+      // indistinguishable from a never-touched one — so the `/ship-checked` credit card
       // would either nag about a shipped fix forever or hide it by widening the
       // filter. One column; no new function.
       `SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
@@ -2455,7 +2455,7 @@ async function projectRemediationState(repoId, findingId, state, { resolvedRound
     // user_action NULL**, which is why the credit for a real catch lands in
     // a source comment and the audit's tail reads as noise. A shipped fix
     // is evidence the finding was real, which is exactly the inference
-    // `/ship` Step 6.7's card already offers a human ("`accepted` only for a
+    // `/ship-checked` Step 6.7's card already offers a human ("`accepted` only for a
     // fixed-but-unlabelled one").
     //
     // The NULL/`needs_triage` guard is the same one the `needs_triage` and

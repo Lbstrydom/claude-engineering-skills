@@ -7,7 +7,7 @@ summary: Python pre-push command discovery — env wrapper detection + per-tool 
 Applied when `detect-stack` reports `stack: 'python'` or `'mixed'` with
 Python files in the diff. The environment manager must be detected FIRST,
 then tools are probed THROUGH that wrapper so the discovered commands are
-the ones `/ship` can actually execute.
+the ones `/ship-checked` can actually execute.
 
 ## Detection order
 

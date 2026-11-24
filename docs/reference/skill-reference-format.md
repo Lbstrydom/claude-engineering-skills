@@ -46,7 +46,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
-| `references/interop.md` | How this skill feeds /audit-loop, /ship, /plan-*. | The user asks about cross-skill effects, OR you need to emit a correlation row. |
+| `references/interop.md` | How this skill feeds /audit-loop, /ship-checked, /plan-*. | The user asks about cross-skill effects, OR you need to emit a correlation row. |
 | `references/troubleshooting.md` | Recovery from mid-session failures. | A tool call fails twice in a row, OR the user asks "what went wrong". |
 ```
 
@@ -67,7 +67,7 @@ to its row in the parent `SKILL.md` reference-index.
 
 ```markdown
 ---
-summary: How this skill feeds /audit-loop, /ship, /plan-*.
+summary: How this skill feeds /audit-loop, /ship-checked, /plan-*.
 ---
 
 # Rest of the reference file…
@@ -97,7 +97,7 @@ loaded?"** in a way Claude can detect at runtime.
 
 ### Good triggers
 
-- "The user asks how this skill interacts with /ship"
+- "The user asks how this skill interacts with /ship-checked"
 - "Step 4 fails twice in a row"
 - "About to generate the debrief section"
 - "Plan includes modal interactions"

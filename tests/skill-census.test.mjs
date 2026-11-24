@@ -71,7 +71,7 @@ describe('ALL_SKILLS — the 18-skill roster is exhaustive and has no duplicates
   });
 
   it('includes every DB-backed skill named in the plan\'s contract table', () => {
-    for (const s of ['audit-code', 'audit-plan', 'plan', 'ship', 'persona-test', 'nav-audit', 'ux-lock']) {
+    for (const s of ['audit-code', 'audit-plan', 'plan', 'ship-checked', 'persona-test', 'nav-audit', 'ux-lock']) {
       assert.ok(ALL_SKILLS.includes(s), `missing DB-backed skill: ${s}`);
     }
   });

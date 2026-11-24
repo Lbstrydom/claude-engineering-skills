@@ -95,7 +95,7 @@
           "scripts/check-skill-frontmatter.mjs"
         ],
         "overlay": {
-          "skills/ship/SKILL.md": "tests/fixtures/poison/skill-frontmatter-indented-key.md"
+          "skills/ship-checked/SKILL.md": "tests/fixtures/poison/skill-frontmatter-indented-key.md"
         },
         "expectExit": 1,
         "expectStderr": "indented under a block scalar",

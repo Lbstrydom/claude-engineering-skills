@@ -2,7 +2,7 @@
  * @fileoverview "N merged PRs unrecorded" — the ship record catch-up's nudge in `fleet status`, `fleet next` and after
  * `fleet land` (docs/plans/ship-record-catchup.md §2.7).
  *
- * Coordinators land PRs without /ship, so the session log goes stale with nobody noticing (storyline's sat untouched for
+ * Coordinators land PRs without /ship-checked, so the session log goes stale with nobody noticing (storyline's sat untouched for
  * 325 commits). This puts the count where the coordinator already looks.
  *
  * **fleet never imports the ship domain** (`allowedDeps`: fleet → shared-lib only). `status` runs the SIBLING CLI
@@ -209,4 +209,4 @@ export function invalidateRecordCache(cacheDir, now) {
 export const recordCommandFor = (fleetCmd) => String(fleetCmd ?? 'node scripts/fleet.mjs').replace(/fleet\.mjs(["']?)$/, 'ship-record.mjs$1');
 
 /** The line `fleet land` prints after a merge: the count is stale the moment a PR lands, so it names the action, not a number. */
-export const LAND_RECORD_NUDGE = (recordCmd, fleetCmd) => `records: this landing merged PR(s) without /ship — record them: \`${recordCmd} catchup --write\` (coordinator); \`${fleetCmd} status\` re-measures`;
+export const LAND_RECORD_NUDGE = (recordCmd, fleetCmd) => `records: this landing merged PR(s) without /ship-checked — record them: \`${recordCmd} catchup --write\` (coordinator); \`${fleetCmd} status\` re-measures`;

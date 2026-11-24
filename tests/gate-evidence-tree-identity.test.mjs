@@ -122,8 +122,8 @@ describe('E1 — a foreign commit after the audit does not defeat content identi
   it('validateTrailerInput: stale-but-content-verifiable evidence does not force --gate not-run', () => {
     const evidence = staleEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main' }));
     const { ok, errors, values } = validateTrailerInput(
-      { skill: 'ship', modelsRaw: 'claude', gate: 'converged', evidence },
-      { skillNames: ['ship'] },
+      { skill: 'ship-checked', modelsRaw: 'claude', gate: 'converged', evidence },
+      { skillNames: ['ship-checked'] },
     );
     assert.equal(ok, true, `expected no validation errors, got: ${JSON.stringify(errors)}`);
     assert.equal(values.runId, RUN_ID, 'the run backing the claim is still attached to the trailer');
@@ -132,8 +132,8 @@ describe('E1 — a foreign commit after the audit does not defeat content identi
   it('validateTrailerInput: stale WITHOUT auditedTree still forces --gate not-run', () => {
     const evidence = staleEvidence({ runId: RUN_ID, sid: 'audit-1', round: 1, ts: new Date().toISOString() });
     const { ok, errors } = validateTrailerInput(
-      { skill: 'ship', modelsRaw: 'claude', gate: 'converged', evidence },
-      { skillNames: ['ship'] },
+      { skill: 'ship-checked', modelsRaw: 'claude', gate: 'converged', evidence },
+      { skillNames: ['ship-checked'] },
     );
     assert.equal(ok, false);
     assert.match(errors[0].custom, /no fresh audit evidence exists/);

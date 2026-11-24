@@ -317,7 +317,7 @@ export function exitCodeFor(results) {
   return 0;
 }
 
-/** The text a `/cycle` done report or a `/ship` summary pastes: one line per PR, one per check. */
+/** The text a `/cycle` done report or a `/ship-checked` summary pastes: one line per PR, one per check. */
 export function renderReport(results) {
   const lines = [];
   for (const r of results) {

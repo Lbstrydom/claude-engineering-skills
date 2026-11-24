@@ -185,7 +185,7 @@ a `status.md` entry, a plan's status/audit trail with figures), every figure mus
 carry `measured`/`derived`/`expected` and the command or artifact it came from,
 and every line citation is pinned (`node scripts/check-doc-citations.mjs <doc>`,
 existing). An untraceable figure is fixed or settled with `/investigate` before
-the commit. Detail in `skills/ship/references/claims-check.md`; the campaign
+the commit. Detail in `skills/ship-checked/references/claims-check.md`; the campaign
 close-out (§2.4 C11) points at the same step.
 
 ### 2.4 Campaign mode on `/plan` + `/audit-plan` checks
@@ -282,7 +282,7 @@ close-out (§2.4 C11) points at the same step.
 | `skills/fleet/SKILL.md`, `references/background-runs.md` | (modify/create) |
 | `skills/plan/SKILL.md`, `references/campaign.md` | (modify/create) |
 | `skills/audit-plan/SKILL.md` | (modify) campaign check step |
-| `skills/ship/SKILL.md`, `references/claims-check.md` | (modify/create) Step 1.5 |
+| `skills/ship-checked/SKILL.md`, `references/claims-check.md` | (modify/create) Step 1.5 |
 | `docs/reference/environment-variables.md` | (modify) `AUDIT_CANARY` |
 | `tests/run-heartbeat.test.mjs`, `tests/audit-canary.test.mjs`, `tests/campaign-contract.test.mjs`, `tests/ship-claims-check-step.test.mjs` | (create) |
 | `.skill-size-baseline.json` | (modify) re-baseline shrinks |

@@ -114,7 +114,7 @@ is logged and ignored.
 It's an advisory
 **nudge, never a gate** — the user chooses. The browser lenses (persona/click/nav/visual)
 run against the **deployed** app, so at audit time they're "worth running after you
-deploy"; `/ship` surfaces them again when the app is live. Ranked by leverage
+deploy"; `/ship-checked` surfaces them again when the app is live. Ranked by leverage
 (unguarded HIGH fix → theme → nav → semantic-DOM → journey), capped at 2, and it
 never re-suggests a lens already covered for this commit.
 

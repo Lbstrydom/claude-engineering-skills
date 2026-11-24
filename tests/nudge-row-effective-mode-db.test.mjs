@@ -93,7 +93,7 @@ describe('nudge rows carry the effective mode their counts use (disposable DB)',
     if (savedUrl === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = savedUrl;
   });
 
-  /** The reconciliation a /ship consumer performs: fold the listing, compare to the count. */
+  /** The reconciliation a /ship-checked consumer performs: fold the listing, compare to the count. */
   function assertReconciles(rows, counts, label) {
     // Negative control first: the fixture must actually contain the disagreement.
     const recordedCode = rows.filter((r) => r.audit_mode === 'code');

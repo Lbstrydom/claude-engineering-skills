@@ -78,7 +78,7 @@ describe('unlocked-fix store boundary — global access must be ASKED for', () =
     });
     // Added 2026-07-30: this reader kept the pre-fix `if (repoId) … else every
     // repository` shape for three days after its siblings were fenced, and
-    // /ship Step 0.5e calls it with no flags at all.
+    // /ship-checked Step 0.5e calls it with no flags at all.
     it(`getUnremediatedAcceptances rejects ${label}`, async () => {
       await assert.rejects(() => getUnremediatedAcceptances(arg), /explicit scope is required/);
     });
@@ -168,8 +168,8 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
     for (const e of declared) {
       assert.ok(e, 'a nudge command vanished from the registry');
       assert.equal(e.scope, 'global-optin',
-        `${e.name} must scope. The worksheet is the command /ship PRINTS as its remediation, and the `
-        + 'acceptance backlog is a second /ship step that shipped unscoped for three days — leaving any '
+        `${e.name} must scope. The worksheet is the command /ship-checked PRINTS as its remediation, and the `
+        + 'acceptance backlog is a second /ship-checked step that shipped unscoped for three days — leaving any '
         + 'of them unscoped hands the operator another repository\'s findings');
     }
   });
@@ -268,7 +268,7 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
 describe('the fence covers the whole view family, not just the reported one', () => {
   // The 207-vs-0 fix added the fence and routed the two readers it knew about.
   // `getUnremediatedAcceptances` queried a sibling view, skipped the fence, and
-  // reproduced the identical defect one /ship step later. Enumerating readers by
+  // reproduced the identical defect one /ship-checked step later. Enumerating readers by
   // hand is what missed it, so enumerate mechanically instead.
   // The `_all` base views are listed explicitly: `\b` after `unlocked_fixes`
   // does NOT match `unlocked_fixes_all` (the next char is a word char), so an
@@ -352,7 +352,7 @@ describe('a capped nudge reader must impose its OWN total order', () => {
   // `ORDER BY CASE severity … , created_at ASC`, the planner keeps that Sort
   // under the outer LIMIT, and all 15 HIGH rows of 44 landed inside the page.
   // But Postgres does not guarantee a subquery's ORDER BY reaches an outer
-  // query, and the sibling view carries no inner sort at all — so /ship's
+  // query, and the sibling view carries no inner sort at all — so /ship-checked's
   // "show at most 5 rows, HIGH first" was resting on an accident of one view's
   // text. The order has to be asserted where the LIMIT is applied.
   // Adjacent concatenated template literals are joined before scanning: a SQL
@@ -486,7 +486,7 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
   // A `LIMIT`ed read whose caller reports `rows.length` states a floor as a
   // total. Twice in this family: `unlocked_fixes` reported 20 against 232
   // (2026-07-29), `unremediated_acceptances` 20 against 129 (2026-07-31). Both
-  // were fixed in the store AND the CLI — but the /ship prose was corrected for
+  // were fixed in the store AND the CLI — but the /ship-checked prose was corrected for
   // only one, so on 2026-08-09 the surviving "count the rows" instruction
   // produced 20 against a real 201 and that number was reported back as the
   // size of the backlog being triaged.
@@ -542,10 +542,10 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
     });
   }
 
-  it('/ship never tells the operator to count the capped rows', () => {
+  it('/ship-checked never tells the operator to count the capped rows', () => {
     // The prose half of the same contract — the half that survived both tool
     // fixes and produced the 20-vs-201 report.
-    const shipSkill = fs.readFileSync(path.join(repoRoot, 'skills', 'ship', 'SKILL.md'), 'utf-8');
+    const shipSkill = fs.readFileSync(path.join(repoRoot, 'skills', 'ship-checked', 'SKILL.md'), 'utf-8');
     assert.doesNotMatch(shipSkill, /Count the rows as `unremediated_count`/,
       'Step 0.5e must read byMode.total, not rows.length');
     assert.match(shipSkill, /byMode\.total/, 'Step 0.5e must name the field that carries the real total');

@@ -38,7 +38,7 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3,
  * wires that script to `body`.
  */
 function consumer(script, body) {
-  const skillRel = '.claude/skills/ship/SKILL.md';
+  const skillRel = '.claude/skills/ship-checked/SKILL.md';
   writeFile(root, skillRel, `Then run **\`npm run ${script}\`** — it enforces the topology.\n`);
   writeFile(root, 'package.json', JSON.stringify({ scripts: { [script]: body } }, null, 2));
   return { files: { [skillRel]: 'sha-not-read-by-gate5' } };
@@ -120,7 +120,7 @@ describe('gate 5 — npm scripts must resolve to a shipped tool', () => {
   });
 
   it('ignores an `npm run X` the consumer never wired', () => {
-    const skillRel = '.claude/skills/ship/SKILL.md';
+    const skillRel = '.claude/skills/ship-checked/SKILL.md';
     writeFile(root, skillRel, 'Run `npm run context:check`.\n');
     writeFile(root, 'package.json', JSON.stringify({ scripts: {} }, null, 2));
 

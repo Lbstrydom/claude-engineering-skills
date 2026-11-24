@@ -124,11 +124,11 @@ from audit_findings where remediation_state in ('fixed','verified') group by 1,2
 class ("the loop fixes the best catches BEFORE adjudication… credit lands
 in a source comment") and records that a fix landed 2026-07-28/08-01: `/ship`
 Step 6.7 now calls `final-review-record-fix`, and the comment at
-`skills/ship/SKILL.md:457-458` says the command "is generic despite its
+`skills/ship-checked/SKILL.md:457-458` says the command "is generic despite its
 name… not shadow-only." **That fix closed less than it appears to.** Tracing
 the actual call path:
 
-- `skills/ship/SKILL.md` Step 6.7 calls `final-review-pending`
+- `skills/ship-checked/SKILL.md` Step 6.7 calls `final-review-pending`
   (`scripts/lib/cross-skill/commands/final-review.mjs:204`), which sources
   from `getFinalReviewStats(repoName).shadowOnlyQueue`
   (`scripts/lib/store/runs-findings.mjs:1243`, doc-labelled "the human
@@ -223,7 +223,7 @@ Phase 0 kills or shrinks three things the origin brief implicitly assumed:
 `scripts/lib/store/runs-findings.mjs:1243` (`getFinalReviewStats`
 `shadowOnlyQueue` doc) → `scripts/lib/cross-skill/commands/final-review.mjs:204`
 (`finalReviewPendingCmd`, sources `shadowOnlyQueue` only) →
-`skills/ship/SKILL.md` Step 6.7 (the only caller) → `scripts/lib/final-review-credit.mjs:29`
+`skills/ship-checked/SKILL.md` Step 6.7 (the only caller) → `scripts/lib/final-review-credit.mjs:29`
 (`KNOWN_USER_ACTIONS`, `fix-now`/`deferred` never written). Persistence
 gap: `scripts/ux-lock-run.mjs:240` (`sourceKind` defaults `'manual'`) vs
 `scripts/lib/cross-skill/commands/ship.mjs:389-395` (`lock-with-test`
@@ -288,7 +288,7 @@ graph LR
     MEMO["docs/research/\nskill-efficacy-census-verdict.md"]
   end
 
-  RF --> FRC --> SkillShip["skills/ship/SKILL.md\nStep 6.7"]
+  RF --> FRC --> SkillShip["skills/ship-checked/SKILL.md\nStep 6.7"]
   SC --> CMD
   SC --> COL --> SEC --> SCHEMA
   CMD --> MEMO
@@ -743,7 +743,7 @@ checklist — strategy-pattern-over-switch).
   `signalQuality` from `unchecked-call-site` to `caller-checked` **for
   rows recorded after this fix lands only** — historical rows keep the
   old ambiguity, per §2's evidence-quality enum.
-- **`skills/ship/SKILL.md`** (modify) — Step 6.7 prose + the printed card
+- **`skills/ship-checked/SKILL.md`** (modify) — Step 6.7 prose + the printed card
   wording, to state plainly that the nudge now covers both buckets (and
   why it didn't before, so a future reader doesn't reintroduce the
   scoping bug believing it's already general).

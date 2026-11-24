@@ -394,7 +394,7 @@ describe('a second sync before the first is COMMITTED (upstream report 1fb43574)
   let second;
   let firstEntry;
   const VICTIM_A = '.claude/skills/plan/SKILL.md';
-  const VICTIM_B = '.claude/skills/ship/SKILL.md';
+  const VICTIM_B = '.claude/skills/ship-checked/SKILL.md';
 
   before(async () => {
     second = path.join(tmp, 'consumer-b');

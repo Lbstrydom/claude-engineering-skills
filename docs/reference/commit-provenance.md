@@ -6,7 +6,7 @@ participated, and whether a gate governed the change. Git-native: queryable
 with `git log` / `git interpret-trailers`, no database required. The
 authoritative writer is [`scripts/ship-commit.mjs`](../../scripts/ship-commit.mjs)
 (pure logic in [`scripts/lib/commit-trailers.mjs`](../../scripts/lib/commit-trailers.mjs));
-`/ship` Step 6.3 invokes it. Plan + audit trail:
+`/ship-checked` Step 6.3 invokes it. Plan + audit trail:
 [`docs/plans/provenance-trailers-and-gate-honesty.md`](../plans/provenance-trailers-and-gate-honesty.md).
 
 > **Two arguments became REQUIRED in 2026-08 and the writer refuses without
@@ -38,7 +38,7 @@ AI-Final-Review: approve
 | `AI-Audited-Tree` | 40-hex git oid, conditional — **`passed` only** | the tree object `ship-commit` actually compared when granting `passed`, i.e. the index tree at ship time, which at that moment equals the marker's `auditedTree`. Written only on the accept branch of `evaluateGateVerification`, and the renderer independently refuses to emit it on any other gate or for a malformed oid. **Added 2026-08-04 to make `passed` re-checkable from the commit alone** — see "Verifying a historical `passed`" below |
 | `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. Since E1 this is **more than a correlation hint on a `passed` commit**: `passed` additionally requires the marker's `auditedTree` to equal the tree being committed, so the id names a run whose *subject* was verified. On `waived` it remains a best-effort hint. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
 | `AI-Final-Review` | `approve` \| `approve-with-debt` \| `blocked`, conditional | the **result** of the final review of the run `AI-Run-ID` names (the round gate's disposition, not the reviewer's verdict word: an `APPROVE` can be `blocked`). **Derived, never an input**: read from `.audit/last-final-review.json` and emitted only when that marker is bound to the same gate evidence `AI-Run-ID` comes from (run, audited tree and round all equal) and records a disposition. There is no flag, and a hand-typed one is refused as a reserved trailer. Absent ⇒ *no final-review record was bound to this run's evidence*, never "approved". Written by `ship-commit.mjs` only; a train squash never carries it. Since 2026-10-20; see "The final-review result" below |
-| `AI-Ship-Authority` | the single literal `launch-prompt`, conditional | the ship was **pre-authorised by the user's launch prompt** rather than typed as `/ship`. Written only by `ship-commit.mjs --preauthorised`, after every condition in `scripts/lib/ship-preauth.mjs` held (effective gate `passed`/`converged`, the store's audit converged for this branch, the final review APPROVED this audited tree and round with result `approve`, and no sensitive path, migration or repository-policy file in the branch). A user-typed `/ship` writes none. Since 2026-10-15; see "Pre-authorised ships" below |
+| `AI-Ship-Authority` | the single literal `launch-prompt`, conditional | the ship was **pre-authorised by the user's launch prompt** rather than typed as `/ship-checked`. Written only by `ship-commit.mjs --preauthorised`, after every condition in `scripts/lib/ship-preauth.mjs` held (effective gate `passed`/`converged`, the store's audit converged for this branch, the final review APPROVED this audited tree and round with result `approve`, and no sensitive path, migration or repository-policy file in the branch). A user-typed `/ship-checked` writes none. Since 2026-10-15; see "Pre-authorised ships" below |
 
 ### The audited-target identity (E1)
 
@@ -52,9 +52,9 @@ and had its findings **fixed** moves the tree by construction, which made
 `passed` unreachable while fresh evidence made `not-run` illegal — leaving only
 `waived`, i.e. *"shipped past a gate"*, for the workflow's best outcome. A
 `/cycle --autonomous` ship was consequently indistinguishable in git history
-from `/ship --no-tests`.
+from `/ship-checked --no-tests`.
 
-**Why `passed` is rare, and why that is not a defect.** `/ship`'s own mandatory
+**Why `passed` is rare, and why that is not a defect.** `/ship-checked`'s own mandatory
 Steps 2–5 write `status.md`, sometimes CLAUDE.md, and the plan's Implementation
 Log *after* the audit and *before* Step 6.3's commit. So even a zero-finding,
 converged, otherwise-untouched audit moves the tree and lands on `converged`.
@@ -151,9 +151,9 @@ writers, so a malformed or hand-typed block can never enter history.
 
 ### Two emission points, one renderer, one evaluator (ship trains)
 
-A `/ship --train` lands several audited PRs in one human action, and GitHub's
+A `/ship-checked --train` lands several audited PRs in one human action, and GitHub's
 squash writes the commit message, so the block would otherwise be lost (measured
-2026-10-11: of 80 merged PRs, 54 never ran `/ship` and 9 lost the trailer on the
+2026-10-11: of 80 merged PRs, 54 never ran `/ship-checked` and 9 lost the trailer on the
 squash). `scripts/ship-train.mjs` therefore writes each squash commit's message,
 and there are now **two** emission points: `ship-commit.mjs` (direct commits)
 and `ship-train.mjs` (squash messages). Both render through the same
@@ -266,7 +266,7 @@ back-dated, and hand-writing it is forgery the store cross-check exists to catch
 
 ### Pre-authorised ships (`AI-Ship-Authority`, from 2026-10-15)
 
-A chip's launch prompt may pre-authorise its own ship (`skills/fleet/references/chip-preamble.md`). It is then not a typed `/ship`, and
+A chip's launch prompt may pre-authorise its own ship (`skills/fleet/references/chip-preamble.md`). It is then not a typed `/ship-checked`, and
 the commit says so. The decision is code (`evaluatePreauthorisedShip`), so a chip cannot talk itself past the list; the commit path
 refuses (exit 2, each refused condition named) otherwise, and `--check-preauthorised` prints the same verdict early without committing.
 The final-review condition reads `.audit/last-final-review.json` (written by `gemini-review.mjs` after each code-mode review, from the gate-evidence marker it ran
@@ -399,7 +399,7 @@ row-by-row by [`tests/ship-commit-cli.test.mjs`](../../tests/ship-commit-cli.tes
 ## Degradation
 
 - **Manual commits** need nothing: commit as usual, carry no trailers.
-- **Consumer repos with a stale sync** (helper not hydrated): `/ship` falls
+- **Consumer repos with a stale sync** (helper not hydrated): `/ship-checked` falls
   back to a plain commit and prints `provenance trailers skipped (helper
   unavailable — re-run npm run sync)`.
 - The helper never invents values: no fresh audit evidence → `AI-Run-ID`
@@ -410,7 +410,7 @@ row-by-row by [`tests/ship-commit-cli.test.mjs`](../../tests/ship-commit-cli.tes
 
 ## v1 scope
 
-`/ship` is the only emission point; `/cycle`'s autonomous path is the
+`/ship-checked` is the only emission point; `/cycle`'s autonomous path is the
 explicit v2 target (its unattended retry loop should not gate on an unproven
 exit-2 contract). Other v2 items (receipt-derived `AI-Models`, verdict-bound
 ship-evidence record, `--gate-reason`) are listed in the plan's §V2 with
@@ -427,10 +427,10 @@ cut the per-session context cost (plan: `docs/plans/skill-best-practice-alignmen
 Track C); the reserved-namespace and never-hand-write rules stay resident there. Its
 full former text, verbatim (link targets re-based to this file):
 
-`/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
+`/ship-checked` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
 git trailers written ONLY by two helpers sharing ONE renderer and ONE gate
-evaluator: `scripts/ship-commit.mjs` (`/ship` Step 6.3) and, for the squash
-messages of a `/ship --train`, `scripts/ship-train.mjs` — never hand-typed; the
+evaluator: `scripts/ship-commit.mjs` (`/ship-checked` Step 6.3) and, for the squash
+messages of a `/ship-checked --train`, `scripts/ship-train.mjs` — never hand-typed; the
 `AI-*` namespace is reserved. `AI-Final-Review` (`approve|approve-with-debt|blocked`)
 is DERIVED from the final-review marker bound to the run's evidence — no flag, never
 on a train squash, and it never moves `AI-Gate`. `AI-Gate` has **four**
@@ -440,7 +440,7 @@ values, two verified against the store's `audit_runs` row and two declared:
 `waived` (declared, unverified) · `not-run` (no fresh evidence). Both verified
 values are fail-closed and clear the **same** store bar, so neither is cheaper;
 each refusal names the other — you may not over- *or* under-claim. **`passed` is
-rare by design** (`/ship`'s own Steps 2–5 move the tree after the audit): never
+rare by design** (`/ship-checked`'s own Steps 2–5 move the tree after the audit): never
 hand-write `.audit/last-audit-run.json` or reorder a ship to chase it — the value
 worth investigating is a `passed` that should not be there. Applies from tag
 `provenance-v1` forward; absence after that = "not mechanically produced".

@@ -187,7 +187,7 @@ export function listMergedSince({ gh }, { repo, branch, fromIso, toIso, limit = 
 /** Is `sha` a commit in the local object store? */
 export const hasCommit = ({ git }, sha) => SHA_RE.test(sha ?? '') && ok(git(['cat-file', '-e', `${sha}^{commit}`]));
 
-/** A file name the catch-up itself writes (per-PR, floor, run) — never evidence that /ship ran. */
+/** A file name the catch-up itself writes (per-PR, floor, run) — never evidence that /ship-checked ran. */
 export const isCatchupEntryName = (name) => prNumberFromEntryName(name) !== null || isFloorEntryName(name) || RUN_ENTRY_RE.test(name);
 
 /** Every path a merge changed against its first parent: NUL-separated (no quoting), sorted (no config-dependent order). */

@@ -10,7 +10,7 @@ for the one-time migration from the pre-isolation layout to the
 
 If you maintain a repo where you want Claude / Copilot / Cursor to use the
 engineering-skills suite (`/plan`, `/audit-code`, `/audit-plan`,
-`/persona-test`, `/click-test`, `/ux-lock`, `/ship`, `/brainstorm`), and
+`/persona-test`, `/click-test`, `/ux-lock`, `/ship-checked`, `/brainstorm`), and
 you have a local checkout of `claude-engineering-skills` somewhere on your
 machine, you can adopt the bundle into your repo.
 
@@ -92,7 +92,7 @@ which GitHub token you are actually using and which permissions it holds:
 node scripts/.claude-skills/check-setup.mjs
 ```
 
-Every consumer running `/ship`, `/audit-code` or `cross-skill.mjs` eventually
+Every consumer running `/ship-checked`, `/audit-code` or `cross-skill.mjs` eventually
 hits a `gh` command that dies on a bare `403`, and each one rediscovers by
 trial and error which permission was missing. GitHub already answers that
 question on every REST response — it is just not printed anywhere a human
@@ -365,7 +365,7 @@ surprises people:
 
 The `.mjs` half still has to RUN, so a Tier-2 consumer (no `package.json`)
 cannot run `arch:refresh` itself however its code is written. Everything else
-— `/plan`, `/audit-plan`, `/audit-code`, `/ship`, and the browser lenses — is
+— `/plan`, `/audit-plan`, `/audit-code`, `/ship-checked`, and the browser lenses — is
 language-agnostic and works regardless.
 
 **Don't reason about this by hand — ask:**
@@ -598,7 +598,7 @@ The Architecture tab wants a populated symbol index, so on a cold repo run
 `build-dashboard.mjs all`. (In the source repo those three are chained behind
 `npm run dashboard:setup`; that alias is not part of what you receive.)
 
-`/ship` and `/audit-code` each rebuild the dashboard as an advisory step, but
+`/ship-checked` and `/audit-code` each rebuild the dashboard as an advisory step, but
 both gate that step on being in the source repo and skip it silently here —
 your builds are yours to trigger.
 
@@ -948,7 +948,7 @@ consumer 2026-08-13.
 It affects the whole synced surface, not one script: every
 `scripts/.claude-skills/*.mjs` that an npm script or a SKILL.md step names
 (`check-context-drift`, `ship-commit`, `cross-skill`, `visual-audit`,
-`symbol-index/*`, …). `/ship` fails on its **first** command — Phase 0's
+`symbol-index/*`, …). `/ship-checked` fails on its **first** command — Phase 0's
 `detect-stack` — before reaching the `context:check` most people notice.
 
 ### Do NOT sync into a worktree
@@ -967,7 +967,7 @@ The same class, on the source side, and it cost a consumer a stale bundle before
 it was found. `scripts/lib/consumer-repos.local.json` — the gitignored registry
 naming private/corporate consumers that must not appear in this public repo — is
 absent from every linked worktree, because `git worktree add` copies only
-tracked content. A `/ship` from a worktree therefore resolved **only** the two
+tracked content. A `/ship-checked` from a worktree therefore resolved **only** the two
 committed `BASE_REPOS` and printed:
 
 ```
@@ -1487,7 +1487,7 @@ There are two distinct shapes — pick by whether the target repo has **its own
 code** worth keeping.
 
 ### A) As a consumer (layer the skills INTO an existing repo)
-The repo has its own application code; you want `/plan`, `/audit-code`, `/ship`,
+The repo has its own application code; you want `/plan`, `/audit-code`, `/ship-checked`,
 etc. available inside it. Use the sync flow above (`npm run sync:refresh --
 --target <alias>`). Tooling lands gitignored under `scripts/.claude-skills/`;
 only skill `.md` + config are tracked. This is the right shape for
@@ -1696,7 +1696,7 @@ sha**, and whether the cited path is really upstream-owned.
 
 **From here (the source repo):** `npm run upstream:issues` to list, then
 `upstream ack` / `upstream fix --commit <sha>` / `upstream wont-fix --id <id>`.
-`/ship` Step 0.5h prints the open count — **advisory**: cloud state nudges, never
+`/ship-checked` Step 0.5h prints the open count — **advisory**: cloud state nudges, never
 blocks.
 
 **Pass notes on stdin, not as an argv string.** Every `--note` accepts `-`, which
@@ -1781,7 +1781,7 @@ Check for these when adding a gate or a nudge. Each is a general defect class,
 not a one-off. AGENTS.md carries the five one-line rules; the incidents and the
 measured inert windows are here.
 
-**(1) A read handing back a key its writer rejects.** `/ship` 0.5e listed
+**(1) A read handing back a key its writer rejects.** `/ship-checked` 0.5e listed
 unclosable rows for weeks because `unremediated_acceptances` projected
 `audit_finding_id` while its only closer needs `--fingerprint` — two reports, one
 column. **A new close-this-row nudge means a new row in**
@@ -1822,7 +1822,7 @@ typo:
 1. `skills:hydrate` plus a runbook pointer, across all 16 skills.
 2. `/ai-context-management` inert in every consumer: its instructions were gated
    behind `npm run context:check` while only its detector was synced.
-3. `/ship` and `/security-strategy` appended `--if-present` to a missing alias —
+3. `/ship-checked` and `/security-strategy` appended `--if-present` to a missing alias —
    which **exits 0 having run nothing**, so the skill reported success.
 4. Two shared references promised `.audit/` is swept "in every consumer" by a
    script the sync does not ship.
@@ -1864,7 +1864,7 @@ Three fixes (fleet proposals eb21, f757, 33e2). **Consumers need a sync AND `hoo
 
 - **Budget refit from the store, not a guess (eb21).** `600s + 30s per file`, cap 2700s; lines are not an input. Measured 2026-10-24 over the store's `audit_runs` (3000 code-audit rows, 610 of them round 1, which is what a pre-push audit is): round-1 p95 wall by files changed is 349s (3-6), 559s (6-10), 697s (10-16), 837s (16-25), 855s (25-40), 1167s (40-80); max 1823s. v12's formula covered 94.4% of them (storyline: 23 files, 1208 lines, budget 881s, audit 882s); this one covers 100%, and 99.3% with 25% headroom for the hook's own startup. `diff_lines_changed` is populated on only 122 of the 610 rows and explains less than the file count, so it is dropped. To re-fit, re-run the same query (`total_duration_ms` against `diff_files_changed`, `mode='code'`, `rounds=1`) when the pass set or the models change; the derivation is in the doc comment on `BUDGET`.
 - **Reuse by patches (eb21; shared with f757).** A converged run is also reused when the tree differs but the branch's own non-merge commits (those `origin/main` lacks) have exactly the audited commits' **content fingerprints** (a per-commit hash of the commit's own `-U0 --binary --no-renames` diff with textconv/ext-diff off; only `index` lines and hunk line numbers are dropped, so whitespace and binary payload count; **not** `git patch-id`, which ignores whitespace and so cannot prove a Python re-indent or a string-literal edit unchanged) as a multiset: a squash-divergence cherry-pick recovery or a rebase moves the tree, not the branch's diff. The hook prints `range-diff-equivalent` and the run, round and commit count, never "the same tree". Refused (re-run) when: the marker has no `auditedSha`; the audit read an uncommitted tree (its sha is only the parent); a commit was added, dropped or amended (whitespace included); the range holds a **merge commit** of its own (what a merge introduces is in no non-merge commit); an own commit has an empty diff; more than 200 own commits; `origin/main` does not resolve; the store row did not converge. The residual risk is the accepted one of rebasing at all: identical patches on a new base are not proof of identical behaviour. Predicate: `scripts/lib/patch-equivalence.mjs`.
-- **AI-Gate provenance uses the same predicate (f757).** `checkEvidenceProvenance` (`/ship`) refused a marker whose audited sha left HEAD's history, so a ship that only rebased recorded `not-run`. With `patchEquivalence` it accepts the marker when the branch's own patches are the audited ones and says RANGE-DIFF-EQUIVALENT; the gate that follows still compares trees, so this supports `converged`, never `passed`.
+- **AI-Gate provenance uses the same predicate (f757).** `checkEvidenceProvenance` (`/ship-checked`) refused a marker whose audited sha left HEAD's history, so a ship that only rebased recorded `not-run`. With `patchEquivalence` it accepts the marker when the branch's own patches are the audited ones and says RANGE-DIFF-EQUIVALENT; the gate that follows still compares trees, so this supports `converged`, never `passed`.
 - **No plan selected is UNMEASURED (33e2).** When the selector resolves no plan (none touched among several active, none active, or the selector itself failing) the hook used to `finish` having audited nothing (storyline #431). The audit is plan-keyed (`openai-audit.mjs code <plan-file>`), so a plan-less audit would need a stand-in plan and an unverified scope; v13 instead REFUSES with the cause, unless the push carries nothing a code audit reads — docs by extension (`.md .mdx .markdown .txt .rst`) or the sync-bookkeeping pair — or `AUDIT_PREPUSH_ALLOW_UNMEASURED=1`. An unknown push range is refused too (it cannot be shown to be docs-only). If this proves noisy in a repo that keeps all its plans Complete, the fix is a plan-less audit, not a softer default. A refusal runs no consumer `pre-push.local`.
 
 ### v14: the audit's report is kept (triage after the push)

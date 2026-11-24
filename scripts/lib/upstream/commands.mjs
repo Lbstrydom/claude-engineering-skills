@@ -676,7 +676,7 @@ export const STDIN_SENTINEL = '-';
  *  - **`--note -`** reads stdin on EVERY note-bearing verb. An explicit
  *    sentinel, because on `ack`/`fix`/`wont-fix` the note is OPTIONAL and
  *    usually omitted: a bare "no flag, so read stdin" fallback there would
- *    block forever on an inherited pipe with no writer (a hook, a `/ship`
+ *    block forever on an inherited pipe with no writer (a hook, a `/ship-checked`
  *    step), turning an omitted note into a hang.
  *  - **an absent flag when the note is REQUIRED** falls back to stdin,
  *    mirroring `upstream report`'s `--body`. Safe for the same reason it is

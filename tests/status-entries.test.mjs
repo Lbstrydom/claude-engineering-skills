@@ -270,11 +270,11 @@ describe('readLogHead', () => {
 describe('the writer instructions name the marker (a consumer without it keeps the old flow)', () => {
   const read = (rel) => fs.readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
 
-  test('/ship Step 2 and its format reference condition on the marker, not on the directory', () => {
-    for (const rel of ['skills/ship/SKILL.md', 'skills/ship/references/status-md-format.md']) {
+  test('/ship-checked Step 2 and its format reference condition on the marker, not on the directory', () => {
+    for (const rel of ['skills/ship-checked/SKILL.md', 'skills/ship-checked/references/status-md-format.md']) {
       assert.match(read(rel), /docs\/status\/entries\/README\.md/, `${rel} must name the marker`);
     }
-    assert.match(read('skills/ship/references/status-md-format.md'), /Marker absent[^]*append to\s+`status\.md`/,
+    assert.match(read('skills/ship-checked/references/status-md-format.md'), /Marker absent[^]*append to\s+`status\.md`/,
       'the marker-absent flow stays the documented default for a consumer');
   });
 });

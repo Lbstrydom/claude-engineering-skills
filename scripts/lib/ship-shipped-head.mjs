@@ -40,7 +40,7 @@ export function isPlainBranch(n) {
 const REMOTE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const SHA_RE = /^[0-9a-f]{7,64}$/i;
-/** The ONLY path /ship may add between the audit and the head: a new status entry file. Path-based; no content is ever parsed. */
+/** The ONLY path /ship-checked may add between the audit and the head: a new status entry file. Path-based; no content is ever parsed. */
 const ENTRIES_PREFIX = 'docs/status/entries/';
 /** A status entry path: the entries directory plus a name in the repository's OWN entry-name grammar (no newline, no nesting, nothing else). */
 export const isShipEntryPath = (rel) => typeof rel === 'string' && rel.startsWith(ENTRIES_PREFIX) && ENTRY_NAME_RE.test(rel.slice(ENTRIES_PREFIX.length));
@@ -102,7 +102,7 @@ export function makeRunner(cwd, { spawn = spawnSync, timeoutMs = GIT_TIMEOUT_MS 
 
 /**
  * The post-audit delta (C4): what differs between the AUDITED tree and the shipped head, over every path either the head or the
- * audited state changed against its own fork point, must be only what /ship writes. Measured on trees, never on the base, so a
+ * audited state changed against its own fork point, must be only what /ship-checked writes. Measured on trees, never on the base, so a
  * plan the branch changed before its audit is judged like any other path, a change reverted to base after the audit is still
  * inspected, and an upstream-only change a rebase brought in (a path in neither set) is correctly ignored. No pathspecs are
  * used at all: the full name list is filtered in code, so a name with glob or magic characters can never be misread.
@@ -144,12 +144,12 @@ export function computePostAuditDelta(run, evidence, headChanged, headTree, base
     const why = shipEntryRefusal({ status, rel, newMode });
     if (why) refused.push(`${rel}: ${why}`);
   }
-  if (refused.length) return no(`${refused.length} path(s) changed since the audit that /ship does not write: ${refused.slice(0, 3).join('; ')}${refused.length > 3 ? `; +${refused.length - 3} more` : ''}`);
+  if (refused.length) return no(`${refused.length} path(s) changed since the audit that /ship-checked does not write: ${refused.slice(0, 3).join('; ')}${refused.length > 3 ? `; +${refused.length - 3} more` : ''}`);
   return { ok: true, reason: judged === 0 ? 'the head tree equals the audited tree on every path the branch touches' : `${judged} path(s) differ from the audited tree, each a newly added status entry` };
 }
 
 /**
- * Why this changed path is not something /ship writes, or null. PATH-ONLY by design: the single permitted change is an ADDED
+ * Why this changed path is not something /ship-checked writes, or null. PATH-ONLY by design: the single permitted change is an ADDED
  * regular file `docs/status/entries/<name>.md`. Content is never read, because a brand-new file cannot rewrite audited content
  * (it is a separate file the audited tree did not contain), so there is nothing in it to verify against the audit.
  * A modification, deletion, rename or type change anywhere, a plan edit and a status.md edit all refuse.

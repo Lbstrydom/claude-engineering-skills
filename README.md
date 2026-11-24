@@ -24,7 +24,7 @@ Three-model audit loop (Claude plans/codes, GPT audits, Gemini reviews) with ada
 | Audit code against its plan (multi-pass + Gemini final) | `/audit-code <plan-file>` |
 | QA a deployed app as a persona (Playwright + P0–P3) | `/persona-test "<persona>" <url>` |
 | Lock a fix's behaviour with a Playwright spec | `/ux-lock <commit-or-description>` |
-| Pre-push quality gate (test + lint + commit + push) | `/ship` |
+| Pre-push quality gate (test + lint + commit + push) | `/ship-checked` |
 | "Why is this code shaped this way?" | `/explain <file:line>` |
 | Brainstorm with multiple LLMs (you drive convergence) | `/brainstorm <topic>` (add `--with-gemini`) |
 | Sync AGENTS.md / CLAUDE.md across all AI agents | `/ai-context-management audit` |
@@ -39,7 +39,7 @@ Three-model audit loop (Claude plans/codes, GPT audits, Gemini reviews) with ada
 | `npm run arch:render` | Generate `docs/architecture-map.md` (Mermaid + flat tables) |
 | `npm run arch:drift` | Compute drift score for active snapshot |
 | `npm run arch:duplicates` | List top cross-file duplicate clusters (refactor targets). Opt-in size floor: `--min-lines 6` skips symbols of 5 lines or fewer (default `0` = off; env `ARCH_DUPLICATE_MIN_LINES`) — [details](docs/reference/architecture-index.md) |
-| `npm run security:refresh` | Re-parse `docs/security-strategy.md` and refresh the security_incidents Supabase index (auto-runs post-push from `/ship`) |
+| `npm run security:refresh` | Re-parse `docs/security-strategy.md` and refresh the security_incidents Supabase index (auto-runs post-push from `/ship-checked`) |
 
 **Requirements layer** (terminal) — a materialized view of the codebase's de-facto invariants, surfaced to `/audit-code` as a rubric:
 
@@ -58,7 +58,7 @@ Once `.requirements/ledger.json` exists, `/audit-code` automatically injects in-
 Full cycle (one command):       /cycle <task>     ← runs everything end-to-end
 
 Atomic chain:
-  /plan → /audit-plan → (you implement) → /audit-code → /persona-test → /ux-lock → /ship
+  /plan → /audit-plan → (you implement) → /audit-code → /persona-test → /ux-lock → /ship-checked
 
 Side-channels (anytime):
   /brainstorm   — second opinion with OpenAI/Gemini, manual convergence
@@ -73,7 +73,7 @@ Side-channels (anytime):
 <!-- arch-map-discoverability:start -->
 ## Architecture
 
-See [`docs/architecture-map.md`](docs/architecture-map.md) — generated index of every symbol in this repo, grouped by domain, with Mermaid diagrams. Regenerated on `/ship` or via `npm run arch:render`.
+See [`docs/architecture-map.md`](docs/architecture-map.md) — generated index of every symbol in this repo, grouped by domain, with Mermaid diagrams. Regenerated on `/ship-checked` or via `npm run arch:render`.
 <!-- arch-map-discoverability:end -->
 
 ## Quick Start
@@ -182,7 +182,7 @@ All skills support **JS/TS** and **Python** (FastAPI, Django, Flask) with automa
 | **[explain](skills/explain/SKILL.md)** | Synthesises arch-memory + git history + AGENTS.md principles to answer "why is this here?" |
 | **[ux-lock](skills/ux-lock/SKILL.md)** | Generates Playwright e2e specs that lock fixes' public DOM contracts (role, aria, data-testid — not CSS classes); verify-mode grades a plan against live impl |
 | **[persona-test](skills/persona-test/SKILL.md)** | Drives a browser as a persona against a live URL → P0–P3 findings + qualitative debrief; results auto-correlate with audit findings |
-| **[ship](skills/ship/SKILL.md)** | Pre-push quality gate; warns on open persona-test P0s + missing regression specs |
+| **[ship](skills/ship-checked/SKILL.md)** | Pre-push quality gate; warns on open persona-test P0s + missing regression specs |
 | **[brainstorm](skills/brainstorm/SKILL.md)** | Concept-level multi-LLM thinking partner; user-driven manual convergence |
 | **[ai-context-management](skills/ai-context-management/SKILL.md)** | Keeps AGENTS.md / CLAUDE.md aligned across Claude / Copilot / Cursor / Windsurf |
 | **[nav-audit](skills/nav-audit/SKILL.md)** | System-level nav/IA audit — builds the whole nav graph from source, checks offered-vs-needed against the persona registry |

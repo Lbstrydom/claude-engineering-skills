@@ -246,7 +246,7 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
     const { writeGateEvidence } = await import('./gate-evidence.mjs');
     // `auditedBranch` is forwarded by PRESENCE, never `?? null`: null MEANS
     // "detached at capture", so coalescing an unset property into null would
-    // record every attached audit as detached and make /ship's guard B refuse
+    // record every attached audit as detached and make /ship-checked's guard B refuse
     // every ship. If the capture block never ran, that is a wiring bug — say so
     // and write nothing, rather than fabricating a plausible-looking marker.
     if (!Object.hasOwn(ctx, 'auditedBranch')) {
@@ -260,7 +260,7 @@ export async function runPersistence(data, assembled, mergedResult, persistenceS
       // alongside the cloud convergence write immediately below — which DOES
       // tally into `writeOutcomes`/`mergedResult`. Capturing it here doesn't
       // fold it into `runStatus` (a local marker miss is a different kind of
-      // gap than undurable audit data — /ship's guard already degrades a
+      // gap than undurable audit data — /ship-checked's guard already degrades a
       // missing marker to `not-run` on its own), just makes the failure
       // queryable instead of stderr-only, same as `_ledgerWriteError` below.
       const gateEvidenceResult = writeGateEvidence({

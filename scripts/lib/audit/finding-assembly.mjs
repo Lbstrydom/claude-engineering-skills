@@ -544,7 +544,7 @@ export async function assembleFindings(data) {
     // A prior accepted entry whose scope changed and is no longer raised → fixed;
     // a fixed entry re-raised on a changed scope → regressed. This is what finally
     // populates `audit_findings.remediation_state` so the `unlocked_fixes` view /
-    // /ship missing-spec gate stop reading vacuously empty. Fail-open — a failure
+    // /ship-checked missing-spec gate stop reading vacuously empty. Fail-open — a failure
     // here never blocks the round.
     try {
       // ORDER IS LOAD-BEARING (Gemini final-gate H). Self-heal FIRST, using the

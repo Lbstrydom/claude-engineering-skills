@@ -234,7 +234,7 @@ export const CAP_ORDERS = Object.freeze(['oldest', 'newest']);
  *  1. **The cap must not be biased against the aging population.** It was
  *     `ROW_NUMBER() OVER (ORDER BY created_at DESC) <= cap`, i.e. it kept the
  *     NEWEST rows. Measured on this repo 2026-08-13: of **991** eligible
- *     findings older than 14 days — the exact population `/ship`'s
+ *     findings older than 14 days — the exact population `/ship-checked`'s
  *     unremediated-acceptance gate counts, whose rows are about to cross the
  *     30-day ceiling and never be shown again — **0** fell inside the default
  *     cap of 400, which reached back only to the previous day. The rows nearest

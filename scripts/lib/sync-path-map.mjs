@@ -22,6 +22,9 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   CONSUMER_TOOLING_DIR: 'scripts/.claude-skills',
   MIGRATIONS_SRC_PREFIX: 'supabase/migrations/',
   MIGRATIONS_DEST_PREFIX: '.audit-loop/migrations/',
+  // Synced skills land here, tracked in the consumer. A skill upstream renames or removes is RETIRED through the same
+  // probe-gated gc as a migration (unedited -> deleted, edited -> held); a consumer's own skills are never in the manifest.
+  SKILLS_DEST_PREFIX: '.claude/skills/',
   // The `--adopt` schema contract. Lives under `tests/fixtures/` in this repo
   // because that is where it is generated and asserted, but it is a RUNTIME
   // asset for consumers — `runAdopt` hard-aborts without it, so `--adopt` (the

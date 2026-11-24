@@ -9,7 +9,7 @@ P1 defects were fixed by replaying the full `/cycle`, which re-planned and
 re-audited an already-accepted plan and re-audited the whole dirty tree. What
 actually worked, done by hand, was: resume the accepted plan → triage the
 persona findings → implement focused fixes → focused `/audit-code` → rerun the
-affected persona journey → update evidence → `/ship`. REMEDIATE is that
+affected persona journey → update evidence → `/ship-checked`. REMEDIATE is that
 sequence, named, with the same gates every other mode keeps.
 
 ```
@@ -33,7 +33,7 @@ input is never inferred).
 | Gemini final gate | **runs** | Unchanged: **max 2 rounds**, with `gemini-gate.md`'s design/correctness exception. |
 | 5 `/persona-test` | **affected journeys only** (`--from persona-test`) | Rerunning every persona re-buys the whole exploratory pass. |
 | 6 `/ux-lock` | runs per fixed P0/P1 unless `--no-uxlock` | A post-ship regression is exactly what a lock spec exists for. |
-| 7 `/ship` | **blocked handoff, always** | Same as every mode: `/ship` refuses programmatic invocation. `--autonomous` never reaches it. |
+| 7 `/ship-checked` | **blocked handoff, always** | Same as every mode: `/ship-checked` refuses programmatic invocation. `--autonomous` never reaches it. |
 
 ## R1 — Load the governing plan
 
@@ -59,7 +59,7 @@ you cannot map to a file is not in the fix list yet — investigate it first; do
 not guess a scope.
 
 **Record the result in the plan** before touching code, as a dated entry under
-the plan's `## Implementation Log` (the section `/ship` Step 5 appends to —
+the plan's `## Implementation Log` (the section `/ship-checked` Step 5 appends to —
 create it at the bottom if absent):
 
 ```markdown
@@ -156,8 +156,8 @@ rerun block ship exactly as in Step 5.
 1. Append the outcome to the R2 log entry: per finding `fixed` / `still-present`
    / `unverified`, the audit verdict and rounds, the rerun result.
 2. Step 6 `/ux-lock` for each fixed P0/P1 (unless `--no-uxlock`).
-3. Step 7's blocked handoff — `Resume with: /ship docs/plans/<name>.md`.
-   `/ship` Step 5 then sees the plan path and the log entry.
+3. Step 7's blocked handoff — `Resume with: /ship-checked docs/plans/<name>.md`.
+   `/ship-checked` Step 5 then sees the plan path and the log entry.
 
 Summary card:
 
@@ -169,7 +169,7 @@ Summary card:
   Audit-code: 2 rounds, CONVERGED, H:0 M:0 L:1 (focused: 3 files)
   Final review: APPROVE (<provider> / <model>)
   Rerun:      "Pieter" "adding a bottle" — 2/2 fixed (create→reload→edit→reload)
-  Ship:       BLOCKED — run: /ship docs/plans/<name>.md
+  Ship:       BLOCKED — run: /ship-checked docs/plans/<name>.md
 ═══════════════════════════════════════
 ```
 

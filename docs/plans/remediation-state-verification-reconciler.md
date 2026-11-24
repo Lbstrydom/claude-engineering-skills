@@ -392,9 +392,9 @@ rule warns about. New, distinctly-named columns instead.
   authoritative KEYS inventory.
 - `docs/runbooks/local-maintenance-checks.md` (modify) — add the row to the
   hand-maintained table.
-- `skills/ship/SKILL.md` (modify, Step 0.5e) — best-effort capped
+- `skills/ship-checked/SKILL.md` (modify, Step 0.5e) — best-effort capped
   `--apply` call + the one-line auto-reconciled summary (§2 Decision C.1); run
-  `npm run skills:regenerate` to sync `.claude/skills/ship/SKILL.md`.
+  `npm run skills:regenerate` to sync `.claude/skills/ship-checked/SKILL.md`.
 - `docs/reference/environment-variables.md` (modify) — add
   `AUDIT_REMEDIATION_RECONCILE_ENABLED` and `AUDIT_REMEDIATION_RECONCILE_MODEL`
   rows (`--cap` stays CLI-only — see §2 Decision C.1 on why no shared env

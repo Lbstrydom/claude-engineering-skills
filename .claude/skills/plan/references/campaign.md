@@ -112,9 +112,9 @@ An artifact on an unmerged branch, untracked, or a symlink fails; the command pr
 file's SHA-256 for the close-out record.
 
 ### C12 — Close-out claims check
-- **claims-check**: the write-up(s) the `/ship` close-out claims check runs over: every
+- **claims-check**: the write-up(s) the `/ship-checked` close-out claims check runs over: every
   figure traces to an artifact and carries measured / derived / expected
-  (the `/ship` skill's Step 1.5).
+  (the `/ship-checked` skill's Step 1.5).
 
 ## The dress-rehearsal gate
 

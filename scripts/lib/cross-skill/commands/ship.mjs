@@ -25,7 +25,7 @@ async function lockRepoRoot() {
 }
 
 /**
- * `record-ship-event` — /ship writes its outcome. Moved from
+ * `record-ship-event` — /ship-checked writes its outcome. Moved from
  * `cmdRecordShipEvent`; the write template for every Cluster B migration:
  * validate → cloud degrade → lazy scope → port write → map the store's
  * discriminated result (`{ok:false}` becomes a thrown CommandError, never a
@@ -89,7 +89,7 @@ const pageArgs = (ctx) => ({ limit: ctx.flag('limit'), offset: ctx.flag('offset'
  * Keyset cursor for the two nudge readers — the LAST row of a page, in that
  * reader's total order. Opaque to the caller (base64url JSON).
  *
- * Why not `--offset`: the /ship workflow is "verify each row, then close it",
+ * Why not `--offset`: the /ship-checked workflow is "verify each row, then close it",
  * and every close removes a row from the view. An offset counts positions in a
  * set that has since shrunk, so `--offset 20` after closing k rows of page 1
  * silently skips k unread rows. A cursor names a POSITION IN THE ORDER, which a
@@ -147,7 +147,7 @@ const nextCursorFor = (kind, rows, limit) => (rows.length > 0 && rows.length >= 
  * (`nextCursor: null`), so a transient store error mid-walk would read as "no
  * more rows" and the unread tail would silently never be examined. A thrown
  * CommandError carries `measured:false` and NO `nextCursor`, so a caller cannot
- * mistake it for exhaustion. The other reader callers (the /ship nudge cards)
+ * mistake it for exhaustion. The other reader callers (the /ship-checked nudge cards)
  * stay on the degrade path.
  */
 async function readPageStrict(read) {
@@ -503,7 +503,7 @@ async function lockWithTestWorksheet(ctx) {
   const rows = await ctx.deps.getUnlockedFixes(storeScope, { mode: 'code' });
   // `allAges: false` spelled out rather than inherited — this line once read
   // `{ allAges }` against no such binding and threw on EVERY invocation of the
-  // command /ship Step 0.5b tells operators to run.
+  // command /ship-checked Step 0.5b tells operators to run.
   const byMode = await ctx.deps.countUnlockedFixes(storeScope, { allAges: false });
   const capped = byMode.code > rows.length;
 
@@ -593,7 +593,7 @@ async function lockWithTestWorksheet(ctx) {
  * `--commit`), `--as dismissed`, or `--as accepted-permanent` (both with a
  * mandatory `--reason`).
  *
- * The closing command `/ship` Step 0.5e printed, `final-review-record-fix`, is
+ * The closing command `/ship-checked` Step 0.5e printed, `final-review-record-fix`, is
  * scoped to final-review passes, so it could not close any ordinary-pass
  * finding — every row of the 2026-10-02 queue. By id, not run+fingerprint:
  * the ids are what both nudge readers print, and an id cannot match a second

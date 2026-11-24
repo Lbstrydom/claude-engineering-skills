@@ -12,7 +12,7 @@
  * the broken form does not error: it just quietly stops applying.
  *
  * Silent by construction, in BOTH directions:
- *   - `disable-model-invocation` — a self-invoked /ship "cites its own execution
+ *   - `disable-model-invocation` — a self-invoked /ship-checked "cites its own execution
  *     as consent" (ship/SKILL.md). Blast radius spans hosts: VS Code Copilot
  *     reads `.claude/skills/` and honours this exact key.
  *   - `allowed-tools`, `model`, `argument-hint`, `user-invocable`, `license` —

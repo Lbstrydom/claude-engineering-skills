@@ -181,7 +181,7 @@ describe('the local registry FILE is found off the main checkout too', () => {
   // The 2026-07-30 fix above anchored the registry's consumer PATHS to the main
   // checkout; the lookup of the file that LISTS them still used the worktree's
   // own `scripts/lib`. That file is gitignored, so `git worktree add` never
-  // populates it: a /ship from a worktree resolved only the committed
+  // populates it: a /ship-checked from a worktree resolved only the committed
   // BASE_REPOS, silently dropped every private consumer, and still printed
   // `Targets: 2/2 reached · Errors: 0`.
 

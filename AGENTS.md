@@ -10,7 +10,7 @@
 > recipes, env tables, migration mechanics) belongs in `docs/` with a short
 > *what-it-is / when-you-need-it / pointer* stub here, mirroring the skill
 > `SKILL.md ≤3K + references/` pattern. **Enforced since 2026-07-13**: `npm run context:check` (run by
-> the pre-push hook and `/ship` Step 4) fails on
+> the pre-push hook and `/ship-checked` Step 4) fails on
 > `ctx/oversized-agents-md` above **79000 characters**
 > (`DEFAULT_MAX_AGENTS_MD_CHARS` in `scripts/check-context-drift.mjs`) — condense
 > a dossier section to a stub + `docs/<topic>.md` rather than raising the cap.
@@ -819,7 +819,7 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
 - **Promote a one-off check that mattered** — subject probe + negative control +
   vacuous-pass guard, with a disposition and a named retirement predicate:
   [contract-test-scaffold.md](skills/audit-code/examples/contract-test-scaffold.md).
-- **Verify what the consumer receives, not what the producer sent.** `/ship`
+- **Verify what the consumer receives, not what the producer sent.** `/ship-checked`
   Step 6.8; `unverified` must name a concrete blocked prerequisite, never a bare
   "not applicable".
 

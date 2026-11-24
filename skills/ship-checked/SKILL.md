@@ -1,14 +1,14 @@
 ---
-name: ship
+name: ship-checked
 description: |
-  Sync all project documentation, optionally update a plan, then commit and push to git.
-  Updates status.md (session log), syncs CLAUDE.md to AGENTS.md, and handles git workflow.
+  Our /ship: syncs docs, runs the repo's checks, then commits and pushes. The built-in /ship skips all of these.
+  Optionally updates a plan. Updates status.md (session log), syncs CLAUDE.md to AGENTS.md, and handles git workflow.
   Use when the user is ready to commit and push their work.
   Recommend it on: "ship it", "commit and push", "push my changes", "ready to ship".
   DO NOT INVOKE THIS SKILL ON YOUR OWN INITIATIVE — it commits and pushes, which is not
   undoable once the push lands. Run it only when the user asked for it in their own words
   this turn. If they merely approved a design ("looks good, ship it" about a plan), say
-  /ship is available and stop. Their invocation IS the approval that lets every step skip
+  it is available and stop. Their invocation IS the approval that lets every step skip
   confirmation, which is exactly why it cannot be self-invoked.
   Full command syntax: see the Usage section in this skill.
 disable-model-invocation: true
@@ -20,7 +20,7 @@ allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack --include-env-mana
 > **This skill's last line is an end marker naming the skill between em-dashes, after
 > the Reference files table.** If that last line is not in your context (context
 > compaction keeps only the start of a skill), re-read
-> `.claude/skills/ship/SKILL.md` in full before continuing — the later steps still apply.
+> `.claude/skills/ship-checked/SKILL.md` in full before continuing — the later steps still apply.
 
 > **Explicit invocation only — this is a host-neutral requirement, not just a
 > frontmatter flag.** `disable-model-invocation: true` enforces it in Claude Code
@@ -30,15 +30,15 @@ allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack --include-env-mana
 > only when the user asked, in their own words this turn, for their work to be
 > committed and pushed. "Looks good, ship it" said about a plan, a diff or a
 > design is assent to the *idea*, not an instruction to push — answer it by
-> offering `/ship`, never by running it.
+> offering this skill, never by running it.
 >
 > Every step below skips confirmation because the user chose to run this; a
 > self-invoked run would cite its own execution as consent.
 > → `references/flow-rationale.md` §Explicit invocation — read when deciding
 > whether a message is an invocation, or before changing this rule.
 
-> **Host built-in check.** Claude Code 2.1.330+ reserves `/ship` and skips this
-> skill. If that built-in ran (a PR or watch with no `AI-*`
+> **Host built-in check.** Claude Code 2.1.330+ has its own `/ship`. If a user
+> typed that and it ran (a PR or watch with no `AI-*`
 > trailers), stop and tell the user: no gate ran.
 
 A single command that ensures all project documentation is current, then
@@ -46,14 +46,14 @@ commits and pushes. Follow every step in order.
 
 ## Usage
 
-| Invocation | Effect |
+| `/ship-checked` + | Effect |
 |---|---|
-| `/ship` | sync docs + commit + push |
-| `/ship docs/plans/<name>.md` | also update that plan before committing |
-| `/ship --no-tests` | skip pre-push tests (override; logged in `ship_event`) |
-| `/ship --ignore-p0` | push despite an unresolved persona-test P0 finding |
-| `/ship --skip-ux-lock` | push despite an unlocked recent UI fix |
-| `/ship --train [--waive n,…] [--allow-unaudited n,…] [--end-of-day]` | land a batch of ship-ready PRs in one action (see **Train mode**) |
+| (nothing) | sync docs + commit + push |
+| `docs/plans/<name>.md` | also update that plan before committing |
+| `--no-tests` | skip pre-push tests (override; logged in `ship_event`) |
+| `--ignore-p0` | push despite an unresolved persona-test P0 finding |
+| `--skip-ux-lock` | push despite an unlocked recent UI fix |
+| `--train [--waive n,…] [--allow-unaudited n,…] [--end-of-day]` | land a batch of ship-ready PRs in one action (see **Train mode**) |
 
 The three override flags are honoured only when the **user** passes them; see
 Step 0.5f's override handling. Never add one on the skill's own initiative to get
@@ -503,7 +503,7 @@ what's about to ship. The map itself is **never committed** — see below.
 
 ```bash
 # Determine since-commit (last shipped). Use upstream/origin HEAD as a proxy
-# when no /ship event has been recorded yet.
+# when no ship event has been recorded yet.
 LAST=$(git rev-parse "@{upstream}" 2>/dev/null || git rev-parse "HEAD~1")
 node scripts/symbol-index/refresh.mjs --since-commit "$LAST" || true
 node scripts/symbol-index/render-mermaid.mjs || true
@@ -656,7 +656,7 @@ _This site: `path+flags` — no path means skip the plan update entirely; do not
 
 **Resuming after a blocked `/cycle --autonomous` run?** Treat the plan path as
 required, not optional — `/cycle`'s Step 7 handoff card names it explicitly
-(`/ship docs/plans/<name>.md`) for exactly this reason: a bare `/ship` here
+(`/ship-checked docs/plans/<name>.md`) for exactly this reason: a bare run here
 skips this step entirely, and the plan's `Status:`/Implementation Log never
 picks up what the autonomous run did.
 
@@ -800,7 +800,7 @@ the freshness rule: `references/commit-provenance-deep-dive.md`.
 
 ### 6.3 Commit and push
 
-**The `/ship` command IS the user's approval.** Proceed directly — no
+**The invocation IS the user's approval.** Proceed directly — no
 confirmation prompts.
 
 **Both of these are now REQUIRED, and `ship-commit` refuses without them.**
@@ -814,7 +814,7 @@ EPOCH=$(date +%s)
 MODELS="claude-opus-5-5,gpt-6.1-terra"   # the models that actually did the work this ship
 GATE=not-run                     # passed | converged | waived | not-run — see AI-Gate above
 
-node scripts/ship-commit.mjs --message-file ".claude/tmp/ship-commit-msg-$EPOCH.txt" --skill ship --models "$MODELS" --gate "$GATE" --expect-head "$SHIP_HEAD" --expect-branch "$SHIP_BRANCH" --path scripts/lib/*.mjs --path tests/*.test.mjs
+node scripts/ship-commit.mjs --message-file ".claude/tmp/ship-commit-msg-$EPOCH.txt" --skill ship-checked --models "$MODELS" --gate "$GATE" --expect-head "$SHIP_HEAD" --expect-branch "$SHIP_BRANCH" --path scripts/lib/*.mjs --path tests/*.test.mjs
 git push origin "$SHIP_BRANCH"
 ```
 
@@ -889,7 +889,7 @@ consumer's `package.json`); the refresher itself **is** synced
 After refresh, regex-match the HEAD commit subject against
 `/fix.*\bsecurity\b|\bcve\b|\bvuln\b|\bleak\b|\binjection\b|\bauth\b|\bxss\b|\bcsrf\b|\brce\b/i`
 (word-boundary-anchored on purpose). If matched, emit a single passive log line
-(NOT an interactive prompt — `/ship` runs to completion without asking, which
+(NOT an interactive prompt — this skill runs to completion without asking, which
 is the whole contract in its `description`; a prompt here would strand the
 push mid-flight):
 
@@ -933,7 +933,7 @@ node scripts/cross-skill.mjs quality session-review
 ```
 
 For each pending note, emit a single passive line with the ready link command
-(NOT an interactive prompt — `/ship` runs to completion without asking, same as
+(NOT an interactive prompt — this skill runs to completion without asking, same as
 the Step 6.5 security hint):
 
 ```
@@ -1028,8 +1028,8 @@ node scripts/lib/worktree-preflight.mjs pending-note write
 ```
 
 It resolves the MAIN checkout itself (never hand-write the path) and stamps the
-filename with the shipped sha and the time; the **next** `/ship`'s Step 2 drains
-it. If no further `/ship` happens, the notes simply sit there unread — an
+filename with the shipped sha and the time; the **next** run's Step 2 drains
+it. If no further run happens, the notes simply sit there unread — an
 acceptable loss for advisory documentation (never a gate), not a reason to force
 a push now. Incident history behind each of these rules:
 `references/post-push-advisories.md` §6.8.
@@ -1081,16 +1081,15 @@ prints `{"ok":true,"cloud":false}` and returns 0.
 
 ---
 
-## Train mode (`/ship --train`)
+## Train mode (`/ship-checked --train`)
 
-**Source-repo-gated** (`package.json.name === "claude-engineering-skills"`); consumers skip this (no sync closure to classify
-against, no sync tools to publish with). One human invocation lands several already-audited, `fleet ready` PRs: one status entry,
+**Source-repo-gated** (`package.json.name === "claude-engineering-skills"`); consumers skip it. One human invocation lands several already-audited, `fleet ready` PRs: one status entry,
 per-PR provenance in each squash commit, one combined test run, one consumer sync. **Human-only, like the rest of this skill** — `--train` does not relax the
-explicit-invocation rule above. Its three flags are read only from this invocation. Runbook,
-refusals, overrides, recovery: `references/train-mode.md` (read it before running any verb of
+explicit-invocation rule above. Its three flags come only from this invocation. Runbook:
+`references/train-mode.md` (read it before running any verb of
 `node scripts/ship-train.mjs plan | message | land | verify | sync`).
 
-**PRs merged without `/ship`** (fleet land, `gh pr merge`): the record half, docs-only, merge stays human —
+**PRs merged without this skill** (fleet land, `gh pr merge`): the record half, docs-only, merge stays human —
 `node scripts/ship-record.mjs`, `references/record-catchup.md`.
 
 ---
@@ -1104,19 +1103,19 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/architecture-and-dashboard-refresh.md` | Why the arch-map and dashboard pages are Category A, 0.5c's failure-mode matrix, and 0.5c/0.5d history. | Debugging Step 0.5c/0.5d (staging, a refresh that did not run), or a consumer asks to build its dashboard. |
 | `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch`/`--path` behaviour, or before changing one. |
-| `references/flow-rationale.md` | Why /ship's own flow is shaped as it is — the explicit-invocation bar, numbering, and Steps 0.5b-6.8 rationale. | A step's one-liner points here, or before changing that step's rule or its numbering. |
+| `references/flow-rationale.md` | Why /ship-checked's own flow is shaped as it is — the explicit-invocation bar, numbering, and Steps 0.5b-6.8 rationale. | A step's one-liner points here, or before changing that step's rule or its numbering. |
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |
 | `references/post-push-advisories.md` | Steps 6.5-6.8's post-push advisories and the Step 7 close-out - incident history, kept out of the routine flow. | Debugging Step 6.5-6.8's behaviour, changing one, walking Step 6.7's whole queue, or writing the close-out. |
 | `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |
 | `references/python-environment-discovery.md` | Python pre-push command discovery — env wrapper detection + per-tool probe order. | detect-stack returned `python` or `mixed` with Python files in the diff. |
 | `references/status-md-format.md` | status.md session-log template + update rules + persona / UX status sections. | Step 2 — creating status.md for the first time, OR appending UX / Persona / Regression-Lock / Plan-Verify sections. |
-| `references/train-mode.md` | /ship --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship --train` was invoked, or the user asked to land several ready PRs together. |
-| `references/record-catchup.md` | Record catch-up — /ship's record half for PRs merged without it: one entry per PR, docs-only commit, human merge. | A PR merged without /ship (`fleet status`: records). |
+| `references/train-mode.md` | /ship-checked --train runbook — plan, land, verify, sync a batch of ship-ready PRs; refusals, overrides, recovery. | `/ship-checked --train` was invoked, or the user asked to land several ready PRs together. |
+| `references/record-catchup.md` | Record catch-up — the ship record for PRs merged without it: one entry per PR, docs-only commit, human merge. | A PR merged without /ship-checked (`fleet status`: records). |
 | `references/upstream-triage.md` | Step 0.5h — triaging a consumer's upstream report: the owning store, the FULL uuid, and the freshness check. | Step 0.5h's card lists a report you are about to `ack`, `fix` or `wont-fix`. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |
 | `references/ci-merge.md` | ci-merge.mjs - wait on every check of the pushed head, reject red or UNSTABLE, update BEHIND, squash-merge. | A push opened or updated a PR: waiting on CI, or merging. |
 | `references/claims-check.md` | Step 1.5 claims check — every figure in a write-up traces to an artifact and carries its provenance label. | Step 1.5 — the change carries a write-up, results doc or status report. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
-— end of /ship —
+— end of /ship-checked —

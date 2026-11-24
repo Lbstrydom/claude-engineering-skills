@@ -4,7 +4,7 @@
  * (docs/plans/ship-batch-member-outcomes.md).
  *
  * Each chip shipped itself (`ship-commit.mjs --preauthorised`); this re-verifies each member from durable facts, lands only
- * the members that verify, and leaves the rest open for the user's `/ship`.
+ * the members that verify, and leaves the rest open for the user's `/ship-checked`.
  *
  *   build   grant -> `admitMember` per member -> PARTITION -> the existing train build over the admitted members only
  *           -> a WRITE-ONCE record `fleet/shipbatch/<trainId>.json` (v2, strict; never patched).
@@ -260,7 +260,7 @@ export function buildShipBatch(ctx, flags, deps, buildFn, { parseSelect }) {
 Nothing was built, merged or changed: this stops the run, it is not a refusal of one member.`);
   const needsText = needsUser.map((n) => `  needs-user  ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}`);
   if (!ok.length) {
-    return { ok: false, code: 'refused', reason: 'no member is ship-ok', needsUser, text: `REFUSED: no member is ship-ok — nothing was built, merged or changed\n${needsText.join('\n')}\nEach waits for the user to type /ship in its own session.` };
+    return { ok: false, code: 'refused', reason: 'no member is ship-ok', needsUser, text: `REFUSED: no member is ship-ok — nothing was built, merged or changed\n${needsText.join('\n')}\nEach waits for the user to type /ship-checked in its own session.` };
   }
   // The partition happens BEFORE the integration worktree, so the tested combination is the admitted set (a member that later does not land leaves a subset).
   const r = buildFn(ctx, { ...flags, '--select': ok.map((m) => m.id).join(',') }, deps);
@@ -399,7 +399,7 @@ export function summaryText(run, trainId, extra = [], label = 'ship-batch') {
       const what = o ? `${o.status}/${o.code}${o.verdict ? `/${o.verdict}` : ''}` : `${m.step}`;
       return `  ${what.padEnd(34)} ${m.id} (PR #${m.prNumber})${o?.attribution === 'unknown' ? '  [attribution: unknown]' : ''}${o?.gate ? `  AI-Gate: ${o.gate}` : ''}${o?.mergeOid ? ` -> ${short(o.mergeOid)}` : ''}${o?.reason ? `  [${o.reason}]` : ''}`;
     }),
-    ...(run.policy?.excluded ?? []).map((n) => `  needs-user${' '.repeat(24)} ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}  -> the user types /ship in that session`),
+    ...(run.policy?.excluded ?? []).map((n) => `  needs-user${' '.repeat(24)} ${n.id}${n.prNumber ? ` (PR #${n.prNumber})` : ''}: ${n.reasons.join('; ')}  -> the user types /ship-checked in that session`),
     ...res.tails, ...extra,
   ];
   return { res, text: lines.join('\n') };

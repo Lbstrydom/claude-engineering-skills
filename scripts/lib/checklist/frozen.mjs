@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 export const FROZEN = Object.freeze({
   frozenOn: '2026-11-22',
   files: Object.freeze({
-    checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '2a455f3d361d4537e8e2903f457545be296885fd9b724e37193daa9a26c26f40' }),
+    checklist: Object.freeze({ path: '.audit-loop/checklist.json', sha256: '0d2aea1de7bcdee16b5c5448146fd263cbd61a097b3afa240fb985d3e219e91b' }),
     matcher: Object.freeze({ path: 'scripts/lib/checklist/match.mjs', sha256: 'fc00e14d59be335017c17609e0254520188adbef037483735dcfe17785016aca' }),
     scoring: Object.freeze({ path: 'scripts/lib/checklist/pilot.mjs', sha256: 'c758c13a21c6b582dafde08c9e0249657cf7bdfcb08720118ef47cc20d615b39' }),
     // v4: the schema decides how an entry is LOADED (trigger keys, the `checks` default), so it is part of the instrument too.

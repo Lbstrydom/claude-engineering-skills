@@ -1,8 +1,8 @@
 /**
- * @fileoverview Contract tests for the `/ship` final-review credit card.
+ * @fileoverview Contract tests for the `/ship-checked` final-review credit card.
  *
  * `renderFinalReviewCard` exists BECAUSE a SKILL.md is not an executable seam —
- * "three /ship regression tests" could not otherwise have been satisfied (audit
+ * "three /ship-checked regression tests" could not otherwise have been satisfied (audit
  * R3-M2). Everything the operator sees is decided here, so everything the plan
  * promises about the card is asserted here.
  *

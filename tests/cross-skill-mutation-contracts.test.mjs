@@ -198,7 +198,7 @@ test('C1 scoped: a resolvable uuid translates to the v4 repoId', async () => {
 // while `scope.repoId` was an OBJECT in production — callers bound it into
 // `WHERE repo_id = $1` and Postgres rejected it:
 //   invalid input syntax for type uuid: "{"id":"22865de8-…","name":"…"}"
-// which killed `persona-outcomes summary` and /ship's Step 0.5a UX gate.
+// which killed `persona-outcomes summary` and /ship-checked's Step 0.5a UX gate.
 // Pin the real shape so the fixture cannot be more generous than reality again.
 test('C1 scoped: unwraps the audit_repos ROW the real resolver returns', async () => {
   const r = await resolveRepoScope({

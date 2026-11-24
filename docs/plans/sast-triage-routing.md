@@ -970,7 +970,7 @@ the SARIF router calls or depends on them):
 **Item 4 — the reported cause is wrong and the real one is worse.** The report
 attributed silent telemetry loss to `/ship` invoking bare `scripts/cross-skill.mjs`
 where consumers have `scripts/.claude-skills/cross-skill.mjs`. Checked directly:
-the consumer's `.claude/skills/ship/SKILL.md` **is** correctly rewritten (all 8
+the consumer's `.claude/skills/ship-checked/SKILL.md` **is** correctly rewritten (all 8
 call sites point at `scripts/.claude-skills/`). The rewriter works.
 
 The actual cause is that the consumer also has an untracked, stale

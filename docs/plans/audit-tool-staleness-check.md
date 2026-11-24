@@ -100,7 +100,7 @@ Generated artefact. Committed to git so it's accessible via
 
 Add `sync:version-check` script: `node scripts/check-audit-tool-version.mjs`.
 
-### 7. `skills/ship/SKILL.md` (modified)
+### 7. `skills/ship-checked/SKILL.md` (modified)
 
 Add Step 6.0 between Step 5.5 and Step 6.1. Contents: regenerate manifest
 in source repo via `node scripts/sync-to-repos.mjs --target wine` (any

@@ -62,8 +62,8 @@ describe('receipt', () => {
       sourceUrl: 'https://example.com',
       surface: 'both',
       managedFiles: [
-        { path: 'C:/Users/u/.claude/skills/ship/SKILL.md', sha: 'aaa', skill: 'ship', scope: 'global' },
-        { path: '.agents/skills/ship/SKILL.md', sha: 'bbb', skill: 'ship', scope: 'repo' },
+        { path: 'C:/Users/u/.claude/skills/ship-checked/SKILL.md', sha: 'aaa', skill: 'ship', scope: 'global' },
+        { path: '.agents/skills/ship-checked/SKILL.md', sha: 'bbb', skill: 'ship', scope: 'repo' },
       ],
     }));
 

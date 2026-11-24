@@ -98,7 +98,7 @@ sync are legitimate UX patterns. Consumer apps tune:
 - Restock advisor where stale copy is acceptable → `severityFloor: 'P2'`
 
 The contradiction is ALWAYS emitted so the ledger has the audit trail;
-severity controls what `/ship` does with it.
+severity controls what `/ship-checked` does with it.
 
 ---
 
@@ -209,7 +209,7 @@ captures that would otherwise hide as flakiness.
 ## Candidate emission — RETIRED 2026-08-11
 
 The runner used to write each unexpected P0/P1 contradiction to
-`regression_specs` as a `persona-consistency-candidate` row, which `/ship`
+`regression_specs` as a `persona-consistency-candidate` row, which `/ship-checked`
 Step 5.6 promoted into a generated Playwright spec. **That whole path is
 gone**, along with both consistency `source_kind` values and the four evidence
 columns (migration `20260811150000`). It never wrote a row in its 12-week life

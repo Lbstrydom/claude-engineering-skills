@@ -228,7 +228,7 @@
       "state": "fixed",
       "disposition": {
         "kind": "exempt",
-        "value": "prose-only SKILL.md fix (cycle/SKILL.md Step 7 + Step 8 + --autonomous docs); no CLI exit code to bind a test to, /ship's own disable-model-invocation refusal is already tested"
+        "value": "prose-only SKILL.md fix (cycle/SKILL.md Step 7 + Step 8 + --autonomous docs); no CLI exit code to bind a test to, /ship-checked's own disable-model-invocation refusal is already tested"
       },
       "recordedAt": "2026-09-19T12:06:12.426Z"
     },

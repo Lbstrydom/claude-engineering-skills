@@ -5,8 +5,8 @@ description: |
   worktrees, a shared tree): see who is doing what, stop two sessions
   building the same thing, and land ready branches with ONE combined test
   run after explicit human approval. /fleet COORDINATES CONCURRENT SESSIONS;
-  it does not plan (/plan), audit (/audit-code) or ship a single change
-  (/ship), and it is not /cycle (one feature, one session) nor /brainstorm.
+  it does not plan (/plan), audit (/audit-code) or ship one change
+  (/ship-checked); nor is it /cycle (one feature, one session) or /brainstorm.
   Coordination is cooperative, not enforced.
   Triggers on: "fleet", "what are my sessions doing", "status of all
   branches", "spin up sessions", "land these branches together",

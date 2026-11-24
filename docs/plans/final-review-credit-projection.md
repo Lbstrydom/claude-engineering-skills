@@ -147,7 +147,7 @@ graph LR
   observability). The card's headline class is renamed from
   "fixed-but-unlabelled" to what it will now mean — *fixed with no completed
   ruling on either axis* — and the `/ship` SKILL.md Step 6.7 prose and
-  `skills/ship/gate-contract.json` follow. The population moves 2,280 → 631
+  `skills/ship-checked/gate-contract.json` follow. The population moves 2,280 → 631
   (449 shadow never adjudicated + 95 `merged` fixed-without-ruling + 84 shadow
   adjudicated-but-still-in-population + 3), and the entry says why.
   **Cross-axis lifecycle, stated (R1 M2)**: `user_action` is the ship-time
@@ -224,8 +224,8 @@ graph LR
 | `tests/gemini-review-shadow-persist.test.mjs` | create | Producer→store contract: a fake `recordFinalReviewFindings` captures the payload from the persistence block for (a) an executed non-empty shadow → `shadowRan:true`, `shadow` non-empty; (b) an executed EMPTY shadow → `shadowRan:true`, `shadow: []`; (c) a shadow that did not run (`_shadow.state !== 'ran'`) → `shadowRan:false`, `shadow: []`, every primary `_bucket` null. Exercises the real block via its exported seam (`_internals`) rather than a copy of it. |
 | `scripts/db-test-container.mjs` | modify | Enrol `tests/final-review-replay-db.test.mjs`. |
 | `.github/workflows/postgres-parity.yml` | modify | Enrol the same file in the job list and both `paths:` filters. |
-| `skills/ship/SKILL.md` | modify | Step 6.7: the card's classes and what "no ruling on either axis" means; note that a re-run final review no longer erases labels. |
-| `skills/ship/gate-contract.json` | modify | Disposition the new prose lines. |
+| `skills/ship-checked/SKILL.md` | modify | Step 6.7: the card's classes and what "no ruling on either axis" means; note that a re-run final review no longer erases labels. |
+| `skills/ship-checked/gate-contract.json` | modify | Disposition the new prose lines. |
 | `tests/final-review-adjudicate.test.mjs` | modify | Existing suite gains: adjudicating a row then re-running `recordFinalReviewFindings` for that run keeps `user_action` (the seam-3 regression, on the suite that already owns the adjudicate fixture). |
 
 Regex-resolvable paths: 12 (≥5 — fuzzy discovery will not fire).
@@ -248,7 +248,7 @@ Files: `scripts/lib/store/runs-findings.mjs` (modify — `recordFinalReviewFindi
 `tests/final-review-adjudicate.test.mjs` (a comment only — see §Audit trail).
 
 **Phase 3 — Operator surface**: SKILL.md + gate contract. Files:
-`skills/ship/SKILL.md` (modify), `skills/ship/gate-contract.json` (modify).
+`skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/gate-contract.json` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`;
 `npm run db:enrolment:gate`; `npm run size:ratchet:gate` (`runs-findings.mjs` is

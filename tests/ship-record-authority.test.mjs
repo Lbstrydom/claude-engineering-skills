@@ -92,8 +92,8 @@ describe('ship-commit --record (integration)', () => {
   it('commits a record with its authority trailers, and refuses a code path', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-record-commit-'));
     run(dir, 'git', ['init', '-q', '-b', 'main']);
-    fs.mkdirSync(path.join(dir, 'skills/ship'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'skills/ship/SKILL.md'), '---\nname: ship\ndescription: x\n---\n');
+    fs.mkdirSync(path.join(dir, 'skills/ship-checked'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skills/ship-checked/SKILL.md'), '---\nname: ship\ndescription: x\n---\n');
     run(dir, 'git', ['add', '-A']); run(dir, 'git', ['commit', '-q', '-m', 'init']);
     const fleet = path.join(ROOT, 'scripts/fleet.mjs');
     assert.equal(run(dir, process.execPath, [fleet, 'decision', 'record', '--scope', 'record-catchup', '--words-file', '-'], 'Commit docs-only records.\n').status, 0);

@@ -333,8 +333,9 @@ remains the drift backstop for a consumer-repo copy created by other means.
 
 Claude Code v2.1.330 bundles `/ship` (internal skill `ship-local`) and `/steward`
 as part of Claude Ship, and **reserves their names**: a project or personal skill
-named `ship`, `ship-local` or `steward` is not loaded. Ours is `skills/ship/` →
-`.claude/skills/ship/`, synced to every consumer.
+named `ship`, `ship-local` or `steward` is not loaded. Ours WAS `skills/ship/`;
+**renamed to `/ship-checked` on 2026-11-24** (Louis's decision) for exactly this
+reason. The evidence below is what the rename answered.
 
 **Which `/ship` wins: the built-in.**
 
@@ -346,8 +347,8 @@ named `ship`, `ship-local` or `steward` is not loaded. Ours is `skills/ship/` �
 | [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) §Resolve skills that share a name | "Where `/ship` is available, the bundled `/ship` or `/steward`. Claude Code doesn't load yours" | doc, read 2026-11-24 |
 
 Not measured: the interactive `/` menu (a headless run cannot type a slash
-command), and hosts other than Claude Code. Copilot reads `.claude/skills/ship/`
-with no such reservation, so there ours still runs.
+command), and hosts other than Claude Code. Copilot read `.claude/skills/ship/`
+with no such reservation, so there ours still ran.
 
 **What typing `/ship` does on CC 2.1.330+**, per
 [the /ship docs](https://code.claude.com/docs/en/ship-command): commits (in a
@@ -367,15 +368,23 @@ Louis's settings decision; no file in this repo sets it.
 **Guards in this repo.**
 - `skills:check` (`check-skill-descriptions.mjs`, via
   [`skill-reserved-names.mjs`](../../scripts/lib/skill-reserved-names.mjs))
-  fails on any skill whose directory or frontmatter `name` is reserved. `ship` is
-  the one declared exception, and the exception fails once no skill uses it.
+  fails on any skill whose directory or frontmatter `name` is reserved. Since the
+  rename there is no exception; `KNOWN_RESERVED_COLLISIONS` is empty and any
+  future entry fails once its directory is gone.
 - **Never name a skill `steward`.** `.claude/skills/steward/SKILL.md` is the
   file the built-in watch and the org PR Steward agent read as **instructions**,
   so ours would be regenerated into that exact path and synced into every
   consumer, steering an agent that pushes under the user's name.
-- Our `/ship` SKILL.md carries a tripwire for the case where it loads but the
-  built-in ran earlier in the session. While the name is reserved, CC 2.1.330
-  never loads it, so the tripwire cannot catch the main case: only a rename can.
+- `/ship-checked`'s SKILL.md carries a tripwire: if the built-in `/ship` ran
+  instead (a user typing the old name), stop and say none of our gates ran.
+- **The old consumer copy is retired by the sync.** `.claude/skills/` is a
+  `retirePrefixes` entry in `sync-to-repos.mjs`, so a synced skill file upstream
+  no longer ships is deleted if unedited and held if edited, exactly as retired
+  migrations are; a consumer's own skills are never in the manifest and never
+  touched.
+- **Old `AI-Skill: ship` trailers stay valid.** `canonicalSkillName`
+  (`skill-reserved-names.mjs`) folds the legacy value onto `ship-checked` for
+  every reader; history is never rewritten.
 
 ---
 

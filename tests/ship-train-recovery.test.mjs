@@ -171,7 +171,7 @@ describe('ship-train land — recovery from owned state only', () => {
     await runLand(ctx, { train: trainId, resume: true, composer, overrides });
     const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
     const files = walk(fleetDir(fx.repo)).map((f) => path.relative(fleetDir(fx.repo), f).split(path.sep).join('/'));
-    assert.deepEqual(files.filter((f) => /ship|\.msg$/i.test(f)), [], `unexpected ship-train artefacts: ${files.join(', ')}`);
+    assert.deepEqual(files.filter((f) => /ship-checked|\.msg$/i.test(f)), [], `unexpected ship-train artefacts: ${files.join(', ')}`);
     assert.ok(git(['rev-parse', '--git-dir'], fx.repo));
   });
 });

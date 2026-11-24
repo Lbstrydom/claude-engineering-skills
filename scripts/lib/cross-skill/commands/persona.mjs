@@ -174,7 +174,7 @@ export async function personaOutcomesCmd(ctx) {
   if (sub === 'summary') {
     // THE READ CHAIN (2026-09-07). `--repo` → `PERSONA_TEST_REPO_NAME` →
     // ambient git identity → `measured:false`. The env layer alone was not
-    // enough: `/ship` invoked this as `--repo "$PERSONA_TEST_REPO_NAME"`, a
+    // enough: `/ship-checked` invoked this as `--repo "$PERSONA_TEST_REPO_NAME"`, a
     // SHELL expansion, and a Claude Code session inherits neither the
     // consumer's `.env` nor `~/.audit-loop.env` — so the flag arrived EMPTY,
     // the env fallback never ran (an empty flag is falsy but the CLI never saw
@@ -673,7 +673,7 @@ export async function getPersonaSessionsByRepoCmd(ctx) {
   const requestedName = parsed.data.repoName ?? process.env.PERSONA_TEST_REPO_NAME ?? null;
   const scope = await ctx.resolveScope({ explicitRepoName: requestedName });
   if (scope.kind === 'unresolved') {
-    // NOT `rows: []` alone. This command is /ship Step 0.5a's LEGACY fallback,
+    // NOT `rows: []` alone. This command is /ship-checked Step 0.5a's LEGACY fallback,
     // and an empty row list there is read as "no session with open P0s" — the
     // exact false-clean the 2026-09-07 consumer report was about.
     return {

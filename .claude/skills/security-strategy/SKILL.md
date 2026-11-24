@@ -41,7 +41,7 @@ running anything** — so a consumer's index silently never refreshed. The
 refresher is itself synced, so the path always resolves.
 
 The skill is **on-demand only** — it never blocks `/cycle`, `/plan`, or
-`/ship`. The planner (Phase 0.5b) consults the memory via the cross-skill
+`/ship-checked`. The planner (Phase 0.5b) consults the memory via the cross-skill
 bridge regardless of whether this skill has run recently.
 
 > **Worktree preflight** — in a linked git worktree the gitignored tooling tree

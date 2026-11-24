@@ -157,7 +157,7 @@ describe('evaluateShippedHead: each condition fails ALONE with its own reason', 
 const refusal = (o) => shipEntryRefusal({ newMode: '100644', ...o });
 const entry = 'docs/status/entries/2026-11-18-070000-ship-x.md';
 
-describe('shipEntryRefusal: the only change /ship may make after the audit is a NEW status entry file', () => {
+describe('shipEntryRefusal: the only change /ship-checked may make after the audit is a NEW status entry file', () => {
   it('an ADDED regular entry file passes', () => {
     assert.equal(refusal({ status: 'A', rel: entry }), null);
   });

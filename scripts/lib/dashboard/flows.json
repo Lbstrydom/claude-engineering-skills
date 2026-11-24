@@ -6,7 +6,7 @@
     { "id": "audit-code", "skill": "audit-code", "label": "Audit Code — multi-pass review" },
     { "id": "ux-lock", "skill": "ux-lock", "label": "UX Lock — Playwright regression spec" },
     { "id": "persona-test", "skill": "persona-test", "label": "Persona Test — live UX testing" },
-    { "id": "ship", "skill": "ship", "label": "Ship — sync docs, commit, push" },
+    { "id": "ship-checked", "skill": "ship-checked", "label": "Ship (checked) — sync docs, run checks, commit, push" },
     { "id": "cycle", "skill": "cycle", "label": "Cycle — orchestrates the whole chain" }
   ],
   "edges": [
@@ -14,8 +14,8 @@
     { "from": "audit-plan", "to": "audit-code", "label": "human implements" },
     { "from": "audit-code", "to": "ux-lock", "label": "fixes shipped" },
     { "from": "audit-code", "to": "persona-test", "label": "frontend scope" },
-    { "from": "ux-lock", "to": "ship" },
-    { "from": "persona-test", "to": "ship" },
+    { "from": "ux-lock", "to": "ship-checked" },
+    { "from": "persona-test", "to": "ship-checked" },
     { "from": "cycle", "to": "plan", "label": "drives" }
   ]
 }

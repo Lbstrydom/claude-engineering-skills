@@ -7,7 +7,7 @@
  * paths this gate reads"), never the fallthrough of a failure. Every uncertainty (no explicit range, git cannot list the
  * diff, the tree cannot be read, an import the closure cannot follow) returns `run: true`. And the scoped mode is OFF
  * unless the pre-push sandbox says so (`AUDIT_PREPUSH_GATE_SCOPE=path`, set by `prepush-check.mjs` only for a branch-tier
- * push that does not update the default branch), so `npm run check`, `/ship`, a push to `main` and the `full` tier are
+ * push that does not update the default branch), so `npm run check`, `/ship-checked`, a push to `main` and the `full` tier are
  * byte-for-byte what they were.
  *
  * Triggers are DERIVED from the gate's own inputs, never typed in: the import closure (plus the repo paths each file

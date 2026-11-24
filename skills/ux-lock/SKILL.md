@@ -195,7 +195,7 @@ the run instead of warning). Omit it only when re-running legacy suites.
   required `source_kind` + a derived `description`) and records this run's
   pass/fail + duration. `--no-register` skips registration (records nothing).
 - **Exit code reflects test pass/fail** — non-zero means the spec failed, so you
-  (and `/ship`/CI) see it. A *failing* run is still recorded as `passed:false`
+  (and `/ship-checked`/CI) see it. A *failing* run is still recorded as `passed:false`
   (not silently dropped).
 - **Graceful**: cloud off → runs + prints, skips recording with a hint;
   Playwright missing → exit 5 (install hint); malformed report → hard error.
@@ -287,10 +287,10 @@ registers the SPEC row via cross-skill; this call owns only the RUN rows.)
   fail; a non-zero exit means the spec could not RUN (PW missing / fatal), not
   that a criterion failed. Exit 4 (`error.code: PERSIST_FAILED`) means it RAN
   but its run or criterion rows were NOT recorded.
-- **Nothing gates on this today** — `/ship` never queries `plan_satisfaction`
+- **Nothing gates on this today** — `/ship-checked` never queries `plan_satisfaction`
   as a gate; do not tell the user a failing verify blocks shipping.
   → `references/history-and-evidence.md` §Steps V3–V5 — read when asked whether
-  verify gates `/ship`, or before claiming it does.
+  verify gates `/ship-checked`, or before claiming it does.
 
 The verify-spec template MUST emit each test with
 `{ annotation: [{ type: 'criterion_hash', description: '<hash>' }] }` — naming
@@ -302,7 +302,7 @@ Full template + translation rules: `references/verify-mode-generation.md`.
 Emit the satisfaction summary with pass/fail/**skipped** counts per severity +
 the list of failing P0 criteria. **A skipped P0/P1 is neither a pass nor a
 failure and must be rendered as its own line — never silently dropped**, since
-it is invisible to the `/ship` gate by design (the store correctly excludes
+it is invisible to the `/ship-checked` gate by design (the store correctly excludes
 skipped items from `failing_p0_criteria`) and this report is the only place
 it can surface. Status rubric is a full precedence table, not three
 independent conditions: `PLAN_NOT_SHIPPED` (any P0 failed) →
@@ -333,7 +333,7 @@ readable via `cross-skill.mjs plan-satisfaction --plan-id <id>`
 
 - **/audit-code** converges → **/ux-lock** locks in fixes
 - **/persona-test** finds P0 → fix → **/ux-lock** prevents recurrence
-- **/ship** warns if recent fixes lack regression specs
+- **/ship-checked** warns if recent fixes lack regression specs
 - **/plan** produces Acceptance Criteria → **/ux-lock verify** grades implementation
 
 ---
@@ -358,7 +358,7 @@ situations — read them only when the trigger applies.
 | `references/verify-mode-generation.md` | VERIFY mode — criterion parser wiring, translation rules, per-criterion run+record protocol. | Mode: VERIFY, Steps V0–V6 (parsing, generating, running, recording). |
 | `references/scope-and-limitations.md` | Where /ux-lock works well, where it doesn't (Obsidian/Electron), and fallback strategies. | Target is an Obsidian plugin / Electron app / CLI / anti-bot-protected URL, OR bootstrapping Playwright harness from scratch, OR user is on Windows and Playwright MCP tools aren't appearing. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 2.5 — the spec is written and must be proven RED against the un-fixed code before it is run and recorded. ALSO Step V6 — about to emit the VERIFY report, to apply §7's skipped-criteria rule. |
-| `references/history-and-evidence.md` | The measured cases behind Step 2.5's RED proof, the Step 3 store diagnosis, and why nothing gates on verify today. | Step 2.5 RED/GREEN is ambiguous, OR the store's spec-run rows look empty, OR asked whether verify gates `/ship`. |
+| `references/history-and-evidence.md` | The measured cases behind Step 2.5's RED proof, the Step 3 store diagnosis, and why nothing gates on verify today. | Step 2.5 RED/GREEN is ambiguous, OR the store's spec-run rows look empty, OR asked whether verify gates `/ship-checked`. |
 | `references/worktree-preflight.md` | Worktree preflight remedy — the skills:hydrate npm script to add when a linked worktree lacks the tooling tree. | A command dies with `MODULE_NOT_FOUND` in a linked worktree AND this repo has no `skills:hydrate` script. |
 
 — end of /ux-lock —

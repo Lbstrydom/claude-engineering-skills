@@ -58,7 +58,7 @@ export default function sectionStartHere(_data, ui) {
         <h3>🏗️ …build a feature properly</h3>
         <p>Run <code>/plan</code> to design it → <code>/audit-plan</code> refines the design with a
         second and third AI model → implement → <code>/audit-code</code> reviews the diff in multiple
-        passes → <code>/ship</code> commits, pushes, and updates the docs. See ${tabLink('flows', 'Process Flows')}
+        passes → <code>/ship-checked</code> commits, pushes, and updates the docs. See ${tabLink('flows', 'Process Flows')}
         for the full picture.</p>
       </div>
       <div class="workflow">

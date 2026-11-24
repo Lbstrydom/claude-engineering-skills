@@ -466,7 +466,7 @@ export const REGISTRY = Object.freeze([
     name: 'get-persona-sessions-by-repo',
     flags: ['repo', 'repo-id', 'limit', 'select', { name: 'p0-only', kind: 'boolean' }],
     positionals: 'none', payload: 'both',
-    // 'explicit-preferred' (2026-09-07): a pure read, and /ship Step 0.5a's
+    // 'explicit-preferred' (2026-09-07): a pure read, and /ship-checked Step 0.5a's
     // fallback — refusing it for want of a name the caller's shell never had is
     // how the gate went blind. `--repo` still wins wherever it is given.
     scope: 'explicit-preferred', kind: 'read', cloud: 'degrade-noop',
@@ -514,13 +514,13 @@ export const REGISTRY = Object.freeze([
       { name: 'render', kind: 'boolean' }, { name: 'no-llm-labels', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'read', cloud: 'degrade-noop',
-    // Three states, exit 0 for ALL of them — /ship must continue through every
+    // Three states, exit 0 for ALL of them — /ship-checked must continue through every
     // one, because a credit nudge that can FAIL a ship is worse than no nudge.
     // The envelope carries its outcome in `state`, not `ok`, so it is declared
     // okless rather than softFail: there is no `ok` to lie with, and the
     // declaration is what stops a handler that merely FORGOT `ok` from
     // inheriting the same exemption.
-    okless: { reason: 'the envelope is {schemaVersion, state: ready|disabled|unavailable, …} — outcome rides `state`, and all three states are exit 0 by contract so /ship can never be failed by its own credit nudge.' },
+    okless: { reason: 'the envelope is {schemaVersion, state: ready|disabled|unavailable, …} — outcome rides `state`, and all three states are exit 0 by contract so /ship-checked can never be failed by its own credit nudge.' },
     degradeShape: {},
     load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewPendingCmd),
   },

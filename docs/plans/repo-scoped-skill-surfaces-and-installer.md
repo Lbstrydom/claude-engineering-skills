@@ -64,8 +64,8 @@ Measured consequence:
 
 | File | `scripts/.claude-skills/` refs |
 |---|---|
-| `~/.claude/skills/ship/SKILL.md` | **0** |
-| `wine-cellar-app/.claude/skills/ship/SKILL.md` | **20** |
+| `~/.claude/skills/ship-checked/SKILL.md` | **0** |
+| `wine-cellar-app/.claude/skills/ship-checked/SKILL.md` | **20** |
 
 The global copy even contains, at its line 475, the sentence *"Consumer repos: the synced
 copy of this file already carries the rewritten `scripts/.claude-skills/ship-commit.mjs`

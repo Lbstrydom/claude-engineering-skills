@@ -259,7 +259,7 @@ UI tweaks, type-only refactors, test fixtures, doc-only or cosmetic edits.
 If the response includes incidents with `mitigation-failing` or
 `manual-verification-required` status matching your target paths, address them
 explicitly in the design before proposing code. If `docs/security-strategy.md`
-doesn't exist here, run `/security-strategy bootstrap` once to seed it; `/ship`
+doesn't exist here, run `/security-strategy bootstrap` once to seed it; `/ship-checked`
 surfaces security-relevant commits in a one-line post-push reminder.
 
 ### Secret pre-write gate + audit trail (back-port from corporate kit)
@@ -323,7 +323,7 @@ and the forcing question for the next such proposal:
 
 <!-- moved in stage 1, 2026-11-22 -->
 
-`/ship` commits carry `AI-*` git trailers (`AI-Skill`/`AI-Models`/`AI-Gate`/…)
+`/ship-checked` commits carry `AI-*` git trailers (`AI-Skill`/`AI-Models`/`AI-Gate`/…)
 written ONLY by `ship-commit.mjs` and `ship-train.mjs` — **never hand-typed; the
 `AI-*` namespace is reserved.** `AI-Gate` is `passed`/`converged` (verified against
 the store) or `waived`/`not-run` (declared); **`passed` is rare by design** — never
@@ -647,7 +647,7 @@ instead of the named one (verified 2026-07-20).
 > hook): [consumer-adoption.md](../../docs/runbooks/consumer-adoption.md).
 >
 > **Consumers are not all on ONE store**, so **an unasked question must never
-> render as an empty result** — a single-store read is blind to a consumer (`/ship`
+> render as an empty result** — a single-store read is blind to a consumer (`/ship-checked`
 > printed `0 open` against 8). Fan out with `npm run upstream:queues` /
 > `stores:drift`; name a store by `storeDescriptor` (fingerprint + consumers, never
 > a hostname — this repo is public). **An EMPTY DSN env var is the AIR-GAP signal**
@@ -891,7 +891,7 @@ byte-checked in `npm run check`. **Edit the canonical, never a copy.**
   vacuous-pass guard, with a disposition and a named retirement predicate:
   [contract-test-scaffold.md](../../skills/audit-code/examples/contract-test-scaffold.md).
 
-- **Verify what the consumer receives, not what the producer sent.** `/ship`
+- **Verify what the consumer receives, not what the producer sent.** `/ship-checked`
   Step 6.8; `unverified` must name a concrete blocked prerequisite, never a bare
   "not applicable".
 

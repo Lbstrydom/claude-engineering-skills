@@ -43,7 +43,7 @@ Line citations: `node scripts/check-doc-citations.mjs <doc>` (report-only) — p
 
 Every "done", "complete" or "run" in a status report names its artifact, and the
 artifact is committed. The evidence normally lands in the same change, so run this after
-`/ship` Step 6 commits and before it pushes (`HEAD` is then the commit being shipped);
+`/ship-checked` Step 6 commits and before it pushes (`HEAD` is then the commit being shipped);
 after the merge, the campaign close-out checks it again on the base branch:
 
 ```bash
@@ -54,7 +54,7 @@ node scripts/campaign-contract-check.mjs docs/plans/<name>.md --closeout --rev o
 ## When to run
 
 The figure checks run before the commit, over the documents the change brings — and again over the
-`status.md` entry and plan update that `/ship` Steps 2 and 5 write, since those are
+`status.md` entry and plan update that `/ship-checked` Steps 2 and 5 write, since those are
 written after Step 1.5 and carry figures too.
 
 ## Outcome

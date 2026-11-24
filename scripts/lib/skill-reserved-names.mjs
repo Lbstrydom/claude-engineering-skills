@@ -16,9 +16,9 @@
  * of ours named `steward` would be regenerated into exactly that path and synced
  * into every consumer, steering an agent that pushes under the user's name.
  *
- * `ship` is the one live collision: ours predates the built-in. It is a
- * DECLARED exception, not a silent one, and the exception must stay live — a
- * renamed skill leaves the entry stale, which fails, so the list cannot rot.
+ * Ours was named `ship` and collided; it was renamed `ship-checked` on
+ * 2026-11-24. `LEGACY_SKILL_NAMES` keeps the old name readable wherever a
+ * stored value (an `AI-Skill` trailer, a CLI flag) still carries it.
  *
  * @module scripts/lib/skill-reserved-names
  */
@@ -30,15 +30,23 @@ export const RESERVED_SKILL_NAMES = Object.freeze(['ship', 'ship-local', 'stewar
 /**
  * Known collisions, keyed by the skill DIRECTORY they are tolerated in, each
  * naming the one reserved name it may carry and why. Scoped to the directory so
- * a second skill claiming `ship` is still a violation. Removing an entry is
- * the normal end state (after a rename); adding one needs Louis's decision.
+ * a second skill claiming the name is still a violation. Empty since the
+ * `ship` → `ship-checked` rename; adding an entry needs Louis's decision, and
+ * an entry whose directory is gone fails as stale.
  */
-export const KNOWN_RESERVED_COLLISIONS = Object.freeze({
-  ship: Object.freeze({
-    name: 'ship',
-    reason: 'Ours predates the CC 2.1.330 built-in; CC no longer loads it. Rename is pending a decision (skill-surface-ownership.md §8).',
-  }),
-});
+export const KNOWN_RESERVED_COLLISIONS = Object.freeze({});
+
+/**
+ * Former skill names → current name. History is never rewritten: commits keep
+ * `AI-Skill: ship`, so every reader folds through `canonicalSkillName`.
+ */
+export const LEGACY_SKILL_NAMES = Object.freeze({ ship: 'ship-checked' });
+
+/** The skill name a stored or typed value means today (legacy names folded). */
+export function canonicalSkillName(name) {
+  const v = String(name ?? '').trim();
+  return Object.hasOwn(LEGACY_SKILL_NAMES, v) ? LEGACY_SKILL_NAMES[v] : v;
+}
 
 /**
  * Claude Code compares names ignoring case and spacing (docs §When a synced

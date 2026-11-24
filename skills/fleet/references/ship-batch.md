@@ -4,9 +4,9 @@ summary: Landing shipped chips in one action — the standing grant, `land --shi
 
 # Landing a batch of shipped chips (`fleet land --ship-batch`)
 
-`/ship` is user-only, so the user used to type it in every chip. Under a **standing grant** the user writes in their own
+`/ship-checked` is user-only, so the user used to type it in every chip. Under a **standing grant** the user writes in their own
 `~/.claude/CLAUDE.md`, the chip ships itself and the coordinator lands the whole batch in ONE action. Anything that does not verify
-waits for the user's `/ship` in that chip, and the rest still lands. The design, its audit trail and the full condition
+waits for the user's `/ship-checked` in that chip, and the rest still lands. The design, its audit trail and the full condition
 table are the source repo's `coordinator-aggregate-ship` plan (not synced to consumers).
 
 ## What the user wrote, and what it means
@@ -35,7 +35,7 @@ The grant is the section headed `## Coordinators may ship batches of pre-authori
 3. **Approve**: `node scripts/fleet.mjs land --approve <train> --ship-batch`. This is the one land that needs no chat go-ahead, and
    only for a train built in step 2 under the grant. Every other `land --approve`, `--confirm`, `--override` and `--accept-rerun`
    still needs the user.
-4. **Report**: per member `verified` / `needs-user`, with the reasons and "type `/ship <plan>` in that chip's session". Then the
+4. **Report**: per member `verified` / `needs-user`, with the reasons and "type `/ship-checked <plan>` in that chip's session". Then the
    record nudge: a self-shipped member is already recorded; only members merged without a ship need `ship-record.mjs catchup`.
 
 ## What the re-check refuses (each is its own reason)

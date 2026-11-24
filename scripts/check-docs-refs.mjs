@@ -5,7 +5,7 @@
  * Contract: docs/reference/reference-integrity.md (the grammar, the classes,
  * the exclusions). Plan: docs/plans/reference-integrity-gate.md.
  *
- * Why this exists: /ship's archive step moves a completed plan from `docs/plans/`
+ * Why this exists: /ship-checked's archive step moves a completed plan from `docs/plans/`
  * to `docs/completed/`, silently invalidating every reference to it. Nothing
  * verifies. The directory is a denormalized cache of the `Status:` line, and
  * nothing invalidates it.
@@ -394,14 +394,14 @@ export const BASELINE = new Set([
   'README.md→scripts/X.mjs',
   'docs/reference/skill-surface-ownership.md→scripts/X.mjs',
   'docs/runbooks/consumer-adoption.md→scripts/X.mjs',
-  'skills/ship/SKILL.md→scripts/foo.mjs',
-  'skills/ship/SKILL.md→tests/foo.test.mjs',
-  '.claude/skills/ship/SKILL.md→scripts/foo.mjs',
-  '.claude/skills/ship/SKILL.md→tests/foo.test.mjs',
+  'skills/ship-checked/SKILL.md→scripts/foo.mjs',
+  'skills/ship-checked/SKILL.md→tests/foo.test.mjs',
+  '.claude/skills/ship-checked/SKILL.md→scripts/foo.mjs',
+  '.claude/skills/ship-checked/SKILL.md→tests/foo.test.mjs',
   // Same example line, verbatim, inside its gate-contract.json ignoredCandidates
   // entry (the `line` field must byte-match the SKILL.md text to disposition it).
-  'skills/ship/gate-contract.json→scripts/foo.mjs',
-  'skills/ship/gate-contract.json→tests/foo.test.mjs',
+  'skills/ship-checked/gate-contract.json→scripts/foo.mjs',
+  'skills/ship-checked/gate-contract.json→tests/foo.test.mjs',
   // Consumer-side artefacts this repo describes but never contains: a transient
   // sync lockfile, a per-machine untracked repo list, and a consumer's own test
   // entry point. Never existed here and never will (verified via git log).

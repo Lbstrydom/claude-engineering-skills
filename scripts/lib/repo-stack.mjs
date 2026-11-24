@@ -1,7 +1,7 @@
 /**
  * @fileoverview Repo stack detection — pure functions used by the
  * `cross-skill.mjs detect-stack` subcommand. Shared detection logic for
- * /plan, /ship which each run this at their Phase 0.
+ * /plan, /ship-checked which each run this at their Phase 0.
  *
  * All functions are synchronous; filesystem + `git ls-files` only. No
  * network, no cache. (`git ls-files` is a subprocess used by the
@@ -245,7 +245,7 @@ export function detectPythonFramework(cwd = process.cwd()) {
 }
 
 /**
- * Detect the Python environment manager — used by /ship for pre-push tool discovery.
+ * Detect the Python environment manager — used by /ship-checked for pre-push tool discovery.
  * Caller must opt in (skills that don't need this pay nothing).
  * @param {string} cwd
  * @returns {'poetry'|'uv'|'pipenv'|'venv'|'none'}

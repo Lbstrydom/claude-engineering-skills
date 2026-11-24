@@ -494,7 +494,7 @@ describe('check-docs-refs / drift-gate', () => {
     // module is accurate history, and making it a finding would corrupt the
     // record (and bury the live-surface findings under ~400 historical ones).
     for (const live of ['AGENTS.md', 'CLAUDE.md', 'README.md',
-      'skills/ship/SKILL.md', '.claude/skills/ship/SKILL.md',
+      'skills/ship-checked/SKILL.md', '.claude/skills/ship-checked/SKILL.md',
       'docs/reference/skill-surface-ownership.md', 'docs/runbooks/consumer-adoption.md']) {
       assert.equal(isLiveSurface(live), true, `${live} must be a live surface`);
     }

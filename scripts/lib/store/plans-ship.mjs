@@ -1,6 +1,6 @@
 /**
  * @fileoverview Cross-skill data-loop domain — plans, regression specs,
- * /ship nudges, persona↔audit correlations, plan verification, ship events.
+ * /ship-checked nudges, persona↔audit correlations, plan verification, ship events.
  *
  * **This file is a re-export barrel** since cross-skill-command-registry
  * Phase 6. It was a 1,572-line module owning six unrelated tables; the code

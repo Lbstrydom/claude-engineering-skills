@@ -104,7 +104,7 @@ What *does* justify the work is separate and was found while planning it — see
   (`scripts/lib/store/plans-ship.mjs:800`) and is reachable via
   `cross-skill.mjs:521 cmdPlanSatisfaction`, but ship's only mention of plan
   satisfaction is an *optional status.md reporting section*
-  (`skills/ship/references/status-md-format.md:78`). Ship's Step 0.5 gates are
+  (`skills/ship-checked/references/status-md-format.md:78`). Ship's Step 0.5 gates are
   persona-P0 and unlocked-fixes; there is no plan-satisfaction gate.
 
 **Two skills each delegate the gate to the other; nobody enforces it.** This is
@@ -461,7 +461,7 @@ semantics, and file scope (audit R1-H1).
 | | **A1 — `/ship` really gates** | **A2 — prose is wrong (recommended)** |
 |---|---|---|
 | Intent | §10 P0 criteria block a ship | verify is a report; nothing blocks |
-| Files | `skills/ship/SKILL.md` (new Step 0.5d gate), `scripts/cross-skill.mjs` (invocation), `skills/plan/SKILL.md`, `skills/ux-lock/SKILL.md` | `skills/plan/SKILL.md`, `skills/ux-lock/SKILL.md` |
+| Files | `skills/ship-checked/SKILL.md` (new Step 0.5d gate), `scripts/cross-skill.mjs` (invocation), `skills/plan/SKILL.md`, `skills/ux-lock/SKILL.md` | `skills/plan/SKILL.md`, `skills/ux-lock/SKILL.md` |
 | Must also define | stale/absent satisfaction data, cloud-off behaviour, override flag, ship_event `blockReasons` value, positive+negative tests | nothing new |
 | Cost | new blocking gate + its failure semantics | prose correction |
 
