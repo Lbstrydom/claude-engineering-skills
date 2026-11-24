@@ -128,6 +128,16 @@ describe('per-pass canary (the frontend pass gets a UI canary)', () => {
     rc2.plant(built(), { passName: 'frontend' });
     const none = rc2.resolve([res2([{ section: 'public/js/other.js:4', detail: DEFECT }])], ['frontend']);
     assert.equal(none.status, 'missed', 'NEGATIVE CONTROL: a finding on some other file is not the canary');
+    // CROSS-CANARY control: the frontend pass was shown the UI canary; a finding on the SERVER canary that names the defect is not its hit (and is still stripped)
+    const rc3 = createRoundCanary(ON, { seed: 'k' });
+    rc3.plant(built(), { passName: 'frontend' });
+    const cross = [res2([{ section: `${rc3.canary.path}:4`, detail: DEFECT }])];
+    assert.equal(rc3.resolve(cross, ['frontend']).status, 'missed');
+    assert.equal(cross[0].result.findings.length, 0, 'the other canary file is still stripped from the counts');
+    // and the mirror: backend citing the UI canary is not a hit either
+    const rc4 = createRoundCanary(ON, { seed: 'k' });
+    rc4.plant(built(), { passName: 'backend' });
+    assert.equal(rc4.resolve([res2([{ section: `${rc4.uiCanary.path}:4`, detail: DEFECT }])], ['backend']).status, 'missed');
   });
   it('findings anchored on EITHER canary file are stripped before they reach the counts', () => {
     const rc = createRoundCanary(ON, { seed: 'k' });

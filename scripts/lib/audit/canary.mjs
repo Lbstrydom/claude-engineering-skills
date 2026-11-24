@@ -170,7 +170,8 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
       if (cited.length > 0) r.result = { ...r.result, findings: findings.filter((f) => !cites(f)) };
       if (!planted.has(name)) return;
       seen.add(name);
-      const hit = cited.find(namesCanaryDefect);
+      const own = canaryFor(name); // detection needs the canary THIS pass was shown; a finding on the other canary's file is stripped but is not a hit
+      const hit = cited.filter((f) => citesCanary(f, own)).find(namesCanaryDefect);
       // A map-reduce pass whose units did not all complete (the planted unit 1 may be the one lost) or whose REDUCE was
       // skipped did not fully read the canary: say pass-failed, not "blind". Both fail closed either way.
       const partial = (r?._mapCompletionRate ?? 1) < 1 || r?._reduceSkipped === true;
