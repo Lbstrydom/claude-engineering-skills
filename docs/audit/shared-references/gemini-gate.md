@@ -15,18 +15,17 @@ by role**: report `_gate.label` from the result — `final gate (<provider> /
 <model>)` — never "Gemini" unless `_provider` is `gemini`, and repeat
 `_gate.independenceNote` when present.
 
-**Provider / no-key degradation ladder (don't just skip).** Each rung asks
-whether a ROUTE exists, not whether one public variable is set — the rung 2a
-Azure branch was missing until 2026-08-27, so on an Azure-only tenant (no
-`GEMINI_API_KEY`, no `ANTHROPIC_API_KEY`) this ladder sent the reader to rung 3
-while `gemini-review.mjs` would in fact have used Foundry Claude. That is the
-env-var-instead-of-route class AGENTS.md records three prior instances of, and
-it made this ladder disagree with the auto-selection order documented below.
+**Provider ladder (don't just skip).** Each rung asks whether a ROUTE exists,
+not whether one public variable is set: the Azure rung was missing until
+2026-08-27, so an Azure-only tenant was sent to rung 3 while `gemini-review.mjs`
+used Foundry Claude (the env-var-instead-of-route class).
 1. `GEMINI_API_KEY` set → Gemini (preferred).
 2. else the **Azure profile is active** (`AZURE_OPENAI_ENDPOINT`) → Foundry
-   Claude, via `azureConfig.claudeRoute`. No flag needed, and no public key is
-   involved — this rung is unreachable by a check that only reads
-   `ANTHROPIC_API_KEY`.
+   Claude, via `azureConfig.claudeRoute`. This is the work profile's **policy
+   choice, not a fallback** for a missing Gemini key (work tenants have no
+   Gemini): the GPT passes are the cross-vendor view, and only this gate shares
+   a family with a Claude author. Say so; never report it as a degraded route.
+   No flag, no public key: unreachable by a check reading only `ANTHROPIC_API_KEY`.
 3. else `ANTHROPIC_API_KEY` set → `gemini-review.mjs` auto-falls-back to Claude Opus (no flag needed).
 4. **else no route at all** → do NOT silently skip. Run an **independent adversarial
    review agent** over the union diff as the gate: spawn a fresh subagent (whatever delegation tool the host exposes; its name varies by host)

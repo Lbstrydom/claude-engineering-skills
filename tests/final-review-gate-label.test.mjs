@@ -10,7 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { describeFinalGate, WEAKER_CHECK_SENTENCE } from '../scripts/lib/final-review/gate-label.mjs';
+import { describeFinalGate, WEAKER_CHECK_SENTENCE, AZURE_PAIRING_SENTENCE } from '../scripts/lib/final-review/gate-label.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(REPO, p), 'utf8');
@@ -23,10 +23,33 @@ describe('describeFinalGate', () => {
     assert.equal(g.reviewerFamily, 'anthropic', 'a bare Azure deployment name still resolves its family from the provider');
   });
 
-  test('same family as a declared author → plain weaker-check sentence', () => {
-    const g = describeFinalGate({ provider: 'azure-claude', model: 'claude-opus-4-8', authorModel: 'claude-opus-5-5' });
+  test('same family as a declared author (public route) → plain weaker-check sentence', () => {
+    const g = describeFinalGate({ provider: 'claude-opus', model: 'claude-opus-4-8', authorModel: 'claude-opus-5-5' });
     assert.equal(g.sameFamilyAsAuthor, true);
     assert.ok(g.independenceNote.includes(WEAKER_CHECK_SENTENCE));
+  });
+
+  // Field report 5 (2026-11-23): on the Azure profile Foundry Claude is the policy choice,
+  // and the plain sentence was read as "no Gemini key, routing broken".
+  test('azure-claude, author undeclared → the designed-pairing note, no missing-key or fallback wording', () => {
+    const g = describeFinalGate({ provider: 'azure-claude', model: 'x', authorModel: null });
+    assert.equal(g.independenceNote, AZURE_PAIRING_SENTENCE);
+    assert.match(g.independenceNote, /designed pairing/);
+    assert.match(g.independenceNote, /GPT audit passes are the cross-vendor view/);
+    assert.doesNotMatch(g.independenceNote, /fallback|missing|key|weaker|undeclared/i);
+    assert.equal(g.sameFamilyAsAuthor, null, 'the author is still unmeasured; only the wording changed');
+  });
+
+  test('azure-claude, declared Claude author → the pairing note, family match still recorded', () => {
+    const g = describeFinalGate({ provider: 'azure-claude', model: 'claude-opus-4-8', authorModel: 'claude-opus-5-5' });
+    assert.equal(g.sameFamilyAsAuthor, true);
+    assert.ok(g.independenceNote.startsWith(AZURE_PAIRING_SENTENCE));
+    assert.doesNotMatch(g.independenceNote, /fallback|missing|weaker/i);
+  });
+
+  test('NEGATIVE CONTROL: public claude-opus with an undeclared author keeps the existing sentence exactly', () => {
+    const g = describeFinalGate({ provider: 'claude-opus', model: 'x', authorModel: null });
+    assert.equal(g.independenceNote, `author model undeclared (AUDIT_AUTHOR_TIER_HINT unset); if Claude authored this change, the reviewer is the ${WEAKER_CHECK_SENTENCE}`);
   });
 
   test('cross-vendor → no note', () => {
