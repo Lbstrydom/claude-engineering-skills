@@ -85,3 +85,14 @@ No-spend (part of the build, in `npm test`):
 ## 8. Not done (scope boundary)
 
 A minimum-location-coverage gate inside `reopenRate` (the coordinator fixed the consumer contract for this plan; the replay's located-share report is the evidence for deciding it later); Pilot 1 scope and T2 threshold recalibration (separate); store columns for lines; tie-breaking an ambiguous quote by changed hunk (the `[lines]` status mix says whether it is worth building); Option A's persisted extraction (read-side fallback exists).
+
+## 9. Replay result (run 2026-11-24, approved by the coordinator; `measured` via `node scripts/openai-audit.mjs code`, cost from each result's `_usage.costUsd`)
+
+Set: the first 10 branches (newest first) with >= 3 code runs, a recorded `audited_sha` for rounds 2 and 3 both reachable locally, round 2 an ancestor of round 3, a 2-8 file fix range and >= 3 round-3 findings. Selected by that rule before any result was seen. Each run: detached worktree at `auditedSha(3)`, this branch's tooling with that worktree as cwd, `--round 3 --scope diff --base auditedSha(2)` (the fix range), `AUDIT_DB_URL=''`, `LEARNING_DISABLE=1`, `--no-ledger --no-debt-ledger --no-tools`. Excluded: 0 of the 10 chosen. Live schema acceptance: the first provider call returned a valid response (no 400).
+
+- **Cost: $1.03 total** (10 rounds; per round $0.07-$0.16), against the $5 estimate.
+- **`reopenRate` measured on 10 of 10 checkpoints** (bar: >= 70%), via the unchanged `computeRoundSignals`.
+- Findings: 43 total, 19 with a quote (44%), 18 anchored (42%); 1 quote did not resolve.
+- Located share per checkpoint (anchored / total): 1/1, 3/3, 1/10, 3/4, 1/8, 2/4, 3/5, 1/1, 1/5, 2/2. Three checkpoints locate <= 20% (`measured-but-thin`: 1/10, 1/8, 1/5).
+
+**Caveats.** (1) The in-hunk share (14 of 18 anchored hits) is inflated by construction: this replay audits only the fix-range diff, so findings land in its hunks. It supports "the signal becomes measurable", not "the signal's value is right"; production round-3 audits see the whole PR. (2) The replay re-runs the audit, so its findings are new ones, not the stored round-3 findings. (3) A minimum-coverage gate on the signal stays with the signal owner (section 8).
