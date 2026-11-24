@@ -746,7 +746,7 @@
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
-      "line": "carries `Status: Complete`; never move it. → `references/flow-rationale.md`",
+      "line": "A completed plan stays in `docs/plans/` as `Status: Complete`; never move it",
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
@@ -792,6 +792,10 @@
     {
       "line": "must trace to an artifact and carry `measured` / `derived` / `expected` with its",
       "reason": "Step 1.5 close-out claims check (docs/plans/test-campaign-controls.md §2.3): applies the verification doctrine to a write-up. Agent-applied, no exit code; deliberately no new engine. The step's presence and wiring are guarded by tests/ship-claims-check-step.test.mjs."
+    },
+    {
+      "line": "> trailers), stop and tell the user: no gate ran.",
+      "reason": "The host built-in tripwire (added 2026-11-24 for Claude Ship). An instruction to the agent for the case where Claude Code's own /ship ran instead of this skill; no /ship code runs in that case, so there is no exit code to assert. The mechanical guard for the collision is skills:check's reserved-name rule (scripts/lib/skill-reserved-names.mjs, tests/skill-reserved-names.test.mjs)."
     }
   ]
 }

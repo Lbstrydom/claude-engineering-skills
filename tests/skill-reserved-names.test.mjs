@@ -40,28 +40,59 @@ describe('findReservedNameCollisions', () => {
 
   it('passes a non-reserved name (positive control)', () => {
     const r = findReservedNameCollisions({ deploy: md('deploy') }, { known: {} });
-    assert.deepEqual(r, { violations: [], tolerated: [], staleExceptions: [] });
+    assert.deepEqual(r, { violations: [], tolerated: [], staleExceptions: [], unreadable: [] });
   });
 
   it('tolerates a declared exception, and reports it rather than hiding it', () => {
-    const r = findReservedNameCollisions({ ship: md('ship') }, { known: { ship: 'why' } });
+    const r = findReservedNameCollisions({ ship: md('ship') }, { known: { ship: { name: 'ship', reason: 'why' } } });
     assert.deepEqual(r.violations, []);
     assert.deepEqual(r.tolerated, [{ skill: 'ship', name: 'ship', reason: 'why' }]);
   });
 
   it('fails a stale exception once the skill is renamed', () => {
-    const r = findReservedNameCollisions({ release: md('release') }, { known: { ship: 'why' } });
+    const r = findReservedNameCollisions({ release: md('release') }, { known: { ship: { name: 'ship', reason: 'why' } } });
     assert.deepEqual(r.staleExceptions, ['ship']);
   });
 
   it('the reserved list matches the CC 2.1.330 debug line, and steward has no exception', () => {
     assert.deepEqual([...RESERVED_SKILL_NAMES].sort(), ['ship', 'ship-local', 'ship:steward', 'steward']);
-    assert.equal(Object.hasOwn(KNOWN_RESERVED_COLLISIONS, 'steward'), false);
+    assert.equal(Object.values(KNOWN_RESERVED_COLLISIONS).some((e) => foldSkillName(e.name) !== 'ship'), false);
   });
 
-  it('extractFrontmatterName reads quoted and bare names', () => {
-    assert.equal(extractFrontmatterName(md('"ship"')), 'ship');
-    assert.equal(extractFrontmatterName('no frontmatter'), null);
+  it('the exception is scoped to its directory: a second claimant of ship fails', () => {
+    const known = { ship: { name: 'ship', reason: 'why' } };
+    const r = findReservedNameCollisions({ ship: md('ship'), other: md('ship') }, { known });
+    assert.deepEqual(r.violations, [{ skill: 'other', name: 'ship' }]);
+  });
+
+  it('a renamed original leaves the exception stale even if another skill claims the name', () => {
+    const known = { ship: { name: 'ship', reason: 'why' } };
+    const r = findReservedNameCollisions({ release: md('release'), other: md('ship') }, { known });
+    assert.deepEqual(r.staleExceptions, ['ship']);
+    assert.deepEqual(r.violations, [{ skill: 'other', name: 'ship' }]);
+  });
+
+  it('the exception covers only its declared name: the ship dir named steward fails', () => {
+    const known = { ship: { name: 'ship', reason: 'why' } };
+    const r = findReservedNameCollisions({ ship: md('steward') }, { known });
+    assert.deepEqual(r.violations, [{ skill: 'ship', name: 'steward' }]);
+  });
+
+  it('reads YAML names the parser way: quoted, commented, block scalar', () => {
+    assert.deepEqual(extractFrontmatterName(md('"ship"')), { ok: true, name: 'ship' });
+    assert.deepEqual(extractFrontmatterName(md('steward # reserved')), { ok: true, name: 'steward' });
+    assert.deepEqual(extractFrontmatterName(md('"steward" # reserved')), { ok: true, name: 'steward' });
+    assert.deepEqual(extractFrontmatterName('---\nname: >-\n  steward\n---\n'), { ok: true, name: 'steward' });
+    assert.deepEqual(extractFrontmatterName('no frontmatter'), { ok: true, name: null });
+    const r = findReservedNameCollisions({ helper: md('steward # reserved') }, { known: {} });
+    assert.deepEqual(r.violations, [{ skill: 'helper', name: 'steward' }]);
+  });
+
+  it('fails closed on a name it cannot read', () => {
+    const r = findReservedNameCollisions({ helper: '---\nname: [steward\n---\n' }, { known: {} });
+    assert.equal(r.unreadable.length, 1);
+    const n = findReservedNameCollisions({ helper: '---\nname: 7\n---\n' }, { known: {} });
+    assert.equal(n.unreadable.length, 1);
   });
 });
 

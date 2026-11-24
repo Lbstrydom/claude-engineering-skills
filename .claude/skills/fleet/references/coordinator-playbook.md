@@ -39,9 +39,10 @@ both the audited sha and the PR head sha.
 A chip that SHIPPED itself has a head whose tree differs from the audited one by its ship docs, by construction. For those, never
 compare by hand: `land --ship-batch` judges that delta with one grammar (`references/ship-batch.md`).
 
-**Undo note after every merge or push**: name what landed and its undo, e.g. `Merged PR $PR as $SQUASH; undo: git
-revert --no-edit $SQUASH` (as a new PR) or `Pushed $OLD..$NEW; undo: git revert --no-edit $OLD..$NEW`. Never a force-push.
-Who approves which paths: the repo's merge policy (CES: its merge-policy reference doc, source repo only).
+**Undo note after every merge or push**: say what landed and its undo —
+`Merged PR $PR as $SQUASH; undo: git revert --no-edit $SQUASH` (as a new PR), or
+`Pushed $OLD..$NEW; undo: git revert --no-edit $OLD..$NEW` (merges: `-m 1`; new branch: close its PR). No force-push.
+Who approves which paths: the repo's merge policy (CES: its merge-policy doc).
 
 ## 2. Stacked PRs: retarget before deleting a branch
 

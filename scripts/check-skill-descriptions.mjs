@@ -124,8 +124,12 @@ function main(argv) {
   }
 
   const reservedNames = findReservedNameCollisions(byName);
-  if (reservedNames.violations.length > 0 || reservedNames.staleExceptions.length > 0) {
+  if (reservedNames.violations.length > 0 || reservedNames.staleExceptions.length > 0
+      || reservedNames.unreadable.length > 0) {
     process.stderr.write(`${R}skill-descriptions: FAILED${X} — host-reserved skill name\n`);
+    for (const u of reservedNames.unreadable) {
+      process.stderr.write(`  [${u.skill}] name could not be read (${u.error}) — refusing to report it clean\n`);
+    }
     for (const v of reservedNames.violations) {
       process.stderr.write(`  [${v.skill}] uses "${v.name}", reserved by Claude Code's built-in /ship and /steward\n`);
     }

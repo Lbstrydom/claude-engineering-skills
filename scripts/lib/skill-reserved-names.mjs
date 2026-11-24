@@ -22,16 +22,22 @@
  *
  * @module scripts/lib/skill-reserved-names
  */
+import yaml from 'yaml';
 
 /** Names the host reserves (from the CC 2.1.330 debug line quoted above). */
 export const RESERVED_SKILL_NAMES = Object.freeze(['ship', 'ship-local', 'steward', 'ship:steward']);
 
 /**
- * Known collisions, each with the reason it is tolerated. Removing an entry is
+ * Known collisions, keyed by the skill DIRECTORY they are tolerated in, each
+ * naming the one reserved name it may carry and why. Scoped to the directory so
+ * a second skill claiming `ship` is still a violation. Removing an entry is
  * the normal end state (after a rename); adding one needs Louis's decision.
  */
 export const KNOWN_RESERVED_COLLISIONS = Object.freeze({
-  ship: 'Ours predates the CC 2.1.330 built-in; CC no longer loads it. Rename is pending a decision (skill-surface-ownership.md §Host-reserved names).',
+  ship: Object.freeze({
+    name: 'ship',
+    reason: 'Ours predates the CC 2.1.330 built-in; CC no longer loads it. Rename is pending a decision (skill-surface-ownership.md §8).',
+  }),
 });
 
 /**
@@ -43,33 +49,49 @@ export function foldSkillName(name) {
   return String(name ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
 }
 
-/** @param {string} skillMd @returns {string|null} the frontmatter `name`, if any */
+/**
+ * The frontmatter `name`, parsed as YAML (comments, quoting and block scalars
+ * all handled by the parser, not a regex).
+ * @param {string} skillMd
+ * @returns {{ok:true, name:string|null} | {ok:false, error:string}}
+ */
 export function extractFrontmatterName(skillMd) {
   const fm = String(skillMd ?? '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return null;
-  const m = fm[1].match(/^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m);
-  return m ? m[1] : null;
+  if (!fm) return { ok: true, name: null };
+  let doc;
+  try { doc = yaml.parse(fm[1]); } catch (err) { return { ok: false, error: `unparseable frontmatter: ${err.message}` }; }
+  const name = doc && typeof doc === 'object' ? doc.name : undefined;
+  if (name === undefined || name === null) return { ok: true, name: null };
+  if (typeof name !== 'string') return { ok: false, error: `frontmatter name is a ${typeof name}, not a string` };
+  return { ok: true, name: name.trim() };
 }
 
 /**
  * @param {Record<string,string>} skillMdByDir  skill directory name → SKILL.md text
- * @param {{reserved?: readonly string[], known?: Record<string,string>}} [opts]
- * @returns {{violations: {skill:string, name:string}[], tolerated: {skill:string, name:string, reason:string}[], staleExceptions: string[]}}
+ * @param {{reserved?: readonly string[], known?: Record<string,{name:string, reason:string}>}} [opts]
+ * @returns {{violations: {skill:string, name:string}[], tolerated: {skill:string, name:string, reason:string}[],
+ *   staleExceptions: string[], unreadable: {skill:string, error:string}[]}}
+ *   An unreadable name fails closed: the caller must not report clean over it.
  */
 export function findReservedNameCollisions(skillMdByDir, opts = {}) {
   const reserved = new Set((opts.reserved ?? RESERVED_SKILL_NAMES).map(foldSkillName));
   const known = opts.known ?? KNOWN_RESERVED_COLLISIONS;
-  const knownFolded = new Map(Object.entries(known).map(([k, v]) => [foldSkillName(k), v]));
-  const violations = [], tolerated = [], seen = new Set();
+  const violations = [], tolerated = [], unreadable = [], used = new Set();
   for (const [dir, md] of Object.entries(skillMdByDir)) {
-    const names = new Set([dir, extractFrontmatterName(md)].filter(Boolean).map(foldSkillName));
+    const fm = extractFrontmatterName(md);
+    if (!fm.ok) { unreadable.push({ skill: dir, error: fm.error }); continue; }
+    const names = new Set([dir, fm.name].filter(Boolean).map(foldSkillName));
+    const exception = Object.hasOwn(known, dir) ? known[dir] : null;
     for (const name of names) {
       if (!reserved.has(name)) continue;
-      seen.add(name);
-      if (knownFolded.has(name)) tolerated.push({ skill: dir, name, reason: knownFolded.get(name) });
-      else violations.push({ skill: dir, name });
+      if (exception && foldSkillName(exception.name) === name) {
+        used.add(dir);
+        tolerated.push({ skill: dir, name, reason: exception.reason });
+      } else {
+        violations.push({ skill: dir, name });
+      }
     }
   }
-  const staleExceptions = [...knownFolded.keys()].filter((k) => !seen.has(k));
-  return { violations, tolerated, staleExceptions };
+  const staleExceptions = Object.keys(known).filter((dir) => !used.has(dir));
+  return { violations, tolerated, staleExceptions, unreadable };
 }

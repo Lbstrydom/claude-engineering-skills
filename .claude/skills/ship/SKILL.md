@@ -831,7 +831,9 @@ explicitly. Full rationale: `references/commit-provenance-deep-dive.md`.
 refuses an unscoped commit outright: it cannot know whose staged entries the
 index holds, so it requires you to declare what you are shipping. There is no
 override flag, deliberately. Add one `--path <file>` per file you
-are shipping, as in the block above. This commits those paths' worktree contents and leaves every other index
+are shipping.
+
+This commits those paths' worktree contents and leaves every other index
 entry staged and untouched. Untracked paths are handled (marked
 intent-to-add, rolled back if the run is rejected). Do **not** fall back to a
 bare `git commit -- <paths>` — it scopes correctly but drops the `AI-*`
@@ -855,7 +857,8 @@ run sync)`.
 If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.
 
-**Undo note**: report `Pushed <old>..<new> to origin/<branch>; undo: git revert --no-edit <old>..<new>`.
+**Undo note**: report `Pushed <old>..<new> to origin/<branch>; undo: git revert --no-edit <old>..<new>`
+(merges in the range: `-m 1`; a new branch: close its PR).
 
 **CI on the pushed head**: `node scripts/ci-merge.mjs --pr <n> --wait-only` reports every check; add `--merge` only when the user said to merge (`references/ci-merge.md`).
 
