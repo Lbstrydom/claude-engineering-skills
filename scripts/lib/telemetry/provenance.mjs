@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveMainRoot } from '../pinned-worktree/paths.mjs';
 
 export const PROVENANCE_SCHEMA_VERSION = 1;
 export const SNAPSHOT_MAX_BYTES = 2048;
@@ -118,19 +119,18 @@ const readOrNull = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { r
 
 /**
  * The impure shell around `decideBundleToolSha`: reads the bundle's manifest, and
- * only when it is absent asks git for the main checkout (`--git-common-dir`, as
- * `skills:hydrate` does) and reads that one.
+ * only when it is absent asks for the main checkout (`resolveMainRoot`, the one
+ * main-checkout oracle) and reads that one.
  * @param {string} scriptsDir the `scripts/.claude-skills` directory of the running bundle
  */
-export function resolveBundleToolSha(scriptsDir, { run = execFileSync, selfPath = fileURLToPath(import.meta.url) } = {}) {
+export function resolveBundleToolSha(scriptsDir, { mainRootOf = resolveMainRoot, selfPath = fileURLToPath(import.meta.url) } = {}) {
   const repoRoot = path.resolve(scriptsDir, '..', '..');
   const localManifestText = readOrNull(path.join(repoRoot, SYNC_MANIFEST_REL));
   let mainManifestText; let mainIsSelf = false; let selfHash = null;
   if (localManifestText == null) {
     try {
-      const common = String(run('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repoRoot, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })).trim();
-      if (common) {
-        const mainRoot = path.resolve(path.dirname(common));
+      const mainRoot = mainRootOf(repoRoot);
+      if (mainRoot) {
         mainIsSelf = mainRoot.toLowerCase() === repoRoot.toLowerCase();
         mainManifestText = mainIsSelf ? null : readOrNull(path.join(mainRoot, SYNC_MANIFEST_REL));
       }

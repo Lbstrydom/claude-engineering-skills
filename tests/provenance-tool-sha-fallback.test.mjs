@@ -72,7 +72,7 @@ describe('the constants agree with the sync and the hydrator', () => {
   });
 });
 
-describe('resolveBundleToolSha (filesystem + injected git)', () => {
+describe('resolveBundleToolSha (filesystem + injected main-checkout oracle)', () => {
   const layout = () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'toolsha-'));
     const main = path.join(base, 'main');
@@ -81,28 +81,28 @@ describe('resolveBundleToolSha (filesystem + injected git)', () => {
     const selfPath = path.join(wt, 'scripts', '.claude-skills', 'lib', 'telemetry', 'provenance.mjs');
     fs.writeFileSync(selfPath, 'export const x = 1;\n');
     const selfHash = 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(selfPath)).digest('hex');
-    const run = () => `${path.join(main, '.git')}\n`;
-    return { main, wt, selfPath, selfHash, run };
+    const mainRootOf = () => main;
+    return { main, wt, selfPath, selfHash, mainRootOf };
   };
 
   it('a worktree with the bundle and no manifest gets the main checkout\'s commit', () => {
-    const { main, wt, selfPath, selfHash, run } = layout();
+    const { main, wt, selfPath, selfHash, mainRootOf } = layout();
     fs.writeFileSync(path.join(main, SYNC_MANIFEST_REL), JSON.stringify({ commitSha: SHA, files: { [SELF_MANIFEST_KEY]: selfHash } }));
-    const d = resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { run, selfPath });
+    const d = resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { mainRootOf, selfPath });
     assert.deepEqual(d, { sha: SHA, source: 'main-worktree-manifest', reason: null });
   });
 
   it('NEGATIVE CONTROL: the same layout with a stale main manifest is null', () => {
-    const { main, wt, selfPath, run } = layout();
+    const { main, wt, selfPath, mainRootOf } = layout();
     fs.writeFileSync(path.join(main, SYNC_MANIFEST_REL), JSON.stringify({ commitSha: SHA, files: { [SELF_MANIFEST_KEY]: 'sha256:00' } }));
-    assert.equal(resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { run, selfPath }).sha, null);
+    assert.equal(resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { mainRootOf, selfPath }).sha, null);
   });
 
   it('git is not asked when the bundle has its own manifest', () => {
     const { wt, selfPath } = layout();
     fs.writeFileSync(path.join(wt, SYNC_MANIFEST_REL), JSON.stringify({ commitSha: SHA }));
-    const run = () => { throw new Error('git must not run'); };
-    assert.equal(resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { run, selfPath }).sha, SHA);
+    const mainRootOf = () => { throw new Error('the main checkout must not be asked'); };
+    assert.equal(resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { mainRootOf, selfPath }).sha, SHA);
   });
 
   it('fleet telemetry reads the bundle commit through the same resolver', () => {
