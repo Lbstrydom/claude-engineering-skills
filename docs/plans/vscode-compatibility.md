@@ -1,6 +1,6 @@
 # Plan: VS Code compatibility — host facts, MCP, hook portability, fleet on VS Code
 - **Date**: 2026-11-22
-- **Status**: Draft
+- **Status**: In Progress — Clusters A-E landed (#478-#486); Cluster A smoke run done 2026-11-23/24, PARTIAL; Cluster D is Tier 1 only, Tier 2 deferred
 - **Author**: Claude + Louis
 - **Scope**: backend (skills prose, hooks, sync and fleet CLI strings; no UI)
 - **Target domain(s)**: `claude-hooks`, `fleet`, `shared-lib`, `skills-content`
@@ -10,6 +10,18 @@
 - **Evidence**: [`docs/research/vscode-compatibility-review-2026-11.md`](../research/vscode-compatibility-review-2026-11.md)
   (the review). Every vendor fact below is cited there with its URL. This plan restates only the facts that change a
   design decision.
+
+**Where it stands (2026-11-24).** All five clusters landed as code and docs. Louis ran the Cluster A smoke runbook on
+2026-11-23/24 (run `20261123T115033-48d0cf22`, VS Code 1.147). The result is **PARTIAL**:
+
+- **Copilot (H1):** mostly passed. Skills discovered once each, edits worked, and a worktree session started and took a
+  follow-up.
+- **Built-in Claude provider (H2):** edits passed; `rg` was not on its shell PATH.
+- **Claude Code extension (H3):** BLOCKED; no usable composer opened.
+- **MCP:** `playwright` and `mermaid` both showed Error, cause unknown.
+- **Hooks:** all 24 captures were `UserPromptSubmit`. They projected to one fixture, `copilot/userpromptsubmit.json`, which is still on the work machine and not committed.
+
+`hosts.md` carries the exercised cells as `obs`. **Tier 2 deferred: no recorded fixtures.** The smoke run recorded no PreToolUse or PostToolUse payload, so Copilot's tool-event field names still rest on docs, not recordings.
 
 **Approval markers.** ⚑ marks a change Louis must approve before a chip implements it. There are two of them: Cluster C
 (a new file written into consumers) and the smoke runbook's own instruction to run it. No change in this plan loosens a
@@ -586,7 +598,7 @@ Files: `scripts/lib/fleet/archive.mjs` (modify), `scripts/lib/fleet/prune.mjs` (
   - Without recorded fixtures, the grep, quick-fix and syntax hooks are explicitly deferred on Copilot. They are reported
     as "Tier 2 deferred", not as shipped.
   - Tier 1 (detection, the arch-memory skip, output envelopes) ships either way.
-  - Cluster D's acceptance names which tier landed.
+  - Cluster D's acceptance names which tier landed. **Landed: Tier 1 only (#485).** Tier 2 is deferred: the 2026-11-23/24 smoke run recorded no PreToolUse or PostToolUse payload, so Copilot's tool-event field names still rest on docs, not recordings.
 - **`.mcp.json` in consumers ⚑.** It is a new file in every consumer's tree. Mitigations: the co-owned merge keeps their
   servers, and the sync receipt records the write. Louis approves before Cluster C starts.
 - **Fleet prose edits near the size caps.** The size gate fails on growth, which forces condensing. The risk is a chip
@@ -674,6 +686,9 @@ INC-001 applies to the hook-payload work:
 - **Cluster D** — Phases 4-5 — fix-gate: yes
   - Coupling: the oracle and its four callers share one contract (the normalised event and the output shape). The
     cross-cutting pass must see both sides of that seam.
+  - Acceptance (tier): **Tier 1 landed (#485). Tier 2 deferred: no recorded fixtures.** The 2026-11-23/24 smoke run
+    captured only `UserPromptSubmit`, so the Copilot `tool_input` keys are unrecorded and the grep, quick-fix and syntax
+    hooks stay silent on Copilot.
   - author-tier: standard
 - **Cluster E** — Phases 6-7 — fix-gate: final
   - Coupling: the `session-host` role vocabulary is defined in `hosts.md` and used by the prose touchpoints and the two

@@ -1,8 +1,9 @@
 # VS Code host smoke test — skills, MCP, hooks, sessions and fleet, per harness
 
 **What it is**: the first real observation of how this repo behaves in each VS Code agent surface. Every VS Code cell in
-[`vscode-compatibility-review-2026-11.md`](../research/vscode-compatibility-review-2026-11.md) is **doc** or **unverified**;
-none is **obs**. You run this once per harness, and it turns those cells into **obs** with a date and a version. It also
+[`vscode-compatibility-review-2026-11.md`](../research/vscode-compatibility-review-2026-11.md) is **doc** or **unverified**
+until this runbook records it (the first run, `20261123T115033-48d0cf22` of 2026-11-23/24, PARTIAL, is in
+[`hosts.md`](../../skills/fleet/references/hosts.md)). You run this once per harness, and it turns those cells into **obs** with a date and a version. It also
 captures real hook payloads, which Cluster D of [`vscode-compatibility.md`](../plans/vscode-compatibility.md) needs before
 it may map any Copilot tool-input field.
 
@@ -97,7 +98,23 @@ Set-Content -LiteralPath $record -Value $lines
 Get-Content -LiteralPath $record
 ```
 
-You will add one line per extra artifact later (`worktree|path`). Never edit the record by hand to remove a line.
+You will add one line per extra artifact later. Never edit the record by hand to remove a line. A worktree goes in
+through this helper only: it asks for the folder and records it **only** if `git worktree list` names it and it is not
+the checkout you run in (cleanup runs `git worktree remove --force` on every recorded worktree, so a typo or the wrong
+folder must be refused, not recorded):
+
+```powershell
+function Add-RecordedWorktree {
+  $answer = Read-Host 'Paste the new worktree folder exactly as git worktree list printed it'
+  $listed = @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { [IO.Path]::GetFullPath($_.Substring(9)) })
+  if (-not $answer) { throw 'REFUSED: nothing pasted. Nothing was recorded.' }
+  $full = [IO.Path]::GetFullPath($answer.Trim().Trim('"'))
+  if ($listed -notcontains $full) { throw "REFUSED: $full is not a worktree git lists. Nothing was recorded." }
+  if ($full -eq [IO.Path]::GetFullPath($repo)) { throw 'REFUSED: that is the checkout you run in, not a new worktree.' }
+  Add-Content -LiteralPath $record -Value "worktree|$full"
+  "recorded worktree|$full"
+}
+```
 
 **Step C: create the run folder and lock it to you.** Nothing else on the machine may read your prompts.
 
@@ -306,14 +323,13 @@ Finally tell me the EXACT name of the tool you used for each of the three action
 Record: for each of start, list and message, `worked` or `no tool`, and the exact tool name given. Note whether the
 new session shows in the Agents window with a worktree, and whether a rate-limit message appeared
 (`chat.agentHost.agentOrchestrationLimits`). **Record the worktree the moment it exists**, before you carry on with the other checks, so an interrupted run still
-cleans it up (set `$path` to the new worktree's folder; `git worktree list` shows it). Then, when you finish, archive the
-new session in the Agents window:
+cleans it up: run the two lines below and paste the new worktree's folder when asked (a red `REFUSED` records nothing;
+run `Add-RecordedWorktree` again with the right folder). Then, when you finish, archive the new session in the Agents
+window:
 
 ```powershell
 git worktree list
-$path = 'C:pathof	he
-ewworktree'
-Add-Content -LiteralPath $record -Value "worktree|$path"
+Add-RecordedWorktree
 ```
 
 Record **only** worktrees the agent created in this check.
@@ -342,21 +358,25 @@ before relying on it"). You need two sessions on two worktrees: start two sessio
 In A:
 
 ```powershell
-node scripts/fleet.mjs claim --id smoke-a --intent "smoke test" --paths "scratch/a/**"
+node scripts/fleet.mjs claim --id smoke-a --intent "smoke test A" --paths "scratch/a/claim.txt"
 ```
 
 In B:
 
 ```powershell
-node scripts/fleet.mjs claim --id smoke-b --intent "smoke test" --paths "scratch/b/**"
+node scripts/fleet.mjs claim --id smoke-b --intent "smoke test B" --paths "scratch/b/claim.txt"
 node scripts/fleet.mjs status
 ```
+
+The intents must differ and the paths are literal files, not globs. Fleet refuses a claim whose intent equals a live
+claim's (exit 3) even when the paths are disjoint, so two `smoke test` claims make B fail for the wrong reason. A literal
+path names exactly one file, so the overlap check below compares two named files rather than two patterns.
 
 Record: both `smoke-a` and `smoke-b` appear in `status`. (A warning that the claim id is not the branch name is
 expected.) Now the overlap refusal, in B:
 
 ```powershell
-node scripts/fleet.mjs claim --id smoke-c --intent "overlap" --paths "scratch/a/**"
+node scripts/fleet.mjs claim --id smoke-c --intent "overlap" --paths "scratch/a/claim.txt"
 $LASTEXITCODE
 ```
 
@@ -395,15 +415,15 @@ node scripts/fleet.mjs release --id smoke-b --abandoned
 ```
 
 Then archive sessions A and B in the Agents window. §7 removes their worktrees and releases the claims, but only if you
-recorded them **as you created them**: right after starting each session, and right after each `claim` above, run
+recorded them **as you created them**: right after starting each session run `Add-RecordedWorktree` (§1.3 step B) and
+paste that session's worktree folder, and right after each `claim` above record the id that session made:
 
 ```powershell
-Add-Content -LiteralPath $record -Value "worktree|$path"
+Add-RecordedWorktree
 Add-Content -LiteralPath $record -Value 'fleet-claim|smoke-a'
 ```
 
-with `$path` set to that session's worktree folder and the claim id that session made (`smoke-a` or `smoke-b`). Record only
-the two sessions you started for this check.
+(`smoke-b` in B.) Record only the two sessions you started for this check.
 
 ## 5. Can the Copilot harness run the repo's `.sh` hook on Windows?
 

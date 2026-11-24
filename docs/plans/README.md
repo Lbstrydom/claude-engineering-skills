@@ -53,7 +53,7 @@ This is the list to read when asking "what is in flight?".
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
 | [Telemetry linkage as a structural contract](./telemetry-linkage-structural.md) | `In Progress` |  |
 | [Verification lessons — no retry-to-green, gates judged from main, step-back, diff-triggered checklist](./verification-lessons.md) | `Approved` |  |
-| [VS Code compatibility — host facts, MCP, hook portability, fleet on VS Code](./vscode-compatibility.md) | `Draft` |  |
+| [VS Code compatibility — host facts, MCP, hook portability, fleet on VS Code](./vscode-compatibility.md) | `In Progress` | Clusters A-E landed (#478-#486); Cluster A smoke run done 2026-11-23/24, PARTIAL; Cluster D is Tier 1 only,… |
 | [Moving wine-cellar-app into a personal GitHub organisation](./wine-org-move.md) | `Draft` |  |
 
 ## Parked
