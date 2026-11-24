@@ -25,9 +25,14 @@ const REPO_ROOT = path.resolve(TEST_DIR, '..');
 const HOOKS = path.join(REPO_ROOT, '.claude', 'hooks');
 const HOST_MODULE = path.join(REPO_ROOT, 'scripts', 'lib', 'hook-host.mjs');
 const COPILOT_FIXTURE_DIR = path.join(TEST_DIR, 'fixtures', 'hook-payloads', 'copilot');
-const TIER2_SKIP = fs.existsSync(COPILOT_FIXTURE_DIR)
+// Tier 2 is TOOL-EVENT recordings (`pretooluse.*` / `posttooluse.*`, runbook §6.5). The recorded prompt fixture
+// (`userpromptsubmit.json`, smoke run 2026-11-23/24) is Tier 1 evidence and must not switch these tests on.
+const isToolEventFixture = (name) => /^(pre|post)tooluse\..+\.json$/i.test(name);
+const copilotFixtures = fs.existsSync(COPILOT_FIXTURE_DIR) ? fs.readdirSync(COPILOT_FIXTURE_DIR) : [];
+const TIER2_SKIP = copilotFixtures.some(isToolEventFixture)
   ? false
-  : 'Tier 2 deferred: no recorded Copilot fixtures (cluster A smoke run, docs/runbooks/vscode-host-smoke.md)';
+  : 'Tier 2 deferred: no recorded Copilot tool-event fixtures (cluster A smoke run, docs/runbooks/vscode-host-smoke.md)';
+const RECORDED_PROMPT_FIXTURE = path.join(COPILOT_FIXTURE_DIR, 'userpromptsubmit.json');
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 // Claude Code's envelope carries `transcript_path`; Copilot's documented envelope carries a string `timestamp` and none.
@@ -42,6 +47,16 @@ const copilot = (event, extra) => ({ ...COPILOT_ENV, hook_event_name: event, ...
 describe('detectHookHost', () => {
   it('classifies the documented Copilot envelope as copilot', () => {
     assert.equal(detectHookHost(copilot('PreToolUse', { tool_name: 'Bash' })), 'copilot');
+  });
+  it('classifies the RECORDED Copilot prompt envelope (smoke run 2026-11-23/24) as copilot', () => {
+    const recorded = JSON.parse(fs.readFileSync(RECORDED_PROMPT_FIXTURE, 'utf8'));
+    assert.equal(recorded.hook_event_name, 'UserPromptSubmit');
+    assert.equal(detectHookHost(recorded), 'copilot');
+  });
+  it('the Tier 2 trigger counts tool-event fixtures only, never the prompt fixture', () => {
+    assert.equal(isToolEventFixture('userpromptsubmit.json'), false);
+    assert.equal(isToolEventFixture('pretooluse.bash.json'), true);
+    assert.equal(isToolEventFixture('posttooluse.str_replace_editor-v2.json'), true);
   });
   it('control: the Claude envelope is claude-code, not copilot', () => {
     assert.equal(detectHookHost(claude('PreToolUse', { tool_name: 'Bash' })), 'claude-code');
