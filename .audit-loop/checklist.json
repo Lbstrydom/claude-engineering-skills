@@ -442,8 +442,8 @@
           "skills/nav-audit/SKILL.md",
           "skills/persona-test/SKILL.md",
           "skills/plan/SKILL.md",
-          "skills/ship/SKILL.md",
-          "skills/ship/references/pre-ship-gate-queries.md",
+          "skills/ship-checked/SKILL.md",
+          "skills/ship-checked/references/pre-ship-gate-queries.md",
           "skills/ux-lock/SKILL.md",
           ".skill-size-baseline.json",
           "scripts/skill-size-ratchet.mjs"
@@ -452,7 +452,7 @@
       "check": "Skill markdown over 12,000 chars may not grow; move detail to references/. AGENTS.md: \"**Skill markdown may not grow.** `npm run skills:size:gate` ratchets every `skills/**/*.md` (and the canonical shared references, never the generated copies) in characters against `.skill-size-baseline.json`.\"",
       "incident": "No dated incident is recorded in AGENTS.md for this rule; it is backed by the skills:size:gate gate, which fails the push on the mistake.",
       "control": {
-        "path": "skills/ship/SKILL.md",
+        "path": "skills/ship-checked/SKILL.md",
         "text": "An added paragraph in an oversized SKILL.md.",
         "negativePath": "scripts/lib/vcs.mjs"
       },
