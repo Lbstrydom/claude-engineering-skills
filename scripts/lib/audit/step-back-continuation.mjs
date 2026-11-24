@@ -122,13 +122,23 @@ export function toLiveFinding(f) { const { topicId: _store, ...rest } = f ?? {};
  */
 export function toAuditLedgerEntries(snapshot) {
   const byId = new Map();
-  for (const r of snapshot.rounds) for (const f of r.findings) byId.set(f.id, f);
+  const liveByStoreTopic = new Map(); // store fingerprint -> the live-derived topic of any finding that carries it
+  for (const r of snapshot.rounds) {
+    for (const f of r.findings) {
+      // Store finding ids are UUIDs (measured: 0 id reused across rounds with a different topic in 143 frozen points); a reused id would
+      // silently attach a ruling to the wrong finding, so it is refused rather than resolved by "last one wins".
+      const prev = byId.get(f.id);
+      if (prev && prev.topicId !== f.topicId) throw new Error(`finding id ${f.id} is reused across rounds with different topics; the ledger cannot be restored unambiguously`);
+      byId.set(f.id, f);
+      if (f.topicId) liveByStoreTopic.set(String(f.topicId), topicOf(toLiveFinding(f)));
+    }
+  }
   const sev = (x) => (['HIGH', 'MEDIUM', 'LOW'].includes(String(x).toUpperCase()) ? String(x).toUpperCase() : 'MEDIUM');
   return snapshot.ledgerEntries.map((e) => {
     const live = byId.get(e.findingId);
     const f = live ?? {};
     const category = String(e.category ?? f.category ?? '');
-    const topicId = live ? topicOf(toLiveFinding(live)) : String(e.topicId);
+    const topicId = live ? topicOf(toLiveFinding(live)) : (liveByStoreTopic.get(String(e.topicId)) ?? String(e.topicId));
     return {
       topicId, latestFindingId: e.findingId ?? undefined, semanticHash: topicId, severity: sev(e.severity), originalSeverity: sev(e.severity),
       category, section: String(f.section ?? e.affectedFiles?.[0] ?? ''), detail: String(f.detail ?? ''), pass: /^\[([^\]]+)\]/.exec(category)?.[1]?.toLowerCase() ?? 'backend',
