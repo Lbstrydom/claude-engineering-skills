@@ -33,6 +33,10 @@ import { normalizePath } from '../file-io.mjs';
 // A neutral location: a path that announces itself as a test plant invites the model to skip it (measured: see
 // docs/plans/test-campaign-controls.md §10). The id keeps it unique; it never exists on disk.
 export const CANARY_DIR = 'src/access';
+/** The frontend pass's canary lives in UI code: measured 2026-11-24, a server-side authorisation canary appended to the frontend pass was missed 10 of 10 (a UI lens does not report it), while the backend pass found it 3 of 3. */
+export const UI_CANARY_DIR = 'public/js/ui';
+/** Passes whose lens is the UI; they get the UI canary. Every other eligible pass gets the server canary. */
+export const UI_CANARY_PASSES = Object.freeze(['frontend']);
 /** The wave-2 correctness passes that receive the canary. Selected by NAME, never call order. */
 export const CANARY_ELIGIBLE_PASSES = Object.freeze(['backend', 'be-routes', 'be-services', 'frontend']);
 const ASSIGNMENT_RE = /\bassignment\b[^\n]{0,60}?\b(?:instead of|rather than|in place of|used as|as (?:a|the) (?:comparison|condition))|\bassign(?:s|ed|ing)?\b[^\n]{0,80}?\b(?:instead of|rather than)\b[^\n]{0,20}?\bcompar|single\s*['"`]?=['"`]?|['"`]=['"`]\s*(?:instead of|rather than|vs\.?|versus|not)|instead of\s*['"`]?={2,3}|role\s*=\s*['"`]admin/i;
@@ -45,8 +49,22 @@ export function canaryEnabled(env = process.env) {
 }
 
 /** The planted file for one round. `seed` varies it per round (path and names), never its defect. */
-export function createCanary({ seed = String(Date.now()) } = {}) {
+export function createCanary({ seed = String(Date.now()), kind = 'server' } = {}) {
   const id = crypto.createHash('sha256').update(`audit-canary:${seed}`).digest('hex').slice(0, 10);
+  if (kind === 'ui') {
+    const relPath = `${UI_CANARY_DIR}/admin-menu-${id}.js`;
+    const source = [
+      `// Visibility of the admin entry in the console header (build ${id}).`,
+      `export function showAdminMenu(user, menuEl) {`,
+      `  if (!user || !menuEl) return;`,
+      `  if (user.role = 'admin') {`,
+      `    menuEl.hidden = false;`,
+      `  }`,
+      `}`,
+    ].join('\n');
+    const block = `\n\n### ${relPath}\n\`\`\`js\n${source}\n\`\`\`\n`;
+    return { id, path: relPath, normalisedPath: normalizePath(relPath), block, chars: block.length, kind };
+  }
   const relPath = `${CANARY_DIR}/console-guard-${id}.mjs`;
   const source = [
     `// Request guard for the admin console (build ${id}).`,
@@ -115,6 +133,9 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
     return { enabled: false, plant: (built) => built, resolve: () => null, outcome: () => null, markUnsupported: () => null };
   }
   const canary = createCanary({ seed });
+  const uiCanary = createCanary({ seed, kind: 'ui' });
+  const canaryFor = (passName) => (UI_CANARY_PASSES.includes(passName) ? uiCanary : canary);
+  const cites = (f) => citesCanary(f, canary) || citesCanary(f, uiCanary);
   const planted = new Set();
   let outcome = null;
 
@@ -126,7 +147,7 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
     if (!messages || messages.length === 0) return built;
     planted.add(opts.passName);
     const last = messages[messages.length - 1];
-    return { ...built, messages: [...messages.slice(0, -1), { ...last, content: `${last.content}${canary.block}` }] };
+    return { ...built, messages: [...messages.slice(0, -1), { ...last, content: `${last.content}${canaryFor(opts.passName).block}` }] };
   }
 
   /**
@@ -143,10 +164,10 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
     (results || []).forEach((r, i) => {
       const name = passNames[i];
       const findings = Array.isArray(r?.result?.findings) ? r.result.findings : [];
-      const cited = findings.filter((f) => citesCanary(f, canary));
+      const cited = findings.filter(cites);
       // Strip canary-ANCHORED findings only: one anchored to a real file is about that file even if its text mentions
       // the canary, and is kept. Replace, never mutate — a skipped pass's `result` can be a shared EMPTY_* constant.
-      if (cited.length > 0) r.result = { ...r.result, findings: findings.filter((f) => !citesCanary(f, canary)) };
+      if (cited.length > 0) r.result = { ...r.result, findings: findings.filter((f) => !cites(f)) };
       if (!planted.has(name)) return;
       seen.add(name);
       const hit = cited.find(namesCanaryDefect);
@@ -172,6 +193,8 @@ export function createRoundCanary(env = process.env, { seed } = {}) {
   return {
     enabled: true,
     canary,
+    uiCanary,
+    canaryFor,
     plant,
     resolve,
     outcome: () => outcome ?? { status: 'not-planted', planted: [...planted], detectedIn: [], missedIn: [], failedIn: [], chars: canary.chars, path: canary.path },

@@ -46,8 +46,8 @@ describe('planting', () => {
   });
   it('plants into every eligible pass, map-reduce unit 1 only, never probe or ineligible passes', () => {
     const rc = createRoundCanary(ON, { seed: 's' });
-    const has = (r) => r.messages.at(-1).content.includes(rc.canary.path);
-    for (const p of CANARY_ELIGIBLE_PASSES) assert.ok(has(rc.plant(built(), { passName: p })), p);
+    const has = (r, pass = 'backend') => r.messages.at(-1).content.includes(rc.canaryFor(pass).path);
+    for (const p of CANARY_ELIGIBLE_PASSES) assert.ok(has(rc.plant(built(), { passName: p }), p), p);
     assert.ok(has(rc.plant(built(), { passName: 'backend', unitLabel: 'Audit Unit 1/3 (4 files)' })));
     assert.ok(!has(rc.plant(built(), { passName: 'backend', unitLabel: 'Audit Unit 2/3 (4 files)' })));
     assert.ok(!has(rc.plant(built(), { passName: 'backend', unitLabel: 'probe' })));
@@ -105,6 +105,40 @@ describe('detection contract', () => {
   });
 });
 
+describe('per-pass canary (the frontend pass gets a UI canary)', () => {
+  it('the frontend pass is planted with the UI canary, every other pass with the server one, and they are different files', () => {
+    const rc = createRoundCanary(ON, { seed: 'k' });
+    const text = (pass) => rc.plant(built(), { passName: pass }).messages.at(-1).content;
+    assert.ok(text('frontend').includes(rc.uiCanary.path)); assert.ok(!text('frontend').includes(rc.canary.path));
+    for (const p of ['backend', 'be-routes', 'be-services']) { assert.ok(text(p).includes(rc.canary.path), p); assert.ok(!text(p).includes(rc.uiCanary.path), p); }
+    assert.notEqual(rc.canary.path, rc.uiCanary.path);
+    assert.match(rc.uiCanary.path, /^public\/js\/ui\/admin-menu-[0-9a-f]{10}\.js$/);
+  });
+  it('the UI canary carries the same single unambiguous defect (an assignment used as the condition), in UI code', () => {
+    const rc = createRoundCanary(ON, { seed: 'k' });
+    assert.match(rc.uiCanary.block, /if \(user\.role = 'admin'\)/); assert.match(rc.uiCanary.block, /menuEl\.hidden = false/);
+    assert.doesNotMatch(rc.uiCanary.block, /===/);
+  });
+  it('a frontend finding on the UI canary that names the defect is DETECTED; the same finding anchored on the server canary path is a different file and not a hit for frontend', () => {
+    const rc = createRoundCanary(ON, { seed: 'k' });
+    rc.plant(built(), { passName: 'frontend' });
+    const hit = rc.resolve([res2([{ section: `${rc.uiCanary.path}:4`, detail: DEFECT }])], ['frontend']);
+    assert.equal(hit.status, 'detected');
+    const rc2 = createRoundCanary(ON, { seed: 'k' });
+    rc2.plant(built(), { passName: 'frontend' });
+    const none = rc2.resolve([res2([{ section: 'public/js/other.js:4', detail: DEFECT }])], ['frontend']);
+    assert.equal(none.status, 'missed', 'NEGATIVE CONTROL: a finding on some other file is not the canary');
+  });
+  it('findings anchored on EITHER canary file are stripped before they reach the counts', () => {
+    const rc = createRoundCanary(ON, { seed: 'k' });
+    rc.plant(built(), { passName: 'backend' }); rc.plant(built(), { passName: 'frontend' });
+    const results = [res2([{ section: `${rc.canary.path}:4`, detail: DEFECT }]), res2([{ section: `${rc.uiCanary.path}:4`, detail: DEFECT }])];
+    rc.resolve(results, ['backend', 'frontend']);
+    assert.equal(results[0].result.findings.length, 0); assert.equal(results[1].result.findings.length, 0);
+  });
+});
+const res2 = (findings, extra = {}) => ({ result: { findings }, ...extra });
+
 describe('resolve', () => {
   const plantBoth = () => {
     const rc = createRoundCanary(ON, { seed: 'r' });
@@ -116,9 +150,9 @@ describe('resolve', () => {
 
   it('detected in every planted pass ⇒ detected, canary findings stripped, others kept', () => {
     const rc = plantBoth();
-    const p = rc.canary.path;
+    const p = rc.canary.path; const ui = rc.canaryFor('frontend').path;
     const real = mkFinding({ detail: 'real one' });
-    const results = [res([{ section: `${p}:4`, detail: DEFECT }, real]), res([{ section: `${p}:4`, category: 'Security', detail: DEFECT }])];
+    const results = [res([{ section: `${p}:4`, detail: DEFECT }, real]), res([{ section: `${ui}:4`, category: 'Security', detail: DEFECT }])];
     const o = rc.resolve(results, ['backend', 'frontend']);
     assert.equal(o.status, 'detected');
     assert.deepEqual(results[0].result.findings, [real]);
@@ -127,7 +161,7 @@ describe('resolve', () => {
   });
   it('missing in one of two planted passes ⇒ missed (and still stripped)', () => {
     const rc = plantBoth();
-    const results = [res([{ section: `${rc.canary.path}:4`, detail: DEFECT }]), res([{ section: `${rc.canary.path}:2`, detail: 'rename this function' }])];
+    const results = [res([{ section: `${rc.canary.path}:4`, detail: DEFECT }]), res([{ section: `${rc.canaryFor('frontend').path}:2`, detail: 'rename this function' }])];
     const o = rc.resolve(results, ['backend', 'frontend']);
     assert.equal(o.status, 'missed');
     assert.deepEqual(o.missedIn, ['frontend']);
@@ -196,7 +230,7 @@ describe('summary line', () => {
 // ── Orchestration: the real runMultiPassCodeAudit with a stub client ─────────
 const PLAN = `# Canary fixture plan\n\nImplement \`${BACKEND_FILE}\` and \`${FIXTURE_DIR}/src/components/Widget.jsx\`.\n`;
 const OPTS = { passFilter: ['structure', 'wiring', 'backend', 'frontend', 'sustainability', 'quickfix'], noTools: true, noDebtLedger: true, scopeMode: 'plan', noLedger: true };
-const CANARY_PATH_RE = /### (src\/access\/console-guard-[0-9a-f]+\.mjs)/;
+const CANARY_PATH_RE = /### ((?:src\/access\/console-guard|public\/js\/ui\/admin-menu)-[0-9a-f]+\.m?js)/;
 
 function stub(responses, seen) {
   return {
