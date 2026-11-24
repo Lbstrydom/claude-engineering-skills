@@ -28,7 +28,7 @@ function fakeGit(responses) {
 const ENV_EMPTY = {};
 
 test('explicit env range wins and is marked trusted', () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123', 'merge-base abc123 def456': 'abc123' });
+  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123', 'merge-base --all abc123 def456': 'abc123' });
   const r = resolvePushRange({
     env: { [PUSH_RANGE_ENV.BASE]: 'abc123', [PUSH_RANGE_ENV.HEAD]: 'def456' },
     run,
@@ -41,7 +41,7 @@ test('explicit env range wins and is marked trusted', () => {
 });
 
 test('explicit base defaults head to HEAD when only base is supplied', () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123', 'merge-base abc123 HEAD': 'abc123' });
+  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123', 'merge-base --all abc123 HEAD': 'abc123' });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc123' }, run });
   assert.equal(r.ok, true);
   assert.equal(r.head, 'HEAD');
@@ -51,7 +51,7 @@ test('explicit base is preferred even when an upstream exists', () => {
   // Regression guard: the whole point is that the hook's answer beats inference.
   const run = fakeGit({
     'rev-parse --verify --quiet abc123^{commit}': 'abc123',
-    'merge-base abc123 HEAD': 'abc123',
+    'merge-base --all abc123 HEAD': 'abc123',
     'rev-parse --verify --quiet @{upstream}': 'origin/main',
   });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc123' }, run });
@@ -125,7 +125,7 @@ test('root commit yields no-base rather than a range that reads as clean', () =>
 test('a detached clean checkout never silently resolves to HEAD~1 when a range was supplied', () => {
   // The worktree scenario end-to-end: no upstream, never dirty. With the hook's
   // range present the result must be the full range, not the tip commit.
-  const run = fakeGit({ 'rev-parse --verify --quiet base99^{commit}': 'base99', 'merge-base base99 tip99': 'base99' });
+  const run = fakeGit({ 'rev-parse --verify --quiet base99^{commit}': 'base99', 'merge-base --all base99 tip99': 'base99' });
   const r = resolvePushRange({
     env: { [PUSH_RANGE_ENV.BASE]: 'base99', [PUSH_RANGE_ENV.HEAD]: 'tip99' },
     run,
@@ -140,7 +140,7 @@ test('describePushRange surfaces inference in the label', () => {
   const inferred = resolvePushRange({ env: ENV_EMPTY, run });
   assert.match(describePushRange(inferred), /inferred/);
 
-  const explicitRun = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'merge-base abc HEAD': 'abc' });
+  const explicitRun = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'merge-base --all abc HEAD': 'abc' });
   const explicit = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc' }, run: explicitRun });
   assert.doesNotMatch(describePushRange(explicit), /inferred/);
 });
@@ -155,7 +155,7 @@ test('describePushRange reports unresolved ranges', () => {
 // anchored at merge-base(BASE, HEAD); the real-git end-to-end proof is tests/push-range-merge-base.test.mjs.
 
 test('an explicit base HEAD is BEHIND is moved to the merge-base, still trusted, and the move is recorded', () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base mainTip prHead': 'fork01' });
+  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base --all mainTip prHead': 'fork01' });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'mainTip', [PUSH_RANGE_ENV.HEAD]: 'prHead' }, run });
   assert.equal(r.ok, true);
   assert.equal(r.base, 'fork01');
@@ -166,7 +166,7 @@ test('an explicit base HEAD is BEHIND is moved to the merge-base, still trusted,
 });
 
 test('an explicit base that is an ancestor of HEAD is returned exactly as given (every fast-forward push)', () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet origin/x^{commit}': 'cafe', 'merge-base origin/x HEAD': 'cafe' });
+  const run = fakeGit({ 'rev-parse --verify --quiet origin/x^{commit}': 'cafe', 'merge-base --all origin/x HEAD': 'cafe' });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'origin/x' }, run });
   assert.equal(r.base, 'origin/x');
   assert.equal('requestedBase' in r, false);
@@ -182,7 +182,7 @@ test('a merge-base git cannot compute is a HARD failure, never the two-dot range
 });
 
 test("anchor 'verbatim' keeps the base tip and never asks for a merge-base (gate-provenance judges by the base tip)", () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base mainTip prHead': 'fork01' });
+  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base --all mainTip prHead': 'fork01' });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'mainTip', [PUSH_RANGE_ENV.HEAD]: 'prHead' }, run, anchor: 'verbatim' });
   assert.equal(r.base, 'mainTip');
   assert.equal(run.calls.some((c) => c.startsWith('merge-base')), false);
@@ -199,6 +199,23 @@ test('isExplicitRangeFailure separates "the given range is unusable" from "nothi
   assert.equal(isExplicitRangeFailure(resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'a b' }, run: fakeGit({}) })), true);
   assert.equal(isExplicitRangeFailure(resolvePushRange({ env: ENV_EMPTY, run: fakeGit({}) })), false);
   assert.equal(isExplicitRangeFailure(resolvePushRange({ env: ENV_EMPTY, run: fakeGit({}), requireExplicit: true })), false);
-  const run = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'merge-base abc HEAD': 'abc' });
+  const run = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'merge-base --all abc HEAD': 'abc' });
   assert.equal(isExplicitRangeFailure(resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc' }, run })), false);
+});
+
+test('a criss-cross history (several best common ancestors) is a hard failure, never a silent pick of one', () => {
+  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base --all mainTip prHead': 'fork01\nfork02' });
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'mainTip', [PUSH_RANGE_ENV.HEAD]: 'prHead' }, run });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'ambiguous-merge-base');
+  assert.equal(isExplicitRangeFailure(r), true);
+});
+
+test('a shallow checkout is refused before any merge-base is trusted (a non-best ancestor can hide behind the boundary)', () => {
+  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'rev-parse --is-shallow-repository': 'true', 'merge-base --all mainTip prHead': 'fork01' });
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'mainTip', [PUSH_RANGE_ENV.HEAD]: 'prHead' }, run });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'shallow-history');
+  assert.equal(isExplicitRangeFailure(r), true);
+  assert.equal(run.calls.some((c) => c.startsWith('merge-base')), false, 'no merge-base is computed in shallow history');
 });

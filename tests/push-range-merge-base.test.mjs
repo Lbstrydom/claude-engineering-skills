@@ -14,7 +14,7 @@
  * The contracts the CLI judges by are this checkout's, as in CI (which checks out the merge commit): X and Y are dispositioned by
  * none of them.
  */
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -42,6 +42,7 @@ function git(args, { input, env = commitEnv } = {}) {
 const head = git(['rev-parse', 'HEAD']);
 const original = git(['show', `${head}:${SKILL}`]);
 const indexDir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-range-merge-base-'));
+after(() => fs.rmSync(indexDir, { recursive: true, force: true }));
 let n = 0;
 /** HEAD's tree with each `path → content` replaced, written through a throwaway index so this checkout's index is never touched. */
 function treeWith(files) {
@@ -60,6 +61,12 @@ const A0 = commit(treeWith({ [SKILL]: withX }), head, 'old main: SKILL.md carrie
 const M = commit(git(['rev-parse', `${head}^{tree}`]), A0, 'main moves on: X reworded away');
 const P = commit(treeWith({ [SKILL]: withX, 'docs/push-range-merge-base-fixture.md': 'unrelated\n' }), A0, 'PR behind main: no SKILL.md change');
 const P2 = commit(treeWith({ [SKILL]: `${withX}${Y}\n` }), A0, 'PR behind main: adds Y');
+// Force pushes whose base is the OLD remote tip (CES's own hook sends it). N: P2 rebased onto main, still adding Y.
+// R2/N2: the ancestor A0 has X, the old tip R2 deleted it, the new head N2 keeps it - by contract X is not the branch's own line.
+const N = commit(treeWith({ [SKILL]: `${original}\n${Y}\n` }), M, 'P2 rebased onto main');
+const R2 = commit(git(['rev-parse', `${head}^{tree}`]), A0, 'old remote tip: X deleted');
+const N2 = commit(treeWith({ [SKILL]: withX, 'docs/push-range-merge-base-fixture.md': 'rewritten\n' }), A0, 'new head: X kept');
+const twoDotCandidates = (a, b) => parseChangedSkillCandidates(git(['-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', 'diff', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0', a, b, '--', 'skills/*/SKILL.md'])).map((c) => c.line);
 
 function runGate(base, rangeHead) {
   const env = { ...process.env, [PUSH_RANGE_ENV.REQUIRED]: '1', [PUSH_RANGE_ENV.BASE]: base, [PUSH_RANGE_ENV.HEAD]: rangeHead };
@@ -71,7 +78,7 @@ describe('a range-scoped gate on a branch behind its base (merge-base anchoring)
   it('HARNESS CONTROL: X and Y are enforcement-verb candidates, and the fixture commits exist', () => {
     assert.equal(isCandidateLine(X), true);
     assert.equal(isCandidateLine(Y), true);
-    for (const c of [A0, M, P, P2]) assert.match(c, /^[0-9a-f]{40}$/);
+    for (const c of [A0, M, P, P2, N, R2, N2]) assert.match(c, /^[0-9a-f]{40}$/);
     assert.equal(git(['merge-base', M, P]), A0);
   });
 
@@ -103,6 +110,21 @@ describe('a range-scoped gate on a branch behind its base (merge-base anchoring)
     const r = runGate(A0, P2);
     assert.equal(r.status, 1, r.out);
     assert.ok(r.out.includes('quux reticulator'), r.out);
+  });
+
+  it('FORCE PUSH, rebased head adds Y: RED for Y (the old-tip two-dot range MISSES it), never for main’s removed X', () => {
+    assert.deepEqual(twoDotCandidates(P2, N), [], 'negative control: the two-dot old-tip..new-head diff has no added candidate line');
+    const r = runGate(P2, N);
+    assert.equal(r.status, 1, r.out);
+    assert.ok(r.out.includes('quux reticulator'), r.out);
+    assert.ok(!r.out.includes('zorkmid frobnicator'), r.out);
+  });
+
+  it('FORCE PUSH, a line the ancestor had, the old tip deleted and the new head keeps: GREEN by contract (not the branch’s own line)', () => {
+    assert.equal(twoDotCandidates(R2, N2).length, 1, 'the two-dot range would report X as added');
+    const r = runGate(R2, N2);
+    assert.equal(r.status, 0, r.out);
+    assert.doesNotMatch(r.out, /undispositioned enforcement-verb line/);
   });
 
   it('a head with no merge-base with the base FAILS under REQUIRED=1, never passes having read nothing', () => {
