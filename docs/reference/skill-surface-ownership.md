@@ -329,6 +329,54 @@ None of the three write paths can resurrect `.github/skills/` any more;
 repo, and [`check-stale-skill-surface.mjs`](../../scripts/check-stale-skill-surface.mjs)
 remains the drift backstop for a consumer-repo copy created by other means.
 
+## 8. Host-reserved names (Claude Ship, 2026-11-23)
+
+Claude Code v2.1.330 bundles `/ship` (internal skill `ship-local`) and `/steward`
+as part of Claude Ship, and **reserves their names**: a project or personal skill
+named `ship`, `ship-local` or `steward` is not loaded. Ours is `skills/ship/` →
+`.claude/skills/ship/`, synced to every consumer.
+
+**Which `/ship` wins: the built-in.**
+
+| Evidence | Result | Label |
+|---|---|---|
+| CC 2.1.330 (the desktop app's bundled build), this repo, `claude -p "reply ok" --debug-file` | `[skills] Ignored /ship: each uses a name reserved for a skill built into Claude Code (ship-local, ship, steward, ship:steward)` | measured 2026-11-24 |
+| CC 2.1.318 (global CLI), same command | no `Ignored /ship` line; ours loads | measured 2026-11-24 (negative control) |
+| CC 2.1.330 with `--settings` carrying the off switch below | still `Ignored /ship` | measured 2026-11-24 |
+| [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) §Resolve skills that share a name | "Where `/ship` is available, the bundled `/ship` or `/steward`. Claude Code doesn't load yours" | doc, read 2026-11-24 |
+
+Not measured: the interactive `/` menu (a headless run cannot type a slash
+command), and hosts other than Claude Code. Copilot reads `.claude/skills/ship/`
+with no such reservation, so there ours still runs.
+
+**What typing `/ship` does on CC 2.1.330+**, per
+[the /ship docs](https://code.claude.com/docs/en/ship-command): commits (in a
+private repo, uncommitted changes too), pushes, opens a PR, runs `/code-review`
+and starts a watch that pushes fixes — with none of our gates, no `status.md`
+entry and no `AI-*` trailers. It asks no confirmation (a few-second `Esc to
+cancel` line). On native Windows no watch starts, but the commit, push and PR do
+happen. In a public repo (CES) it does not commit uncommitted work, but it still
+pushes an existing branch's commits and opens the PR.
+
+**The off switch** is `"skillOverrides": {"ship-local": "off", "steward": "off"}`
+in settings (managed settings for an org; the troubleshooting page also honours
+it in a user's own settings file). It stops the built-in, but **does not bring
+ours back** (third row above): the name stays reserved. Turning it on is
+Louis's settings decision; no file in this repo sets it.
+
+**Guards in this repo.**
+- `skills:check` (`check-skill-descriptions.mjs`, via
+  [`skill-reserved-names.mjs`](../../scripts/lib/skill-reserved-names.mjs))
+  fails on any skill whose directory or frontmatter `name` is reserved. `ship` is
+  the one declared exception, and the exception fails once no skill uses it.
+- **Never name a skill `steward`.** `.claude/skills/steward/SKILL.md` is the
+  file the built-in watch and the org PR Steward agent read as **instructions**,
+  so ours would be regenerated into that exact path and synced into every
+  consumer, steering an agent that pushes under the user's name.
+- Our `/ship` SKILL.md carries a tripwire for the case where it loads but the
+  built-in ran earlier in the session. While the name is reserved, CC 2.1.330
+  never loads it, so the tripwire cannot catch the main case: only a rename can.
+
 ---
 
 Design record: [repo-scoped-skill-surfaces-and-installer.md](../plans/repo-scoped-skill-surfaces-and-installer.md).

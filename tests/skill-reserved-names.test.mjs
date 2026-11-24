@@ -1,0 +1,88 @@
+/**
+ * Tests for scripts/lib/skill-reserved-names.mjs and its wiring into
+ * scripts/check-skill-descriptions.mjs (part of `npm run skills:check`).
+ *
+ * Claude Code 2.1.330 does not load a skill named ship / ship-local / steward,
+ * and `.claude/skills/steward/SKILL.md` is the file its watch reads as
+ * instructions. Each rule is shown to FAIL on a planted violation (negative
+ * control) before the live tree is shown to pass.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import {
+  findReservedNameCollisions, extractFrontmatterName, foldSkillName,
+  RESERVED_SKILL_NAMES, KNOWN_RESERVED_COLLISIONS,
+} from '../scripts/lib/skill-reserved-names.mjs';
+
+const REPO_ROOT = path.resolve(import.meta.dirname, '..');
+const md = (name) => `---\nname: ${name}\ndescription: |\n  demo\n---\n\n# Body\n`;
+
+describe('findReservedNameCollisions', () => {
+  it('flags a skill named steward (negative control)', () => {
+    const r = findReservedNameCollisions({ steward: md('steward') }, { known: {} });
+    assert.deepEqual(r.violations, [{ skill: 'steward', name: 'steward' }]);
+  });
+
+  it('flags a reserved frontmatter name under an innocent directory', () => {
+    const r = findReservedNameCollisions({ helper: md('Steward') }, { known: {} });
+    assert.deepEqual(r.violations, [{ skill: 'helper', name: 'steward' }]);
+  });
+
+  it('flags ship-local and folds case and spacing as the host does', () => {
+    assert.equal(foldSkillName(' Ship-Local '), 'ship-local');
+    const r = findReservedNameCollisions({ 'SHIP-LOCAL': md('x') }, { known: {} });
+    assert.equal(r.violations.length, 1);
+  });
+
+  it('passes a non-reserved name (positive control)', () => {
+    const r = findReservedNameCollisions({ deploy: md('deploy') }, { known: {} });
+    assert.deepEqual(r, { violations: [], tolerated: [], staleExceptions: [] });
+  });
+
+  it('tolerates a declared exception, and reports it rather than hiding it', () => {
+    const r = findReservedNameCollisions({ ship: md('ship') }, { known: { ship: 'why' } });
+    assert.deepEqual(r.violations, []);
+    assert.deepEqual(r.tolerated, [{ skill: 'ship', name: 'ship', reason: 'why' }]);
+  });
+
+  it('fails a stale exception once the skill is renamed', () => {
+    const r = findReservedNameCollisions({ release: md('release') }, { known: { ship: 'why' } });
+    assert.deepEqual(r.staleExceptions, ['ship']);
+  });
+
+  it('the reserved list matches the CC 2.1.330 debug line, and steward has no exception', () => {
+    assert.deepEqual([...RESERVED_SKILL_NAMES].sort(), ['ship', 'ship-local', 'ship:steward', 'steward']);
+    assert.equal(Object.hasOwn(KNOWN_RESERVED_COLLISIONS, 'steward'), false);
+  });
+
+  it('extractFrontmatterName reads quoted and bare names', () => {
+    assert.equal(extractFrontmatterName(md('"ship"')), 'ship');
+    assert.equal(extractFrontmatterName('no frontmatter'), null);
+  });
+});
+
+describe('check-skill-descriptions CLI enforces it', () => {
+  const run = (cwd) => spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/check-skill-descriptions.mjs')], { cwd, encoding: 'utf8' });
+
+  it('exits 1 on a planted steward skill (negative control)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reserved-names-'));
+    try {
+      for (const n of ['ship', 'steward']) {
+        fs.mkdirSync(path.join(dir, 'skills', n), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'skills', n, 'SKILL.md'), md(n));
+      }
+      const r = run(dir);
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(r.stderr, /\[steward\] uses "steward"/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('exits 0 on the live skills/ tree', () => {
+    const r = run(REPO_ROOT);
+    assert.equal(r.status, 0, r.stderr);
+  });
+});

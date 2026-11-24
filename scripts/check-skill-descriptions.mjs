@@ -12,6 +12,11 @@
  *
  * Takes no flags, so `cli:flags:gate` has nothing to guard.
  *
+ * Third check (scripts/lib/skill-reserved-names.mjs): no skill may carry a
+ * name the host reserves for a built-in (`ship`, `ship-local`, `steward`):
+ * Claude Code 2.1.330 does not load it, and `steward` would land at the path
+ * the built-in watch reads as instructions. `ship` is a declared exception.
+ *
  * Usage:
  *   node scripts/check-skill-descriptions.mjs
  *
@@ -31,6 +36,7 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import {
   findTriggerCollisions, checkDescriptionBudget, DESCRIPTION_MAX_CHARS,
 } from './lib/skill-description-lint.mjs';
+import { findReservedNameCollisions } from './lib/skill-reserved-names.mjs';
 
 const KNOWN_FLAGS = ['--selfcheck-relocation'];
 
@@ -115,6 +121,26 @@ function main(argv) {
       + '  descriptions, so a reader can tell which to reach for.\n',
     );
     process.exit(1);
+  }
+
+  const reservedNames = findReservedNameCollisions(byName);
+  if (reservedNames.violations.length > 0 || reservedNames.staleExceptions.length > 0) {
+    process.stderr.write(`${R}skill-descriptions: FAILED${X} — host-reserved skill name\n`);
+    for (const v of reservedNames.violations) {
+      process.stderr.write(`  [${v.skill}] uses "${v.name}", reserved by Claude Code's built-in /ship and /steward\n`);
+    }
+    for (const k of reservedNames.staleExceptions) {
+      process.stderr.write(`  KNOWN_RESERVED_COLLISIONS has "${k}" but no skill uses it — delete the stale exception\n`);
+    }
+    process.stderr.write(
+      '\n  Claude Code 2.1.330+ does not load a skill with this name, and a skill\n'
+      + "  named steward would be read as the watch's instructions. Pick another\n"
+      + '  name. See docs/reference/skill-surface-ownership.md §Host-reserved names.\n',
+    );
+    process.exit(1);
+  }
+  for (const t of reservedNames.tolerated) {
+    process.stderr.write(`  note: [${t.skill}] "${t.name}" is a declared host-reserved collision — ${t.reason}\n`);
   }
 
   process.stdout.write(
