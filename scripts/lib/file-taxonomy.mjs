@@ -16,15 +16,19 @@
  * ## Contract
  *
  * `matchFileKind(path)` is a pure function of the PATH ONLY: no filesystem,
- * no directory semantics (a `Password/` directory is `sensitive-paths.mjs`'s
+ * no sensitivity semantics (a `Password/` directory is `sensitive-paths.mjs`'s
  * concern, which runs later and independently). Ordered precedence, first
  * match wins:
  *
  *   0. bundle-generated store — the tech-debt ledger's files, the sync receipt → `non-code` (bundle-generated-stores.mjs)
+ *   0b. husky helper dir     — anything under `.husky/_/` (husky writes it) → `non-code`
  *   1. exact filename        — lockfiles → `non-code`; build files → `declarative`
  *   2. compound suffix       — generated (`.g.cs`, `.min.js`) → `non-code`; `.html.template`
  *   3. last extension        — language → `source`; else declarative / non-code
+ *   3b. hook directory       — a file under `.githooks/` / `.husky/` no step above classified → `source` (`sh`)
  *   4. otherwise             — `uncovered`
+ *
+ * Step 3b is the one rule keyed on a DIRECTORY segment: still a pure function of the path string, never the disk.
  *
  * Kinds: `source` (a known programming language) · `declarative` (reviewable
  * config / markup / build definition) · `non-code` (an EXPECTED exclusion:
@@ -145,6 +149,22 @@ export const KNOWN_EXTENSIONLESS_FILENAMES = Object.freeze([
   'Dockerfile', 'Makefile', 'Rakefile', 'Gemfile', 'Vagrantfile', 'Procfile', 'Jenkinsfile',
 ]);
 
+/**
+ * Directories whose files are git hook scripts. A hook is named for the event it handles (`pre-push`, `post-merge`) and
+ * carries no extension, or one no table knows (`pre-push.local`), so neither the extension nor the exact-name step can see
+ * it: until this rule a changed hook classified `uncovered` and reached neither reviewer (wine PR #1431 changed only
+ * `.githooks/pre-push.local`; both GPT rounds and the final gate passed with coverage PARTIAL). Matched as ANY path
+ * segment, so a monorepo's `frontend/.husky/pre-commit` is one too. Hooks are classed as `sh`: git runs them through
+ * `sh`, and husky's are always shell.
+ */
+export const HOOK_SCRIPT_DIRS = Object.freeze(['.githooks', '.husky']);
+
+/**
+ * husky's own helper directory (`.husky/_/`): written by `husky install` / `husky` (and gitignored by the `.gitignore` it
+ * writes there), so it is generated, never reviewed — `non-code`, like a lockfile.
+ */
+const HOOK_GENERATED_DIRS = Object.freeze([['.husky', '_']]);
+
 // ── Derived tables (built once; every consumer reads these) ─────────────────
 
 export const LANGUAGES = Object.freeze(
@@ -186,6 +206,43 @@ function baseName(filePath) {
   return norm.slice(norm.lastIndexOf('/') + 1);
 }
 
+const HOOK_DIR_SET = new Set(HOOK_SCRIPT_DIRS);
+const SH_LANGUAGE = LANGUAGE_BY_EXT.get('.sh');
+
+/**
+ * Is `filePath` inside a hook directory? `{kind:'generated'}` under husky's helper dir, `{kind:'hook', dir}` under any
+ * other hook dir, else null. Path segments only (the directories, never the basename), so a FILE named `.githooks` is not
+ * a hook.
+ */
+function hookDirContext(filePath) {
+  const dirs = String(filePath).replace(/\\/g, '/').split('/').slice(0, -1);
+  // Generated wins wherever it sits: the WHOLE path is scanned for it first, so `.githooks/vendor/.husky/_/x` is generated
+  // too, not decided by whichever hook segment happens to come first.
+  for (let i = 0; i < dirs.length - 1; i++) {
+    if (HOOK_GENERATED_DIRS.some(([d, sub]) => d === dirs[i] && dirs[i + 1] === sub)) return { kind: 'generated', dir: dirs[i] };
+  }
+  const dir = dirs.find((d) => HOOK_DIR_SET.has(d));
+  return dir ? { kind: 'hook', dir } : null;
+}
+
+/**
+ * `sh` when `matchFileKind` classed the path a hook script (its step 3b), else null — asked of the classifier, not
+ * re-derived, so the fence and comment prefix can never disagree with admission.
+ */
+function hookScriptLanguage(filePath) {
+  return matchFileKind(filePath).rule.startsWith('hook-dir:') ? SH_LANGUAGE : null;
+}
+
+/**
+ * Regex fragment (no capture groups, no start anchor) matching a path that names a hook script: optional leading dirs, a
+ * `HOOK_SCRIPT_DIRS` segment, then the file. Ends on a word char or `-`, so prose punctuation (`pre-push.`) is not
+ * swallowed, and a trailing lookahead requires the path to END there (a delimiter, a `.`, or end of text): a name with a
+ * character outside `[\w.-]` (`.githooks/pre+push`) is then NOT matched, rather than truncated to a different real path
+ * (`.githooks/pre`). For the free-text reference extractors, which otherwise need a known extension or name.
+ */
+export const HOOK_SCRIPT_PATH_PATTERN =
+  `(?:[\\w.-]+\\/)*(?:${HOOK_SCRIPT_DIRS.map(reEscape).join('|')})\\/(?:[\\w.-]+\\/)*[\\w.-]*[\\w-](?![^\\s\`'"()\\[\\]<>{},;:!?.])`;
+
 /**
  * Classify a path. Pure; path only.
  * @param {string} filePath
@@ -203,6 +260,14 @@ export function matchFileKind(filePath) {
   if (isBundleGeneratedStore(filePath)) {
     const d = lower.lastIndexOf('.');
     return { kind: 'non-code', language: null, extension: d > 0 ? lower.slice(d + 1) : lower, rule: 'generated-store' };
+  }
+
+  // 0b. husky's helper dir (`.husky/_/`): every file in it is written by husky, its own `.gitignore` included — before the
+  //     exact-name step, which would otherwise class that `.gitignore` as reviewable policy.
+  const hookDir = hookDirContext(filePath);
+  if (hookDir?.kind === 'generated') {
+    const d = lower.lastIndexOf('.');
+    return { kind: 'non-code', language: null, extension: d > 0 ? lower.slice(d + 1) : null, rule: 'generated:.husky/_' };
   }
 
   // 1. exact filename
@@ -225,6 +290,13 @@ export function matchFileKind(filePath) {
     if (lang) return { kind: 'source', language: lang.id, extension: ext.slice(1), rule: `ext:${ext}` };
     if (DECLARATIVE_FENCE.has(ext)) return { kind: 'declarative', language: null, extension: ext.slice(1), rule: `ext:${ext}` };
     if (NON_CODE_SET.has(ext)) return { kind: 'non-code', language: null, extension: ext.slice(1), rule: `ext:${ext}` };
+  }
+
+  // 3b. a hook script (`.githooks/pre-push`, `.githooks/pre-push.local`, `.husky/pre-commit`): no extension the steps above
+  //     know, so it is shell by where it lives. AFTER step 3, so `.githooks/lib/check.mjs` stays `js` and a `.md` stays markdown.
+  //     `extension` is `sh` (non-null is what admits it: `resolveReferenceExtension`).
+  if (hookDir?.kind === 'hook') {
+    return { kind: 'source', language: SH_LANGUAGE.id, extension: 'sh', rule: `hook-dir:${hookDir.dir}` };
   }
 
   // 4. unrecognised — the caller must report it, never drop it silently.
@@ -253,6 +325,8 @@ export function fenceLanguageFor(filePath) {
     const decl = DECLARATIVE_FENCE.get(ext);
     if (decl) return decl;
   }
+  const hook = hookScriptLanguage(filePath);
+  if (hook) return hook.fence;
   return 'js';
 }
 
@@ -279,6 +353,8 @@ export function commentPrefixFor(filePath) {
     const lang = LANGUAGE_BY_EXT.get(lower.slice(dot));
     if (lang && 'comment' in lang) return lang.comment;
   }
+  const hook = hookScriptLanguage(filePath);
+  if (hook) return hook.comment;
   return '//';
 }
 
