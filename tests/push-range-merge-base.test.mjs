@@ -42,7 +42,7 @@ function git(args, { input, env = commitEnv } = {}) {
 const head = git(['rev-parse', 'HEAD']);
 const original = git(['show', `${head}:${SKILL}`]);
 const indexDir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-range-merge-base-'));
-after(() => fs.rmSync(indexDir, { recursive: true, force: true }));
+after(() => fs.rmSync(indexDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 let n = 0;
 /** HEAD's tree with each `path → content` replaced, written through a throwaway index so this checkout's index is never touched. */
 function treeWith(files) {
