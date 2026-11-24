@@ -109,8 +109,9 @@ async function main() {
   if (process.env.GATE_PROVENANCE_CRASH_FOR_TEST === "1") throw new Error("injected crash (test seam)");
 
   const run = gitRunner(opts.repoRoot);
-  // One range, one resolver: an explicit base, never inferred, never HEAD~1 or the upstream.
-  const range = resolvePushRange({ env: { AUDIT_PUSH_RANGE_BASE: opts.base, AUDIT_PUSH_RANGE_HEAD: opts.head }, requireExplicit: true, run });
+  // One range, one resolver: an explicit base, never inferred, never HEAD~1 or the upstream. VERBATIM, not anchored at the
+  // merge-base: a PR is judged by the gates of the base TIP it merges into, the same sha the runner was installed from.
+  const range = resolvePushRange({ env: { AUDIT_PUSH_RANGE_BASE: opts.base, AUDIT_PUSH_RANGE_HEAD: opts.head }, requireExplicit: true, anchor: 'verbatim', run });
   let report;
   if (!range.ok) {
     report = unmeasuredReport({ mode: opts.mode, base: opts.base, head: opts.head, reason: `base not usable: ${range.message}` });

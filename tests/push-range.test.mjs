@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolvePushRange, describePushRange, PUSH_RANGE_ENV } from '../scripts/lib/push-range.mjs';
+import { resolvePushRange, describePushRange, isExplicitRangeFailure, PUSH_RANGE_ENV } from '../scripts/lib/push-range.mjs';
 
 /** Build a fake git runner from an argv-prefix → output map. */
 function fakeGit(responses) {
@@ -28,7 +28,7 @@ function fakeGit(responses) {
 const ENV_EMPTY = {};
 
 test('explicit env range wins and is marked trusted', () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123' });
+  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123', 'merge-base abc123 def456': 'abc123' });
   const r = resolvePushRange({
     env: { [PUSH_RANGE_ENV.BASE]: 'abc123', [PUSH_RANGE_ENV.HEAD]: 'def456' },
     run,
@@ -41,7 +41,7 @@ test('explicit env range wins and is marked trusted', () => {
 });
 
 test('explicit base defaults head to HEAD when only base is supplied', () => {
-  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123' });
+  const run = fakeGit({ 'rev-parse --verify --quiet abc123^{commit}': 'abc123', 'merge-base abc123 HEAD': 'abc123' });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc123' }, run });
   assert.equal(r.ok, true);
   assert.equal(r.head, 'HEAD');
@@ -51,6 +51,7 @@ test('explicit base is preferred even when an upstream exists', () => {
   // Regression guard: the whole point is that the hook's answer beats inference.
   const run = fakeGit({
     'rev-parse --verify --quiet abc123^{commit}': 'abc123',
+    'merge-base abc123 HEAD': 'abc123',
     'rev-parse --verify --quiet @{upstream}': 'origin/main',
   });
   const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc123' }, run });
@@ -124,7 +125,7 @@ test('root commit yields no-base rather than a range that reads as clean', () =>
 test('a detached clean checkout never silently resolves to HEAD~1 when a range was supplied', () => {
   // The worktree scenario end-to-end: no upstream, never dirty. With the hook's
   // range present the result must be the full range, not the tip commit.
-  const run = fakeGit({ 'rev-parse --verify --quiet base99^{commit}': 'base99' });
+  const run = fakeGit({ 'rev-parse --verify --quiet base99^{commit}': 'base99', 'merge-base base99 tip99': 'base99' });
   const r = resolvePushRange({
     env: { [PUSH_RANGE_ENV.BASE]: 'base99', [PUSH_RANGE_ENV.HEAD]: 'tip99' },
     run,
@@ -139,7 +140,7 @@ test('describePushRange surfaces inference in the label', () => {
   const inferred = resolvePushRange({ env: ENV_EMPTY, run });
   assert.match(describePushRange(inferred), /inferred/);
 
-  const explicitRun = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc' });
+  const explicitRun = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'merge-base abc HEAD': 'abc' });
   const explicit = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc' }, run: explicitRun });
   assert.doesNotMatch(describePushRange(explicit), /inferred/);
 });
@@ -147,4 +148,57 @@ test('describePushRange surfaces inference in the label', () => {
 test('describePushRange reports unresolved ranges', () => {
   const r = resolvePushRange({ env: ENV_EMPTY, run: fakeGit({}) });
   assert.match(describePushRange(r), /unresolved \(no-base\)/);
+});
+
+// ── merge-base anchoring (static-gates false red on PR #515, 2026-11-24) ──────────────────────────────────────────────────────
+// A two-dot `git diff base..head` with HEAD behind BASE reads BASE's newer lines as HEAD's own, reversed. The explicit range is
+// anchored at merge-base(BASE, HEAD); the real-git end-to-end proof is tests/push-range-merge-base.test.mjs.
+
+test('an explicit base HEAD is BEHIND is moved to the merge-base, still trusted, and the move is recorded', () => {
+  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base mainTip prHead': 'fork01' });
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'mainTip', [PUSH_RANGE_ENV.HEAD]: 'prHead' }, run });
+  assert.equal(r.ok, true);
+  assert.equal(r.base, 'fork01');
+  assert.equal(r.requestedBase, 'mainTip');
+  assert.equal(r.source, 'explicit');
+  assert.equal(r.trusted, true);
+  assert.match(describePushRange(r), /fork01\.\.prHead \[explicit, merge-base of mainTip\]/);
+});
+
+test('an explicit base that is an ancestor of HEAD is returned exactly as given (every fast-forward push)', () => {
+  const run = fakeGit({ 'rev-parse --verify --quiet origin/x^{commit}': 'cafe', 'merge-base origin/x HEAD': 'cafe' });
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'origin/x' }, run });
+  assert.equal(r.base, 'origin/x');
+  assert.equal('requestedBase' in r, false);
+});
+
+test('a merge-base git cannot compute is a HARD failure, never the two-dot range and never inference', () => {
+  // Shallow clone or unrelated histories: falling back to the verbatim base would bring the false red (or the miss) back.
+  const run = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'rev-parse --verify --quiet @{upstream}': 'origin/main' });
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc', [PUSH_RANGE_ENV.HEAD]: 'def' }, run });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no-merge-base');
+  assert.equal(isExplicitRangeFailure(r), true);
+});
+
+test("anchor 'verbatim' keeps the base tip and never asks for a merge-base (gate-provenance judges by the base tip)", () => {
+  const run = fakeGit({ 'rev-parse --verify --quiet mainTip^{commit}': 'aaaa', 'merge-base mainTip prHead': 'fork01' });
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'mainTip', [PUSH_RANGE_ENV.HEAD]: 'prHead' }, run, anchor: 'verbatim' });
+  assert.equal(r.base, 'mainTip');
+  assert.equal(run.calls.some((c) => c.startsWith('merge-base')), false);
+});
+
+test('an unknown anchor is refused, not read as the default', () => {
+  const r = resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc' }, run: fakeGit({}), anchor: 'three-dot' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'invalid-anchor');
+});
+
+test('isExplicitRangeFailure separates "the given range is unusable" from "nothing was given"', () => {
+  assert.equal(isExplicitRangeFailure(resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'deadbeef' }, run: fakeGit({}) })), true);
+  assert.equal(isExplicitRangeFailure(resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'a b' }, run: fakeGit({}) })), true);
+  assert.equal(isExplicitRangeFailure(resolvePushRange({ env: ENV_EMPTY, run: fakeGit({}) })), false);
+  assert.equal(isExplicitRangeFailure(resolvePushRange({ env: ENV_EMPTY, run: fakeGit({}), requireExplicit: true })), false);
+  const run = fakeGit({ 'rev-parse --verify --quiet abc^{commit}': 'abc', 'merge-base abc HEAD': 'abc' });
+  assert.equal(isExplicitRangeFailure(resolvePushRange({ env: { [PUSH_RANGE_ENV.BASE]: 'abc' }, run })), false);
 });

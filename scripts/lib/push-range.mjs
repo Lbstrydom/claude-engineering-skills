@@ -76,20 +76,40 @@ function defaultRun(args) {
  * inference — the caller asked for a specific range and must not be handed a
  * narrower one while being told everything is fine.
  *
+ * An explicit range is ANCHORED at `merge-base(BASE, HEAD)` (opt out with
+ * `anchor: 'verbatim'`). Every gate diffs `base..head`, and `git diff A..B` is
+ * TWO-dot: it compares the two trees, not "what B added since it left A". When
+ * HEAD is behind BASE (a PR branch behind main: CI hands BASE = main's tip),
+ * main's newer changes appear REVERSED, as the branch's own added lines.
+ * Measured 2026-11-24 on PR #515: static-gates went red on an undispositioned
+ * `[ship]` line that existed only in main's pre-#514 text, and a rebase with no
+ * other change made it green; the same reversal can also HIDE a real line. When
+ * BASE is an ancestor of HEAD (every fast-forward push) the merge-base IS the
+ * base, and the base is returned exactly as given. A merge-base git cannot
+ * compute (a shallow clone, unrelated histories) is a hard failure
+ * (`no-merge-base`), never a demotion to the verbatim two-dot range or to
+ * inference. `requestedBase` carries the base as given whenever it was moved.
+ *
  * @param {object} [opts]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {(args: string[]) => string|null} [opts.run] injected git runner (tests)
  * @param {boolean} [opts.requireExplicit] fail instead of inferring
  * @param {string} [opts.defaultBranch] used for the fork-point fallback
- * @returns {{ok: true, base: string, head: string, source: PushRangeSource, trusted: boolean}
- *          | {ok: false, reason: 'invalid-explicit'|'unresolvable-explicit'|'inference-forbidden'|'no-base', message: string}}
+ * @param {'merge-base'|'verbatim'} [opts.anchor] how an EXPLICIT base is used: 'merge-base' (default) diffs what HEAD added
+ *   since it left BASE; 'verbatim' keeps BASE as given, for a caller that judges against the base TIP on purpose (gate-provenance)
+ * @returns {{ok: true, base: string, head: string, source: PushRangeSource, trusted: boolean, requestedBase?: string}
+ *          | {ok: false, reason: 'invalid-explicit'|'unresolvable-explicit'|'no-merge-base'|'invalid-anchor'|'inference-forbidden'|'no-base', message: string}}
  */
 export function resolvePushRange(opts = {}) {
   const {
     env = process.env,
     run = defaultRun,
     defaultBranch = 'origin/main',
+    anchor = 'merge-base',
   } = opts;
+  if (anchor !== 'merge-base' && anchor !== 'verbatim') {
+    return { ok: false, reason: 'invalid-anchor', message: `anchor must be 'merge-base' or 'verbatim', got ${JSON.stringify(anchor)}` };
+  }
   const requireExplicit = opts.requireExplicit
     ?? (env[PUSH_RANGE_ENV.REQUIRED] ?? '').trim() === '1';
 
@@ -110,14 +130,26 @@ export function resolvePushRange(opts = {}) {
     // Resolvability is separate from shape: a well-formed sha that this
     // checkout does not contain would make `git diff` fail later, at a point
     // where the caller has already decided the range is good.
-    if (!run(['rev-parse', '--verify', '--quiet', `${rawBase}^{commit}`])) {
+    const baseSha = run(['rev-parse', '--verify', '--quiet', `${rawBase}^{commit}`]);
+    if (!baseSha) {
       return {
         ok: false,
         reason: 'unresolvable-explicit',
         message: `${PUSH_RANGE_ENV.BASE}=${rawBase} does not resolve to a commit in this checkout`,
       };
     }
-    return { ok: true, base: rawBase, head: rawHead, source: 'explicit', trusted: true };
+    if (anchor === 'verbatim') return { ok: true, base: rawBase, head: rawHead, source: 'explicit', trusted: true };
+    // Two-dot `git diff base..head` against a base HEAD is behind reads the base's newer lines as HEAD's own, reversed.
+    const mergeBase = run(['merge-base', rawBase, rawHead]);
+    if (!mergeBase) {
+      return {
+        ok: false,
+        reason: 'no-merge-base',
+        message: `git cannot compute merge-base(${rawBase}, ${rawHead}) in this checkout (shallow clone, unrelated histories, or an unresolvable head); refusing to diff the two-dot range, which reads the base's newer changes as the head's own`,
+      };
+    }
+    if (mergeBase === baseSha) return { ok: true, base: rawBase, head: rawHead, source: 'explicit', trusted: true };
+    return { ok: true, base: mergeBase, head: rawHead, source: 'explicit', trusted: true, requestedBase: rawBase };
   }
 
   if (requireExplicit) {
@@ -199,6 +231,20 @@ export function branchOwnedChangedFiles(range, opts = {}) {
   return { files, scoped: true, excluded: everything.length - files.length };
 }
 
+/** Reasons that mean a range WAS given explicitly and is unusable, as opposed to none being given. */
+const EXPLICIT_FAILURE_REASONS = new Set(['invalid-explicit', 'unresolvable-explicit', 'no-merge-base', 'invalid-anchor']);
+
+/**
+ * Did the caller HAND this resolver a range it could not use? Such a range names a specific commit, so a caller that would read
+ * the working tree when no range is given must not do so here: that would judge a different tree than the one named.
+ *
+ * @param {ReturnType<typeof resolvePushRange>} r
+ * @returns {boolean}
+ */
+export function isExplicitRangeFailure(r) {
+  return !r.ok && EXPLICIT_FAILURE_REASONS.has(r.reason);
+}
+
 /**
  * Human-readable one-liner for a resolved range, for gate summary lines.
  * Always names the source so an under-scoped run is visible in the log.
@@ -208,7 +254,8 @@ export function branchOwnedChangedFiles(range, opts = {}) {
  */
 export function describePushRange(r) {
   if (!r.ok) return `unresolved (${r.reason})`;
-  return `${r.base}..${r.head} [${r.source}${r.trusted ? '' : ', inferred'}]`;
+  const anchored = r.requestedBase ? `, merge-base of ${r.requestedBase}` : '';
+  return `${r.base}..${r.head} [${r.source}${r.trusted ? '' : ', inferred'}${anchored}]`;
 }
 
 /** @internal test seam */

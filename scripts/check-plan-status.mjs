@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process';
 import {
   parsePlanStatus, selectAuditPlan, classifyPlanStatus, listPlanFiles, checkPlanDependencies,
 } from './lib/plan-status.mjs';
-import { resolvePushRange, branchOwnedChangedFiles } from './lib/push-range.mjs';
+import { resolvePushRange, branchOwnedChangedFiles, isExplicitRangeFailure } from './lib/push-range.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { gitPlanFiles } from './lib/plan-git-source.mjs';
 import { canonicalizeEol } from './lib/file-io.mjs';
@@ -74,6 +74,11 @@ function changedFilesForPush() {
 const UNAVAILABLE = Symbol('pushed-plans-unavailable');
 function pushedPlanFiles() {
   const range = resolvePushRange({});
+  // A range that was HANDED over but is unusable (e.g. a head with no merge-base) still names a commit that is not this checkout.
+  if (isExplicitRangeFailure(range)) {
+    process.stderr.write(`  [plan-status] the pushed range is unusable (${range.reason}); refusing to substitute this checkout's working tree\n`);
+    return UNAVAILABLE;
+  }
   if (!range.ok || !range.trusted) return null;
   const files = gitPlanFiles({ head: range.head });
   if (files === null) {
