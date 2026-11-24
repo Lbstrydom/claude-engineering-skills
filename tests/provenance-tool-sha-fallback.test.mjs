@@ -28,7 +28,8 @@ const FILES = { [SELF_MANIFEST_KEY]: 'sha:self', [OTHER_KEY]: 'sha:other-file', 
 const manifest = (o = {}) => JSON.stringify({ commitSha: SHA, files: FILES, ...o });
 /** This tree's hashes: by default every file matches the manifest; `over` changes some. */
 const tree = (over = {}) => (k) => (Object.hasOwn(over, k) ? over[k] : FILES[k] ?? null);
-const borrow = (hashOf, text = manifest()) => decideBundleToolSha({ localManifestText: null, mainManifestText: text, mainIsSelf: false, hashOf });
+const BUNDLE_PRESENT = [SELF_MANIFEST_KEY, OTHER_KEY];
+const borrow = (hashOf, text = manifest()) => decideBundleToolSha({ localManifestText: null, mainManifestText: text, mainIsSelf: false, hashOf, presentKeys: BUNDLE_PRESENT });
 
 describe('decideBundleToolSha (pure)', () => {
   it('the bundle\'s own manifest wins, and is never second-guessed by the main one', () => {
@@ -64,6 +65,14 @@ describe('decideBundleToolSha (pure)', () => {
     // The sync's own bookkeeping lives in the bundle but is never in a manifest (found by the real-sync test, 2026-11-24).
     assert.equal(decideBundleToolSha({ localManifestText: null, mainManifestText: manifest(), mainIsSelf: false, hashOf: tree(),
       presentKeys: [SELF_MANIFEST_KEY, OTHER_KEY, 'scripts/.claude-skills/.sync-watermark.json', 'scripts/.claude-skills/.sync.lock'] }).sha, SHA);
+  });
+
+  it('NEGATIVE CONTROL: an inventory that was never taken (unlistable bundle, or omitted) is not an empty one', () => {
+    for (const presentKeys of [null, undefined]) {
+      const d = decideBundleToolSha({ localManifestText: null, mainManifestText: manifest(), mainIsSelf: false, hashOf: tree(), presentKeys });
+      assert.equal(d.sha, null, String(presentKeys));
+      assert.match(d.reason, /could not be listed/);
+    }
   });
 
   it('files outside the bundle (e.g. a skill copy) are not part of the comparison', () => {

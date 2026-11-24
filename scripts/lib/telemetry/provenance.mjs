@@ -104,11 +104,11 @@ function parseManifest(text) {
  * @param {string|null} facts.localManifestText this bundle's sibling manifest, or null
  * @param {string|null|undefined} facts.mainManifestText the main checkout's manifest; null = none there, undefined = no main checkout
  * @param {boolean} facts.mainIsSelf the main checkout IS this tree (nothing to borrow)
- * @param {string[]} [facts.presentKeys] manifest-style keys of every file under this tree's bundle
+ * @param {string[]|null} facts.presentKeys manifest-style keys of every file under this tree's bundle; null = could not be listed
  * @param {(key: string) => string|null} facts.hashOf `sha256:<hex>` of this tree's file at a manifest key, null when absent
  * @returns {{sha: string|null, source: 'bundle-manifest'|'main-worktree-manifest'|null, reason: string|null}}
  */
-export function decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf, presentKeys = [] }) {
+export function decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf, presentKeys = null }) {
   const local = parseManifest(localManifestText);
   if (local) {
     return SHA_RE.test(local.commitSha ?? '')
@@ -127,6 +127,8 @@ export function decideBundleToolSha({ localManifestText, mainManifestText, mainI
   if (differing.length) {
     return { sha: null, source: null, reason: `${why}; the main worktree's manifest describes a different bundle (${differing.length} of ${keys.length} files differ; re-run skills:hydrate)` };
   }
+  // An inventory that was never taken is not an empty one: without it, an unlisted file cannot be ruled out.
+  if (!Array.isArray(presentKeys)) return { sha: null, source: null, reason: `${why}; this bundle's files could not be listed, so it cannot be matched to the main worktree's manifest` };
   const listed = new Set(keys);
   const extra = presentKeys.filter((k) => k.startsWith(BUNDLE_KEY_PREFIX) && !listed.has(k) && !SYNC_METADATA.has(k));
   if (extra.length) {
@@ -161,7 +163,7 @@ export function resolveBundleToolSha(scriptsDir, { mainRootOf = resolveMainRoot 
   const hashOf = (key) => {
     try { return 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(path.join(repoRoot, key))).digest('hex'); } catch { return null; }
   };
-  const presentKeys = [];
+  let presentKeys = [];
   if (localManifestText == null && typeof mainManifestText === 'string') {
     const walk = (rel) => {
       for (const e of fs.readdirSync(path.join(repoRoot, rel), { withFileTypes: true })) {
@@ -169,7 +171,7 @@ export function resolveBundleToolSha(scriptsDir, { mainRootOf = resolveMainRoot 
         if (e.isDirectory()) walk(r); else presentKeys.push(r);
       }
     };
-    try { walk(BUNDLE_KEY_PREFIX.slice(0, -1)); } catch { /* unreadable bundle: the hash comparison already refuses */ }
+    try { walk(BUNDLE_KEY_PREFIX.slice(0, -1)); } catch { presentKeys = null; /* fail closed: decideBundleToolSha refuses */ }
   }
   return decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf, presentKeys });
 }
