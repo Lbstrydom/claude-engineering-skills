@@ -72,7 +72,7 @@ function main(argv) {
     process.exit(2);
   }
 
-  const byName = {};
+  const byName = Object.create(null); // a skills/__proto__ dir must be an own key, not a prototype write
   for (const n of names) {
     byName[n] = fs.readFileSync(path.join(SKILLS_DIR, n, 'SKILL.md'), 'utf-8');
   }
@@ -139,7 +139,7 @@ function main(argv) {
     process.stderr.write(
       '\n  Claude Code 2.1.330+ does not load a skill with this name, and a skill\n'
       + "  named steward would be read as the watch's instructions. Pick another\n"
-      + '  name. See docs/reference/skill-surface-ownership.md §Host-reserved names.\n',
+      + '  name. See docs/reference/skill-surface-ownership.md §8 (host-reserved names).\n',
     );
     process.exit(1);
   }

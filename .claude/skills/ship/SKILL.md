@@ -38,7 +38,7 @@ allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack --include-env-mana
 > whether a message is an invocation, or before changing this rule.
 
 > **Host built-in check.** Claude Code 2.1.330+ reserves `/ship` and skips this
-> skill. If its built-in ran this session (a PR or watch with no `AI-*`
+> skill. If that built-in ran (a PR or watch with no `AI-*`
 > trailers), stop and tell the user: no gate ran.
 
 A single command that ensures all project documentation is current, then
@@ -857,8 +857,8 @@ run sync)`.
 If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.
 
-**Undo note**: report `Pushed <old>..<new> to origin/<branch>; undo: git revert --no-edit <old>..<new>`
-(merges in the range: `-m 1`; a new branch: close its PR).
+**Undo note**: report `Pushed <old>..<new> to origin/<branch>; undo: git revert --no-edit -m 1 $(git rev-list --first-parent <old>..<new>)`
+(a new branch: close its PR).
 
 **CI on the pushed head**: `node scripts/ci-merge.mjs --pr <n> --wait-only` reports every check; add `--merge` only when the user said to merge (`references/ci-merge.md`).
 

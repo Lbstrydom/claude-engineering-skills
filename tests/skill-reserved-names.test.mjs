@@ -112,6 +112,19 @@ describe('check-skill-descriptions CLI enforces it', () => {
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  it('a skills/__proto__ directory is still checked, not swallowed by the prototype', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reserved-names-'));
+    try {
+      for (const [d, n] of [['ship', 'ship'], ['__proto__', 'steward']]) {
+        fs.mkdirSync(path.join(dir, 'skills', d), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'skills', d, 'SKILL.md'), md(n));
+      }
+      const r = run(dir);
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(r.stderr, /\[__proto__\] uses "steward"/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
   it('exits 0 on the live skills/ tree', () => {
     const r = run(REPO_ROOT);
     assert.equal(r.status, 0, r.stderr);
