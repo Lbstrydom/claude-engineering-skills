@@ -16,9 +16,9 @@ function of the **path only**, ordered precedence (exact filename → generated/
 | Class | Meaning | Reaches the model? |
 |---|---|---|
 | `profiled` | a known language **with** a profile (boundaries, imports, tools): js, ts, py, **cs** | yes |
-| `model-only` | a known source language with no profile (go, rs, java, kt, rb, php, sh, …) | yes |
+| `model-only` | a known source language with no profile (go, rs, java, kt, rb, php, sh, …), and a git hook script under `.githooks/` or `.husky/` (`sh`, by directory: hooks carry no extension) | yes |
 | `declarative` | reviewable config / markup / build definition (json, yml, sql, md, `.csproj`, `Dockerfile`, …) | yes |
-| `non-code` | an **expected** exclusion: binary, asset, lockfile, generated (`.g.cs`, `*.min.js`) | no (expected) |
+| `non-code` | an **expected** exclusion: binary, asset, lockfile, generated (`.g.cs`, `*.min.js`, husky's own `.husky/_/`) | no (expected) |
 | `uncovered` | **unrecognised** — never silently dropped, always reported | no, **reported** |
 
 **Adding a language is one edit**: a language entry in the taxonomy gives admission, repo profiling, fence language,

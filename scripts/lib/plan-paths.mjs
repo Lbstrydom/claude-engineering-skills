@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   matchFileKind, SOURCE_CODE_EXTENSIONS, AUDITABLE_EXTENSIONS, COMPOUND_REFERENCE_SUFFIXES, toExtensionAlternation,
+  HOOK_SCRIPT_PATH_PATTERN,
 } from './file-taxonomy.mjs';
 
 export { COMPOUND_REFERENCE_SUFFIXES };
@@ -204,16 +205,21 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false, repoFil
   const EXT = toExtensionAlternation(PLAN_REFERENCE_EXTENSIONS);
 
   // Phase 1: Exact path regex extraction (backtick paths, inline paths, heading filenames)
-  const genericPathRegex = new RegExp(`(?:^|\\s|\\\`|\\()((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))`, 'gm');
+  // A hook script (`.githooks/pre-push`) has no extension to key on: the taxonomy's hook-path fragment is tried FIRST
+  // (first-match-wins), so it is captured whole and then admitted by the same `resolveReferenceExtension` as any file.
+  const HOOK = HOOK_SCRIPT_PATH_PATTERN;
+  // A dependency's file is never a plan subject at ANY depth (`frontend/node_modules/.husky/x`), not only at the root.
+  const inDependencyDir = (p) => p.split('/').includes('node_modules');
+  const genericPathRegex = new RegExp(`(?:^|\\s|\\\`|\\()(${HOOK}|(?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))`, 'gm');
   while ((match = genericPathRegex.exec(planContent)) !== null) {
     const p = match[1].replace(/^\.\//, '');
-    if (!p.startsWith('http') && !p.startsWith('node_modules') && !infraExcluded(p)) paths.add(p);
+    if (!p.startsWith('http') && !inDependencyDir(p) && !infraExcluded(p)) paths.add(p);
   }
 
-  const btRegex = new RegExp(`\\\`((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))\\\``, 'gm');
+  const btRegex = new RegExp(`\\\`(${HOOK}|(?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))\\\``, 'gm');
   while ((match = btRegex.exec(planContent)) !== null) {
     const p = match[1].replace(/^\.\//, '');
-    if (!p.startsWith('http') && !p.startsWith('node_modules') && !infraExcluded(p)) paths.add(p);
+    if (!p.startsWith('http') && !inDependencyDir(p) && !infraExcluded(p)) paths.add(p);
   }
 
   const fnRegex = new RegExp(`####\\s+\`([\\w./-]+\\.(?:${ALL_EXTENSIONS_PATTERN}))\``, 'gm');
@@ -221,7 +227,7 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false, repoFil
     const captured = match[1];
     if (captured.includes('/')) {
       const normalized = captured.replace(/^\.\//, '');
-      if (!normalized.startsWith('http') && !normalized.startsWith('node_modules') && !infraExcluded(normalized)) paths.add(normalized);
+      if (!normalized.startsWith('http') && !inDependencyDir(normalized) && !infraExcluded(normalized)) paths.add(normalized);
       continue;
     }
     const filename = captured;

@@ -13,6 +13,7 @@ import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
 import {
   languageById, matchFileKind, AUDITABLE_EXTENSIONS, KNOWN_EXTENSIONLESS_FILENAMES, toExtensionAlternation,
+  HOOK_SCRIPT_PATH_PATTERN,
 } from './file-taxonomy.mjs';
 import { scanCsharpBoundaries, csharpBoundaryScanner } from './csharp-scanner.mjs';
 
@@ -388,12 +389,15 @@ const EXTENSIONLESS_FILENAME_PATTERN = toExtensionAlternation(KNOWN_EXTENSIONLES
 /**
  * Build a file-reference regex for path extraction from free text.
  * Handles: 'foo.py', './foo.py', '../foo.py', '/abs/foo.py', backticked, quoted,
- * and a well-known extensionless filename (optionally path-prefixed, e.g. 'docker/Dockerfile').
+ * a well-known extensionless filename (optionally path-prefixed, e.g. 'docker/Dockerfile'), and a hook script
+ * ('.githooks/pre-push', 'frontend/.husky/pre-commit' — the taxonomy's `HOOK_SCRIPT_PATH_PATTERN`).
  */
 export function buildFileReferenceRegex() {
   return new RegExp(
     `(?:^|[\\s\`('"])` +
-    `((?:\\.{1,2}\\/|\\/)?(?:[\\w.-]+\\/)*(?:[\\w.-]+\\.(?:${ALL_EXTENSIONS_PATTERN})|(?:${EXTENSIONLESS_FILENAME_PATTERN})))`,
+    // The hook alternative goes FIRST: alternation is first-match-wins, and `.githooks/check.sh.local` must be captured
+    // whole, not cut to `.githooks/check.sh` by the extension branch.
+    `((?:\\.{1,2}\\/|\\/)?(?:${HOOK_SCRIPT_PATH_PATTERN}|(?:[\\w.-]+\\/)*(?:[\\w.-]+\\.(?:${ALL_EXTENSIONS_PATTERN})|(?:${EXTENSIONLESS_FILENAME_PATTERN}))))`,
     'g'
   );
 }
