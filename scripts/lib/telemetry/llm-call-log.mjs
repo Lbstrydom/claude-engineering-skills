@@ -19,7 +19,7 @@
  */
 import crypto from 'node:crypto';
 import { isWorkItemId } from '../ledger/work-item.mjs';
-import { costFromUsage } from '../model-pricing.mjs';
+import { costFromUsage, PRICING_VERSION } from '../model-pricing.mjs';
 import { CAPTURE_SCHEMA_VERSION, ATTEMPT_OUTCOMES, attemptOutcomeForError } from '../capture/schema-version.mjs';
 
 export const LLM_CALL_SCHEMA_VERSION = 1;
@@ -101,7 +101,7 @@ export function beginLogicalCall() {
 /**
  * Record one provider ATTEMPT. Never throws, never blocks.
  * @param {object} c logicalCallId, attemptNo, attemptOutcome (default 'success'), purpose, model, route, promptHash, promptVariant, temperature, reasoningEffort,
- *   usage {input_tokens, cached_tokens, output_tokens, reasoning_tokens}, latencyMs, costUsd, truncated, retried, fallback
+ *   usage {input_tokens, cached_tokens, output_tokens, reasoning_tokens}, latencyMs, costUsd, pricingVersion (stored only beside a cost), truncated, retried, fallback
  */
 export function record(c) {
   try {
@@ -137,6 +137,8 @@ export function record(c) {
       reasoning_tokens: int(u.reasoning_tokens),
       latency_ms: int(c?.latencyMs ?? u.latency_ms),
       cost_usd: num(c?.costUsd),
+      // Only beside a cost: a version with no cost would claim a pricing that never happened.
+      pricing_version: num(c?.costUsd) != null ? str(c?.pricingVersion, 40) : null,
       truncated: bool(c?.truncated),
       retried: bool(c?.retried),
       fallback: bool(c?.fallback),
@@ -181,6 +183,7 @@ export function recordGptCall({ result, opts, logicalCallId = null, attemptNo = 
       usage: result?.usage,
       latencyMs: result?.latencyMs,
       costUsd: costOf(result?.usage, result?.model),
+      pricingVersion: PRICING_VERSION,
       truncated: false,
       retried: result?._retried === true,
       fallback: false,
@@ -210,6 +213,7 @@ export function recordGptAttemptFailure({ err, opts, model = null, logicalCallId
       usage: err?.llmUsage ?? null,
       latencyMs,
       costUsd: costOf(err?.llmUsage, model),
+      pricingVersion: PRICING_VERSION,
       truncated: err?.llmCategory === 'truncated' || err?.llmCategory === 'incomplete',
       retried: attemptNo > 1,
       fallback: false,

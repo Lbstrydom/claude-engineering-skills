@@ -29,6 +29,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveBundleToolSha } from '../telemetry/provenance.mjs';
 
 export const TELEMETRY_VERSION = 1;
 /** Spool cap: past this many pending events a new one is counted as dropped, not written. */
@@ -188,15 +189,10 @@ export function outcomeOf(result, error) {
  */
 export function toolShaFor(scriptsDir) {
   if (path.basename(scriptsDir) !== '.claude-skills') return null;
-  try {
-    const fd = fs.openSync(path.join(scriptsDir, '..', '.sync-manifest.json'), 'r');
-    try {
-      const buf = Buffer.alloc(1024);
-      const n = fs.readSync(fd, buf, 0, buf.length, 0);
-      const m = buf.toString('utf8', 0, n).match(/"commitSha"\s*:\s*"([0-9a-f]{7,40})"/);
-      return m ? m[1] : null;
-    } finally { fs.closeSync(fd); }
-  } catch { return null; }
+  // One reader for the bundle's commit (telemetry/provenance.mjs), so a hydrated
+  // worktree without its own manifest falls back the same way for fleet events as
+  // for audit runs, rather than this copy staying NULL.
+  try { return resolveBundleToolSha(scriptsDir).sha; } catch { return null; }
 }
 
 /** Every string id this invocation named: flag values, positionals, and the ids its result carries. */

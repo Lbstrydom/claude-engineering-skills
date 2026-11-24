@@ -18,6 +18,15 @@
  * reviewer is the common Claude Code case, so it is disclosed as `null`
  * (unmeasured) with the same plain sentence, never as "independent".
  *
+ * **On the Azure work profile the same-family gate is the design, not a
+ * fallback (field report 5, 2026-11-23).** Work tenants have no Gemini, so
+ * `selectProvider` picks `azure-claude` by policy whatever keys are present:
+ * the GPT audit passes are the cross-vendor view, and only the final gate shares
+ * a family with a Claude author. The plain weaker-check sentence was true but left
+ * that out, and a consumer agent read it as "no Gemini key, routing broken". So
+ * `azure-claude` gets the pairing sentence; public `claude-opus` (a real
+ * fallback for a missing Gemini key) keeps the plain one.
+ *
  * @module scripts/lib/final-review/gate-label
  */
 import { modelFamily } from '../model-resolver.mjs';
@@ -26,6 +35,10 @@ import { modelFamily } from '../model-resolver.mjs';
 const PROVIDER_FAMILY = Object.freeze({ gemini: 'google', 'claude-opus': 'anthropic', 'azure-claude': 'anthropic' });
 
 export const WEAKER_CHECK_SENTENCE = 'same model family as the author — a weaker independent check than a cross-vendor reviewer';
+
+/** The Azure work profile's designed pairing: says where the cross-vendor view comes from. No key, no fallback. */
+export const AZURE_PAIRING_SENTENCE = "the Azure work profile's designed pairing: the GPT audit passes are the cross-vendor view, "
+  + 'and only this final gate shares a model family with a Claude author';
 
 /**
  * @param {{provider: string, model: string|null, authorModel?: string|null}} input
@@ -39,7 +52,13 @@ export function describeFinalGate({ provider, model, authorModel = null }) {
   let independenceNote = null;
   if (authorFamily && reviewerFamily) {
     sameFamilyAsAuthor = authorFamily === reviewerFamily;
-    if (sameFamilyAsAuthor) independenceNote = `${WEAKER_CHECK_SENTENCE} (author ${authorModel})`;
+    if (sameFamilyAsAuthor) {
+      independenceNote = provider === 'azure-claude'
+        ? `${AZURE_PAIRING_SENTENCE} (author ${authorModel})`
+        : `${WEAKER_CHECK_SENTENCE} (author ${authorModel})`;
+    }
+  } else if (provider === 'azure-claude') {
+    independenceNote = authorModel ? `${AZURE_PAIRING_SENTENCE} (author model "${authorModel}" unclassified)` : AZURE_PAIRING_SENTENCE;
   } else if (reviewerFamily === 'anthropic') {
     const why = authorModel ? `author model "${authorModel}" unclassified` : 'author model undeclared (AUDIT_AUTHOR_TIER_HINT unset)';
     independenceNote = `${why}; if Claude authored this change, the reviewer is the ${WEAKER_CHECK_SENTENCE}`;

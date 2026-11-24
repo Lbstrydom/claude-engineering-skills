@@ -14,7 +14,7 @@
  */
 import { bindRun, record, drain } from './llm-call-log.mjs';
 import { routeFor } from './llm-call-log.mjs';
-import { costFromUsage } from '../model-pricing.mjs';
+import { costFromUsage, PRICING_VERSION } from '../model-pricing.mjs';
 import { resolveWorkItemId } from '../ledger/work-item.mjs';
 import { execFileSync } from 'node:child_process';
 
@@ -71,6 +71,7 @@ export async function recordFinalReviewCall({ runId, repoId = null, model, provi
       },
       latencyMs,
       costUsd: finalReviewCostUsd(usage, model),
+      pricingVersion: PRICING_VERSION,
     });
     const log = drain();
     if (!log) return 'skipped';

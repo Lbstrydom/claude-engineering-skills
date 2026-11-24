@@ -177,6 +177,10 @@ export const CORE_ENTRY = [
   // (`check --static|--live`) so a policy-private consumer can answer "are the capture columns filling?"
   // without any data leaving. Its config ships via sync-inventory's fs-read assets. Also in CLI_SMOKE_SET.
   'scripts/own-model-coverage.mjs',
+  // Capture-completeness report / canary / ledger flush CLI. Nothing imports it (maintenance-checks spawns it, source repo only),
+  // so the walker cannot find it; a policy-private consumer runs `report` against ITS OWN store, the analysis going to the data
+  // (field report 5, 2026-11-23). No fs-read assets. Also in CLI_SMOKE_SET.
+  'scripts/capture-completeness.mjs',
   // Deterministic /ship commit helper — validates + appends the AI-*
   // provenance trailer block and performs the commit (docs/reference/commit-provenance.md).
   // /ship SKILL.md shells it, nothing imports it. Walker pulls in

@@ -480,7 +480,7 @@
       "reason": "Names the final-review round cap. The cap is mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+ and gemini-review.mjs exits non-zero before building a provider (pinned by tests/final-review-round-cap-cli.test.mjs, spawning the real CLI, and tests/final-review-round-gate.test.mjs). This skill routes on that result and has no exit code of its own."
     },
     {
-      "line": "`gemini-review.mjs` refuses `--round 3`; never loop past it.",
+      "line": "`gemini-review.mjs` refuses `--round 3`.",
       "reason": "Names the final-review round cap. The cap is mechanical one layer down since 2026-09-27: scripts/lib/final-review/round-gate.mjs::validateRoundArgs refuses --round 3+ and gemini-review.mjs exits non-zero before building a provider (pinned by tests/final-review-round-cap-cli.test.mjs, spawning the real CLI, and tests/final-review-round-gate.test.mjs). This skill routes on that result and has no exit code of its own."
     },
     {
@@ -516,7 +516,7 @@
       "reason": "Describes how the round's `_coverage` ledger is worded and rendered (formatCoverageSuffix / coverageMissingNote in scripts/lib/coverage-format.mjs, wave INELIGIBLE wording in scripts/lib/audit/wave-eligibility.mjs); the wording and the ledger invariants are pinned by tests/coverage-surface.test.mjs, tests/wave-eligibility.test.mjs and tests/coverage-cluster-c-fixes.test.mjs. This skill line is a rendering instruction, not a separate gate."
     },
     {
-      "line": "Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when",
+      "line": "Run the final gate: newest Gemini Pro (`latest-pro`; override `FINAL_REVIEW_MODEL`), else Claude Opus with no",
       "reason": "Describes which model the final reviewer runs and how to change it (the latest-pro default, the FINAL_REVIEW_MODEL override, the Opus fallback) - configuration, not an enforcement claim. Reworded 2026-10-10 from the stale \"Run Gemini 3.1 Pro as the final gate\"; the word override names an env var, not a bypass. The model default itself is pinned by tests/final-review-env-alias.test.mjs; the gate being MANDATORY is dispositioned separately."
     },
     {
@@ -608,12 +608,12 @@
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
-      "line": "regardless of convergence. No-key degradation ladder (`references/gemini-gate.md`",
+      "line": "regardless of convergence. Ladder (`references/gemini-gate.md`; never",
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
-      "line": "— never a silent skip): Gemini → Claude Opus fallback → an **independent",
-      "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
+      "line": "**Step 7 (final gate) is MANDATORY** after the last audit round,",
+      "reason": "Reworded 2026-11-24 from \"Step 7 (Gemini final review)\": names the gate by role, not by one provider. Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
       "line": "`FINAL_GATE_SKIPPED` and do not claim full final-gate validation.",
@@ -746,6 +746,10 @@
     {
       "line": "| `references/contested-verification.md` | Quoted-line verification of contested findings: flow, item states, exit codes. | Step 3 - a finding is disputed or re-raised after a dismissal. |",
       "reason": "Reference-index row for references/contested-verification.md; the row text is a summary that skills:check byte-matches against the reference's frontmatter. Descriptive, no enforcement claim."
+    },
+    {
+      "line": "cross-vendor; only this gate shares a Claude author's family.",
+      "reason": "Wording only (field report 5, 2026-11-23): names the final gate by role and says that on the Azure profile Foundry Claude is the policy choice, not a fallback. Routing is code (selectProvider in scripts/gemini-review.mjs); the independence note is computed by scripts/lib/final-review/gate-label.mjs and pinned by tests/final-review-gate-label.test.mjs. No enforcement claim of its own."
     }
   ]
 }

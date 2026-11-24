@@ -305,9 +305,9 @@ Stability uses `_hash` for exact cross-round matching:
 the card, never a retry, unless the **meta-review** (`references/meta-review.md`, also round 4 on a fired signal)
 admits it; on `META_*` run the printed debt command.
 
-**Step 7 (Gemini final review) is MANDATORY** after the last audit round,
-regardless of convergence. No-key degradation ladder (`references/gemini-gate.md`
-— never a silent skip): Gemini → Claude Opus fallback → an **independent
+**Step 7 (final gate) is MANDATORY** after the last audit round,
+regardless of convergence. Ladder (`references/gemini-gate.md`; never
+skip): Gemini → Foundry Claude (Azure, by policy) → Claude Opus → an **independent
 adversarial review agent** over the code + findings (verdict in the same
 APPROVE/CONCERNS/REJECT shape) → only when none is available, output
 `FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
@@ -588,8 +588,9 @@ require a shared SSoT, a parity assertion, or a declared `data-engine-claim` sur
 > review envelope opens with an **Audit Coverage** note naming what was NOT examined. Keep it in `--summary`: an APPROVE
 > over it is an APPROVE of the examined files only. A coverage gap is not itself release-blocking.
 
-Run the final reviewer — the newest Gemini Pro by default (`latest-pro`, resolved at runtime; override with `FINAL_REVIEW_MODEL`) as the final gate. Falls back to Claude Opus when
-`GEMINI_API_KEY` is absent.
+Run the final gate: newest Gemini Pro (`latest-pro`; override `FINAL_REVIEW_MODEL`), else Claude Opus with no
+`GEMINI_API_KEY`. On the Azure profile Foundry Claude is the **policy choice, not a fallback**: the GPT passes are
+cross-vendor; only this gate shares a Claude author's family.
 
 **Build the transcript first** — the reviewer reads a file no earlier step
 writes. Never hand-assemble the JSON:
@@ -598,11 +599,9 @@ writes. Never hand-assemble the JSON:
 node scripts/build-audit-transcript.mjs --sid $SID --changed "$CHANGED"
 ```
 
-It discovers every `.audit/$SID-r<N>-result.json`, folds in
-`.audit/$SID-ledger.json` as the deliberation trail, and writes
-`.audit/$SID-transcript.json`. **`--changed` is the reviewer's scope filter** —
-pass the same list you gave the R1 audit; without it out-of-scope findings stop
-being dropped and the builder warns on stderr.
+It folds every round result and the ledger into `.audit/$SID-transcript.json`.
+**`--changed` is the reviewer's scope filter**: pass the R1 list, or out-of-scope
+findings stop being dropped (the builder warns).
 
 Read the cloud run id from the LAST round's result, passing the path as an argument
 (never a literal inside `-e`) — **`--run-id` arms the verdict write-back to
@@ -613,9 +612,8 @@ ROUND=2   # the last round actually run
 RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" ".audit/$SID-r$ROUND-result.json")
 ```
 
-If `gemini-review.mjs` warns that cloud is on but `--run-id` is absent, the extraction
-failed — don't ignore it. → `references/convergence-report.md` §Step 7 RUN_ID — read
-when `RUN_ID` is unexpectedly empty.
+A "cloud on but `--run-id` absent" warning means the extraction failed:
+`references/convergence-report.md` §Step 7 RUN_ID.
 
 If `RUN_ID` is non-empty:
 
@@ -623,14 +621,14 @@ If `RUN_ID` is non-empty:
 node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript.json --out .audit/$SID-gemini-result.json --run-id "$RUN_ID" 2>.audit/$SID-gemini-stderr.log
 ```
 
-Otherwise (cloud genuinely off — `RUN_ID` empty):
+Otherwise (`RUN_ID` empty, cloud off):
 
 ```bash
 node scripts/gemini-review.mjs review "$PLAN_FILE" .audit/$SID-transcript.json --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
 ```
 
 Add `--round 1` to the first run. **Hard cap: 2 final-review rounds** —
-`gemini-review.mjs` refuses `--round 3`; never loop past it.
+`gemini-review.mjs` refuses `--round 3`.
 
 **Act on `gateDisposition`, not the verdict word.** The result JSON (and the
 stdout summary `Gate: …`) carries a code-computed `gateDisposition`; `verdict`

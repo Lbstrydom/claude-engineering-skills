@@ -124,10 +124,32 @@ describe('the source-repo-only escape hatch is real, not a loophole', () => {
       Object.values(inventory._internals).filter(Array.isArray).flat().filter((v) => typeof v === 'string'),
     );
     for (const rel of exempt) {
+      if (Object.hasOwn(SYNCED_BUT_CADENCE_SOURCE_ONLY, rel)) continue;
       assert.ok(
         !declared.has(`scripts/${rel}`),
         `${rel} is marked sourceRepoOnly yet IS synced — one of the two is wrong`,
       );
     }
+    // The unsynced branch must still be exercised, or the allowlist has swallowed the guard.
+    assert.ok([...exempt].some((rel) => !Object.hasOwn(SYNCED_BUT_CADENCE_SOURCE_ONLY, rel)), 'every sourceRepoOnly script is allowlisted: the guard checks nothing');
   });
+
+  test('an allowlisted script is really synced and really still behind a sourceRepoOnly check (no stale entries)', async () => {
+    const inventory = await import('../scripts/lib/sync-inventory.mjs');
+    const declared = new Set(Object.values(inventory._internals).filter(Array.isArray).flat().filter((v) => typeof v === 'string'));
+    const exempt = sourceRepoOnlyScripts();
+    for (const rel of Object.keys(SYNCED_BUT_CADENCE_SOURCE_ONLY)) {
+      assert.ok(declared.has(`scripts/${rel}`), `${rel} is allowlisted as synced but is not in the sync inventory`);
+      assert.ok(exempt.has(rel), `${rel} is allowlisted but no sourceRepoOnly check spawns it any more`);
+    }
+  });
+});
+
+/**
+ * Scripts that ship to consumers (a consumer may run them by hand) while the weekly CHECK that spawns them stays
+ * source-repo only. Here `sourceRepoOnly` gates the cadence, not the script's availability, so "synced" is correct.
+ */
+const SYNCED_BUT_CADENCE_SOURCE_ONLY = Object.freeze({
+  'capture-completeness.mjs': 'synced so a policy-private consumer can run report/canary against its own store (field report 5, '
+    + '2026-11-23); the weekly capture-canary check stays source-only until consumer stores carry the P0 migrations',
 });

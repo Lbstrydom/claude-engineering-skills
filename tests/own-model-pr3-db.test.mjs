@@ -156,6 +156,29 @@ describe('own-model telemetry PR 3 (DB integration)', { skip }, () => {
     assert.equal(cov.evaluateEntry(entry, m).status, 'below-floor', 'a half-filled column fails its 0.9 floor');
   });
 
+  test('policy_version applicability measures repos that have recorded it, and excludes one with no AGENTS.md', async () => {
+    // Field report 5: a consumer without AGENTS.md is NULL by design and read as below-floor store-wide.
+    const withPolicy = crypto.randomUUID(); const without = crypto.randomUUID();
+    const runs = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    try {
+      await q.query('INSERT INTO audit_repos (id, name) VALUES ($1, $2), ($3, $4)', [withPolicy, `omp3-${tag}-pol`, without, `omp3-${tag}-nopol`]);
+      await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode, policy_version) VALUES
+        ($1, $4, 'x.md', 'code', '0123456789abcdef'), ($2, $4, 'x.md', 'code', NULL), ($3, $5, 'x.md', 'code', NULL)`, [...runs, withPolicy, without]);
+      const entry = { table: 'audit_runs', column: 'policy_version', since: '2000-01-01', where: 'code_run_policy_repo', expectFill: 0.8, tolerance: 0.1 };
+      const { sql, params } = cov.buildMeasureSql(entry);
+      const m = await q.one(`${sql} AND repo_id IN ('${withPolicy}', '${without}')`, params);
+      assert.deepEqual([m.total, m.filled], [2, 1], 'the no-AGENTS.md repo is excluded; the half-filled repo still counts');
+      assert.equal(cov.evaluateEntry(entry, m).status, 'below-floor', 'a partial fault in a measured repo still fails the floor');
+      // NEGATIVE CONTROL: the old applicability counts the excluded repo.
+      const old = cov.buildMeasureSql({ ...entry, where: 'code_run' });
+      const o = await q.one(`${old.sql} AND repo_id IN ('${withPolicy}', '${without}')`, old.params);
+      assert.deepEqual([o.total, o.filled], [3, 1]);
+    } finally {
+      await q.query('DELETE FROM audit_runs WHERE id IN ($1, $2, $3)', runs);
+      await q.query('DELETE FROM audit_repos WHERE id IN ($1, $2)', [withPolicy, without]);
+    }
+  });
+
   test('adjudication writer module still exports the event writer used by the label history', () => {
     assert.equal(typeof adj.recordAdjudicationEvent, 'function');
   });

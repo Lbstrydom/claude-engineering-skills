@@ -211,8 +211,9 @@ export const CHECKS = [
     label: 'Own-model capture canary + completeness reconciliation (7 days)',
     requiredEnv: ['AUDIT_DB_URL'],
     // sourceRepoOnly: P0 ships with the migration applied to THIS repo's store first; a consumer on an unmigrated
-    // store would fail this weekly (`unmeasured:store-not-migrated`) before it could act on it. Opening it to
-    // consumers means adding the CLI to the sync lists in the same change as migrating their stores.
+    // store would fail this weekly (`unmeasured:store-not-migrated`) before it could act on it. The CLI itself is
+    // synced (a consumer runs it by hand against its own store); opening this weekly check to consumers waits on
+    // migrating their stores.
     sourceRepoOnly: true,
     steps: [
       // The decision ledger's events are spooled locally and delivered ONLY by `ledger flush`, which nothing ran:
