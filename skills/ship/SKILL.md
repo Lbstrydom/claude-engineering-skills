@@ -37,6 +37,10 @@ allowed-tools: Bash(node scripts/cross-skill.mjs detect-stack --include-env-mana
 > → `references/flow-rationale.md` §Explicit invocation — read when deciding
 > whether a message is an invocation, or before changing this rule.
 
+> **Host built-in check.** Claude Code 2.1.330+ reserves `/ship` and skips this
+> skill. If that built-in ran (a PR or watch with no `AI-*`
+> trailers), stop and tell the user: no gate ran.
+
 A single command that ensures all project documentation is current, then
 commits and pushes. Follow every step in order.
 
@@ -675,11 +679,10 @@ picks up what the autonomous run did.
 
 ---
 
-## Step 5.5 — Plans no longer move on completion (removed)
+## Step 5.5 — removed: no plan archive step
 
-**There is no archive step** — a completed plan stays in `docs/plans/` and
-carries `Status: Complete`; never move it. → `references/flow-rationale.md`
-§Step 5.5 — read before reintroducing any plan move.
+A completed plan stays in `docs/plans/` as `Status: Complete`; never move it
+(`references/flow-rationale.md` §Step 5.5).
 
 ---
 
@@ -828,11 +831,7 @@ explicitly. Full rationale: `references/commit-provenance-deep-dive.md`.
 refuses an unscoped commit outright: it cannot know whose staged entries the
 index holds, so it requires you to declare what you are shipping. There is no
 override flag, deliberately. Add one `--path <file>` per file you
-are shipping:
-
-```bash
-node scripts/ship-commit.mjs --message-file ".claude/tmp/ship-commit-msg-$EPOCH.txt" --skill ship --models "$MODELS" --gate "$GATE" --expect-head "$SHIP_HEAD" --expect-branch "$SHIP_BRANCH" --path scripts/foo.mjs --path tests/foo.test.mjs
-```
+are shipping.
 
 This commits those paths' worktree contents and leaves every other index
 entry staged and untouched. Untracked paths are handled (marked
@@ -857,6 +856,9 @@ run sync)`.
 
 If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.
+
+**Undo note**: report `Pushed <old>..<new> to origin/<branch>; undo: git revert --no-edit -m 1 $(git rev-list --first-parent <old>..<new>)`
+(a new branch: close its PR).
 
 **CI on the pushed head**: `node scripts/ci-merge.mjs --pr <n> --wait-only` reports every check; add `--merge` only when the user said to merge (`references/ci-merge.md`).
 

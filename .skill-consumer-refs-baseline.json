@@ -357,11 +357,6 @@
       "reason": "Named as the implementation site of the behaviour described around it, not as something to run or open: `scripts/fleet.mjs` is upstream-owned, lands under scripts/.claude-skills/ in a consumer, and its sync banner says it is not theirs to act on. Where a consumer DOES need to invoke a synced script, the text writes `node <path>` so the sync's rewriter maps it.",
       "sites": 1
     },
-    "path scripts/foo.mjs": {
-      "disposition": "illustrative",
-      "reason": "A placeholder in /ship's `--path` example; it names no real file in either repo, so there is nothing for a consumer to resolve.",
-      "sites": 1
-    },
     "path scripts/gemini-review.mjs": {
       "disposition": "illustrative",
       "reason": "An example `CHANGED=` value showing how to add a dependent to an audit scope; not a file the reader opens.",
