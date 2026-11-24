@@ -54,6 +54,18 @@ describe('decideBundleToolSha (pure)', () => {
     }
   });
 
+  it('NEGATIVE CONTROL: a bundle file present here but not listed (left behind by an overlay-only hydration) refuses it', () => {
+    const d = decideBundleToolSha({ localManifestText: null, mainManifestText: manifest(), mainIsSelf: false, hashOf: tree(),
+      presentKeys: [SELF_MANIFEST_KEY, OTHER_KEY, 'scripts/.claude-skills/removed-upstream.mjs'] });
+    assert.equal(d.sha, null);
+    assert.match(d.reason, /1 file\(s\) the main worktree's manifest does not list/);
+    // control: exactly the listed set borrows.
+    assert.equal(decideBundleToolSha({ localManifestText: null, mainManifestText: manifest(), mainIsSelf: false, hashOf: tree(), presentKeys: [SELF_MANIFEST_KEY, OTHER_KEY] }).sha, SHA);
+    // The sync's own bookkeeping lives in the bundle but is never in a manifest (found by the real-sync test, 2026-11-24).
+    assert.equal(decideBundleToolSha({ localManifestText: null, mainManifestText: manifest(), mainIsSelf: false, hashOf: tree(),
+      presentKeys: [SELF_MANIFEST_KEY, OTHER_KEY, 'scripts/.claude-skills/.sync-watermark.json', 'scripts/.claude-skills/.sync.lock'] }).sha, SHA);
+  });
+
   it('files outside the bundle (e.g. a skill copy) are not part of the comparison', () => {
     assert.equal(borrow(tree({ 'skills/x/SKILL.md': 'sha:edited-locally' })).sha, SHA);
   });
@@ -117,6 +129,15 @@ describe('resolveBundleToolSha (filesystem + injected main-checkout oracle)', ()
     fs.writeFileSync(path.join(main, SYNC_MANIFEST_REL), JSON.stringify({ commitSha: SHA, files }));
     fs.appendFileSync(path.join(wt, ...OTHER_KEY.split('/')), '// edited\n');
     assert.equal(resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { mainRootOf }).sha, null);
+  });
+
+  it('NEGATIVE CONTROL: an extra bundle file on disk that the main manifest does not list is null', () => {
+    const { main, wt, files, mainRootOf } = layout();
+    fs.writeFileSync(path.join(main, SYNC_MANIFEST_REL), JSON.stringify({ commitSha: SHA, files }));
+    fs.writeFileSync(path.join(wt, 'scripts', '.claude-skills', 'stale-cli.mjs'), '// removed upstream\n');
+    const d = resolveBundleToolSha(path.join(wt, 'scripts', '.claude-skills'), { mainRootOf });
+    assert.equal(d.sha, null);
+    assert.match(d.reason, /does not list/);
   });
 
   it('the main checkout is not asked when the bundle has its own manifest', () => {

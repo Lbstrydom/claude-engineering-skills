@@ -18,6 +18,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveMainRoot } from '../pinned-worktree/paths.mjs';
+import { LAYOUT_CONSTANTS } from '../sync-path-map.mjs';
 
 export const PROVENANCE_SCHEMA_VERSION = 1;
 export const SNAPSHOT_MAX_BYTES = 2048;
@@ -77,6 +78,8 @@ export const SYNC_MANIFEST_REL = 'scripts/.sync-manifest.json';
 export const SELF_MANIFEST_KEY = 'scripts/.claude-skills/lib/telemetry/provenance.mjs';
 /** The manifest keys that make up the bundle a borrowed manifest is checked against. */
 const BUNDLE_KEY_PREFIX = 'scripts/.claude-skills/';
+/** The sync's own bookkeeping inside the bundle: written there, never listed in a manifest, never code. */
+const SYNC_METADATA = new Set([LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK, LAYOUT_CONSTANTS.SYNC_LOCK]);
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 
 function parseManifest(text) {
@@ -90,7 +93,9 @@ function parseManifest(text) {
  * The bundle's own manifest wins. A linked worktree hydrated by an older hydrator
  * (or created by hand) has the bundle but not the manifest (field report 5: 7 of 9
  * consumer worktrees), so the main checkout's manifest is the fallback, but only
- * when EVERY bundle file it lists hashes to the bytes in this tree: the main checkout
+ * when the bundle here is exactly the one it lists, in both directions: every bundle file it
+ * lists hashes to the bytes in this tree, and this tree has no bundle file it does not list
+ * (an old overlay-only hydration leaves removed files behind). The main checkout
  * may have been re-synced since the worktree was hydrated, and the commit is claimed
  * for the whole bundle, so one matching file proves nothing. An unverifiable borrow
  * is null with its reason, never a guess.
@@ -99,10 +104,11 @@ function parseManifest(text) {
  * @param {string|null} facts.localManifestText this bundle's sibling manifest, or null
  * @param {string|null|undefined} facts.mainManifestText the main checkout's manifest; null = none there, undefined = no main checkout
  * @param {boolean} facts.mainIsSelf the main checkout IS this tree (nothing to borrow)
+ * @param {string[]} [facts.presentKeys] manifest-style keys of every file under this tree's bundle
  * @param {(key: string) => string|null} facts.hashOf `sha256:<hex>` of this tree's file at a manifest key, null when absent
  * @returns {{sha: string|null, source: 'bundle-manifest'|'main-worktree-manifest'|null, reason: string|null}}
  */
-export function decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf }) {
+export function decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf, presentKeys = [] }) {
   const local = parseManifest(localManifestText);
   if (local) {
     return SHA_RE.test(local.commitSha ?? '')
@@ -120,6 +126,11 @@ export function decideBundleToolSha({ localManifestText, mainManifestText, mainI
   const differing = keys.filter((k) => hashOf(k) !== files[k]);
   if (differing.length) {
     return { sha: null, source: null, reason: `${why}; the main worktree's manifest describes a different bundle (${differing.length} of ${keys.length} files differ; re-run skills:hydrate)` };
+  }
+  const listed = new Set(keys);
+  const extra = presentKeys.filter((k) => k.startsWith(BUNDLE_KEY_PREFIX) && !listed.has(k) && !SYNC_METADATA.has(k));
+  if (extra.length) {
+    return { sha: null, source: null, reason: `${why}; this bundle has ${extra.length} file(s) the main worktree's manifest does not list, e.g. ${extra.slice(0, 3).join(', ')} (re-run skills:hydrate)` };
   }
   return { sha: main.commitSha, source: 'main-worktree-manifest', reason: null };
 }
@@ -150,7 +161,17 @@ export function resolveBundleToolSha(scriptsDir, { mainRootOf = resolveMainRoot 
   const hashOf = (key) => {
     try { return 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(path.join(repoRoot, key))).digest('hex'); } catch { return null; }
   };
-  return decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf });
+  const presentKeys = [];
+  if (localManifestText == null && typeof mainManifestText === 'string') {
+    const walk = (rel) => {
+      for (const e of fs.readdirSync(path.join(repoRoot, rel), { withFileTypes: true })) {
+        const r = `${rel}/${e.name}`;
+        if (e.isDirectory()) walk(r); else presentKeys.push(r);
+      }
+    };
+    try { walk(BUNDLE_KEY_PREFIX.slice(0, -1)); } catch { /* unreadable bundle: the hash comparison already refuses */ }
+  }
+  return decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf, presentKeys });
 }
 
 const warned = new Set();
