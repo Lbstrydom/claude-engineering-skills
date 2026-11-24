@@ -224,6 +224,42 @@ describe('the REAL sync ships the CLI + config and the relocated CLI runs', () =
     assert.match(r.stdout, /Population: measured from 0 stores/);
   });
 
+  // Field report 5 (2026-11-23): capture-completeness was not synced, so a policy-private consumer could not run it.
+  it('relocated `capture-completeness`: ships, passes --selfcheck-relocation, and with no store is unmeasured (exit 3), never green', () => {
+    const cli = path.join(consumer, 'scripts/.claude-skills/capture-completeness.mjs');
+    assert.ok(fs.existsSync(cli), 'capture-completeness.mjs not synced');
+    const opts = { cwd: consumer, encoding: 'utf8', windowsHide: true, timeout: 60000, env: { ...process.env, AUDIT_DB_URL: '', LEARNING_DISABLE: '' } };
+    const self = spawnSync(process.execPath, [cli, '--selfcheck-relocation'], opts);
+    assert.equal(self.status, 0, self.stderr);
+    const r = spawnSync(process.execPath, [cli, 'report', '--json'], opts);
+    assert.equal(r.status, 3, `${r.stdout}\n${r.stderr}`);
+  });
+
+  // Field report 5 item 2: a linked worktree with the bundle but no manifest stamped tool_sha NULL.
+  it('relocated toolSha(): a linked worktree hydrated WITHOUT the manifest reads the main checkout\'s commit', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(consumer, 'scripts/.sync-manifest.json'), 'utf8'));
+    assert.match(manifest.commitSha ?? '', /^[0-9a-f]{7,40}$/, 'vacuous-pass guard: the sync must stamp a commit');
+    const wt = path.join(tmp, 'consumer-wt');
+    git(['worktree', 'add', '-q', wt], consumer);
+    // An old-style hydration: the bundle only. scripts/.claude-skills is gitignored, so the worktree starts without it.
+    fs.cpSync(path.join(consumer, 'scripts/.claude-skills'), path.join(wt, 'scripts/.claude-skills'), { recursive: true });
+    assert.ok(!fs.existsSync(path.join(wt, 'scripts/.sync-manifest.json')), 'precondition: no manifest in the worktree');
+    try {   // provenance.mjs imports node builtins only, so no node_modules is needed in the worktree
+      const prov = path.join(wt, 'scripts/.claude-skills/lib/telemetry/provenance.mjs');
+      const probe = `import(${JSON.stringify(new URL(`file:///${prov.replace(/\\/g, '/')}`).href)}).then((m) => process.stdout.write(String(m.toolSha())))`;
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: wt, encoding: 'utf8', windowsHide: true, timeout: 60000 });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, manifest.commitSha, r.stderr);
+      // NEGATIVE CONTROL: once the running bundle differs from what the main manifest describes, nothing is borrowed.
+      fs.appendFileSync(prov, '\n// locally changed\n');
+      const n = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: wt, encoding: 'utf8', windowsHide: true, timeout: 60000 });
+      assert.equal(n.stdout, 'null', n.stderr);
+      assert.match(n.stderr, /tool_sha not recorded: .*different bundle/);
+    } finally {
+      git(['worktree', 'remove', '--force', wt], consumer);
+    }
+  });
+
   it('config deleted: exit 1 naming the mapped path, no stack trace', () => {
     fs.unlinkSync(path.join(consumer, CFG_DEST));
     const r = run(['check', '--static']);
