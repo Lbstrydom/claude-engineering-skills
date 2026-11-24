@@ -99,18 +99,25 @@ Get-Content -LiteralPath $record
 ```
 
 You will add one line per extra artifact later. Never edit the record by hand to remove a line. A worktree goes in
-through this helper only: it asks for the folder and records it **only** if `git worktree list` names it and it is not
-the checkout you run in (cleanup runs `git worktree remove --force` on every recorded worktree, so a typo or the wrong
-folder must be refused, not recorded):
+through this helper only. Cleanup runs `git worktree remove --force` on every recorded worktree, so the helper records a
+folder **only** if `git worktree list` names it now **and** it was not a worktree before the run started: the inventory
+below is taken once, here, before any session exists. Your checkout and every worktree that already existed (another
+session's included) are in it, so a typo or the wrong folder is refused, never recorded. If the window is lost, the
+inventory is gone too and the helper refuses everything; record nothing more and go to §7.
 
 ```powershell
+function Get-WorktreeFolders { @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { [IO.Path]::GetFullPath($_.Substring(9)) }) }
+$worktreesBefore = Get-WorktreeFolders
+"worktrees before the run: $($worktreesBefore.Count)"
 function Add-RecordedWorktree {
+  if ($null -eq $worktreesBefore -or $worktreesBefore.Count -eq 0) { throw 'REFUSED: no pre-run worktree inventory in this window. Nothing was recorded.' }
   $answer = Read-Host 'Paste the new worktree folder exactly as git worktree list printed it'
-  $listed = @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { [IO.Path]::GetFullPath($_.Substring(9)) })
   if (-not $answer) { throw 'REFUSED: nothing pasted. Nothing was recorded.' }
   $full = [IO.Path]::GetFullPath($answer.Trim().Trim('"'))
-  if ($listed -notcontains $full) { throw "REFUSED: $full is not a worktree git lists. Nothing was recorded." }
-  if ($full -eq [IO.Path]::GetFullPath($repo)) { throw 'REFUSED: that is the checkout you run in, not a new worktree.' }
+  $match = @(Get-WorktreeFolders | Where-Object { $_ -eq $full })
+  if ($match.Count -eq 0) { throw "REFUSED: $full is not a worktree git lists. Nothing was recorded." }
+  $full = $match[0]
+  if ($worktreesBefore -contains $full) { throw "REFUSED: $full existed before this run, so it is not this run's to remove. Nothing was recorded." }
   Add-Content -LiteralPath $record -Value "worktree|$full"
   "recorded worktree|$full"
 }
@@ -415,8 +422,10 @@ node scripts/fleet.mjs release --id smoke-b --abandoned
 ```
 
 Then archive sessions A and B in the Agents window. §7 removes their worktrees and releases the claims, but only if you
-recorded them **as you created them**: right after starting each session run `Add-RecordedWorktree` (§1.3 step B) and
-paste that session's worktree folder, and right after each `claim` above record the id that session made:
+recorded them **as you created them**. Record in your **original** PowerShell window (the one from §1, which holds
+`$record`, the pre-run inventory and `Add-RecordedWorktree`), never in A's or B's terminal, where none of them exist: right
+after starting each session run `Add-RecordedWorktree` (§1.3 step B) there and paste that session's worktree folder, and
+right after each `claim` above record the id that session made:
 
 ```powershell
 Add-RecordedWorktree
