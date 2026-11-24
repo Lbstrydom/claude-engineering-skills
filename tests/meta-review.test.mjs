@@ -66,6 +66,23 @@ function deps({ ledger = [ruledEarlier(TH), ruledAt3(TH), ruledAt3(TM1), ruledAt
 
 const run = (o, d) => runMetaReview({ sid: 'audit-plan-1-1', mode: 'plan', round: 4, caps: CAPS.plan, argv: planArgv(), auditDir: dir, trigger: 'T1', ...o }, d);
 
+describe('nothing open to judge', () => {
+  const clean = [...ROUNDS.slice(0, 2), { round: 3, findings: [] }];
+  test('an empty open inventory makes NO reviewer call and records an unavailable decision (the human path applies)', async () => {
+    const p = provider(stopAll());
+    const r = await run({}, deps({ prov: p, rounds: clean }));
+    assert.equal(p.calls.length, 0, 'a reply naming >= 1 topic is impossible, so nothing is sent');
+    assert.equal(r.effect, 'human-card'); assert.equal(r.honoured, false);
+    assert.equal(r.decision.state, 'unavailable'); assert.equal(r.decision.sent, false); assert.equal(r.decision.costUsd, 0);
+    assert.match(r.decision.reason, /no open topics/);
+  });
+  test('POSITIVE CONTROL: the same session with one open topic still calls the reviewer', async () => {
+    const p = provider(stopAll());
+    await run({}, deps({ prov: p }));
+    assert.equal(p.calls.length, 1);
+  });
+});
+
 describe('v2 schema', () => {
   test('a bare continue and an admit without topics are unrepresentable', () => {
     assert.equal(parseMetaReviewOutput('{"action":"continue"}').ok, false);
