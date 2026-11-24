@@ -1,0 +1,11 @@
+-- Own-model full capture, phase P0 (docs/plans/own-model-full-capture.md section 2.2: `cost_usd`, `pricing_version`).
+-- METADATA ONLY. The existing audit.llmCalls writer fills it; no new writer or table.
+-- Idempotent and schema-portable (unqualified names, IF NOT EXISTS).
+--
+--   pricing_version  the model-pricing.mjs PRICING_VERSION the row's cost_usd was computed with. NULL whenever
+--                    cost_usd is NULL (unpriced or unmetered), so a cost can always be re-derived against the
+--                    price table it came from. The P0 plan listed it beside cost_usd, but no migration added it
+--                    until field report 5 (2026-11-23) found it absent.
+--
+-- Rows written before this migration have it NULL; readers report `pre-p0`, never a failure.
+ALTER TABLE llm_call_provenance ADD COLUMN IF NOT EXISTS pricing_version text;

@@ -52,6 +52,12 @@ export const APPLICABILITY = Object.freeze({
   model_pass: `COALESCE(input_tokens, 0) > 0 AND pass_name NOT IN (${WAVE_SQL_LIST})`,
   // The final reviewer's per-finding reversals: the one adjudicator kind whose model the script CAN observe.
   reviewer_event: "adjudicator_kind = 'reviewer'",
+  // `policy_version` hashes the repo's AGENTS.md, so a repo without one is NULL by design and is not a capture fault
+  // (field report 5: 52% store-wide, read as below-floor). The store cannot see a repo's files, so "has an AGENTS.md"
+  // is read as "this repo has recorded a policy_version at least once in the table". Blind spot, stated: a repo whose
+  // writer never filled it once is excluded rather than measured. A partial fault in a repo that has filled it is caught.
+  code_run_policy_repo: "mode = 'code' AND repo_id IN (SELECT repo_id FROM audit_runs WHERE policy_version IS NOT NULL)",
+  policy_repo: 'repo_id IN (SELECT repo_id FROM learning_decisions WHERE policy_version IS NOT NULL)',
 });
 
 export const STATUSES = Object.freeze(['ok', 'drift', 'below-floor', 'unmeasured:no-eligible-rows', 'unmeasured:store']);

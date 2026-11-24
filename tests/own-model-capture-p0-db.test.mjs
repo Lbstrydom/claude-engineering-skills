@@ -86,6 +86,16 @@ describe('own-model capture P0 (DB integration)', { skip }, () => {
     assert.equal(third.rows, 0, 'a filled column is never overwritten');
   });
 
+  test('pricing_version persists beside cost_usd, and a replay backfills it on a row written without it', async () => {
+    const r = row(6, { pricing_version: null });
+    const first = await llm.recordLlmCalls(payload([r]));
+    assert.equal(first.degraded, undefined, 'the migrated store holds the column: nothing is dropped');
+    await llm.recordLlmCalls(payload([{ ...r, pricing_version: '2026-09-23' }]));
+    const [got] = await q.many('SELECT cost_usd, pricing_version FROM llm_call_provenance WHERE call_id = $1', [r.call_id]);
+    assert.equal(got.pricing_version, '2026-09-23');
+    assert.equal(Number(got.cost_usd), 0.01);
+  });
+
   test('the outcome vocabulary is a CHECK: an unknown outcome is refused by the store', async () => {
     const res = await llm.recordLlmCalls(payload([row(4, { attempt_outcome: 'made-up' })]));
     assert.equal(res.ok, false);

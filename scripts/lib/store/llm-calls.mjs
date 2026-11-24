@@ -21,9 +21,13 @@ let _warnedUnmigrated = false;
 let _warnedDegraded = false;
 
 /** PURE. The capture fields the supplied rows carry that an older column tier would silently drop. */
-export function droppedFieldsFor(rows, { hasP0, hasTree }) {
+export function droppedFieldsFor(rows, { hasP0, hasTree, hasPricing = false }) {
   const carries = (cols) => cols.filter((c) => rows.some((r) => r?.[c] != null));
-  return [...(hasP0 ? [] : carries(P0_COLS.map(([n]) => n))), ...(hasTree ? [] : carries(TREE_COLS.map(([n]) => n)))];
+  return [
+    ...(hasP0 ? [] : carries(P0_COLS.map(([n]) => n))),
+    ...(hasTree ? [] : carries(TREE_COLS.map(([n]) => n))),
+    ...(hasPricing ? [] : carries(PRICING_COLS.map(([n]) => n))),
+  ];
 }
 
 // Column tiers by migration. A store that has not applied a newer migration keeps the older insert: an
@@ -39,6 +43,9 @@ const BASE_COLS = [
 const P0_COLS = [['logical_call_id', 'uuid'], ['attempt_no', 'integer'], ['attempt_outcome', 'text'], ['capture_schema_version', 'integer']];
 // 20261123140000: per-call tree identity.
 const TREE_COLS = [['audited_tree', 'text'], ['diff_base_sha', 'text']];
+// 20261124120000: the price table a row's cost_usd came from.
+const PRICING_COLS = [['pricing_version', 'text']];
+const FILLABLE = [...P0_COLS, ...TREE_COLS, ...PRICING_COLS];
 
 /** PURE. The batch insert for a column set; identity is the primary key, so a replay inserts nothing. */
 export function buildInsertCallsSql(cols) {
@@ -46,7 +53,7 @@ export function buildInsertCallsSql(cols) {
   const defs = cols.map(([n, ty]) => `${n} ${ty}`).join(', ');
   // A replay after a migration must restore what an older-tier insert dropped: for the P0/tree columns an existing NULL is
   // filled from the replayed value. A replay that has nothing to add updates no row, so it still inserts and updates 0.
-  const fill = cols.map(([n]) => n).filter((n) => [...P0_COLS, ...TREE_COLS].some(([c]) => c === n));
+  const fill = cols.map(([n]) => n).filter((n) => FILLABLE.some(([c]) => c === n));
   const conflict = fill.length
     ? `DO UPDATE SET ${fill.map((c) => `${c} = COALESCE(llm_call_provenance.${c}, EXCLUDED.${c})`).join(', ')}
     WHERE ${fill.map((c) => `(llm_call_provenance.${c} IS NULL AND EXCLUDED.${c} IS NOT NULL)`).join(' OR ')}`
@@ -61,6 +68,7 @@ export function buildInsertCallsSql(cols) {
 const INSERT_CALLS_SQL = buildInsertCallsSql(BASE_COLS);
 const INSERT_CALLS_P0_SQL = buildInsertCallsSql([...BASE_COLS, ...P0_COLS]);
 const INSERT_CALLS_TREE_SQL = buildInsertCallsSql([...BASE_COLS, ...P0_COLS, ...TREE_COLS]);
+const INSERT_CALLS_PRICING_SQL = buildInsertCallsSql([...BASE_COLS, ...P0_COLS, ...TREE_COLS, ...PRICING_COLS]);
 
 /**
  * @param {{runId: string, producer: string, nonce: string, rows: object[], recorded: number, dropped: number}} payload
@@ -83,11 +91,12 @@ export async function recordLlmCalls(payload) {
   try {
     const hasP0 = await strictColumnExists('llm_call_provenance', 'logical_call_id', many, isCloudEnabled);
     const hasTree = hasP0 && await strictColumnExists('llm_call_provenance', 'audited_tree', many, isCloudEnabled);
+    const hasPricing = hasTree && await strictColumnExists('llm_call_provenance', 'pricing_version', many, isCloudEnabled);
     const written = await withTx(async () => {
       let n = 0;
       if (rows.length) {
         // One statement over the whole batch; identity is the primary key, so a replay inserts nothing.
-        const res = await query(hasTree ? INSERT_CALLS_TREE_SQL : hasP0 ? INSERT_CALLS_P0_SQL : INSERT_CALLS_SQL, [JSON.stringify(rows)]);
+        const res = await query(hasPricing ? INSERT_CALLS_PRICING_SQL : hasTree ? INSERT_CALLS_TREE_SQL : hasP0 ? INSERT_CALLS_P0_SQL : INSERT_CALLS_SQL, [JSON.stringify(rows)]);
         n = res?.rowCount ?? 0;
       }
       await upsert('llm_call_log_summary', [{
@@ -99,11 +108,11 @@ export async function recordLlmCalls(payload) {
     // and the orchestrator that drained the log marks the run incomplete when `dropped > 0`.
     // A store behind the P0 migrations still gets its rows, but the fields its schema cannot hold are DROPPED, and the
     // replay key (call_id) means a later migration cannot restore them. Say so in the receipt and on stderr: never a clean ok.
-    const dropped_fields = droppedFieldsFor(rows, { hasP0, hasTree });
+    const dropped_fields = droppedFieldsFor(rows, { hasP0, hasTree, hasPricing });
     if (dropped_fields.length) {
       if (!_warnedDegraded) {
         _warnedDegraded = true;
-        process.stderr.write(`  [llm-calls] store lacks migration 20261123120000/20261123140000 — DROPPED from call provenance: ${dropped_fields.join(', ')} (setup-postgres.mjs --migrate)
+        process.stderr.write(`  [llm-calls] store lacks migration 20261123120000/20261123140000/20261124120000 — DROPPED from call provenance: ${dropped_fields.join(', ')} (setup-postgres.mjs --migrate)
 `);
       }
       return { ok: true, applied: true, rows: written, degraded: `columns-missing:${dropped_fields.join(',')}` };
