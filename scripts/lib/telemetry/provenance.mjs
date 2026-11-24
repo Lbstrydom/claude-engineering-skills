@@ -58,20 +58,25 @@ const IS_BUNDLE = path.basename(SCRIPTS_DIR) === '.claude-skills';
 const REPO_ROOT = IS_BUNDLE ? path.resolve(SCRIPTS_DIR, '..', '..') : path.resolve(SCRIPTS_DIR, '..');
 const cache = {};
 
-/** First 16 hex of sha256(AGENTS.md), hashed once per process; null when absent. */
+/** First 16 hex of sha256(AGENTS.md), hashed once per process; null when absent, and a null says so once. */
 export function policyVersion(root = REPO_ROOT) {
   const key = `policy:${root}`;
   if (key in cache) return cache[key];
   let v = null;
-  try { v = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'AGENTS.md'))).digest('hex').slice(0, 16); } catch { /* absent in some consumers */ }
+  try { v = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'AGENTS.md'))).digest('hex').slice(0, 16); } catch (err) {
+    // Absent by design in some consumers; any other read failure is a fault. Either way the NULL is explained, not silent.
+    warnNullOnce(key, 'policy_version', err?.code === 'ENOENT' ? 'no AGENTS.md at the repo root' : `AGENTS.md unreadable (${err?.code ?? err?.message})`);
+  }
   cache[key] = v;
   return v;
 }
 
 /** The sync manifest, relative to a repo root (a sibling of `scripts/.claude-skills/`, gitignored with it). */
 export const SYNC_MANIFEST_REL = 'scripts/.sync-manifest.json';
-/** This file's key in a consumer manifest's `files` map: how a borrowed manifest is checked against the running bundle. */
+/** This file's key in a consumer manifest's `files` map (the sync's destination path for it). */
 export const SELF_MANIFEST_KEY = 'scripts/.claude-skills/lib/telemetry/provenance.mjs';
+/** The manifest keys that make up the bundle a borrowed manifest is checked against. */
+const BUNDLE_KEY_PREFIX = 'scripts/.claude-skills/';
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 
 function parseManifest(text) {
@@ -80,23 +85,24 @@ function parseManifest(text) {
 }
 
 /**
- * PURE. Which commit does the running consumer bundle come from?
+ * Which commit does the running consumer bundle come from? Pure given `hashOf`.
  *
  * The bundle's own manifest wins. A linked worktree hydrated by an older hydrator
  * (or created by hand) has the bundle but not the manifest (field report 5: 7 of 9
  * consumer worktrees), so the main checkout's manifest is the fallback, but only
- * when its `files` entry for THIS module matches the bytes running here: the main
- * checkout may have been re-synced since the worktree was hydrated, and then its
- * commit describes a different bundle. An unverifiable borrow is null, not a guess.
+ * when EVERY bundle file it lists hashes to the bytes in this tree: the main checkout
+ * may have been re-synced since the worktree was hydrated, and the commit is claimed
+ * for the whole bundle, so one matching file proves nothing. An unverifiable borrow
+ * is null with its reason, never a guess.
  *
  * @param {object} facts
  * @param {string|null} facts.localManifestText this bundle's sibling manifest, or null
- * @param {string|null} facts.mainManifestText the main checkout's manifest, or null
+ * @param {string|null|undefined} facts.mainManifestText the main checkout's manifest; null = none there, undefined = no main checkout
  * @param {boolean} facts.mainIsSelf the main checkout IS this tree (nothing to borrow)
- * @param {string|null} facts.selfHash `sha256:<hex>` of this module's bytes
+ * @param {(key: string) => string|null} facts.hashOf `sha256:<hex>` of this tree's file at a manifest key, null when absent
  * @returns {{sha: string|null, source: 'bundle-manifest'|'main-worktree-manifest'|null, reason: string|null}}
  */
-export function decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, selfHash }) {
+export function decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf }) {
   const local = parseManifest(localManifestText);
   if (local) {
     return SHA_RE.test(local.commitSha ?? '')
@@ -108,44 +114,51 @@ export function decideBundleToolSha({ localManifestText, mainManifestText, mainI
   const main = parseManifest(mainManifestText);
   if (!main) return { sha: null, source: null, reason: `${why}, and the main worktree has none either (re-sync)` };
   if (!SHA_RE.test(main.commitSha ?? '')) return { sha: null, source: null, reason: `${why}; the main worktree's manifest has no commitSha` };
-  const recorded = main.files && typeof main.files === 'object' ? main.files[SELF_MANIFEST_KEY] : undefined;
-  if (!selfHash || recorded !== selfHash) {
-    return { sha: null, source: null, reason: `${why}; the main worktree's manifest describes a different bundle (re-run skills:hydrate)` };
+  const files = main.files && typeof main.files === 'object' ? main.files : {};
+  const keys = Object.keys(files).filter((k) => k.startsWith(BUNDLE_KEY_PREFIX));
+  if (!keys.includes(SELF_MANIFEST_KEY)) return { sha: null, source: null, reason: `${why}; the main worktree's manifest does not list this bundle` };
+  const differing = keys.filter((k) => hashOf(k) !== files[k]);
+  if (differing.length) {
+    return { sha: null, source: null, reason: `${why}; the main worktree's manifest describes a different bundle (${differing.length} of ${keys.length} files differ; re-run skills:hydrate)` };
   }
   return { sha: main.commitSha, source: 'main-worktree-manifest', reason: null };
 }
 
 const readOrNull = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+/** Windows paths compare case-insensitively; POSIX paths do not (two roots differing only in case are two trees). */
+const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
 
 /**
  * The impure shell around `decideBundleToolSha`: reads the bundle's manifest, and
  * only when it is absent asks for the main checkout (`resolveMainRoot`, the one
- * main-checkout oracle) and reads that one.
+ * main-checkout oracle), reads that one, and hashes this tree's copies of its files.
  * @param {string} scriptsDir the `scripts/.claude-skills` directory of the running bundle
  */
-export function resolveBundleToolSha(scriptsDir, { mainRootOf = resolveMainRoot, selfPath = fileURLToPath(import.meta.url) } = {}) {
+export function resolveBundleToolSha(scriptsDir, { mainRootOf = resolveMainRoot } = {}) {
   const repoRoot = path.resolve(scriptsDir, '..', '..');
   const localManifestText = readOrNull(path.join(repoRoot, SYNC_MANIFEST_REL));
-  let mainManifestText; let mainIsSelf = false; let selfHash = null;
+  let mainManifestText; let mainIsSelf = false;
   if (localManifestText == null) {
     try {
       const mainRoot = mainRootOf(repoRoot);
       if (mainRoot) {
-        mainIsSelf = mainRoot.toLowerCase() === repoRoot.toLowerCase();
+        mainIsSelf = samePath(path.resolve(mainRoot), repoRoot);
         mainManifestText = mainIsSelf ? null : readOrNull(path.join(mainRoot, SYNC_MANIFEST_REL));
       }
     } catch { /* not a git checkout: nothing to borrow from */ }
-    try { selfHash = 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(selfPath)).digest('hex'); } catch { selfHash = null; }
   }
-  return decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, selfHash });
+  const hashOf = (key) => {
+    try { return 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(path.join(repoRoot, key))).digest('hex'); } catch { return null; }
+  };
+  return decideBundleToolSha({ localManifestText, mainManifestText, mainIsSelf, hashOf });
 }
 
 const warned = new Set();
 /** A NULL stamp says why, once per process, so a run is not silently unversioned. */
-function warnNullOnce(key, reason) {
+function warnNullOnce(key, column, reason) {
   if (warned.has(key)) return;
   warned.add(key);
-  try { process.stderr.write(`  [provenance] tool_sha not recorded: ${reason}\n`); } catch { /* never throw from telemetry */ }
+  try { process.stderr.write(`  [provenance] ${column} not recorded: ${reason}\n`); } catch { /* never throw from telemetry */ }
 }
 
 /**
@@ -165,7 +178,7 @@ export function toolSha(root) {
     try { v = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root ?? REPO_ROOT, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null; } catch { v = null; }
     if (!v) reason = 'git rev-parse HEAD failed in the source tree';
   }
-  if (v == null) warnNullOnce(key, reason);
+  if (v == null) warnNullOnce(key, 'tool_sha', reason);
   cache[key] = v;
   return v;
 }

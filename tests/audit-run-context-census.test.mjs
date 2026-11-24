@@ -30,6 +30,9 @@ function impliedCtxKeys(src) {
     .filter(Boolean);
 }
 
+/** The one predicate both the census and its negative control run: keys the impl reads that the ctx does not carry. */
+const unsetKeys = (keys, ctx) => keys.filter((k) => !Object.hasOwn(ctx, k) && !Object.hasOwn(EXEMPT, k));
+
 describe('buildAuditRunContext returns every key the code writer reads', () => {
   const src = fs.readFileSync(new URL('../scripts/lib/audit/legacy-production-audit.mjs', import.meta.url), 'utf8');
   const keys = impliedCtxKeys(src);
@@ -41,7 +44,7 @@ describe('buildAuditRunContext returns every key the code writer reads', () => {
 
   it('every destructured key is returned by the builder or exempted with a reason', async () => {
     const ctx = await buildAuditRunContext({ openai: undefined, planContent: '# plan\n', changedFiles: [] });
-    const missing = keys.filter((k) => !Object.hasOwn(ctx, k) && !Object.hasOwn(EXEMPT, k));
+    const missing = unsetKeys(keys, ctx);
     assert.deepEqual(missing, [], `read by runLegacyProductionAuditImpl but never set by buildAuditRunContext: ${missing.join(', ')}`);
   });
 
@@ -53,9 +56,9 @@ describe('buildAuditRunContext returns every key the code writer reads', () => {
     }
   });
 
-  it('NEGATIVE CONTROL: the pre-#488 shape (impl reads auditIdentity, builder omits it) is caught', () => {
-    const builderKeysBefore = new Set(keys.filter((k) => k !== 'auditIdentity'));
-    const missing = keys.filter((k) => !builderKeysBefore.has(k) && !Object.hasOwn(EXEMPT, k));
-    assert.deepEqual(missing, ['auditIdentity']);
+  it('NEGATIVE CONTROL: the real builder output with auditIdentity removed (the pre-#488 shape) fails the same check', async () => {
+    const ctx = await buildAuditRunContext({ openai: undefined, planContent: '# plan\n', changedFiles: [] });
+    delete ctx.auditIdentity;
+    assert.deepEqual(unsetKeys(keys, ctx), ['auditIdentity']);
   });
 });

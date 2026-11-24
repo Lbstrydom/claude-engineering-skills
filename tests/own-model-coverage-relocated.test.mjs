@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
@@ -246,7 +246,7 @@ describe('the REAL sync ships the CLI + config and the relocated CLI runs', () =
     assert.ok(!fs.existsSync(path.join(wt, 'scripts/.sync-manifest.json')), 'precondition: no manifest in the worktree');
     try {   // provenance.mjs imports node builtins only, so no node_modules is needed in the worktree
       const prov = path.join(wt, 'scripts/.claude-skills/lib/telemetry/provenance.mjs');
-      const probe = `import(${JSON.stringify(new URL(`file:///${prov.replace(/\\/g, '/')}`).href)}).then((m) => process.stdout.write(String(m.toolSha())))`;
+      const probe = `import(${JSON.stringify(pathToFileURL(prov).href)}).then((m) => process.stdout.write(String(m.toolSha())))`;
       const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: wt, encoding: 'utf8', windowsHide: true, timeout: 60000 });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(r.stdout, manifest.commitSha, r.stderr);

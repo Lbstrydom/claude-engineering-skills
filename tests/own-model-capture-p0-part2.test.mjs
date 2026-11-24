@@ -85,13 +85,16 @@ describe('writer column tiers', () => {
     assert.match(tree, /audited_tree text, diff_base_sha text/);
     assert.doesNotMatch(buildInsertCallsSql([['call_id', 'uuid']]), /audited_tree/);
     assert.match(tree, /ON CONFLICT \(call_id\) DO UPDATE SET audited_tree = COALESCE\(llm_call_provenance\.audited_tree, EXCLUDED\.audited_tree\)/);
-    assert.match(tree, /WHERE \(llm_call_provenance\.audited_tree IS NULL AND EXCLUDED\.audited_tree IS NOT NULL\)/);
+    assert.match(tree, /WHERE \(\(llm_call_provenance\.audited_tree IS NULL AND EXCLUDED\.audited_tree IS NOT NULL\) OR /);
     assert.match(buildInsertCallsSql([['call_id', 'uuid']]), /ON CONFLICT \(call_id\) DO NOTHING/, 'the base tier has nothing to backfill');
   });
   // Field report 5 (2026-11-23): the P0 plan listed pricing_version beside cost_usd, but no migration or writer had it.
   test('the pricing tier backfills pricing_version on replay; a store without it is told it was dropped', () => {
-    const pricing = buildInsertCallsSql([['call_id', 'uuid'], ['pricing_version', 'text']]);
-    assert.match(pricing, /pricing_version = COALESCE\(llm_call_provenance\.pricing_version, EXCLUDED\.pricing_version\)/);
+    const pricing = buildInsertCallsSql([['call_id', 'uuid'], ['audit_run_id', 'uuid'], ['cost_usd', 'numeric'], ['pricing_version', 'text']]);
+    assert.match(pricing, /THEN COALESCE\(llm_call_provenance\.pricing_version, EXCLUDED\.pricing_version\) ELSE llm_call_provenance\.pricing_version END/);
+    // Only beside the same, non-null stored cost; only on the same run.
+    assert.match(pricing, /llm_call_provenance\.cost_usd IS NOT NULL AND llm_call_provenance\.cost_usd = EXCLUDED\.cost_usd/);
+    assert.match(pricing, /WHERE llm_call_provenance\.audit_run_id = EXCLUDED\.audit_run_id AND \(/);
     const rows = [{ audited_tree: TREE, pricing_version: '2026-09-23' }];
     assert.deepEqual(droppedFieldsFor(rows, { hasP0: true, hasTree: true, hasPricing: false }), ['pricing_version']);
     assert.deepEqual(droppedFieldsFor(rows, { hasP0: true, hasTree: true, hasPricing: true }), []);

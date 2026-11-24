@@ -96,6 +96,31 @@ describe('own-model capture P0 (DB integration)', { skip }, () => {
     assert.equal(Number(got.cost_usd), 0.01);
   });
 
+  test('NEGATIVE CONTROLS: a replay never labels a different or absent stored cost, and never fills across runs', async () => {
+    const differs = row(7, { pricing_version: null, cost_usd: 0.01 });
+    await llm.recordLlmCalls(payload([differs]));
+    await llm.recordLlmCalls(payload([{ ...differs, cost_usd: 0.02, pricing_version: '2026-09-23' }]));
+    const noCost = row(8, { pricing_version: null, cost_usd: null });
+    await llm.recordLlmCalls(payload([noCost]));
+    await llm.recordLlmCalls(payload([{ ...noCost, pricing_version: '2026-09-23' }]));
+    const got = await q.many('SELECT call_id, cost_usd, pricing_version FROM llm_call_provenance WHERE call_id IN ($1, $2)', [differs.call_id, noCost.call_id]);
+    assert.ok(got.length === 2 && got.every((r) => r.pricing_version === null), JSON.stringify(got));
+    // Cross-run: the same call_id replayed under another run fills nothing.
+    const otherRun = crypto.randomUUID();
+    await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/x.md', 'code')`, [otherRun, repoId]);
+    try {
+      const cross = row(9, { audited_tree: null });
+      await llm.recordLlmCalls(payload([cross]));
+      const res = await llm.recordLlmCalls({ runId: otherRun, producer: 'audit', nonce: 'n2', rows: [{ ...cross, audit_run_id: otherRun, audited_tree: TREE }], recorded: 1, dropped: 0 });
+      assert.equal(res.rows, 0);
+      const [c] = await q.many('SELECT audit_run_id, audited_tree FROM llm_call_provenance WHERE call_id = $1', [cross.call_id]);
+      assert.deepEqual([c.audit_run_id, c.audited_tree], [runId, null]);
+    } finally {
+      await q.query('DELETE FROM llm_call_log_summary WHERE audit_run_id = $1', [otherRun]);
+      await q.query('DELETE FROM audit_runs WHERE id = $1', [otherRun]);
+    }
+  });
+
   test('the outcome vocabulary is a CHECK: an unknown outcome is refused by the store', async () => {
     const res = await llm.recordLlmCalls(payload([row(4, { attempt_outcome: 'made-up' })]));
     assert.equal(res.ok, false);

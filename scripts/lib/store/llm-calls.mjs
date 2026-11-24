@@ -53,10 +53,20 @@ export function buildInsertCallsSql(cols) {
   const defs = cols.map(([n, ty]) => `${n} ${ty}`).join(', ');
   // A replay after a migration must restore what an older-tier insert dropped: for the P0/tree columns an existing NULL is
   // filled from the replayed value. A replay that has nothing to add updates no row, so it still inserts and updates 0.
+  const colNames = new Set(cols.map(([n]) => n));
   const fill = cols.map(([n]) => n).filter((n) => FILLABLE.some(([c]) => c === n));
+  // A fill may only describe the row it lands on. pricing_version describes cost_usd, which a replay never updates, so
+  // it is filled only beside an equal, non-null stored cost (else a version could label a cost it did not price).
+  const guardFor = (c) => (c === 'pricing_version' && colNames.has('cost_usd')
+    ? ' AND llm_call_provenance.cost_usd IS NOT NULL AND llm_call_provenance.cost_usd = EXCLUDED.cost_usd' : '');
+  const setFor = (c) => (guardFor(c)
+    ? `${c} = CASE WHEN TRUE${guardFor(c)} THEN COALESCE(llm_call_provenance.${c}, EXCLUDED.${c}) ELSE llm_call_provenance.${c} END`
+    : `${c} = COALESCE(llm_call_provenance.${c}, EXCLUDED.${c})`);
+  // call_id is a UUIDv5 of the run, so a cross-run collision is not expected; the fill still refuses one rather than trust it.
+  const sameRun = colNames.has('audit_run_id') ? 'llm_call_provenance.audit_run_id = EXCLUDED.audit_run_id AND ' : '';
   const conflict = fill.length
-    ? `DO UPDATE SET ${fill.map((c) => `${c} = COALESCE(llm_call_provenance.${c}, EXCLUDED.${c})`).join(', ')}
-    WHERE ${fill.map((c) => `(llm_call_provenance.${c} IS NULL AND EXCLUDED.${c} IS NOT NULL)`).join(' OR ')}`
+    ? `DO UPDATE SET ${fill.map(setFor).join(', ')}
+    WHERE ${sameRun}(${fill.map((c) => `(llm_call_provenance.${c} IS NULL AND EXCLUDED.${c} IS NOT NULL${guardFor(c)})`).join(' OR ')})`
     : 'DO NOTHING';
   return `
   INSERT INTO llm_call_provenance (${names})
