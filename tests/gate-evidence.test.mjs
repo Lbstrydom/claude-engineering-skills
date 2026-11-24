@@ -119,8 +119,8 @@ describe('THE REACHABILITY PIN: passed is now attainable, and only with both hal
     // a converged audit could say neither `not-run` (forbidden by freshness)
     // nor `passed` (refused for want of a verdict).
     const res = validateTrailerInput(
-      { skill: 'ship', modelsRaw: 'claude', gate: 'not-run', messageText: null, evidence: freshEv() },
-      { skillNames: ['ship'] },
+      { skill: 'ship-checked', modelsRaw: 'claude', gate: 'not-run', messageText: null, evidence: freshEv() },
+      { skillNames: ['ship-checked'] },
     );
     assert.equal(res.ok, false);
     assert.ok(res.errors.some((e) => e.field === 'gate-evidence'));
@@ -128,8 +128,8 @@ describe('THE REACHABILITY PIN: passed is now attainable, and only with both hal
 
   test('and a fresh marker + converged row passes full trailer validation', () => {
     const res = validateTrailerInput(
-      { skill: 'ship', modelsRaw: 'claude,gpt,gemini', gate: 'passed', messageText: null, evidence: freshEv() },
-      { skillNames: ['ship'] },
+      { skill: 'ship-checked', modelsRaw: 'claude,gpt,gemini', gate: 'passed', messageText: null, evidence: freshEv() },
+      { skillNames: ['ship-checked'] },
     );
     assert.equal(res.ok, true, res.errors.map((e) => e.custom || e.field).join('; '));
     assert.equal(res.values.runId, RUN_ID, 'the runId must flow into the AI-Run-ID trailer');

@@ -170,7 +170,7 @@ describe("scope 'global-optin' (--all-repos chain — legacy resolveShipNudgeSco
   });
 });
 
-describe("scope 'explicit-preferred' (the READ chain — /ship's persona gate)", () => {
+describe("scope 'explicit-preferred' (the READ chain — /ship-checked's persona gate)", () => {
   it('a NAMED repo takes the explicit-required path byte-for-byte', async () => {
     const named = await resolveCommandScope('explicit-preferred', { explicitRepoName: 'o/r' }, okDeps());
     const required = await resolveCommandScope('explicit-required', { explicitRepoName: 'o/r' }, okDeps());

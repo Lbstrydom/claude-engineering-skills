@@ -63,7 +63,7 @@ All refs pinned at `e6c1f1c0`.
   | File | Count |
   |---|---|
   | `skills/persona-test/SKILL.md` | 7 |
-  | `skills/ship/SKILL.md` | 3 |
+  | `skills/ship-checked/SKILL.md` | 3 |
   | `skills/click-test/SKILL.md` | 2 |
   | `skills/ux-lock/SKILL.md` | 2 |
   | `skills/ux-lock/references/verify-mode-generation.md` | 1 |
@@ -80,7 +80,7 @@ All refs pinned at `e6c1f1c0`.
   etc. Research input: Copilot has no documented skill-invokes-skill mechanism.
 - **Hook claims** — `AGENTS.md:1153 (e6c1f1c0)` states the quickfix hook *"fires
   on every Edit/Write (PostToolUse)"* with no host qualifier;
-  `skills/ship/SKILL.md:1187 (e6c1f1c0)` asserts *"The `UserPromptSubmit` hook
+  `skills/ship-checked/SKILL.md:1187 (e6c1f1c0)` asserts *"The `UserPromptSubmit` hook
   injects `> Relevant prior friction` callouts"*. Contrast the arch-memory
   section, which already models the correct treatment: the rule is host-neutral
   and mandatory, the hook is labelled Claude-Code-only **acceleration**.
@@ -352,10 +352,10 @@ so it is judgment-heavy and **done by hand**. No codemod.
 | P1 | `docs/audit/shared-references/browser-tool-detection.md` (canonical; generated copies land in both consuming skills via `scripts/sync-shared-audit-refs.mjs`) | Write D2a's normative driver contract (closed vocabulary incl. `readText`, ONE ordered selection rule, per-consumer minimum sets, and the **three-status** `ok`/`degraded`/`blocked` model with its evidence requirements — a partial surface is `degraded`, not automatically `blocked`), THEN add the Copilot row; replace the `webfetch({url})` row with a host-neutral static-fetch row | D1, D2, D2a, D2b (#1, #5, #16) |
 | P1 | `skills/persona-test/SKILL.md` | `browser_tool` value set gains the Copilot driver; degraded-mode wording stops naming WebFetch (`:211,247,340`) | D2 (#16) |
 | P1 | `skills/click-test/SKILL.md` | `:164`-`:176` — keep the delegation, restate the abort in capability terms, drop "Static-only WebFetch" as the only named failure (`:197` table row) | D1, D2 |
-| P2 | `skills/persona-test/SKILL.md`, `skills/ship/SKILL.md`, `skills/click-test/SKILL.md`, `skills/ux-lock/SKILL.md`, `skills/ux-lock/references/verify-mode-generation.md`, `skills/audit-code/SKILL.md`, `skills/audit-plan/SKILL.md`, `skills/brainstorm/SKILL.md`, `skills/ai-context-management/SKILL.md` | State D4's contract in full **once** per skill at its first `$ARGUMENTS` use, then annotate **every one of the other 19−9 sites** with its own grammar class and empty-input behaviour (D4 rule 5). Not "first use only" — that phrasing was a regression corrected in R3/H3 | D4, D7 (#15, #12) |
+| P2 | `skills/persona-test/SKILL.md`, `skills/ship-checked/SKILL.md`, `skills/click-test/SKILL.md`, `skills/ux-lock/SKILL.md`, `skills/ux-lock/references/verify-mode-generation.md`, `skills/audit-code/SKILL.md`, `skills/audit-plan/SKILL.md`, `skills/brainstorm/SKILL.md`, `skills/ai-context-management/SKILL.md` | State D4's contract in full **once** per skill at its first `$ARGUMENTS` use, then annotate **every one of the other 19−9 sites** with its own grammar class and empty-input behaviour (D4 rule 5). Not "first use only" — that phrasing was a regression corrected in R3/H3 | D4, D7 (#15, #12) |
 | P3 | `skills/cycle/SKILL.md` | Add the **no-dispatch branch** (`:44`) — see below | D6, R1/H2 |
 | P4 | `AGENTS.md` | Host-qualify the quickfix Layer-1 sentence (`:1153`) — **condense, do not append** (≈1000 chars headroom against the 92000 cap) | D5 |
-| P4 | `skills/ship/SKILL.md` | Qualify the `UserPromptSubmit` claim at `:1187` | D5 |
+| P4 | `skills/ship-checked/SKILL.md` | Qualify the `UserPromptSubmit` claim at `:1187` | D5 |
 | — | `.skill-consumer-refs-baseline.json` | Re-baseline only if a declared site count legitimately moves | — |
 
 Path count is well above the 5-path fuzzy-discovery threshold, so
@@ -405,7 +405,7 @@ its first `$ARGUMENTS` use, and annotate **every remaining site** with its own
 grammar class and empty-input behaviour — all 19, not 9 (D4 rule 5; R3/H3).
 **Prose only — no frontmatter key is added** (D7). Files:
 `skills/persona-test/SKILL.md` (modify),
-`skills/ship/SKILL.md` (modify), `skills/click-test/SKILL.md` (modify),
+`skills/ship-checked/SKILL.md` (modify), `skills/click-test/SKILL.md` (modify),
 `skills/ux-lock/SKILL.md` (modify),
 `skills/ux-lock/references/verify-mode-generation.md` (modify),
 `skills/audit-code/SKILL.md` (modify), `skills/audit-plan/SKILL.md` (modify),
@@ -417,7 +417,7 @@ surviving invariants. Files: `skills/cycle/SKILL.md` (modify).
 
 **Phase 4 — Hook rule + portable path + accelerator**. Restate each hook-backed
 behaviour as D5's three parts, naming the existing portable path in each case.
-Files: `AGENTS.md` (modify), `skills/ship/SKILL.md` (modify).
+Files: `AGENTS.md` (modify), `skills/ship-checked/SKILL.md` (modify).
 
 **Phase 5 — Regression contract**. Extend `tests/skill-consumer-refs.test.mjs`
 with the parity assertions in §9. Files:
@@ -437,8 +437,8 @@ contents — R1/L1).
 
 | Risk | Mitigation |
 |---|---|
-| **Phases 2, 3 and 4 all edit `skills/ship/SKILL.md` or its siblings** — a cross-cluster collision | Cluster B owns Phases 2–5, so every file has exactly one owner |
-| **Phase 2 adds prose to skills whose descriptions are near the 1024-char cap** (`skills/ship/SKILL.md` is at 804) | D7 makes Phase 2 **body-only**; body text does not count against the description cap, and no frontmatter key is added |
+| **Phases 2, 3 and 4 all edit `skills/ship-checked/SKILL.md` or its siblings** — a cross-cluster collision | Cluster B owns Phases 2–5, so every file has exactly one owner |
+| **Phase 2 adds prose to skills whose descriptions are near the 1024-char cap** (`skills/ship-checked/SKILL.md` is at 804) | D7 makes Phase 2 **body-only**; body text does not count against the description cap, and no frontmatter key is added |
 | **AGENTS.md cap**: ~1000 chars headroom, and Phase 4 must *shrink* the quickfix paragraph while adding a qualifier | Condense the existing Layer-1 text; verify with `node scripts/check-context-drift.mjs --strict` before regenerating |
 | **A capability-first ladder could read as permission to skip detection** | The abort path is preserved verbatim; Phase 1 explicitly must not weaken `[BLOCKED]` |
 | **`context: "fork"` looks attractive for `/cycle`** | Deliberately deferred (below) |
@@ -593,12 +593,12 @@ than no branch.
     describes tiers that no longer exist.
 - **Cluster B** — Phases 2–5 — fix-gate: final
   - Coupling: host-contract prose over one overlapping file set, plus the test
-    that pins it. `skills/ship/SKILL.md` is edited by both Phase 2 and Phase 4;
+    that pins it. `skills/ship-checked/SKILL.md` is edited by both Phase 2 and Phase 4;
     `skills/cycle/SKILL.md` and `AGENTS.md` share Phase 4's
     rule-vs-acceleration phrasing; and Phase 5's assertions (T3, T4, T5) are
     written against the exact markers Phases 2–4 introduce, so the test cannot
     be authored before them and must not be separated from them. Splitting
-    would put `skills/ship/SKILL.md` under two clusters, violating the
+    would put `skills/ship-checked/SKILL.md` under two clusters, violating the
     partition invariant.
 - **Final gate**: consolidated Gemini review over the union diff.
 

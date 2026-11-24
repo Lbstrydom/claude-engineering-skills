@@ -145,7 +145,7 @@ const REGISTRY = {
     { id: 'requirements', title: 'Requirements',   group: 'Learning & invariants', build: sectionRequirements, slice: SLICERS.requirements,
       desc: 'The de-facto invariants your code already enforces — extracted into a ledger the audits check against.' },
     { id: 'shipHealth',   title: 'Ship Health',    group: 'Delivery & governance', build: sectionShipHealth,   slice: SLICERS.shipHealth,
-      desc: 'Every /ship outcome — shipped, warned, blocked, overridden — and why.' },
+      desc: 'Every /ship-checked outcome — shipped, warned, blocked, overridden — and why.' },
     { id: 'personaTests', title: 'Persona Tests',  group: 'Delivery & governance', build: sectionPersonaTests, slice: SLICERS.personaTests,
       desc: 'Latest persona-test session per persona, the recent-session trend, and whether the persona↔audit correlation loop is actually firing.' },
     { id: 'security',     title: 'Security',       group: 'Delivery & governance', build: sectionSecurity,     slice: SLICERS.security,
@@ -222,7 +222,7 @@ export function renderDocument(data, kind, assets) {
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',
-        'No telemetry yet — run /audit-code or /ship to populate this dashboard.');
+        'No telemetry yet — run /audit-code or /ship-checked to populate this dashboard.');
     }
   }
 

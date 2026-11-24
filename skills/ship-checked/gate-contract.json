@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "skill": "ship",
+  "skill": "ship-checked",
   "gates": [
     {
       "id": "guard-a-unscoped-commit-refused",
       "kind": "executable",
       "oracle": "cli-exit",
       "scenario": "ship-unscoped-index-refusal",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "`--path` is MANDATORY, not conditional",
       "implementation": "scripts/ship-commit.mjs",
       "tests": [
@@ -20,7 +20,7 @@
       "kind": "executable",
       "oracle": "cli-exit",
       "scenario": "ship-identity-absent-refusal",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "Both of these are now REQUIRED, and `ship-commit` refuses without them",
       "implementation": "scripts/ship-commit.mjs",
       "tests": [
@@ -36,21 +36,21 @@
     {
       "id": "gate-converged-requires-verified-divergence",
       "kind": "document-only",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "a non-converged run refuses either and leaves `waived`",
-      "reason": "The `stated` is a VERBATIM quote from skills/ship/SKILL.md, which is the contract for this field — a first draft paraphrased the claim instead, so the entry asserted that text appeared in a file where it did not. A DISTINCT entry rather than a widening of gate-passed-refused-without-evidence, because that entry's claim is specifically about passed's evidence requirement and merging the two would blur claims that must stay independently traceable. `converged` (added 2026-09-04, docs/plans/gate-taxonomy-remediated-ships.md) is the equal/differing sibling of passed over the same evidence: it clears the SAME store bar — cloud off, run not found, or roundConvergedAfter == null all refuse it — and additionally requires committedTree !== evidence.auditedTree, refusing the equal-tree case as an under-claim and naming passed. Document-only for exactly the reason its sibling is: the refusal is real and enforced in scripts/lib/commit-trailers.mjs::evaluateGateVerification, but its exit code depends on the git + .audit/last-audit-run.json evidence state, so a hermetic cli-exit fixture cannot bind it deterministically — and the cli-exit oracle's scenario enum is closed, with no member for this state. The refusals themselves ARE mechanically covered: tests/commit-trailers.test.mjs pins the accept plus five refusal directions (equal tree, non-converged run, cloud off, unresolvable comparand, no audited-tree identity) and the AI-Audited-Tree omission, and tests/ship-commit-cli.test.mjs rows 5c/5d pin the end-to-end refusal and the --no-tests cap. Those bindings are not declared as fields here because DocumentOnlyGateSchema is .strict() and permits only {id, kind, reason, statedIn, stated}; claiming an implementation/tests binding this schema cannot validate would itself be the fake-check class this suite exists to catch."
+      "reason": "The `stated` is a VERBATIM quote from skills/ship-checked/SKILL.md, which is the contract for this field — a first draft paraphrased the claim instead, so the entry asserted that text appeared in a file where it did not. A DISTINCT entry rather than a widening of gate-passed-refused-without-evidence, because that entry's claim is specifically about passed's evidence requirement and merging the two would blur claims that must stay independently traceable. `converged` (added 2026-09-04, docs/plans/gate-taxonomy-remediated-ships.md) is the equal/differing sibling of passed over the same evidence: it clears the SAME store bar — cloud off, run not found, or roundConvergedAfter == null all refuse it — and additionally requires committedTree !== evidence.auditedTree, refusing the equal-tree case as an under-claim and naming passed. Document-only for exactly the reason its sibling is: the refusal is real and enforced in scripts/lib/commit-trailers.mjs::evaluateGateVerification, but its exit code depends on the git + .audit/last-audit-run.json evidence state, so a hermetic cli-exit fixture cannot bind it deterministically — and the cli-exit oracle's scenario enum is closed, with no member for this state. The refusals themselves ARE mechanically covered: tests/commit-trailers.test.mjs pins the accept plus five refusal directions (equal tree, non-converged run, cloud off, unresolvable comparand, no audited-tree identity) and the AI-Audited-Tree omission, and tests/ship-commit-cli.test.mjs rows 5c/5d pin the end-to-end refusal and the --no-tests cap. Those bindings are not declared as fields here because DocumentOnlyGateSchema is .strict() and permits only {id, kind, reason, statedIn, stated}; claiming an implementation/tests binding this schema cannot validate would itself be the fake-check class this suite exists to catch."
     },
     {
       "id": "gate-no-tests-caps-the-verdict",
       "kind": "document-only",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "**`--no-tests` caps the gate.** With hooks skipped the helper forces `waived`",
       "reason": "Added 2026-09-04 alongside the `converged` value, because documenting the cap for the first time made it a STATED gate this contract had to disposition. The enforcement is real and pre-existing: scripts/ship-commit.mjs sets `opts.gate = evidence.state === 'fresh' ? 'waived' : 'not-run'` BEFORE validation, printing a loud stderr line when that differs from what was asked, so a stronger verdict can never survive `--no-tests`. This is the one place the CLI rewrites a requested gate rather than refusing it, and it can only ever downgrade. It also satisfies ledger invariant REQ-behavioural-19096e7a, whose recorded gap was `untested` until tests/ship-commit-cli.test.mjs row 5d asserted BOTH halves (the capped trailer value and the `--no-verify` git argument). Document-only rather than executable for the same reason as the two gates above: the resulting exit code depends on the git + .audit/last-audit-run.json evidence state, so a hermetic cli-exit fixture cannot bind it deterministically, and the cli-exit scenario enum is closed with no member for this state."
     },
     {
       "id": "category-a-never-staged",
       "kind": "document-only",
-      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE — there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong — the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
+      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship-checked about what NOT to stage. Still document-only as a GATE — there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong — the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
     },
     {
       "id": "step-0-5-gates-non-blocking",
@@ -66,40 +66,40 @@
     {
       "id": "unit-test-lock-refuses-unverifiable-claims",
       "kind": "document-only",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "the writer refuses a missing path or empty rationale",
       "reason": "Step 0.5b's unit-test lock path. The refusals are REAL and unit-tested (tests/unit-test-lock-kind.test.mjs pins all three: a non-existent test path, a path resolving outside the repo, and a missing --description), so this is not an unbacked claim. It is document-only because the refusal surfaces as a JSON `{ok:false, error}` payload rather than a process exit code — cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 — and `cli-exit` is the only CLI oracle available, against a CLOSED scenario registry. Claiming a cli-exit oracle here would assert an exit code the command deliberately does not produce, which is itself the fake-check class this suite exists to catch. Revisit if cross-skill ever adopts non-zero exits for refusals; the scenario would then be real."
     },
     {
       "id": "final-review-credit-advisory-exit-zero",
       "kind": "document-only",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "the reader always exits 0",
       "reason": "Step 6.7's nudge-not-gate guarantee for the final-review credit card. The READ half is mechanically honest and unit-covered: cmdFinalReviewPending maps every failure to one of a closed diagnostic enum and returns a discriminated {ready|disabled|unavailable} result rather than throwing, and renderFinalReviewCard returns '' for disabled, for a zero-count ready, and for any unrecognised shape (tests/final-review-card.test.mjs pins all three empty-output paths plus the no-leak case; tests/final-review-pending.test.mjs pins the classifier and counts). Document-only for the same reason as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks directly above: 'exits 0 and therefore cannot stop the ship' is ultimately a claim about what the AGENT does with the output, and cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 for every subcommand, so a cli-exit oracle would assert an exit code the command produces unconditionally — true but vacuous, which is the fake-check class this suite exists to catch."
     },
     {
       "id": "upstream-queue-never-blocks",
       "kind": "document-only",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "Never blocks, and there is no override flag",
       "reason": "Step 0.5h's nudge-not-gate guarantee for the upstream issue queue. The READ half is mechanically honest: `upstream list` is a cross-skill.mjs subcommand, so it returns {ok:true, cloud:false} on cloud-off and a JSON error payload on a store failure rather than throwing, and the step is instructed to skip silently in both cases -- a query failure can make it neither stricter nor blind. But 'never BLOCKS the ship' is a claim about what the AGENT does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks above. The deeper reason it can only ever advise is the gate-level rule this repo already applies elsewhere: the queue is CLOUD state, and the commit being pushed cannot change it, so blocking on it would be the cried-wolf shape that earns --no-verify."
     },
     {
       "id": "persona-gate-unmeasured-is-not-silent",
       "kind": "document-only",
-      "statedIn": "skills/ship/SKILL.md",
+      "statedIn": "skills/ship-checked/SKILL.md",
       "stated": "`measured: false` means the gate asked nothing",
-      "reason": "Step 0.5a, added 2026-09-07 after a consumer measured the gate printing `gate silent` — the phrase for *no session exists* — while holding 2 open P0, because `--repo \"$PERSONA_TEST_REPO_NAME\"` was a shell expansion the host never populated. The DATA half is mechanically enforced and tested, and this reason names it so the claim is not unbacked: `explicit-preferred` resolves `--repo` -> PERSONA_TEST_REPO_NAME -> ambient git identity -> `{measured:false, reason}` (scripts/lib/cross-skill/scope.mjs), the handlers make NO store call against an unresolved scope, and tests/cross-skill-scope-resolver.test.mjs + tests/cross-skill-store-calls.test.mjs pin both directions — including that a NAMED repo never consults the ambient checkout and an unknown one is still UNKNOWN_REPO. Document-only for the same reason as unit-test-lock-refuses-unverifiable-claims and step-0-5-gates-non-blocking: what is being contracted HERE is which CARD /ship prints from that payload, cross-skill.mjs exits 0 for every subcommand by design, and `cli-exit` is the only oracle in a CLOSED scenario registry — asserting an exit code the command never produces would itself be the fake-check class this suite exists to catch."
+      "reason": "Step 0.5a, added 2026-09-07 after a consumer measured the gate printing `gate silent` — the phrase for *no session exists* — while holding 2 open P0, because `--repo \"$PERSONA_TEST_REPO_NAME\"` was a shell expansion the host never populated. The DATA half is mechanically enforced and tested, and this reason names it so the claim is not unbacked: `explicit-preferred` resolves `--repo` -> PERSONA_TEST_REPO_NAME -> ambient git identity -> `{measured:false, reason}` (scripts/lib/cross-skill/scope.mjs), the handlers make NO store call against an unresolved scope, and tests/cross-skill-scope-resolver.test.mjs + tests/cross-skill-store-calls.test.mjs pin both directions — including that a NAMED repo never consults the ambient checkout and an unknown one is still UNKNOWN_REPO. Document-only for the same reason as unit-test-lock-refuses-unverifiable-claims and step-0-5-gates-non-blocking: what is being contracted HERE is which CARD /ship-checked prints from that payload, cross-skill.mjs exits 0 for every subcommand by design, and `cli-exit` is the only oracle in a CLOSED scenario registry — asserting an exit code the command never produces would itself be the fake-check class this suite exists to catch."
     }
   ],
   "ignoredCandidates": [
     {
       "line": "skips this step entirely, and the plan's `Status:`/Implementation Log never",
-      "reason": "Step 5's cross-reference note for resuming after a blocked `/cycle --autonomous` run. States what happens when no plan path is passed — this is the SAME grammar-rule consequence already stated two lines above ('no path means skip the plan update entirely'), restated here to explain why a bare `/ship` resume is wrong, not a new gate /ship enforces. No /ship exit code distinguishes 'plan path given' from 'plan path omitted' — Step 5's own body is what runs or does not run, per the input-acquisition host-contract marker directly above both lines."
+      "reason": "Step 5's cross-reference note for resuming after a blocked `/cycle --autonomous` run. States what happens when no plan path is passed — this is the SAME grammar-rule consequence already stated two lines above ('no path means skip the plan update entirely'), restated here to explain why a bare `/ship-checked` resume is wrong, not a new gate /ship-checked enforces. No /ship-checked exit code distinguishes 'plan path given' from 'plan path omitted' — Step 5's own body is what runs or does not run, per the input-acquisition host-contract marker directly above both lines."
     },
     {
       "line": "gitignored, so `git worktree add` never populates it — while `.claude/` (this",
-      "reason": "Phase 0a. States what GIT does with an ignored path when creating a linked worktree (it does not populate it) against what the consumer sync layout puts where — `scripts/.claude-skills/` is gitignored, `.claude/` is tracked. A statement of fact about two external behaviours that together produce the MODULE_NOT_FOUND this step exists to pre-empt, not a gate /ship enforces. The preflight it introduces is a pair of `git rev-parse` reads whose result the AGENT acts on; there is no /ship exit code to assert."
+      "reason": "Phase 0a. States what GIT does with an ignored path when creating a linked worktree (it does not populate it) against what the consumer sync layout puts where — `scripts/.claude-skills/` is gitignored, `.claude/` is tracked. A statement of fact about two external behaviours that together produce the MODULE_NOT_FOUND this step exists to pre-empt, not a gate /ship-checked enforces. The preflight it introduces is a pair of `git rev-parse` reads whose result the AGENT acts on; there is no /ship-checked exit code to assert."
     },
     {
       "line": "**Never `cd` to the main checkout to run these.** `ship-commit.mjs` and",
@@ -107,7 +107,7 @@
     },
     {
       "line": "**Never `npm run sync -- --target-path <worktree>`.** It aborts on unowned",
-      "reason": "Phase 0a operator guidance. Describes SYNC's behaviour, not /ship's: the ownership manifest is gitignored, so a fresh worktree reads as an unowned repo and the sync aborts on collisions — and `--adopt-orphans`, the flag that clears the abort, does so by overwriting tracked files. The prohibition is about which recovery an agent reaches for; /ship emits no exit code for a command it is telling you not to run."
+      "reason": "Phase 0a operator guidance. Describes SYNC's behaviour, not /ship-checked's: the ownership manifest is gitignored, so a fresh worktree reads as an unowned repo and the sync aborts on collisions — and `--adopt-orphans`, the flag that clears the abort, does so by overwriting tracked files. The prohibition is about which recovery an agent reaches for; /ship-checked emits no exit code for a command it is telling you not to run."
     },
     {
       "line": "On `post-commit-drift` it exits 1 and prints a recovery command: **do not push.**",
@@ -138,7 +138,7 @@
       "reason": "Elaboration of guard-b-identity-is-a-precondition (bound executably above): it names the specific reason code an INCOMPLETE bundle produces. The refusal is asserted by the ship-identity-absent-refusal recipe and by tests/worktree-identity.test.mjs, which pins incomplete-expectation across every illegal flag combination."
     },
     {
-      "line": "--skill ship --models <csv> --gate <value> \\",
+      "line": "--skill ship-checked --models <csv> --gate <value> \\",
       "reason": "A line INSIDE the fenced example invocation, not a claim of its own. The literal `--gate <value>` placeholder is what trips the verb scan; the gate it illustrates is guard-b-identity-is-a-precondition, bound EXECUTABLY above."
     },
     {
@@ -170,8 +170,8 @@
       "reason": "Interpretation guidance for plan-mode rows: it explains what a stale plan-mode finding MEANS (the plan was never amended) so the agent does not print a section reference as if it were a file path. Descriptive, not an enforced gate."
     },
     {
-      "line": "the weekly GH workflow, never by /ship directly.",
-      "reason": "Pre-existing prose about who updates the arch-drift sticky issue; it became a candidate only because the 2026-07-26 edit reflowed the paragraph and moved 'never' onto this line. Scope statement about a GH workflow, not a /ship gate."
+      "line": "the weekly GH workflow, never by /ship-checked directly.",
+      "reason": "Pre-existing prose about who updates the arch-drift sticky issue; it became a candidate only because the 2026-07-26 edit reflowed the paragraph and moved 'never' onto this line. Scope statement about a GH workflow, not a /ship-checked gate."
     },
     {
       "line": "are \"not applicable\", **not** \"no obligations\". Report it as unmeasured; never",
@@ -183,7 +183,7 @@
     },
     {
       "line": "**`unverified` must name a concrete blocked prerequisite** — \"no network in this",
-      "reason": "Step 6.8 instruction about what the `unverified` terminal state must contain. Whether a stated prerequisite is 'concrete' is a judgement call; /ship emits no exit code for the quality of a status line it wrote into status.md."
+      "reason": "Step 6.8 instruction about what the `unverified` terminal state must contain. Whether a stated prerequisite is 'concrete' is a judgement call; /ship-checked emits no exit code for the quality of a status line it wrote into status.md."
     },
     {
       "line": "environment\", \"no consumer checkout on this machine\" — never a bare \"not",
@@ -199,7 +199,7 @@
     },
     {
       "line": "and per the gate-level rule, machine and remote state may advise where repo",
-      "reason": "A restatement of the repo-wide gate-level rule, cited to explain WHY Step 6.8 is advisory. The enforcement verb belongs to that rule as applied elsewhere; /ship asserts nothing new here."
+      "reason": "A restatement of the repo-wide gate-level rule, cited to explain WHY Step 6.8 is advisory. The enforcement verb belongs to that rule as applied elsewhere; /ship-checked asserts nothing new here."
     },
     {
       "line": "state may block. → `references/verification-discipline.md` §6.",
@@ -207,7 +207,7 @@
     },
     {
       "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |",
-      "reason": "A REFERENCE-TABLE row. The 'Read when' cell is a trigger description for opening a reference file, not a gate /ship enforces."
+      "reason": "A REFERENCE-TABLE row. The 'Read when' cell is a trigger description for opening a reference file, not a gate /ship-checked enforces."
     },
     {
       "line": "Waiting is not a way to clear this gate. Read them:",
@@ -219,19 +219,19 @@
     },
     {
       "line": "that provisions `scripts/.claude-skills/**` never merges npm scripts into a",
-      "reason": "States a fact about the consumer-sync mechanism (added 2026-08-14 alongside `--if-present`): npm scripts are never merged into a consumer's package.json by the file-sync that provisions scripts/.claude-skills/**. Explains WHY `--if-present` is load-bearing; not itself a claim this skill enforces — the sync mechanism's own behaviour lives in scripts/sync-to-repos.mjs, outside /ship's exit code."
+      "reason": "States a fact about the consumer-sync mechanism (added 2026-08-14 alongside `--if-present`): npm scripts are never merged into a consumer's package.json by the file-sync that provisions scripts/.claude-skills/**. Explains WHY `--if-present` is load-bearing; not itself a claim this skill enforces — the sync mechanism's own behaviour lives in scripts/sync-to-repos.mjs, outside /ship-checked's exit code."
     },
     {
       "line": "on every such push (reported by a consumer 2026-08-14) — harmless (never",
-      "reason": "Continuation of the --if-present rationale: describes the field-observed defect (an avoidable npm error) this fix removes, and confirms it never blocked the ship even before the fix — a NEGATIVE historical observation, not an enforcement claim. Nothing in /ship asserts an exit code over whether a prior bug was blocking; the fix is a UX improvement (silence a harmless error), not a new gate."
+      "reason": "Continuation of the --if-present rationale: describes the field-observed defect (an avoidable npm error) this fix removes, and confirms it never blocked the ship even before the fix — a NEGATIVE historical observation, not an enforcement claim. Nothing in /ship-checked asserts an exit code over whether a prior bug was blocking; the fix is a UX improvement (silence a harmless error), not a new gate."
     },
     {
       "line": "**Write the outcome to `.claude/tmp/ship-verification-pending.md` — never by",
-      "reason": "Step 6.8 instruction to the agent about WHERE to record the consumer-verification outcome (a gitignored scratch file, not the already-pushed status.md entry). Same shape as the existing Step 6.8 entries here ('unverified must name a concrete blocked prerequisite', 'Never inherit the producer-side green'): a discipline addressed to the agent, with no CLI exit code for a cli-exit recipe to assert — /ship writes nothing that checks whether the agent complied."
+      "reason": "Step 6.8 instruction to the agent about WHERE to record the consumer-verification outcome (a gitignored scratch file, not the already-pushed status.md entry). Same shape as the existing Step 6.8 entries here ('unverified must name a concrete blocked prerequisite', 'Never inherit the producer-side green'): a discipline addressed to the agent, with no CLI exit code for a cli-exit recipe to assert — /ship-checked writes nothing that checks whether the agent complied."
     },
     {
       "line": "> so the handoff silently never happens and the only symptom is a note that",
-      "reason": "Step 6.8. Explains the FAILURE MODE that motivated resolving the main checkout (a deleted worktree destroys the note). A statement about what happens absent the fix, not a rule /ship enforces."
+      "reason": "Step 6.8. Explains the FAILURE MODE that motivated resolving the main checkout (a deleted worktree destroys the note). A statement about what happens absent the fix, not a rule /ship-checked enforces."
     },
     {
       "line": "primary GPT/Gemini-round finding was never surfaced here at all, however long",
@@ -239,14 +239,14 @@
     },
     {
       "line": "node scripts/remediation-reconcile.mjs --apply --cap 5 2>/dev/null",
-      "reason": "0.5e's auto-reconcile invocation line — a runnable recipe (`node`, `--apply`) the enforcement-verb scanner flags on the tool name alone, same class as the skills:hydrate one-liner above. The CLI's own flag/apply/dry-run behaviour is tested directly; this line is the command an operator runs, not a claim /ship enforces about itself."
+      "reason": "0.5e's auto-reconcile invocation line — a runnable recipe (`node`, `--apply`) the enforcement-verb scanner flags on the tool name alone, same class as the skills:hydrate one-liner above. The CLI's own flag/apply/dry-run behaviour is tested directly; this line is the command an operator runs, not a claim /ship-checked enforces about itself."
     },
     {
       "line": "| `references/migration-credentials.md` | Which role applies migrations, why the runtime DSN cannot, and where its credential belongs (never in .env). | Step 0.5g — a store is behind and `--migrate` is refused with `42501` (`must be owner of table …` / `permission denied for schema public`). |",
-      "reason": "The reference-index ROW for migration-credentials.md. Its Summary column must byte-match the file's `summary:` frontmatter (skills:check enforces that), so the enforcement verbs 'never'/'must'/'refused' are inherited from the reference's own one-line summary and cannot be reworded away independently. Index rows describe what a document covers; they are not gate claims about /ship's behaviour."
+      "reason": "The reference-index ROW for migration-credentials.md. Its Summary column must byte-match the file's `summary:` frontmatter (skills:check enforces that), so the enforcement verbs 'never'/'must'/'refused' are inherited from the reference's own one-line summary and cannot be reworded away independently. Index rows describe what a document covers; they are not gate claims about /ship-checked's behaviour."
     },
     {
-      "line": "> offering `/ship`, never by running it.",
+      "line": "> offering this skill, never by running it.",
       "reason": "Part of the explicit-invocation host-neutral rule header (cross-host-parity-v2, the disable-model-invocation body statement) — instructs the agent when to offer vs. run this skill. Descriptive guidance for the agent, not a mechanically enforced claim within this skill's own execution."
     },
     {
@@ -287,7 +287,7 @@
     },
     {
       "line": "> **Continuing work in the same worktree after a squash merge: rebase, never",
-      "reason": "Step 6.3's squash-merge continuation callout (added 2026-09-08 from storyline upstream report ef229b6d-96ed-4792-98b7-e90276da00cd), warning the AGENT to `git rebase origin/<base>` rather than `git merge origin/<base>` when a follow-up branch shares history with a squash-merged `/ship` PR, and that a `mergeable: CONFLICTING` PR can correlate with zero CI runs firing. This is git-workflow guidance the agent applies while choosing which command to run before pushing — there is no `/ship` CLI exit code to assert, because ship-commit.mjs never sees which git command the agent chose beforehand. Same shape as the pre-existing 'Never `cd` to the main checkout to run these' and 'Never `npm run sync -- --target-path <worktree>`' Phase-0a entries above: a prohibition/preference addressed to the agent, not a claim of mechanical enforcement."
+      "reason": "Step 6.3's squash-merge continuation callout (added 2026-09-08 from storyline upstream report ef229b6d-96ed-4792-98b7-e90276da00cd), warning the AGENT to `git rebase origin/<base>` rather than `git merge origin/<base>` when a follow-up branch shares history with a squash-merged `/ship-checked` PR, and that a `mergeable: CONFLICTING` PR can correlate with zero CI runs firing. This is git-workflow guidance the agent applies while choosing which command to run before pushing — there is no `/ship-checked` CLI exit code to assert, because ship-commit.mjs never sees which git command the agent chose beforehand. Same shape as the pre-existing 'Never `cd` to the main checkout to run these' and 'Never `npm run sync -- --target-path <worktree>`' Phase-0a entries above: a prohibition/preference addressed to the agent, not a claim of mechanical enforcement."
     },
     {
       "line": "Never blocks the ship.",
@@ -347,7 +347,7 @@
     },
     {
       "line": "A queue it could not read renders **`unmeasured`**, never `0`. That distinction",
-      "reason": "Step 2b. Describes what scripts/backlog-snapshot.mjs PRINTS, not something /ship enforces — the skill pastes a line the command produced. The claim is real and mechanically covered where it belongs, at the formatter: tests/backlog-snapshot.test.mjs asserts that an envelope reporting measured:false, cloud:false or a non-repo scope renders , and that no field renders 0 in that case. There is no /ship exit code to assert against, so a cli-exit oracle here would be a fake check."
+      "reason": "Step 2b. Describes what scripts/backlog-snapshot.mjs PRINTS, not something /ship-checked enforces — the skill pastes a line the command produced. The claim is real and mechanically covered where it belongs, at the formatter: tests/backlog-snapshot.test.mjs asserts that an envelope reporting measured:false, cloud:false or a non-repo scope renders , and that no field renders 0 in that case. There is no /ship-checked exit code to assert against, so a cli-exit oracle here would be a fake check."
     },
     {
       "line": "The command always exits 0; it is a nudge, never a gate.",
@@ -355,11 +355,11 @@
     },
     {
       "line": "entry you are already authoring. Never let a script write `status.md`: PR #87",
-      "reason": "Step 2b. An instruction to the AGENT about how to place the backlog line, plus the incident that motivates it — not a gate /ship runs. The property it protects IS enforced, just elsewhere and by a different mechanism: scripts/backlog-snapshot.mjs writes no file at all (it prints one line to stdout), and status:integrity:gate fails the push if any session-log entry is lost or rewritten rather than appended to. So there is nothing for a cli-exit oracle to assert here; asserting one would be the fake-check class this suite catches. The PR #87 reference is the reason the instruction is phrased as a prohibition: a tool rewriting that file destroyed 19,257 lines and reached main through a full check run."
+      "reason": "Step 2b. An instruction to the AGENT about how to place the backlog line, plus the incident that motivates it — not a gate /ship-checked runs. The property it protects IS enforced, just elsewhere and by a different mechanism: scripts/backlog-snapshot.mjs writes no file at all (it prints one line to stdout), and status:integrity:gate fails the push if any session-log entry is lost or rewritten rather than appended to. So there is nothing for a cli-exit oracle to assert here; asserting one would be the fake-check class this suite catches. The PR #87 reference is the reason the instruction is phrased as a prohibition: a tool rewriting that file destroyed 19,257 lines and reached main through a full check run."
     },
     {
       "line": "clear must survive to the next drain, which is why `clear` refuses to delete",
-      "reason": "Step 2 prose explaining why `pending-note clear` takes explicit names. `must` and `refuses` describe the CLI's argument handling — a fact about lib/worktree-preflight.mjs, tested in tests/upstream-triage-2026-09-07.test.mjs — not an enforcement claim /ship makes about itself."
+      "reason": "Step 2 prose explaining why `pending-note clear` takes explicit names. `must` and `refuses` describe the CLI's argument handling — a fact about lib/worktree-preflight.mjs, tested in tests/upstream-triage-2026-09-07.test.mjs — not an enforcement claim /ship-checked makes about itself."
     },
     {
       "line": "session boundary but never ship as-is.",
@@ -367,7 +367,7 @@
     },
     {
       "line": "| the synced consumer bundle | **authoritative**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in the consumer's MAIN checkout* — note the `lib/` segment, it is a module rather than a top-level script. A linked worktree cannot answer this, and since 2026-09-07 it SAYS so: `runGates` refuses a proven linked worktree at `preflight` with exit 2. The manifest records what the last sync wrote to the MAIN checkout's disk, and `skills:hydrate` populates a worktree by copying those same files — so a run there would re-read bytes hydrate just copied and report agreement it manufactured. Hydrate now carries the manifest as well as the tooling tree (upstream 5bc7ff30), so that refusal is explicit rather than the accident of a missing file. `npm run sync:dry` from here is the pre-check, not the verdict | zero unexpected diffs; no orphans |",
-      "reason": "Step 6.8's retrieval table row. Names sync-isolation-verify's own `preflight` refusal of a linked worktree — an enforcement claim about THAT module (tested in tests/upstream-triage-2026-09-07.test.mjs), reported to the reader so they run it in the right tree. /ship enforces nothing here; the whole step is advisory by construction."
+      "reason": "Step 6.8's retrieval table row. Names sync-isolation-verify's own `preflight` refusal of a linked worktree — an enforcement claim about THAT module (tested in tests/upstream-triage-2026-09-07.test.mjs), reported to the reader so they run it in the right tree. /ship-checked enforces nothing here; the whole step is advisory by construction."
     },
     {
       "line": "**Write the outcome with `pending-note write` (body on stdin) — never by",
@@ -391,7 +391,7 @@
     },
     {
       "line": "⚠ UX GATE — UNMEASURED (<reason>)",
-      "reason": "The literal first line of the card /ship prints. `gate` is the card's own title text, not an enforcement claim about the card. The behaviour the card reports is contracted at persona-gate-unmeasured-is-not-silent."
+      "reason": "The literal first line of the card /ship-checked prints. `gate` is the card's own title text, not an enforcement claim about the card. The behaviour the card reports is contracted at persona-gate-unmeasured-is-not-silent."
     },
     {
       "line": "**Closed failure semantics — never a NEW blocker**:",
@@ -406,11 +406,11 @@
       "reason": "Command-example text touching a technical identifier (\"require(\", \"-gate\"/\"GATE=\" as a flag/value name) that the enforcement-verb scanner matches as a whole word; not an enforcement claim about this skill's own behaviour. Introduced by the 2026-09-10 PowerShell-portability pass (cross-host-parity follow-up)."
     },
     {
-      "line": "node scripts/ship-commit.mjs --message-file \".claude/tmp/ship-commit-msg-$EPOCH.txt\" --skill ship --models \"$MODELS\" --gate \"$GATE\" --expect-head \"$SHIP_HEAD\" --expect-branch \"$SHIP_BRANCH\" --path scripts/lib/*.mjs --path tests/*.test.mjs",
+      "line": "node scripts/ship-commit.mjs --message-file \".claude/tmp/ship-commit-msg-$EPOCH.txt\" --skill ship-checked --models \"$MODELS\" --gate \"$GATE\" --expect-head \"$SHIP_HEAD\" --expect-branch \"$SHIP_BRANCH\" --path scripts/lib/*.mjs --path tests/*.test.mjs",
       "reason": "Command-example text touching a technical identifier (\"require(\", \"-gate\"/\"GATE=\" as a flag/value name) that the enforcement-verb scanner matches as a whole word; not an enforcement claim about this skill's own behaviour. Introduced by the 2026-09-10 PowerShell-portability pass (cross-host-parity follow-up)."
     },
     {
-      "line": "node scripts/ship-commit.mjs --message-file \".claude/tmp/ship-commit-msg-$EPOCH.txt\" --skill ship --models \"$MODELS\" --gate \"$GATE\" --expect-head \"$SHIP_HEAD\" --expect-branch \"$SHIP_BRANCH\" --path scripts/foo.mjs --path tests/foo.test.mjs",
+      "line": "node scripts/ship-commit.mjs --message-file \".claude/tmp/ship-commit-msg-$EPOCH.txt\" --skill ship-checked --models \"$MODELS\" --gate \"$GATE\" --expect-head \"$SHIP_HEAD\" --expect-branch \"$SHIP_BRANCH\" --path scripts/foo.mjs --path tests/foo.test.mjs",
       "reason": "Command-example text touching a technical identifier (\"require(\", \"-gate\"/\"GATE=\" as a flag/value name) that the enforcement-verb scanner matches as a whole word; not an enforcement claim about this skill's own behaviour. Introduced by the 2026-09-10 PowerShell-portability pass (cross-host-parity follow-up)."
     },
     {
@@ -419,15 +419,15 @@
     },
     {
       "line": "A stack with nothing indexable (neither JS/TS nor Python) → skips silently (`reason: 'unsupported-stack'`), exit 0,",
-      "reason": "Describes scripts/symbol-index/refresh.mjs's own early-return behaviour (verified against the source at fix time) for a repo with no JS/TS or Python to index — a property of that CLI, not a claim /ship's own execution enforces. Same disposition class as the pre-existing 'exits 0'/'always exits 0' entries elsewhere in this file describing another script's contract."
+      "reason": "Describes scripts/symbol-index/refresh.mjs's own early-return behaviour (verified against the source at fix time) for a repo with no JS/TS or Python to index — a property of that CLI, not a claim /ship-checked's own execution enforces. Same disposition class as the pre-existing 'exits 0'/'always exits 0' entries elsewhere in this file describing another script's contract."
     },
     {
       "line": "or refresh-lock conflict) → `refresh.mjs` exits 1 or 2 and writes a message",
-      "reason": "Describes scripts/symbol-index/refresh.mjs's own error-exit behaviour (RepoRegistrationError/RefreshInFlightError/LockAbortError -> exit 1 or 2, verified against refresh-errors.mjs) — a property of that CLI, not a claim about /ship's own execution. The exit code belongs to a script this step invokes with `|| true`, so it is swallowed before /ship sees it."
+      "reason": "Describes scripts/symbol-index/refresh.mjs's own error-exit behaviour (RepoRegistrationError/RefreshInFlightError/LockAbortError -> exit 1 or 2, verified against refresh-errors.mjs) — a property of that CLI, not a claim about /ship-checked's own execution. The exit code belongs to a script this step invokes with `|| true`, so it is swallowed before /ship-checked sees it."
     },
     {
       "line": "to stderr; this step's own `|| true` swallows the non-zero exit so the ship",
-      "reason": "Continuation of the same sentence describing refresh.mjs's exit behaviour and this step's own `|| true` swallow — a design fact about how a non-blocking advisory step is composed (shell-level, not a /ship CLI branch), not a new enforcement claim."
+      "reason": "Continuation of the same sentence describing refresh.mjs's exit behaviour and this step's own `|| true` swallow — a design fact about how a non-blocking advisory step is composed (shell-level, not a /ship-checked CLI branch), not a new enforcement claim."
     },
     {
       "line": "is never blocked, but the stderr line still prints — read it if the local",
@@ -459,7 +459,7 @@
     },
     {
       "line": "**Never pass `--repo \"$PERSONA_TEST_REPO_NAME\"` as a shell expansion** — see",
-      "reason": "Step 0.5a operator instruction about how to INVOKE the command, not a gate /ship enforces (condensed 2026 Phase-1 size-reduction; supersedes the removed longer paragraph with the same disposition). `never` forbids a shell form: a Claude Code session inherits neither the consumer's .env nor ~/.audit-loop.env, so the expansion yields an empty flag. Nothing in this repo can assert what an agent types into a shell; the defence that IS mechanical is the CLI's own resolution chain, contracted at persona-gate-unmeasured-is-not-silent."
+      "reason": "Step 0.5a operator instruction about how to INVOKE the command, not a gate /ship-checked enforces (condensed 2026 Phase-1 size-reduction; supersedes the removed longer paragraph with the same disposition). `never` forbids a shell form: a Claude Code session inherits neither the consumer's .env nor ~/.audit-loop.env, so the expansion yields an empty flag. Nothing in this repo can assert what an agent types into a shell; the defence that IS mechanical is the CLI's own resolution chain, contracted at persona-gate-unmeasured-is-not-silent."
     },
     {
       "line": "`references/pre-ship-gate-queries.md` §0.5a for why.",
@@ -479,7 +479,7 @@
     },
     {
       "line": "`unlocked_fixes` and gets raised again. The command refuses a missing target",
-      "reason": "Describes what `repoint-regression-spec` REFUSES (a missing target path, an unresolvable repo, an ambiguous lock) — enforcement claims about that CLI, unit-tested in tests/dangling-regression-lock.test.mjs, not a claim /ship enforces about itself. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing 429683ac entries.)"
+      "reason": "Describes what `repoint-regression-spec` REFUSES (a missing target path, an unresolvable repo, an ambiguous lock) — enforcement claims about that CLI, unit-tested in tests/dangling-regression-lock.test.mjs, not a claim /ship-checked enforces about itself. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing 429683ac entries.)"
     },
     {
       "line": "history + why each of these rules exists: `references/pre-ship-gate-queries.md`",
@@ -491,7 +491,7 @@
     },
     {
       "line": "**First, a capped auto-reconcile pass** (best-effort, never blocks, no",
-      "reason": "0.5e's auto-reconcile sub-step (docs/plans/remediation-state-verification-reconciler.md), re-wrapped by the Phase-1 condensation. Same disposition as the pre-existing entry it replaces: 'never blocks, no override flag' is a claim about what the AGENT does after the capped reconciler call returns, not a /ship CLI exit code — the reconciler itself is scripts/remediation-reconcile.mjs, whose own dry-run/apply/kill-switch contract is tested in tests/remediation-verification-selection.test.mjs and tests/mark-findings-remediation.test.mjs."
+      "reason": "0.5e's auto-reconcile sub-step (docs/plans/remediation-state-verification-reconciler.md), re-wrapped by the Phase-1 condensation. Same disposition as the pre-existing entry it replaces: 'never blocks, no override flag' is a claim about what the AGENT does after the capped reconciler call returns, not a /ship-checked CLI exit code — the reconciler itself is scripts/remediation-reconcile.mjs, whose own dry-run/apply/kill-switch contract is tested in tests/remediation-verification-selection.test.mjs and tests/mark-findings-remediation.test.mjs."
     },
     {
       "line": "bounds will never revisit on their own:",
@@ -499,7 +499,7 @@
     },
     {
       "line": "mechanical-resolution path only, never a failure.",
-      "reason": "Describes scripts/remediation-reconcile.mjs's own graceful-degradation behaviour (no Claude credential -> mechanical-only, never a crash) — a property of that CLI, asserted by its own tests, not a /ship gate."
+      "reason": "Describes scripts/remediation-reconcile.mjs's own graceful-degradation behaviour (no Claude credential -> mechanical-only, never a crash) — a property of that CLI, asserted by its own tests, not a /ship-checked gate."
     },
     {
       "line": "**Never add this to `agedOut`, and never report it as a backlog** — mention",
@@ -511,7 +511,7 @@
     },
     {
       "line": "**Use `byMode.total` as `unremediated_count` — NEVER `rows.length`** (capped",
-      "reason": "Instruction to the reading agent about which emitted field to use, not a claim that /ship blocks on anything. It IS mechanically guarded: tests/cross-skill-unlocked-scope.test.mjs asserts every capped nudge reader has a count* sibling and that cross-skill.mjs calls the counter wherever it calls the reader. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing entry.)"
+      "reason": "Instruction to the reading agent about which emitted field to use, not a claim that /ship-checked blocks on anything. It IS mechanically guarded: tests/cross-skill-unlocked-scope.test.mjs asserts every capped nudge reader has a count* sibling and that cross-skill.mjs calls the counter wherever it calls the reader. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing entry.)"
     },
     {
       "line": "If `> 0`, print — never blocks, no override flag. **Show the first 5 rows as",
@@ -543,7 +543,7 @@
     },
     {
       "line": "Print its stdout verbatim — it renders the finished card. **Never blocks, no",
-      "reason": "0.5g's cross-store drift sub-step (`npm run stores:drift`). 'Never blocks, no override flag' describes what the AGENT does with the output, not a /ship CLI exit code — store-drift.mjs's own always-exit-0 contract is asserted in tests/store-drift.test.mjs. (Re-wrapped by the Phase-1 condensation; same disposition as the pre-existing entry.)"
+      "reason": "0.5g's cross-store drift sub-step (`npm run stores:drift`). 'Never blocks, no override flag' describes what the AGENT does with the output, not a /ship-checked CLI exit code — store-drift.mjs's own always-exit-0 contract is asserted in tests/store-drift.test.mjs. (Re-wrapped by the Phase-1 condensation; same disposition as the pre-existing entry.)"
     },
     {
       "line": "nobody could reach is reported explicitly, never counted as current; if NO",
@@ -551,7 +551,7 @@
     },
     {
       "line": "secret store, never a file): `references/migration-credentials.md`. Incident",
-      "reason": "Pointer to the reference carrying the credential-handling procedure; 'never a file' is guidance about where an operator keeps a secret, not a gate /ship enforces. (Re-wrapped by the Phase-1 condensation; same disposition as the pre-existing entry for this sentence.)"
+      "reason": "Pointer to the reference carrying the credential-handling procedure; 'never a file' is guidance about where an operator keeps a secret, not a gate /ship-checked enforces. (Re-wrapped by the Phase-1 condensation; same disposition as the pre-existing entry for this sentence.)"
     },
     {
       "line": "history behind the rules above: `references/pre-ship-gate-queries.md` §0.5g.",
@@ -559,19 +559,19 @@
     },
     {
       "line": "registered consumer's own store** (never a single ambient one — consumers are",
-      "reason": "0.5h. Restates that `upstream-queues.mjs` reads every registered consumer's own store rather than the ambient one — a property of that CLI's resolution logic, tested in tests/upstream-store-discovery.test.mjs, not a claim /ship enforces about its own execution. (Condensed 2026 Phase-1; same disposition as the pre-existing 'Read EVERY consumer's store' entries it replaces.)"
+      "reason": "0.5h. Restates that `upstream-queues.mjs` reads every registered consumer's own store rather than the ambient one — a property of that CLI's resolution logic, tested in tests/upstream-store-discovery.test.mjs, not a claim /ship-checked enforces about its own execution. (Condensed 2026 Phase-1; same disposition as the pre-existing 'Read EVERY consumer's store' entries it replaces.)"
     },
     {
       "line": "never a DSN or hostname.",
-      "reason": "0.5h. A disclosure property of `upstream-queues.mjs`'s rendering (fingerprint plus consumer names only), asserted in tests/upstream-store-discovery.test.mjs — not a gate /ship enforces. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing entry.)"
+      "reason": "0.5h. A disclosure property of `upstream-queues.mjs`'s rendering (fingerprint plus consumer names only), asserted in tests/upstream-store-discovery.test.mjs — not a gate /ship-checked enforces. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing entry.)"
     },
     {
       "line": "not repo state; it always exits 0. **Read the `unqueried` / `no store` lines,",
-      "reason": "0.5h. States that `upstream-queues.mjs` is advisory — it exits 0 whatever the queues hold, a property of the invoked CLI asserted in its own module, not a gate /ship itself runs — plus the instruction to read the unqueried/no-store lines rather than treat the count as complete. (Re-wrapped by the Phase-1 condensation; same disposition as the pre-existing entries it replaces.)"
+      "reason": "0.5h. States that `upstream-queues.mjs` is advisory — it exits 0 whatever the queues hold, a property of the invoked CLI asserted in its own module, not a gate /ship-checked itself runs — plus the instruction to read the unqueried/no-store lines rather than treat the count as complete. (Re-wrapped by the Phase-1 condensation; same disposition as the pre-existing entries it replaces.)"
     },
     {
       "line": "disposition ledger records what you typed, and `upstream:coverage:gate`",
-      "reason": "0.5h. Names a constraint ANOTHER gate imposes (closing a report by uuid prefix fails `upstream:coverage:gate`) so the reader does not leave `npm run check` red. The enforcement is `upstreamTransition`'s boundary check plus check-upstream-probe-coverage.mjs's uuid shape rule, bound in tests/upstream-disposition-ratchet.test.mjs. /ship neither performs nor can assert it. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing entry.)"
+      "reason": "0.5h. Names a constraint ANOTHER gate imposes (closing a report by uuid prefix fails `upstream:coverage:gate`) so the reader does not leave `npm run check` red. The enforcement is `upstreamTransition`'s boundary check plus check-upstream-probe-coverage.mjs's uuid shape rule, bound in tests/upstream-disposition-ratchet.test.mjs. /ship-checked neither performs nor can assert it. (Re-wrapped by the Phase-1 condensation; same claim as the pre-existing entry.)"
     },
     {
       "line": "`references/pre-ship-gate-queries.md` §0.5h.",
@@ -591,11 +591,11 @@
     },
     {
       "line": "| `references/pre-ship-gate-queries.md` | Step 0.5's pre-ship nudges (0.5a/b/e/g/h/i) — the incident history behind each rule, kept out of the routine flow. | Debugging a Step 0.5 nudge's behaviour, or before changing one. |",
-      "reason": "The reference-index ROW for the new pre-ship-gate-queries.md file, added by the Phase-1 size-reduction. The enforcement-verb scanner matches on the substring \"gate\" inside the filename in column 1, same as every citation of this file elsewhere in this table. Index rows describe what a document covers; they are not gate claims about /ship's behaviour."
+      "reason": "The reference-index ROW for the new pre-ship-gate-queries.md file, added by the Phase-1 size-reduction. The enforcement-verb scanner matches on the substring \"gate\" inside the filename in column 1, same as every citation of this file elsewhere in this table. Index rows describe what a document covers; they are not gate claims about /ship-checked's behaviour."
     },
     {
       "line": "**`docs/architecture-map.md` is Category A and is NEVER staged** — it embeds a",
-      "reason": "0.5c, condensed 2026 Phase-2 size-reduction. States the Category-A classification (timestamp+sha header, LLM-written summaries, renders from cloud symbol_index) — a design-rationale fact about the file, not a gate /ship's own exit code enforces. The SKILL-TEXT side (no `git add` of this path) is guarded by tests/skill-staging-instructions.test.mjs, contracted at category-a-never-staged above; this line is the classification rationale, same disposition as the pre-existing 'Category A and is NEVER staged' entry it replaces."
+      "reason": "0.5c, condensed 2026 Phase-2 size-reduction. States the Category-A classification (timestamp+sha header, LLM-written summaries, renders from cloud symbol_index) — a design-rationale fact about the file, not a gate /ship-checked's own exit code enforces. The SKILL-TEXT side (no `git add` of this path) is guarded by tests/skill-staging-instructions.test.mjs, contracted at category-a-never-staged above; this line is the classification rationale, same disposition as the pre-existing 'Category A and is NEVER staged' entry it replaces."
     },
     {
       "line": "(the sync never adds npm scripts), so a consumer runs it by path and gets",
@@ -603,23 +603,23 @@
     },
     {
       "line": "Run it WITHOUT `|| true` — the **exit code is the signal** and must be read,",
-      "reason": "0.5d. Operator instruction about how to invoke `build-dashboard.mjs reference` so its exit code reaches the agent — not a /ship CLI exit code itself; build-dashboard.mjs's own exit-non-zero-on-degraded-build contract is a property of that script. No new claim, pre-existing pattern (advisory step whose exit code the agent must read, not mask)."
+      "reason": "0.5d. Operator instruction about how to invoke `build-dashboard.mjs reference` so its exit code reaches the agent — not a /ship-checked CLI exit code itself; build-dashboard.mjs's own exit-non-zero-on-degraded-build contract is a property of that script. No new claim, pre-existing pattern (advisory step whose exit code the agent must read, not mask)."
     },
     {
       "line": "not masked. A non-zero exit must not abort the ship (this step is advisory):",
-      "reason": "Continuation of the line above: the negative guarantee that a non-zero exit here must not abort /ship. Same document-only class as step-0-5-gates-non-blocking — a judgement about agent flow around an advisory step's exit code, not a /ship exit code of its own."
+      "reason": "Continuation of the line above: the negative guarantee that a non-zero exit here must not abort /ship-checked. Same document-only class as step-0-5-gates-non-blocking — a judgement about agent flow around an advisory step's exit code, not a /ship-checked exit code of its own."
     },
     {
       "line": "exit code is a **reporting** signal, not a staging one:",
-      "reason": "0.5d. States that build-dashboard.mjs's exit code is read for reporting only, never for staging — design rationale for how this advisory step is composed, not an enforcement claim about /ship's own execution."
+      "reason": "0.5d. States that build-dashboard.mjs's exit code is read for reporting only, never for staging — design rationale for how this advisory step is composed, not an enforcement claim about /ship-checked's own execution."
     },
     {
       "line": "**Call the script by path, never `npm run security:refresh`** — that alias",
-      "reason": "Step 6.5 operator instruction about how to INVOKE the refresher script, not a gate /ship enforces (condensed 2026 Phase-3; supersedes the removed longer paragraph with the same disposition). `never` forbids an alias that only exists in the source repo. Nothing in this repo can assert what an agent types into a shell."
+      "reason": "Step 6.5 operator instruction about how to INVOKE the refresher script, not a gate /ship-checked enforces (condensed 2026 Phase-3; supersedes the removed longer paragraph with the same disposition). `never` forbids an alias that only exists in the source repo. Nothing in this repo can assert what an agent types into a shell."
     },
     {
       "line": "exists in the source repo only (the sync never merges npm scripts into a",
-      "reason": "Continuation of the line above, naming WHY the npm alias is source-repo-only (the sync never merges npm scripts into a consumer's package.json) — a fact about the sync mechanism, not a /ship enforcement claim. Same disposition as the pre-existing entries for this incident."
+      "reason": "Continuation of the line above, naming WHY the npm alias is source-repo-only (the sync never merges npm scripts into a consumer's package.json) — a fact about the sync mechanism, not a /ship-checked enforcement claim. Same disposition as the pre-existing entries for this incident."
     },
     {
       "line": "> empty. That is a correct empty, not a broken one: this step must not read an",
@@ -631,15 +631,15 @@
     },
     {
       "line": "`--page-size` is the alias of `--limit` (default 20, cap 200); `--offset` is",
-      "reason": "Step 6.7. Descriptive prose about the final-review-pending CLI's flag contract (page-size alias, cap 200, no offset support) — enforced by that CLI and its own tests, not a /ship gate. Same disposition as the pre-existing '--page-size is the alias of --limit' entry it replaces."
+      "reason": "Step 6.7. Descriptive prose about the final-review-pending CLI's flag contract (page-size alias, cap 200, no offset support) — enforced by that CLI and its own tests, not a /ship-checked gate. Same disposition as the pre-existing '--page-size is the alias of --limit' entry it replaces."
     },
     {
       "line": "outright, so recording a ruling here is never undone by a later triage pass.",
-      "reason": "Step 6.7. Describes user_action's durable-override semantics (once set, it wins outright over a later triage pass) — a property of the store's write contract, not a /ship exit code. Same disposition as the pre-existing entry for this claim."
+      "reason": "Step 6.7. Describes user_action's durable-override semantics (once set, it wins outright over a later triage pass) — a property of the store's write contract, not a /ship-checked exit code. Same disposition as the pre-existing entry for this claim."
     },
     {
       "line": "round or a consolidated union-diff gate upserts the new snapshot and prunes",
-      "reason": "Step 6.7, condensed 2026 Phase-3. Describes recordFinalReviewFindings's upsert-and-prune behaviour (a re-run does not erase prior rulings) — enforced by scripts/lib/store/runs-findings.mjs and pinned by tests/final-review-replay-db.test.mjs and tests/final-review-persistence-isolation.test.mjs, not a claim /ship's own execution enforces. Same disposition as the pre-existing entries for this incident."
+      "reason": "Step 6.7, condensed 2026 Phase-3. Describes recordFinalReviewFindings's upsert-and-prune behaviour (a re-run does not erase prior rulings) — enforced by scripts/lib/store/runs-findings.mjs and pinned by tests/final-review-replay-db.test.mjs and tests/final-review-persistence-isolation.test.mjs, not a claim /ship-checked's own execution enforces. Same disposition as the pre-existing entries for this incident."
     },
     {
       "line": "(never a gate), not a reason to force a push now. Incident history behind",
@@ -647,7 +647,7 @@
     },
     {
       "line": "path>`, deleted once the commit lands) works too, but never your session",
-      "reason": "Step 6.2, condensed 2026 Phase-4 size-reduction. Operator instruction about NOT using the session scratchpad dir for the commit-message file — `--message-file` refuses any path outside repoRoot, a real refusal tested in tests/ship-commit-cli.test.mjs (the escapes-repo case), not a claim /ship's own execution makes about itself beyond that existing binding. Same disposition as the pre-existing 'Not your session scratchpad dir' entry it replaces."
+      "reason": "Step 6.2, condensed 2026 Phase-4 size-reduction. Operator instruction about NOT using the session scratchpad dir for the commit-message file — `--message-file` refuses any path outside repoRoot, a real refusal tested in tests/ship-commit-cli.test.mjs (the escapes-repo case), not a claim /ship-checked's own execution makes about itself beyond that existing binding. Same disposition as the pre-existing 'Not your session scratchpad dir' entry it replaces."
     },
     {
       "line": "scratchpad dir — `--message-file` refuses any path outside `repoRoot`. Why",
@@ -663,7 +663,7 @@
     },
     {
       "line": "to chase it. `--no-run-id --gate not-run` disclaims a marker inherited from",
-      "reason": "Step 6.2. Names the `--no-run-id --gate not-run` combination and what it disclaims — a usage instruction for the ship-commit CLI's own documented flag, not a /ship exit-code claim beyond what gate-converged-requires-verified-divergence and the sibling document-only gates already cover. Same disposition as the pre-existing '--no-run-id exists' entry it replaces."
+      "reason": "Step 6.2. Names the `--no-run-id --gate not-run` combination and what it disclaims — a usage instruction for the ship-commit CLI's own documented flag, not a /ship-checked exit-code claim beyond what gate-converged-requires-verified-divergence and the sibling document-only gates already cover. Same disposition as the pre-existing '--no-run-id exists' entry it replaces."
     },
     {
       "line": "disposition is `incomplete-expectation` → exit 2. You may omit both flags",
@@ -671,15 +671,15 @@
     },
     {
       "line": "**Continuing work in the same worktree after a squash merge: rebase, never",
-      "reason": "Step 6.3, condensed 2026 Phase-4. Git-workflow guidance the agent applies when choosing rebase vs merge after a squash-merged PR — there is no `/ship` CLI exit code to assert, because ship-commit.mjs never sees which git command the agent chose beforehand. Same disposition as the pre-existing 'Continuing work in the same worktree after a squash merge' entry it replaces."
+      "reason": "Step 6.3, condensed 2026 Phase-4. Git-workflow guidance the agent applies when choosing rebase vs merge after a squash-merged PR — there is no `/ship-checked` CLI exit code to assert, because ship-commit.mjs never sees which git command the agent chose beforehand. Same disposition as the pre-existing 'Continuing work in the same worktree after a squash merge' entry it replaces."
     },
     {
       "line": "| `references/commit-provenance-deep-dive.md` | Step 6.2/6.3's AI-Gate and worktree-identity deep-dive — why each value/flag exists and the incidents behind them. | Debugging `--gate`/`--expect-head`/`--expect-branch` behaviour, or before changing one. |",
-      "reason": "The reference-index ROW for the new commit-provenance-deep-dive.md file, added by the Phase-4 size-reduction. Index rows describe what a document covers; they are not gate claims about /ship's behaviour. Matched on 'gate' inside '--gate' and 'AI-Gate', same class as the existing command-example-text entries in this file."
+      "reason": "The reference-index ROW for the new commit-provenance-deep-dive.md file, added by the Phase-4 size-reduction. Index rows describe what a document covers; they are not gate claims about /ship-checked's behaviour. Matched on 'gate' inside '--gate' and 'AI-Gate', same class as the existing command-example-text entries in this file."
     },
     {
       "line": "never reaches them). For a branch/PR ship, the synced-bundle row is `unverified",
-      "reason": "States what the repo pre-push hook does (2026-10-10): consumer sync runs only when the push updates the default branch AND the checkout is that commit, so a branch ship publishes nothing to consumers. The behaviour lives in .githooks/pre-push, outside /ship's exit code, and is pinned behaviourally by tests/prepush-consumer-sync.test.mjs (5 cases, both directions). The /ship-side instruction it carries, reporting the synced-bundle row as unverified until the post-merge sync, is agent output in Step 6.8, which is advisory."
+      "reason": "States what the repo pre-push hook does (2026-10-10): consumer sync runs only when the push updates the default branch AND the checkout is that commit, so a branch ship publishes nothing to consumers. The behaviour lives in .githooks/pre-push, outside /ship-checked's exit code, and is pinned behaviourally by tests/prepush-consumer-sync.test.mjs (5 cases, both directions). The /ship-side instruction it carries, reporting the synced-bundle row as unverified until the post-merge sync, is agent output in Step 6.8, which is advisory."
     },
     {
       "line": "Step 0.5f's override handling. Never add one on the skill's own initiative to get",
@@ -795,7 +795,7 @@
     },
     {
       "line": "> trailers), stop and tell the user: no gate ran.",
-      "reason": "The host built-in tripwire (added 2026-11-24 for Claude Ship). An instruction to the agent for the case where Claude Code's own /ship ran instead of this skill; no /ship code runs in that case, so there is no exit code to assert. The mechanical guard for the collision is skills:check's reserved-name rule (scripts/lib/skill-reserved-names.mjs, tests/skill-reserved-names.test.mjs)."
+      "reason": "The host built-in tripwire (added 2026-11-24 for Claude Ship). An instruction to the agent for the case where Claude Code's own built-in /ship ran instead of this skill; no /ship-checked code runs in that case, so there is no exit code to assert. The mechanical guard for the collision is skills:check's reserved-name rule (scripts/lib/skill-reserved-names.mjs, tests/skill-reserved-names.test.mjs)."
     }
   ]
 }

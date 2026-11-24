@@ -254,10 +254,10 @@ export async function finalReviewStatsCmd(ctx) {
 
 /**
  * `final-review-pending` — findings awaiting credit; the READ that makes
- * /ship's nudge possible.
+ * /ship-checked's nudge possible.
  *
  * THREE states, exit 0 for all of them (`ready`/`disabled`/`unavailable`),
- * because /ship must continue through every one: a credit nudge that can fail
+ * because /ship-checked must continue through every one: a credit nudge that can fail
  * a ship is worse than no nudge. The `unavailable` diagnostic is a CODE from a
  * closed set — never `err.message`, whose contents can include a DSN or key.
  */

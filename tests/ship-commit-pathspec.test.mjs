@@ -46,7 +46,7 @@ function msgFile(text = 'feat: scoped subject\n\nbody\n') {
 }
 
 
-const BASE = (mf) => ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(repo)];
+const BASE = (mf) => ['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', ...identityArgs(repo)];
 
 /** Files touched by the commit at HEAD. */
 function filesInHead() {
@@ -59,7 +59,7 @@ beforeEach(() => {
   git(['config', 'user.email', 'test@example.com']);
   git(['config', 'user.name', 'Test']);
   git(['config', 'commit.gpgsign', 'false']);
-  fs.mkdirSync(path.join(repo, 'skills', 'ship'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'skills', 'ship-checked'), { recursive: true });
   fs.writeFileSync(path.join(repo, 'README.md'), 'seed\n');
   git(['add', 'README.md']);
   git(['commit', '-q', '-m', 'seed']);
@@ -77,7 +77,7 @@ describe('ship-commit --path', () => {
 
     assert.deepEqual(filesInHead(), ['mine.txt']);
     const body = git(['log', '-1', '--format=%B']);
-    assert.match(body, /AI-Skill: ship\n/);
+    assert.match(body, /AI-Skill: ship-checked\n/);
     assert.match(body, /AI-Gate: not-run/);
   });
 

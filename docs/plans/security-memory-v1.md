@@ -565,7 +565,7 @@ Soft warning only — never blocks plan generation.
 
 | File | Status | Edit |
 |---|---|---|
-| `skills/ship/SKILL.md` | EDIT | (R-Gemini-G1 — corrected: `/ship` is `disable-model-invocation: true` and explicitly forbids confirmation prompts; an interactive prompt would break the autonomous fire-and-forget contract.) Replace interactive prompt with **passive log message after successful push**. After git push succeeds, regex-match HEAD commit subject against `/fix.*security\|cve\|vuln\|leak\|injection\|auth\|xss\|csrf\|rce/i`. If matched, emit (to stdout, not interactive prompt): `⚠ Security-relevant commit detected: "<subject>". Run \`/security-strategy add-incident\` to draft an incident entry from this fix.` No blocking, no input — user reads the message and decides whether to invoke separately. Single line, easy to grep, easy to ignore if not needed. |
+| `skills/ship-checked/SKILL.md` | EDIT | (R-Gemini-G1 — corrected: `/ship` is `disable-model-invocation: true` and explicitly forbids confirmation prompts; an interactive prompt would break the autonomous fire-and-forget contract.) Replace interactive prompt with **passive log message after successful push**. After git push succeeds, regex-match HEAD commit subject against `/fix.*security\|cve\|vuln\|leak\|injection\|auth\|xss\|csrf\|rce/i`. If matched, emit (to stdout, not interactive prompt): `⚠ Security-relevant commit detected: "<subject>". Run \`/security-strategy add-incident\` to draft an incident entry from this fix.` No blocking, no input — user reads the message and decides whether to invoke separately. Single line, easy to grep, easy to ignore if not needed. |
 
 ### I. CLI + sync
 
@@ -688,7 +688,7 @@ Machine-checkable post-implementation:
 | AC7 | No `active` enum value anywhere in migration or status resolver | `! grep -E "'active'" supabase/migrations/20260504120000_security_incidents.sql scripts/security-memory/incident-status.mjs` |
 | AC8 | (R2-H3 — corrected after R1-M3 design change) Composite score weights live CLIENT-SIDE, env-tunable; RPC returns raw signals only | `! grep -q "composite_score" supabase/migrations/20260504120000_security_incidents.sql` AND `grep -q "SEC_SCORE_W_COSINE" scripts/lib/neighbourhood-query.mjs`. Subsumes AC21 — single check. |
 | AC9 | Path-overlap force-include verified live | smoke step 4 (above) returns row with `path_overlap: true` ranked first |
-| AC10 | `/ship` hook prompt only fires on security-pattern commits | grep `fix.*security\|cve\|vuln\|leak\|injection\|auth\|xss\|csrf\|rce` skills/ship/SKILL.md |
+| AC10 | `/ship` hook prompt only fires on security-pattern commits | grep `fix.*security\|cve\|vuln\|leak\|injection\|auth\|xss\|csrf\|rce` skills/ship-checked/SKILL.md |
 | AC11 | `npm run security:refresh` defined + works | `npm run security:refresh -- --help` (or trial run) exits 0 |
 | AC12 | (R3-H1 — strengthened from "OR" to "AND") `redactSecrets()` applied at EVERY text-egress site | All sites must grep clean: (1) `grep -q redactSecrets scripts/security-memory/refresh-incidents.mjs` (description+lessons before Gemini embed), (2) `grep -q redactSecrets scripts/lib/neighbourhood-query.mjs` (intent before Gemini embed AND before Haiku rephrase). Test asserts: input containing `sk-…` shaped secret yields `redactionCount > 0` and the secret string never reaches the SDK call. |
 | AC13 | Sync includes new files | grep `security-memory` scripts/sync-to-repos.mjs returns 3 files |

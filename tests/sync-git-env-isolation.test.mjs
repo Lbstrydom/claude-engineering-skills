@@ -4,7 +4,7 @@
  * ## The incident (root-caused 2026-07-30)
  *
  * git's hook machinery exports `GIT_DIR`/`GIT_WORK_TREE` into a hook's process
- * (githooks(5)), and those variables take PRECEDENCE OVER `cwd`. `/ship`'s push
+ * (githooks(5)), and those variables take PRECEDENCE OVER `cwd`. `/ship-checked`'s push
  * runs `.githooks/pre-push`, which runs `sync-to-repos.mjs`, which runs
  * `untrackNewlyIgnored` with `cwd: <consumer>` — so every git call silently
  * retargeted the PUSHING repo. It listed the source repo's tracked files,

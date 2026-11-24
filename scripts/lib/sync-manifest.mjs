@@ -6,7 +6,7 @@
  * claude-engineering-skills.
  *
  * Flow:
- *   1. /ship in claude-engineering-skills regenerates scripts/.sync-manifest.json
+ *   1. /ship-checked in claude-engineering-skills regenerates scripts/.sync-manifest.json
  *      (via sync-to-repos.mjs at the start of every sync).
  *   2. The manifest is committed + pushed alongside the audit-tool code.
  *   3. Consumer repos' openai-audit.mjs fetches the manifest on startup,
@@ -243,7 +243,7 @@ export function findRepoRoot(startDir = process.cwd()) {
  * invalid, or not a regular file — refuses to ship a partial manifest
  * because consumers compare against it as a complete contract.  Pass
  * `{ strict: false }` to downgrade to a warning + omit (only for ad-hoc
- * tooling, never for /ship).
+ * tooling, never for /ship-checked).
  */
 export function generateManifest(rootDir, files, opts = {}) {
   const meta = getGitMeta(rootDir);

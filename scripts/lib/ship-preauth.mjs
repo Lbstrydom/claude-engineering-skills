@@ -2,7 +2,7 @@
  * @fileoverview The conditions under which a chip may ship ITSELF — the pre-authorised ship (coordinator rules 1 and 4;
  * docs/plans/fleet-chips-and-merge-friction.md section 2.2b).
  *
- * `/ship` is user-only by design (it cannot be invoked programmatically). A chip's launch prompt may nevertheless pre-authorise
+ * `/ship-checked` is user-only by design (it cannot be invoked programmatically). A chip's launch prompt may nevertheless pre-authorise
  * the ship steps, but only while a fixed set of conditions holds. Until now those conditions lived in prose a chip read about
  * itself, which is the weakest place for a check on the actor it constrains: a chip that has just spent hours on a change is the
  * one most able to talk itself past "no sensitive paths". So the decision is code, in ONE place, and `ship-commit.mjs
@@ -18,6 +18,7 @@
  */
 import { classifyPath, normalisePath } from './sensitive-paths.mjs';
 import { matchFinalReviewMarker } from './final-review-marker.mjs';
+import { canonicalSkillName } from './skill-reserved-names.mjs';
 
 /** The conditions, in the order they are reported. The ids are the refusal names the plan fixes. */
 export const PREAUTH_CONDITIONS = Object.freeze([
@@ -171,7 +172,7 @@ export function evaluateShippedHead(f = {}) {
       if (n === 0) bad.push(`${key} is missing (an inline text block is not a trailer)`);
       else if (n > 1) bad.push(`${key} appears ${n} times`);
     }
-    if (one('AI-Skill') !== null && one('AI-Skill') !== 'ship') bad.push(`AI-Skill is ${JSON.stringify(one('AI-Skill'))}, not ship`);
+    if (one('AI-Skill') !== null && canonicalSkillName(one('AI-Skill')) !== 'ship-checked') bad.push(`AI-Skill is ${JSON.stringify(one('AI-Skill'))}, not ship-checked`);
     if (one('AI-Ship-Authority') !== null && one('AI-Ship-Authority') !== 'launch-prompt') bad.push(`AI-Ship-Authority is ${JSON.stringify(one('AI-Ship-Authority'))}, not launch-prompt`);
     if (gate !== null && !AI_GATE_SHIPPABLE.has(gate)) bad.push(`AI-Gate is ${JSON.stringify(gate)}; only passed or converged may ship without the user`);
     if (one('AI-Final-Review') !== null && one('AI-Final-Review') !== 'approve') bad.push(`AI-Final-Review is ${JSON.stringify(one('AI-Final-Review'))}, not approve`);
@@ -211,7 +212,7 @@ export function evaluateShippedHead(f = {}) {
   else if (String(rr.geminiVerdict).toUpperCase() !== 'APPROVE') c.push(row('final-review', false, `the store records the run's final review as ${rr.geminiVerdict}, the marker says APPROVE`));
   else c.push(row('final-review', true, `APPROVE (result approve) on run ${runId?.slice(0, 8)}, round ${ev.round}, the audited tree, corroborated by the store`));
 
-  // 4. the delta between the AUDITED tree and the shipped head is only what /ship itself writes.
+  // 4. the delta between the AUDITED tree and the shipped head is only what /ship-checked itself writes.
   if (!f.delta) c.push(row('post-audit-delta', false, 'the post-audit delta was not measured, so nothing was checked'));
   else c.push(f.delta.ok ? row('post-audit-delta', true, f.delta.reason ?? 'only ship-step edits since the audit') : row('post-audit-delta', false, f.delta.reason ?? 'a change since the audit is not a ship-step edit'));
 

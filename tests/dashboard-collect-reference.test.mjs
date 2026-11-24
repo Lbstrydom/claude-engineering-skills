@@ -45,12 +45,12 @@ describe('collectReference — skills source (consumer path)', () => {
     );
     assert.ok(ref.skills.length > 0, 'skills list must be non-empty');
 
-    // Sentinel authority: skills/ship/SKILL.md, the committed source the skills index
-    // reads — `ship` is one of the skills this repo cannot lose without every other
+    // Sentinel authority: skills/ship-checked/SKILL.md, the committed source the skills index
+    // reads — `ship-checked` is one of the skills this repo cannot lose without every other
     // gate (skills:check, the roster docs) failing first.
     assert.ok(
-      ref.skills.some((s) => s.name === 'ship'),
-      `sentinel skill "ship" missing from: ${ref.skills.map((s) => s.name).join(', ')}`,
+      ref.skills.some((s) => s.name === 'ship-checked'),
+      `sentinel skill "ship-checked" missing from: ${ref.skills.map((s) => s.name).join(', ')}`,
     );
   });
 
@@ -67,13 +67,13 @@ describe('collectReference — skills source (consumer path)', () => {
     );
 
     const ref = await collectReference({ collectHome: stubHome });
-    const ship = ref.skills.find((s) => s.name === 'ship');
+    const ship = ref.skills.find((s) => s.name === 'ship-checked');
 
     for (const key of ['name', 'oneLiner', 'triggers', 'usage', 'disableModelInvocation', 'path']) {
       assert.ok(key in ship, `projected skill record is missing "${key}"`);
     }
     // The rendered `path` is cwd-relative by contract (see the cwd note in
     // scripts/lib/skills-index.mjs). Re-rooting it would change dashboard output.
-    assert.equal(ship.path, 'skills/ship/SKILL.md');
+    assert.equal(ship.path, 'skills/ship-checked/SKILL.md');
   });
 });

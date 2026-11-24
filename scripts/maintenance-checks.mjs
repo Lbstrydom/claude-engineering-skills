@@ -441,7 +441,7 @@ export const CHECKS = [
     // stuck `pending`/`planned` that the live-audit-round lifecycle
     // (session-scoped, round-diff-scoped, 14-day-bounded) structurally
     // cannot reach. Uncapped here (no `--cap`) — the weekly cadence itself
-    // bounds total spend, unlike the small capped call /ship Step 0.5e makes
+    // bounds total spend, unlike the small capped call /ship-checked Step 0.5e makes
     // on every push. `--apply` because a dry-run report nobody reads changes
     // nothing; this entry exists specifically to close the loop unattended.
     key: 'remediation-reconcile',

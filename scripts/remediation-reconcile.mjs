@@ -42,7 +42,7 @@ export const KNOWN_FLAGS = Object.freeze(['--selfcheck-relocation', '--apply', '
 const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
 
 // No `--cap` means UNCAPPED (bounded only by ROW_FETCH_LIMIT below), not some
-// hidden default — the two call sites make opposite choices on purpose: /ship
+// hidden default — the two call sites make opposite choices on purpose: /ship-checked
 // Step 0.5e passes an explicit small `--cap` (it pays this in wall-clock and $
 // on every push), the weekly-maintenance entry passes none (a periodic
 // cadence already bounds total spend, and the whole point of that path is

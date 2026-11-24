@@ -23,7 +23,7 @@ export const CORE_ENTRY = [
   // that names it is synced: a documented command whose tooling is absent where
   // it runs is the shape AGENTS.md records as defect class (4).
   'scripts/cycle-cluster-scope.mjs',
-  // /cycle Step 7 and /ship Step 6 wait for CI on the pushed head and merge through it (theme 2, consumer feedback 2026-11-11);
+  // /cycle Step 7 and /ship-checked Step 6 wait for CI on the pushed head and merge through it (theme 2, consumer feedback 2026-11-11);
   // both synced SKILL.md files name the command, so a consumer must have it.
   'scripts/ci-merge.mjs',
   // /cycle Step 0.5's cross-plan coordination check (`--check-deps`, upstream
@@ -75,7 +75,7 @@ export const CORE_ENTRY = [
   // runs it from its landed path in every consumer.
   'scripts/check-windowed-views.mjs',
   // Third in the same family, and the same failure: TWO synced skills instruct
-  // `npm run context:check` — /ship Step 4 and every mode of
+  // `npm run context:check` — /ship-checked Step 4 and every mode of
   // /ai-context-management — while the script implementing it stayed
   // source-repo-only. A consumer wired the npm script against the isolated
   // path it *should* live at, and got `Cannot find module` repo-wide (reported
@@ -181,12 +181,12 @@ export const CORE_ENTRY = [
   // so the walker cannot find it; a policy-private consumer runs `report` against ITS OWN store, the analysis going to the data
   // (field report 5, 2026-11-23). No fs-read assets. Also in CLI_SMOKE_SET.
   'scripts/capture-completeness.mjs',
-  // Deterministic /ship commit helper — validates + appends the AI-*
+  // Deterministic /ship-checked commit helper — validates + appends the AI-*
   // provenance trailer block and performs the commit (docs/reference/commit-provenance.md).
-  // /ship SKILL.md shells it, nothing imports it. Walker pulls in
+  // /ship-checked SKILL.md shells it, nothing imports it. Walker pulls in
   // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
   'scripts/ship-commit.mjs',
-  // Ship record catch-up (docs/plans/ship-record-catchup.md): /ship's record half for PRs merged without /ship. Nothing
+  // Ship record catch-up (docs/plans/ship-record-catchup.md): /ship-checked's record half for PRs merged without /ship-checked. Nothing
   // imports it — SKILL.md, the coordinator playbook and fleet's record-count child (a SIBLING of fleet.mjs) shell it, so it
   // must ship beside fleet.mjs in every consumer. Walker pulls in lib/ship-record/**. Also in CLI_SMOKE_SET.
   'scripts/ship-record.mjs',
@@ -246,7 +246,7 @@ export const CORE_ENTRY = [
   // consumer's. Shipped 2026-08-07 AFTER the shared reference that names it had
   // already synced without it: the reference told consumers to run a script no
   // consumer layout had, which is the helper-path-drift class filed as
-  // wine-cellar-app 2026-07-19 §4 and caught by /ship Step 6.8's first real run.
+  // wine-cellar-app 2026-07-19 §4 and caught by /ship-checked Step 6.8's first real run.
   'scripts/check-doc-citations.mjs',
   'scripts/sync-status.mjs', // consumer git-status ownership triage; see the file's own header
   // Local weekly-maintenance replica of the 5 GH Actions cron workflows
@@ -281,7 +281,7 @@ export const CORE_ENTRY = [
   'scripts/slice-recurrence-check.mjs',
   // Local-vs-store debt reconciler — consumers carry the same divergence.
   'scripts/debt-reconcile.mjs',
-  // Per-ship backlog snapshot the synced /ship SKILL.md tells the operator to
+  // Per-ship backlog snapshot the synced /ship-checked SKILL.md tells the operator to
   // run. Consumers carry the same standing queues, and a documented command
   // whose tooling is absent where it runs is defect class (4) in AGENTS.md.
   // Resolves its sibling readers relative to its OWN directory, so it works
@@ -293,7 +293,7 @@ export const CORE_ENTRY = [
   // scripts/maintenance-checks.mjs's `remediation-reconcile` CHECKS entry
   // (same shape as its siblings just above — declare or it MODULE_NOT_FOUNDs
   // in every consumer, exactly the 2026-07-22 wine-cellar-app incident this
-  // comment block already records once) and by /ship Step 0.5e's best-effort
+  // comment block already records once) and by /ship-checked Step 0.5e's best-effort
   // capped call. The walker pulls in its scripts/lib/remediation-verification.mjs
   // + sensitive-paths.mjs + vcs.mjs closure automatically. Also in
   // CLI_SMOKE_SET (sync-isolation-verify.mjs).

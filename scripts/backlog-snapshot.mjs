@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * @fileoverview backlog-snapshot — one line summarising every standing queue,
- * for the `/ship` status entry.
+ * for the `/ship-checked` status entry.
  *
- * **Why it does its own reads.** An earlier design had `/ship` Step 0.5 persist
+ * **Why it does its own reads.** An earlier design had `/ship-checked` Step 0.5 persist
  * the envelopes it had already fetched, and this command read them back. That
  * saved four cheap store reads (~2s, no LLM, no spend) and cost an entire
  * artifact protocol: envelope versioning, atomic writes, collision rules, and a
@@ -49,7 +49,7 @@ const KNOWN_FLAGS = ['--json', '--help', '-h', '--selfcheck-relocation'];
 function printUsage() {
   process.stderr.write(`Usage: node scripts/backlog-snapshot.mjs [--json]
 
-Print one line summarising the standing queues, for the /ship status entry.
+Print one line summarising the standing queues, for the /ship-checked status entry.
 Reads every queue itself, read-only, at a single instant. Writes no file.
 
 Options:

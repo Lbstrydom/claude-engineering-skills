@@ -237,7 +237,7 @@ export const EXEMPTIONS = Object.freeze({});
 /**
  * The ONE spelling of each pending-note command.
  *
- * `/ship` Step 2 READS the notes and Step 6.8 WRITES one, so the two must reach
+ * `/ship-checked` Step 2 READS the notes and Step 6.8 WRITES one, so the two must reach
  * the same store — and they carried hand-copied recipes with nothing comparing
  * them. That is the producer/consumer-must-agree class this repo keeps fixing,
  * reappearing inside a single document. `checkDocumentedRecipes` compares every
@@ -261,7 +261,7 @@ export const PENDING_NOTE_WRITE_RECIPE = 'node scripts/lib/worktree-preflight.mj
  * Do the DOCS still quote the canonical recipes byte-for-byte?
  *
  * Closes the last two hand-copied spellings this subsystem had (2026-08-14):
- * `skills/ship/SKILL.md` carries the pending-note path recipe twice — once
+ * `skills/ship-checked/SKILL.md` carries the pending-note path recipe twice — once
  * where Step 6.8 WRITES the file and once where Step 2 READS it — and
  * `docs/runbooks/consumer-adoption.md` carries the consumer `skills:hydrate`
  * one-liner. Nothing compared any of them.
@@ -291,8 +291,8 @@ export function checkDocumentedRecipes(rootDir, io = {}) {
     // recipe now inlined in every skill's MARKER_BLOCK — and compared it against
     // the WRONG canonical, reporting drift on a line that is byte-correct. A
     // subject claims a line only when no other subject's key appears on it.
-    { file: 'skills/ship/SKILL.md', marker: 'pending-note read', canonical: PENDING_NOTE_READ_RECIPE, needs: 'node scripts/lib/worktree-preflight.mjs' },
-    { file: 'skills/ship/SKILL.md', marker: 'pending-note write', canonical: PENDING_NOTE_WRITE_RECIPE, needs: 'node scripts/lib/worktree-preflight.mjs' },
+    { file: 'skills/ship-checked/SKILL.md', marker: 'pending-note read', canonical: PENDING_NOTE_READ_RECIPE, needs: 'node scripts/lib/worktree-preflight.mjs' },
+    { file: 'skills/ship-checked/SKILL.md', marker: 'pending-note write', canonical: PENDING_NOTE_WRITE_RECIPE, needs: 'node scripts/lib/worktree-preflight.mjs' },
     { file: 'docs/runbooks/consumer-adoption.md', marker: '"skills:hydrate"', canonical: CONSUMER_HYDRATE_NPM_SCRIPT, needs: '"skills:hydrate"' },
   ];
   const mismatches = [];
@@ -419,11 +419,11 @@ export function checkSkill(rootDir, skill) {
 // ── Ship pending-notes: occupancy, not just path agreement ──────────────────
 
 /**
- * `/ship` Step 6.8 writes a consumer-verification note that Step 2 of the NEXT
+ * `/ship-checked` Step 6.8 writes a consumer-verification note that Step 2 of the NEXT
  * ship reads, prepends to `status.md` and deletes. That handoff used ONE fixed
  * filename, written unconditionally, with no existence check — and the gap
  * between a write and the next read is unbounded, because Step 2 only runs
- * inside `/ship` and not every status.md commit is a ship. A second ship inside
+ * inside `/ship-checked` and not every status.md commit is a ship. A second ship inside
  * that gap destroyed an unread note by following the step as written. Hit live
  * 2026-09-06: a verified note was still unread ~10 hours later when the next
  * Step 6.8 ran (upstream b02d80b3).
@@ -563,7 +563,7 @@ export function clearPendingNotes(mainCheckout, names, io = {}) {
 // ── CLI: `pending-note read|write|clear` ────────────────────────────────────
 //
 // A module rather than a top-level script, and run BY PATH from the two
-// `/ship` steps, exactly as Step 6.8 already runs
+// `/ship-checked` steps, exactly as Step 6.8 already runs
 // `lib/sync-isolation-verify.mjs`: naming synced tooling by path is what makes
 // the command survive the rewrite into a consumer's `scripts/.claude-skills/`.
 

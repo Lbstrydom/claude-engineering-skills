@@ -67,7 +67,7 @@ function arrange({ message = 'feat: test subject\n\nbody line\n', stage = true }
 }
 
 const BASE_ARGS = (mf, cwd = repo) => [
-  '--message-file', mf, '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run',
+  '--message-file', mf, '--skill', 'ship-checked', '--models', 'claude,gpt', '--gate', 'not-run',
   ...identityArgs(cwd), ...scopeArgs(cwd),
 ];
 
@@ -93,7 +93,7 @@ const newRepo = makeRepoTemplate((dir) => {
   g(['config', 'user.name', 'Test']);
   g(['config', 'commit.gpgsign', 'false']);
   // skill-name enum source (§F1.3c): source layout uses skills/<name>/
-  fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'skills', 'ship-checked'), { recursive: true });
   // baseline commit so HEAD exists for most rows
   fs.writeFileSync(path.join(dir, 'README.md'), 'seed\n');
   g(['add', 'README.md']);
@@ -112,13 +112,13 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /ship-commit: committed "feat: happy path"/);
     const body = git(['log', '-1', '--format=%B']);
-    assert.match(body, /AI-Skill: ship\n/);
+    assert.match(body, /AI-Skill: ship-checked\n/);
     assert.match(body, /AI-Models: claude,gpt\n/);
     assert.match(body, /AI-Gate: not-run/);
     assert.match(body, /# markdown header must survive/, '--cleanup=whitespace preserves #-lines (Gemini R2-G2)');
     // parse-back through git's own trailer parser
     const parsed = spawnSync('git', ['interpret-trailers', '--parse'], { cwd: repo, input: body, encoding: 'utf-8', env: gitFixtureEnv() });
-    assert.match(parsed.stdout, /AI-Skill: ship/);
+    assert.match(parsed.stdout, /AI-Skill: ship-checked/);
     assert.match(parsed.stdout, /AI-Gate: not-run/);
   });
 
@@ -134,9 +134,9 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     const before = commitCount();
     for (const [args, family] of [
       [[...BASE_ARGS(mf), '--bogus'], /AGENT FIX: --bogus: unknown flag/],
-      [['--message-file', mf, '--skill', 'shipping', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --skill: expected one of \[ship\]/],
-      [['--message-file', mf, '--skill', 'ship', '--models', 'claude gpt', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --models:/],
-      [['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'green', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --gate:/],
+      [['--message-file', mf, '--skill', 'shipping', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --skill: expected one of \[ship-checked\]/],
+      [['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude gpt', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --models:/],
+      [['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'green', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --gate:/],
     ]) {
       const r = runCli(args);
       assert.equal(r.status, 2, r.stderr);
@@ -148,19 +148,19 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
   it('row 5: fresh evidence + --gate not-run → exit 2; and --gate passed without evidence → exit 2', () => {
     const mf = arrange();
     // no evidence: passed is illegal
-    let r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
+    let r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: no fresh audit evidence exists but --gate is "passed"/);
     // fresh evidence: not-run is illegal
     fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });
     fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
       JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: new Date(Date.now() + 60_000).toISOString() }));
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()]);
+    r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: an audit ran after HEAD/);
     // fresh evidence + passed, but the marker predates E1 (no audited-tree):
     // refused on IDENTITY before the store is even consulted.
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
+    r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /recorded no audited-tree identity/);
 
@@ -174,11 +174,11 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
         ts: new Date(Date.now() + 60_000).toISOString(),
         auditedTree: git(['write-tree']).trim(),
       }));
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
+    r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable \(AUDIT_DB_URL unset\)/);
     // fresh evidence + waived (declared, unverified): legal, AI-Run-ID auto-injected
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
+    r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844/);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
@@ -202,7 +202,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
 
     // Cloud is off in this harness, so the store leg refuses — which is the
     // point worth pinning: `converged` clears no cheaper bar than `passed`.
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged', ...identityArgs(), ...scopeArgs()]);
+    const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'converged', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: "converged" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable \(AUDIT_DB_URL unset\)/);
 
@@ -214,7 +214,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
         ts: new Date(Date.now() + 60_000).toISOString(),
         auditedTree: git(['write-tree']).trim(),
       }));
-    const r2 = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged', ...identityArgs(), ...scopeArgs()]);
+    const r2 = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'converged', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r2.status, 2);
     assert.match(r2.stderr, /understates it; use --gate passed/);
   });
@@ -231,7 +231,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
         ts: new Date(Date.now() + 60_000).toISOString(),
         auditedTree: 'a'.repeat(40),
       }));
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged', '--no-tests', ...identityArgs(), ...scopeArgs()]);
+    const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'converged', '--no-tests', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /--no-tests caps AI-Gate at "waived" \(was: converged\)/);
     const msg = git(['log', '-1', '--format=%B']);
@@ -247,7 +247,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     // directory. The temp index for the --path comparand was built at
     // path.join(repoRoot, '.git', …), so `git read-tree` exited 128 ("Unable to
     // create …/.git/<name>.lock: No such file or directory"), committedTree
-    // stayed null, and BOTH verified gates were refused. Because /ship's guard A
+    // stayed null, and BOTH verified gates were refused. Because /ship-checked's guard A
     // makes --path MANDATORY, `passed` was therefore structurally unreachable
     // for every scoped commit in every worktree — the same shape as the bug the
     // `converged` value exists to fix, one layer down.
@@ -264,7 +264,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
 
       // The base fixture's skill layout is untracked, so a fresh checkout has
       // none and resolveSkillNames would abort before reaching the gate logic.
-      fs.mkdirSync(path.join(wt, 'skills', 'ship'), { recursive: true });
+      fs.mkdirSync(path.join(wt, 'skills', 'ship-checked'), { recursive: true });
       fs.mkdirSync(path.join(wt, '.claude', 'tmp'), { recursive: true });
       const mf = path.join('.claude', 'tmp', 'msg.txt');
       fs.writeFileSync(path.join(wt, mf), 'feat: worktree scoped commit\n\nbody\n');
@@ -281,7 +281,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
         }));
 
       const r = runCli(
-        ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'converged',
+        ['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'converged',
           ...sharedIdentityArgs(wt), ...sharedScopeArgs(wt, 'work.txt')],
         wt,
       );
@@ -360,7 +360,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
 
   it('row 12: not a git repo → exit 1', () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-bare-'));
-    const r = runCli(['--message-file', 'x.txt', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], bare);
+    const r = runCli(['--message-file', 'x.txt', '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run'], bare);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /ship-commit: git:/);
     fs.rmSync(bare, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -406,7 +406,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     const mf = arrange();
     const hooksDir = path.join(repo, '.git', 'hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
-    fs.writeFileSync(path.join(hooksDir, 'commit-msg'), '#!/bin/sh\necho "AI-Skill: ship" >> "$1"\n');
+    fs.writeFileSync(path.join(hooksDir, 'commit-msg'), '#!/bin/sh\necho "AI-Skill: ship-checked" >> "$1"\n');
     fs.chmodSync(path.join(hooksDir, 'commit-msg'), 0o755);
     const r = runCli(BASE_ARGS(mf));
     assert.equal(r.status, 1);
@@ -447,7 +447,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     g(['config', 'user.email', 't@e.c']);
     g(['config', 'user.name', 'T']);
     g(['config', 'commit.gpgsign', 'false']);
-    fs.mkdirSync(path.join(fresh, 'skills', 'ship'), { recursive: true });
+    fs.mkdirSync(path.join(fresh, 'skills', 'ship-checked'), { recursive: true });
     fs.mkdirSync(path.join(fresh, '.claude', 'tmp'), { recursive: true });
     fs.mkdirSync(path.join(fresh, '.audit'), { recursive: true });
     fs.writeFileSync(path.join(fresh, '.claude', 'tmp', 'msg.txt'), 'feat: first commit\n\nbody\n');
@@ -455,7 +455,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
       JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2020-01-01T00:00:00Z' }));
     fs.writeFileSync(path.join(fresh, 'work.txt'), 'x\n');
     g(['add', 'work.txt']);
-    const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude',
+    const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship-checked', '--models', 'claude',
       // Unborn HEAD skips guard B, but guard A still applies: the index is
       // non-empty, so the first commit must name what it ships like any other.
       '--gate', 'waived', '--path', 'work.txt'], fresh);
@@ -473,7 +473,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.equal(commitCount(), before);
   });
 
-  // --check-migrations: the read-only preflight /ship's Step 0.5g runs so an
+  // --check-migrations: the read-only preflight /ship-checked's Step 0.5g runs so an
   // unapplied-migration block surfaces before the doc-update + readiness-suite
   // work that follows, instead of only at Step 6.3 (report 2b7988de).
   it('--check-migrations, cloud off → exit 0, reports realized, no git side effects', () => {
@@ -583,7 +583,7 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
     // scoping to `work.txt` alone would legitimately match the audited tree and
     // E1 would (correctly) not fire. So the row now models an author who ships
     // the unaudited file deliberately, which is the case E1 still owns.
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed',
+    const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'passed',
       ...identityArgs(), '--path', 'work.txt', '--path', 'sneaked-in.txt']);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /is not what run .* audited/);
@@ -598,7 +598,7 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
     git(['add', 'other.txt']);
     freshMarker({ auditedTree: git(['write-tree']).trim() });
 
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude',
+    const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude',
       '--gate', 'passed', '--path', 'other.txt', ...identityArgs()]);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /cannot resolve the tree being committed|is not what run .* audited/);
@@ -607,7 +607,7 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
   it('waived is still reachable on a mismatched tree (the identity check only gates passed)', () => {
     const mf = arrange();
     freshMarker({ auditedTree: 'a'.repeat(40) });   // deliberately not our tree
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
+    const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
@@ -628,7 +628,7 @@ describe('ship-commit CLI — AI-Final-Review', () => {
   const finalReviewMarker = (auditedTree, extra = {}) => fs.writeFileSync(path.join(repo, '.audit', 'last-final-review.json'), JSON.stringify({
     runId: RUN_ID, auditedTree, round: ROUND, verdict: 'CONCERNS', disposition: 'approve_with_debt', ts: new Date().toISOString(), ...extra,
   }));
-  const waivedShip = (mf) => runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
+  const waivedShip = (mf) => runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
   const finalReviewTrailers = () => String(git(['log', '-1', '--format=%(trailers:key=AI-Final-Review,valueonly)'])).trim();
 
   it('a marker bound to the run, tree and round the gate evidence names: the commit carries AI-Final-Review beside AI-Gate: waived (the consumer case)', () => {
@@ -678,7 +678,7 @@ describe('ship-commit CLI — AI-Final-Review', () => {
     assert.doesNotMatch(String(git(['log', '-1', '--format=%B'])), /AI-Final-Review/);
     mf = arrange();
     finalReviewMarker(gateEvidence());
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--no-run-id', ...identityArgs(), ...scopeArgs()]);
+    const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', '--no-run-id', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(String(git(['log', '-1', '--format=%B'])), /AI-Final-Review|AI-Run-ID/);
   });
@@ -689,7 +689,7 @@ describe('ship-commit CLI — AI-Final-Review', () => {
       const mf = arrange();
       const tree = gateEvidence();
       if (withMarker) finalReviewMarker(tree, { verdict: 'APPROVE', disposition: 'approve' });
-      const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
+      const r = runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
       const out = { status: r.status, stderr: r.stderr.replaceAll(repo, '<repo>'), commits: commitCount() };
       fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       return out;
@@ -744,7 +744,7 @@ describe('--message-file - (stdin)', () => {
     git(['add', 'README.md']);
     const before = commitCount();
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()],
+      ['--message-file', '-', '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()],
       'feat: piped subject\n\nbody line\n');
     assert.equal(r.status, 0, r.stderr);
     assert.equal(commitCount(), before + 1, 'the commit must actually land');
@@ -759,11 +759,11 @@ describe('--message-file - (stdin)', () => {
     fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
     git(['add', 'README.md']);
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()],
+      ['--message-file', '-', '--skill', 'ship-checked', '--models', 'claude,gpt', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()],
       'chore: trailers please\n');
     assert.equal(r.status, 0, r.stderr);
     const body = git(['log', '-1', '--format=%B']);
-    assert.match(body, /AI-Skill: ship/);
+    assert.match(body, /AI-Skill: ship-checked/);
     assert.match(body, /AI-Models: claude,gpt/);
     assert.match(body, /AI-Gate: not-run/);
   });
@@ -773,7 +773,7 @@ describe('--message-file - (stdin)', () => {
     git(['add', 'README.md']);
     const before = commitCount();
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()], '');
+      ['--message-file', '-', '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()], '');
     assert.equal(r.status, 2, 'an empty message is agent-correctable input, so exit 2');
     assert.match(r.stderr, /AGENT FIX/);
     assert.match(r.stderr, /stdin/, 'the error must name stdin, not a path the caller never gave');
@@ -784,7 +784,7 @@ describe('--message-file - (stdin)', () => {
     fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
     git(['add', 'README.md']);
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()], '   \n\n  \n');
+      ['--message-file', '-', '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()], '   \n\n  \n');
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX/);
   });
@@ -798,7 +798,7 @@ describe('--message-file - (stdin)', () => {
     fs.writeFileSync(mf, 'docs: from a real file\n');
     const before = commitCount();
     const r = runWithStdin(
-      ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run',
+      ['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run',
         ...identityArgs(), ...stdinScopeArgs()], '');
     assert.equal(r.status, 0, r.stderr);
     assert.equal(commitCount(), before + 1);

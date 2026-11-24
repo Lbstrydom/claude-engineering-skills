@@ -216,7 +216,7 @@ export function composeSquashMessage({ number, title, commitSubjects, decision, 
     throw new Error('composeSquashMessage: a reserved AI-* trailer appears in the PR title or commit subjects');
   }
   const message = composeFinalMessage(text, {
-    skill: 'ship',
+    skill: 'ship-checked',
     models,
     gate: decision.gate,
     runId: decision.runId,

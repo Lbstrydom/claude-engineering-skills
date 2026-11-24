@@ -238,7 +238,7 @@ export async function recordRegressionSpecRun(specId, run, opts = {}) {
  * not invocations (round-4 M1 fix) — one `/ux-lock` session can author
  * several specs, and a `--verify`-mode session authors none at all, so this
  * row is a proxy, never a direct invocation count. `source_kind !=
- * 'unit-test'` excludes `/ship`'s `lock-with-test` rows, which share this
+ * 'unit-test'` excludes `/ship-checked`'s `lock-with-test` rows, which share this
  * table but belong to a different skill.
  *
  * @param {string} repoId
@@ -255,7 +255,7 @@ export async function getRegressionSpecWindowCounts(repoId, { currentStart, prio
 
 /**
  * Every recorded lock's cited `spec_path` for a repo — the raw material for the
- * dangling-citation check the /ship lock nudge reports.
+ * dangling-citation check the /ship-checked lock nudge reports.
  *
  * **Why the check cannot live in SQL.** Postgres cannot stat a file. Existence is a
  * property of the CALLER's working tree, so the query returns citations and the caller

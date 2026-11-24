@@ -6,7 +6,7 @@
  * The UserPromptSubmit hook envelope is `{hook_event_name, prompt}` — it carries
  * NO session id (Gemini-MED), so this is a single rolling log, NOT per-session.
  * `get-friction-neighbourhood` appends one line per injected note on inject;
- * `/ship` + `quality session-review` read recent lines by TIME WINDOW. Closure is
+ * `/ship-checked` + `quality session-review` read recent lines by TIME WINDOW. Closure is
  * human-gated (the C10 y/N prompt), so a wrong-window suggestion is rejected by the
  * user — never a silent mislink.
  *

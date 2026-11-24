@@ -1,7 +1,7 @@
 /**
  * @fileoverview The session log as one file per entry — name grammar, validation, listing, reading.
  *
- * **Why.** Every `/ship` used to insert its entry at the TOP of one file, so two PRs shipping at
+ * **Why.** Every `/ship-checked` used to insert its entry at the TOP of one file, so two PRs shipping at
  * once always collided in `status.md` (four times in one day, 2026-10-15). A new entry is now a
  * NEW FILE under `docs/status/entries/`; a new path never conflicts, nothing is rendered, and
  * the old log stays where it is as frozen history.

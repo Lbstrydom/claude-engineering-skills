@@ -585,7 +585,7 @@ frozen history does not conflict); a union merge driver (GitHub ignores it).
 - `scripts/check-status-log-integrity.mjs` (modify) — read the entries dir at base and head; per-entry mode; the recipe text.
 - `scripts/lib/dashboard/collect-home-shipped.mjs` (modify), `scripts/lib/dashboard/collect-home.mjs` (modify) — read through `readLogHead`.
 - `docs/status/entries/README.md` (create) — the contract and the cutover marker; `docs/status/README.md` (modify) — "Adding an entry".
-- `skills/ship/SKILL.md` (modify), `skills/ship/references/status-md-format.md` (modify), `skills/ship/references/train-mode.md` (modify), `skills/ship/gate-contract.json` (modify if a stated line moves).
+- `skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/references/status-md-format.md` (modify), `skills/ship-checked/references/train-mode.md` (modify), `skills/ship-checked/gate-contract.json` (modify if a stated line moves).
 - `scripts/lib/worktree-preflight.mjs` (modify) — only the text that says where the drained note goes.
 - `skills/fleet/references/coordination-rationale.md` (modify) — rule 8: the status lane no longer exists for conflict reasons.
 - `tests/status-entries.test.mjs` (create), `tests/check-status-log-integrity.test.mjs` (modify), `tests/dashboard-home-status-entries.test.mjs` (modify), `tests/status-entries-merge.test.mjs` (create).

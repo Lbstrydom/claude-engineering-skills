@@ -457,7 +457,7 @@ criterion-hash mapping. Files: `tests/ux-lock-run.test.mjs` (create).
 verify-mode V4–V5 to call the runner; wire `/ship` + `/cycle` regression gate.
 Files: `skills/ux-lock/references/lock-mode-spec-generation.md` (modify),
 `skills/ux-lock/references/verify-mode-generation.md` (modify),
-`skills/ux-lock/SKILL.md` (modify), `skills/ship/SKILL.md` (modify).
+`skills/ux-lock/SKILL.md` (modify), `skills/ship-checked/SKILL.md` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate` + `npm run skills:check`;
 `npm test`.

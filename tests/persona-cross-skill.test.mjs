@@ -60,7 +60,7 @@ const EXIT_BAD_INPUT = 2;
 
 describe('cross-skill: get-persona-sessions-by-repo', () => {
   it('missing --repo no longer REFUSES — it resolves ambiently, and says when it could not', () => {
-    // CHANGED 2026-09-07. This refusal is what made /ship's persona gate blind:
+    // CHANGED 2026-09-07. This refusal is what made /ship-checked's persona gate blind:
     // Step 0.5a passed `--repo "$PERSONA_TEST_REPO_NAME"`, a shell expansion the
     // host never populated, so the flag arrived empty and the gate refused in
     // every consumer. `--repo` is now optional and the chain ends in

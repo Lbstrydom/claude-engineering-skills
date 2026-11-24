@@ -126,7 +126,7 @@ round lifecycle's reach. [`docs/plans/remediation-state-verification-reconciler.
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `AUDIT_REMEDIATION_RECONCILE_ENABLED` | No | `true` | Set to `false` to disable the reconciler entirely (both the `/ship` 0.5e capped call and the `remediation-reconcile` weekly-maintenance entry check this before any DB/LLM call). |
+| `AUDIT_REMEDIATION_RECONCILE_ENABLED` | No | `true` | Set to `false` to disable the reconciler entirely (both the `/ship-checked` 0.5e capped call and the `remediation-reconcile` weekly-maintenance entry check this before any DB/LLM call). |
 | `AUDIT_REMEDIATION_RECONCILE_MODEL` | No | `latest-sonnet` (sentinel — see [Model Resolution](model-resolution.md)) | The verifier model. A real code-reading judgment call per file batch, not a naming/labelling task — Haiku is too weak, Opus is unnecessary. |
 
 ## Consumer dependency install

@@ -280,7 +280,7 @@ export const RELEASE_ARTIFACTS = Object.freeze({
     'skills/audit-loop/SKILL.md',
     'skills/plan-backend/SKILL.md',
     'skills/plan-frontend/SKILL.md',
-    'skills/ship/SKILL.md',
+    'skills/ship-checked/SKILL.md',
     'skills/audit/SKILL.md',
   ],
   // Installer tooling fetched per install

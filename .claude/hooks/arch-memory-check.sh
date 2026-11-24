@@ -305,7 +305,7 @@ fi
 #
 # Trigram-match the prompt against this repo's OPEN friction notes. Cheap (no
 # embed — pg_trgm word_similarity), repo-scoped, top-2. The command appends the
-# injection breadcrumb itself (.audit/friction-injected.jsonl) so /ship +
+# injection breadcrumb itself (.audit/friction-injected.jsonl) so /ship-checked +
 # `quality session-review` can offer closure later. Never blocks the prompt.
 
 FRICTION_PAYLOAD="$(printf '%s' "$PROMPT_FOR_QUERY" | node -e '
@@ -347,7 +347,7 @@ if [[ -n "$FRICTION_PAYLOAD" ]]; then
           out.push("| " + cost + " | `" + name + "` | " + title + " |");
         }
         out.push("");
-        out.push("_You hit these before. Avoid re-living them; if this work resolves one, `/ship` will offer to link the fix._");
+        out.push("_You hit these before. Avoid re-living them; if this work resolves one, `/ship-checked` will offer to link the fix._");
         process.stdout.write(out.join("\n") + "\n");
       });
     ' <<< "$FRICTION_RESULT"

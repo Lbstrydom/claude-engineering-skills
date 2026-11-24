@@ -5,7 +5,7 @@
  * while leaving the branch's own work untouched:
  *   - the consumer pre-push hook's audit REUSE (`prepush-step.mjs audit-reuse`) keys on the pushed commit's TREE, so a squash-
  *     divergence cherry-pick recovery re-ran a ~14 minute audit over a branch whose own diff had not changed (fleet p-...-eb21);
- *   - `/ship`'s AI-Gate provenance (`commit-trailers.mjs checkEvidenceProvenance`) refuses a marker whose audited sha is no longer
+ *   - `/ship-checked`'s AI-Gate provenance (`commit-trailers.mjs checkEvidenceProvenance`) refuses a marker whose audited sha is no longer
  *     an ancestor of HEAD, so a ship that only rebased recorded `not-run` (fleet p-...-f757).
  * They share this predicate rather than each growing a spelling of it: two spellings of "equivalent" is how a reuse accepts what
  * a provenance check refuses.

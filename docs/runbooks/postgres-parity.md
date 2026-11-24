@@ -163,7 +163,7 @@ but **changing its argument list creates a different function**, which receives 
 default privileges above rather than the old one's grants. And the runtime role
 cannot apply migrations (`42501`): that is the boundary working — see
 *Migrations need the admin DSN* below and
-[`migration-credentials.md`](../../skills/ship/references/migration-credentials.md).
+[`migration-credentials.md`](../../skills/ship-checked/references/migration-credentials.md).
 
 Verify, never assume:
 

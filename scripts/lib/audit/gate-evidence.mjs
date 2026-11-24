@@ -139,7 +139,7 @@ export function buildGateEvidence(input) {
  * @param {string|null} [opts.auditedTree] — worktree content identity; REQUIRED
  * @param {string|null} opts.auditedBranch — the ref the audit ran on; REQUIRED
  *   (explicit `null` = detached at capture). Together with `auditedSha` this is
- *   the identity BUNDLE `/ship`'s guard B falls back to when no `--expect-head`
+ *   the identity BUNDLE `/ship-checked`'s guard B falls back to when no `--expect-head`
  *   was passed; a head without a ref disposition is refused, not degraded.
  * @param {(msg: string) => void} [opts.log]
  * @param {{atomicWriteFileSync?: Function}} [opts.adapters] — injected for tests

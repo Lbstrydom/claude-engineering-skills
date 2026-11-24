@@ -698,7 +698,7 @@
       "category": "sync"
     },
     "upstream:queues": {
-      "description": "Open upstream reports across EVERY store this maintainer's consumers file into, not just the ambient AUDIT_DB_URL. Resolves each registered consumer's store the way that consumer's own tooling does (its .env, then the shared ~/.audit-loop.env), dedupes by storeFingerprint so repos sharing a store are queried once, and asks each in a child process. Replaces the single-store read in /ship 0.5h, which printed `0 open` while a consumer on another store had 8 open reports. Advisory (always exit 0), and it distinguishes UNQUERIED from empty — a store nobody could reach is never counted as zero. Prints a fingerprint plus consumer names, never a DSN or hostname.",
+      "description": "Open upstream reports across EVERY store this maintainer's consumers file into, not just the ambient AUDIT_DB_URL. Resolves each registered consumer's store the way that consumer's own tooling does (its .env, then the shared ~/.audit-loop.env), dedupes by storeFingerprint so repos sharing a store are queried once, and asks each in a child process. Replaces the single-store read in /ship-checked 0.5h, which printed `0 open` while a consumer on another store had 8 open reports. Advisory (always exit 0), and it distinguishes UNQUERIED from empty — a store nobody could reach is never counted as zero. Prints a fingerprint plus consumer names, never a DSN or hostname.",
       "category": "sync"
     },
     "upstream:issues": {
@@ -888,7 +888,7 @@
       "category": "audit"
     },
     "scripts/backlog-snapshot.mjs": {
-      "description": "One-line backlog snapshot (finding queues, debt, upstream) for the /ship session-log entry.",
+      "description": "One-line backlog snapshot (finding queues, debt, upstream) for the /ship-checked session-log entry.",
       "category": "learning"
     },
     "scripts/brainstorm-round.mjs": {
@@ -940,11 +940,11 @@
       "category": "skills"
     },
     "scripts/ship-commit.mjs": {
-      "description": "The only writer of AI-* provenance trailers; /ship Step 6.3 commits through it.",
+      "description": "The only writer of AI-* provenance trailers; /ship-checked Step 6.3 commits through it.",
       "category": "hooks"
     },
     "scripts/ship-train.mjs": {
-      "description": "/ship --train CLI (source repo only): plan, message, land, verify and sync a batch of ship-ready PRs.",
+      "description": "/ship-checked --train CLI (source repo only): plan, message, land, verify and sync a batch of ship-ready PRs.",
       "category": "skills"
     },
     "scripts/test-evidence.mjs": {
@@ -984,7 +984,7 @@
       "category": "diagnostic"
     },
     "scripts/ship-record.mjs": {
-      "description": "Ship record catch-up: record PRs merged without /ship (status, catchup, floor, init); writes only new session-log entry files.",
+      "description": "Ship record catch-up: record PRs merged without /ship-checked (status, catchup, floor, init); writes only new session-log entry files.",
       "category": "skills"
     }
   }

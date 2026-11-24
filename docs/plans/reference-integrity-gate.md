@@ -180,7 +180,7 @@ The archive step and its consumers form one uninspected seam:
   `:87-146` `runArchive()` moves `docs/plans/X.md` → `docs/completed/X.md` via
   `fs.renameSync` (`:134`), plus `*-audit-summary*.md` siblings found by
   `findAuditSummariesFor` (`:65-71`). **It rewrites no references.**
-- `skills/ship/SKILL.md:298` — Step 5.5 runs `npm run plans:archive` on every
+- `skills/ship-checked/SKILL.md:298` — Step 5.5 runs `npm run plans:archive` on every
   `/ship` unless `--no-archive`.
 - `scripts/install-prepush-hook.mjs:89-95` — `PLANS_DIR="docs/plans"`; then
   `PLAN_FILE=$(ls -t "$PLANS_DIR"/*.md | head -1)` → audits it via
@@ -665,7 +665,7 @@ text-like file **cannot** produce an unqualified green scan.
 | **`tests/atomic-write-adoption-guard.test.mjs`** | **modify** | **R1-H4, verified**: `:223-226` AST-asserts `archive-completed-plans.mjs — exactly 2 sites … all wrapped`. **Deleting the module breaks this test.** Drop that `it()` + its Rule-2 comment at `:193`. | correctness |
 | **`.requirements/ledger.json`** | **modify** | **R1-H4, verified**: `:1488-1496` anchors an invariant's provenance to `parseStatus`/`isComplete` in the deleted file; `coveredFiles:6` lists it. Reconcile via `requirements.mjs reconcile` — the invariant survives, re-anchored to `lib/plan-status.mjs`. | #5 |
 | **`scripts/.cli-catalog.json`** | **modify** | **R1-H4, verified**: catalogues the deleted CLI. | #19 |
-| `skills/ship/SKILL.md` | modify | Remove Step 5.5 + `--no-archive` (usage line `:12`, step `:298-313`, `:340`). | #5 |
+| `skills/ship-checked/SKILL.md` | modify | Remove Step 5.5 + `--no-archive` (usage line `:12`, step `:298-313`, `:340`). | #5 |
 | `scripts/install-prepush-hook.mjs` | modify | Move `AUDIT_LOOP_DIR` discovery **above** selection; select via the CLI. **Fixes a live bug.** | #2, #15 |
 | `tests/prepush-hook-*.test.mjs` | modify | Prove a `Complete` plan is never selected, and a malformed one never aborts the push. | #11 |
 | `docs/README.md` | modify | Rewrite `plans/`+`completed/` sections; state "status never means a move", matching `research/`. Remove the `plans:archive` reference. | #5 |
@@ -675,7 +675,7 @@ text-like file **cannot** produce an unqualified green scan.
 
 > **Deletion-impact inventory (R1-H4) — the acceptance artifact.** The full tracked
 > consumer set for `plans:archive` / `archive-completed-plans`, measured (`git grep -l`):
-> `skills/ship/SKILL.md` + its `.claude/skills/` mirror · `package.json` ·
+> `skills/ship-checked/SKILL.md` + its `.claude/skills/` mirror · `package.json` ·
 > `scripts/.cli-catalog.json` · `.requirements/ledger.json` ·
 > `tests/atomic-write-adoption-guard.test.mjs` · `tests/archive-completed-plans.test.mjs` ·
 > `docs/README.md` · `docs/architecture-map.md` (generated — `arch:refresh`) ·
@@ -792,7 +792,7 @@ text-like file **cannot** produce an unqualified green scan.
   Files: `scripts/archive-completed-plans.mjs` (delete),
   `tests/archive-completed-plans.test.mjs` (delete),
   `tests/atomic-write-adoption-guard.test.mjs` (modify), `.requirements/ledger.json`
-  (modify), `scripts/.cli-catalog.json` (modify), `skills/ship/SKILL.md` (modify),
+  (modify), `scripts/.cli-catalog.json` (modify), `skills/ship-checked/SKILL.md` (modify),
   `scripts/install-prepush-hook.mjs` (modify), `scripts/sync-to-repos.mjs` (modify),
   `tests/prepush-hook-*.test.mjs` (modify), `docs/runbooks/consumer-adoption.md`
   (modify), `package.json` (modify).

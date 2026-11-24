@@ -411,7 +411,7 @@ export async function dispatch(argv, overrides = {}) {
     // An envelope with NO `ok` field at all is a distinct, legitimate shape —
     // `final-review-pending` carries its outcome in `state`
     // (ready|disabled|unavailable) and deliberately exits 0 for all three,
-    // because /ship must continue through every one. There is no `ok` to lie
+    // because /ship-checked must continue through every one. There is no `ok` to lie
     // with there, so the validator does not apply; but the ABSENCE must be
     // DECLARED (`okless`), or a handler that simply forgot to return `ok`
     // would slip through under the same exemption.

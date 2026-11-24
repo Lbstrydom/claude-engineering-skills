@@ -397,7 +397,7 @@ export function selectAuditPlan(plansDir, opts = {}) {
   // produce a structurally uncountable row (field-confirmed 2026-07-19).
   //
   // `changedFiles` (paths changed in the range being pushed) is the binding
-  // signal: /ship updates a plan's Status + implementation log in the same push
+  // signal: /ship-checked updates a plan's Status + implementation log in the same push
   // that implements it, so the implemented plan is normally IN the diff.
   const changed = normalizeChangedPlanNames(opts.changedFiles);
   let pool = actives;   // the plans a declared-paths decision may choose among

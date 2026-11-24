@@ -215,7 +215,7 @@ test('record-time: a too-short detail is kept without embedding (nothing to comp
 // ── The retrospective reconciler's cap ───────────────────────────────────────
 // Regression origin (2026-08-13). The cap was `ROW_NUMBER() OVER (ORDER BY
 // created_at DESC) <= cap`, so it kept the NEWEST rows. Measured on this repo:
-// of 991 eligible findings older than 14 days — the population /ship's
+// of 991 eligible findings older than 14 days — the population /ship-checked's
 // unremediated-acceptance gate counts, and the one whose rows are days from
 // crossing the 30-day ceiling and never being surfaced again — ZERO fell inside
 // the default cap of 400, which reached back only to the previous day. The

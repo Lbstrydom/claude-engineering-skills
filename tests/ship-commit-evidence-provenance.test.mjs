@@ -2,7 +2,7 @@
  * @fileoverview An audit marker is evidence for THIS branch's history, or it is not evidence (fleet p-20261015130416-f9f9).
  *
  * Replay of the incident (2026-10-15): `.audit/last-audit-run.json` was written by the audit of branch
- * `fix/audit-generated-stores`; the next `/ship` commit was on `fix/audit-unadmitted-files`. `ship-commit` compared the
+ * `fix/audit-generated-stores`; the next `/ship-checked` commit was on `fix/audit-unadmitted-files`. `ship-commit` compared the
  * worktree identity to the caller's own `--expect-*` flags (which matched) and never compared the MARKER's `auditedBranch` /
  * `auditedSha` to the commit being made, so it stamped `AI-Gate: converged` and the other branch's `AI-Run-ID`. Caught only by
  * reading the trailer back.
@@ -41,7 +41,7 @@ const newRepo = makeRepoTemplate((dir) => {
   g(['config', 'user.email', 'test@example.com']);
   g(['config', 'user.name', 'Test']);
   g(['config', 'commit.gpgsign', 'false']);
-  fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'skills', 'ship-checked'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'README.md'), 'seed\n');
   g(['add', 'README.md']);
   g(['commit', '-q', '-m', 'seed']);
@@ -65,7 +65,7 @@ function marker(extra = {}) {
   fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
     JSON.stringify({ runId: RUN_ID, ts: new Date(Date.now() + 60_000).toISOString(), ...extra }));
 }
-const run = (mf, gate) => runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', gate, ...identityArgs(repo), ...scopeArgs(repo, 'work.txt')]);
+const run = (mf, gate) => runCli(['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', '--gate', gate, ...identityArgs(repo), ...scopeArgs(repo, 'work.txt')]);
 
 describe('checkEvidenceProvenance (the pure rule)', () => {
   const fresh = (o = {}) => ({ state: 'fresh', runId: RUN_ID, ts: 'x', ...o });
@@ -145,14 +145,14 @@ describe('ship-commit CLI: the incident, replayed', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-prov-fresh-'));
       const g = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf-8', env: gitFixtureEnv() });
       g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@e.c']); g(['config', 'user.name', 'T']); g(['config', 'commit.gpgsign', 'false']);
-      fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'skills', 'ship-checked'), { recursive: true });
       fs.mkdirSync(path.join(dir, '.claude', 'tmp'), { recursive: true });
       fs.mkdirSync(path.join(dir, '.audit'), { recursive: true });
       fs.writeFileSync(path.join(dir, '.claude', 'tmp', 'msg.txt'), ['feat: first commit', '', 'body', ''].join('\n'));
       fs.writeFileSync(path.join(dir, '.audit', 'last-audit-run.json'), JSON.stringify({ runId: RUN_ID, ts: new Date(Date.now() + 60_000).toISOString(), ...markerExtra }));
       fs.writeFileSync(path.join(dir, 'work.txt'), 'x');
       g(['add', 'work.txt']);
-      const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--path', 'work.txt'], dir);
+      const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', '--path', 'work.txt'], dir);
       const body = g(['log', '-1', '--format=%B']).stdout;
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       return { r, body };

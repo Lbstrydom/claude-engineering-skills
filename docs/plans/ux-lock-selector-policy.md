@@ -404,7 +404,7 @@ alone.
     structural emissions; determinism test still passes).
 - `/ship` Step 5.6 `.spec.js.proposed` candidate stubs materialise via
   `renderCandidateSpec` — covered by the above; verify during implementation that no
-  other template in `skills/ship/**` or `skills/persona-test/references/**` emits
+  other template in `skills/ship-checked/**` or `skills/persona-test/references/**` emits
   Playwright locator code (the consistency-mode `surfaces.json` manifest locators are
   capture-side observation locators, already nudged semantic by
   `manifestQualityWarnings` in `scripts/lib/persona-test/consistency.mjs` — out of

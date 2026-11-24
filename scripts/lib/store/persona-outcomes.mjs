@@ -238,7 +238,7 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
  * says so explicitly rather than implying an unconditional "run this to
  * fix it" (docs/plans/persona-finding-hash-versioning.md, Gemini gate R3
  * finding G1 — a real UX bug: an unconditional hint would nag every
- * `/ship` forever). Deliberately no new "already attempted" tracking
+ * `/ship-checked` forever). Deliberately no new "already attempted" tracking
  * column — that would itself go stale the day a matching new session
  * makes a previously-unrecoverable finding recoverable after all.
  * @returns {Promise<{staleHashCount: number, hint: string|null}>}
@@ -302,12 +302,12 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
   // Either identity suffices. `repoId` is the STRONGER of the two (it selects
   // by the session's own canonical column instead of a caller-supplied display
   // string), so requiring the weaker one alongside it made an ambient-resolved
-  // read impossible for no gain — which is precisely the caller /ship acquired
+  // read impossible for no gain — which is precisely the caller /ship-checked acquired
   // on 2026-09-07.
   if (!repoName && !callerRepoId) return { ok: false, error: 'repoName or repoId is required' };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, sessionId: null };
   try {
-    // persona/verdict included (code-audit M1 fix) — /ship's UX-GATE
+    // persona/verdict included (code-audit M1 fix) — /ship-checked's UX-GATE
     // warning template renders `Last persona test: "<persona>" ... →
     // <verdict>`, which the original summary shape didn't carry.
     const session = callerRepoId

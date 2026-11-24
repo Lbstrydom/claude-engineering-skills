@@ -75,12 +75,12 @@ export const EXPECTED_CONSUMERS = Object.freeze({
   // The  input-acquisition contract. Every skill that reads the token
   // needs it, and the token is Claude-Code idiom no other host substitutes.
   'input-acquisition.md': [
-    'persona-test', 'ship', 'click-test', 'ux-lock', 'audit-code', 'audit-plan',
+    'persona-test', 'ship-checked', 'click-test', 'ux-lock', 'audit-code', 'audit-plan',
     'brainstorm', 'ai-context-management', 'cycle',
   ],
   // cycle's own prerequisite-ladder.md copy cites references/verification-discipline.md §7.
   'verification-discipline.md': [
-    'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
+    'investigate', 'audit-code', 'ux-lock', 'ship-checked', 'explain', 'plan', 'audit-plan',
     'nav-audit', 'persona-test', 'cycle',
   ],
   // The worktree-preflight hydrate recipe. DERIVED, not listed: every skill the

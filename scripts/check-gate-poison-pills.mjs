@@ -23,7 +23,7 @@
  * Isolation covers OUTPUTS, not just inputs: every pill runs against a temp copy of the
  * repo, and the real working tree is asserted byte-identical afterwards.
  *
- * Path-scoped for a branch-tier push only (gate census L-3, approved by Louis 2026-11-22): `npm run check`, `/ship`, every
+ * Path-scoped for a branch-tier push only (gate census L-3, approved by Louis 2026-11-22): `npm run check`, `/ship-checked`, every
  * push to the default branch and the full tier still run every pill. Only the pre-push sandbox, when the tier oracle itself
  * chose the branch tier, sets `AUDIT_PREPUSH_GATE_SCOPE=path`, and then the gate runs only when the explicit push range
  * touches what the pills read, DERIVED from the contracts (`poisonPillTriggers`): the runner, every gate script a pill

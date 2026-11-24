@@ -1,7 +1,7 @@
 /**
  * @fileoverview `closeFindingById` against real Postgres.
  *
- * The motivating fact is the first test: `/ship` Step 0.5e told operators to
+ * The motivating fact is the first test: `/ship-checked` Step 0.5e told operators to
  * close an unremediated acceptance with `final-review-record-fix`, which is
  * scoped to final-review passes — so for an ordinary-pass finding (all 142
  * rows of the 2026-10-02 queue) it could only ever answer `no-match`. Each
@@ -84,7 +84,7 @@ describe('closeFindingById — by-id disposition of ordinary-pass findings', { s
   it('the control: final-review-record-fix cannot touch an ordinary-pass finding', async () => {
     const id = await insFinding(RUN, 'fp-control');
     const res = await runsFindings.recordFinalReviewFix(RUN, 'fp-control', { state: 'fixed' });
-    assert.equal(res.ok, false, 'if this ever succeeds, /ship 0.5e\'s printed command works again and this module may be redundant');
+    assert.equal(res.ok, false, 'if this ever succeeds, /ship-checked 0.5e\'s printed command works again and this module may be redundant');
     assert.equal(await isOpen(id), true);
   });
 

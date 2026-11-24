@@ -2,7 +2,7 @@
  * @fileoverview Final-review credit loop — the PURE half.
  *
  * Two functions, no I/O: classify a final-review finding's outcome from its two
- * persisted axes, and render the `/ship` advisory card from a reader result.
+ * persisted axes, and render the `/ship-checked` advisory card from a reader result.
  *
  * **Why this exists.** `adjudicateFinalReviewFinding` (the adjudication axis) and
  * `recordFinalReviewFix` (the remediation axis) have been built, tested and
@@ -189,7 +189,7 @@ function recordFixCmd(it, state, commitSha) {
 }
 
 /**
- * Render the `/ship` advisory card.
+ * Render the `/ship-checked` advisory card.
  *
  * Every command is emitted COMPLETE, with resolved values — no ellipsis and no
  * `<angle-brackets>`. That is a repo-wide operator-doc rule (PowerShell reserves

@@ -287,7 +287,7 @@ graph LR
 | `tests/dangling-regression-lock.test.mjs` | modify | Fixture git repo with `tests/x.test.mjs`; `process.chdir(<repo>/scripts)`; `listUnlockedFixesCmd` reports `danglingLocks.count === 0` for a lock naming `tests/x.test.mjs` (red today: 1). |
 | `tests/run-finalisation-awaited.test.mjs` | modify | `ORCHESTRATORS` → `[{file, expectCallSites}]` incl. `run-persistence.mjs`; writer patterns include the `durableWrite('audit.…'` spelling; zero-hit pair fails unless declared. |
 | `tests/legacy-production-audit-hardening.test.mjs` | modify | Phase-1 scan walks `scripts/lib/audit/*.mjs`; asserts ≥1 `atomicWriteFileSync(` in the set. |
-| `skills/ship/SKILL.md` | modify | Step 0.5's `final-review-pending` note documents the cursor walk — first page bare, then `--after <nextCursor>` repeated **until `nextCursor` is null, continuing through pages whose `items` is empty** — and `--group-by work-unit`; `--offset` appears only as "not supported (mutation-unsafe)". BARE commands, no shell expansion; regenerated copy verified by `skills:check`. |
+| `skills/ship-checked/SKILL.md` | modify | Step 0.5's `final-review-pending` note documents the cursor walk — first page bare, then `--after <nextCursor>` repeated **until `nextCursor` is null, continuing through pages whose `items` is empty** — and `--group-by work-unit`; `--offset` appears only as "not supported (mutation-unsafe)". BARE commands, no shell expansion; regenerated copy verified by `skills:check`. |
 
 Regex-resolvable paths: 17 (≥5 — fuzzy discovery will not fire).
 
@@ -324,7 +324,7 @@ Files: `scripts/lib/store/runs-findings.mjs` (modify),
 `tests/final-review-pending.test.mjs` (modify),
 `tests/final-review-pending-db.test.mjs` (create),
 `scripts/db-test-container.mjs` (modify),
-`.github/workflows/postgres-parity.yml` (modify), `skills/ship/SKILL.md` (modify).
+`.github/workflows/postgres-parity.yml` (modify), `skills/ship-checked/SKILL.md` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate && npm run skills:check`
 (SKILL.md edit → generated copy); `npm run size:ratchet:gate` (re-baseline

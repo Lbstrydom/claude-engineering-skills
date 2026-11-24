@@ -23,13 +23,13 @@ set"* — with nothing said about the other branch. So the flow died mid-run on 
 bare `MODULE_NOT_FOUND` or a one-line `Error: OPENAI_API_KEY environment
 variable required`, **after** the user had paid to produce the artifact being
 audited. Reported by a consumer 2026-08-27. Two of this repo's own skills
-already model the answer and neither was applied here: `/ship` degrades and
+already model the answer and neither was applied here: `/ship-checked` degrades and
 prints a one-line disclosure, and `references/gemini-gate.md` defines a ladder
 for a missing final-reviewer key. That ladder covers the *final reviewer* only —
 it says nothing about the GPT legs or about the helper scripts themselves, which
 is the gap this file closes.
 
-**Why it matters more here than in `/ship`.** A skipped commit trailer is
+**Why it matters more here than in `/ship-checked`.** A skipped commit trailer is
 cosmetic. A skipped audit gate means *the gate did not run*, and the difference
 between "we audited it" and "we said we audited it" has to survive into the
 report and the commit.
@@ -76,7 +76,7 @@ choice, in a chip or otherwise.
 
 1. **Say so before doing any work**, in one line, naming the concrete missing
    prerequisite and the resolved alternatives you checked — the same shape
-   `/ship` uses. A bare "not applicable" is not a reason.
+   `/ship-checked` uses. A bare "not applicable" is not a reason.
 2. **Offer the substitute, and label it.** Spawn an independent adversarial
    review agent over the same scope with the plan and the diff, exactly as
    `references/gemini-gate.md`'s last rung does for the final reviewer, and record
@@ -106,7 +106,7 @@ An audit that did not run has to be distinguishable downstream from one that ran
 and passed. The mechanisms already exist — use them rather than inventing a
 field:
 
-| Outcome | Pass census (Step 6) | Gate evidence | `/ship` trailer |
+| Outcome | Pass census (Step 6) | Gate evidence | `/ship-checked` trailer |
 |---|---|---|---|
 | ran, converged | `completed` rows | `.audit/last-audit-run.json` written | `--gate passed` (store-verified) |
 | ran, degraded (Rung 1) | `unavailable` rows naming the prerequisite | written, verdict not `passed` | `--gate not-run` |
@@ -116,7 +116,7 @@ field:
 degraded or absent run cannot claim it — that is the design, not an obstacle to
 work around. `not-run` is the honest value and needs no override flag.
 
-**Never let a degraded run reach `/ship` as a silent clean.** The census row and
+**Never let a degraded run reach `/ship-checked` as a silent clean.** The census row and
 the report header are what carry the distinction; if neither is present, the
 next reader has no way to tell the two apart, which is the state this ladder
 exists to prevent.

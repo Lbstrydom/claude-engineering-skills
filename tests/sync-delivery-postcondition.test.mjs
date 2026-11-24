@@ -44,7 +44,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const MAP = {
   '.audit-loop/migrations/a.sql': 'sha256:aaa',
   'scripts/.claude-skills/x.mjs': 'sha256:bbb',
-  '.claude/skills/ship/SKILL.md': 'sha256:ccc',
+  '.claude/skills/ship-checked/SKILL.md': 'sha256:ccc',
 };
 
 test('post-condition: a manifest entry with no file on disk is reported', () => {

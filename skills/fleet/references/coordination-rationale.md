@@ -12,7 +12,7 @@ list and carry nothing further.
 ## Rules 1 and 4 — the chip prompt and where a chip stops
 
 Chip prompts each re-wrote ~40 lines of authority, route, turn and stop point; the one that omitted the turn rule let a worker take
-another repo's turn (2026-10-14). `references/chip-preamble.md` is that block once. `/ship` is typed only when the chip is idle:
+another repo's turn (2026-10-14). `references/chip-preamble.md` is that block once. `/ship-checked` is typed only when the chip is idle:
 mid-turn the host refuses it as a programmatic call and Louis had to type it again (#250).
 
 **A pre-authorised ship is a coded check, not a chip's reading of a list.** `ship-commit.mjs --preauthorised` refuses (exit 2, every
@@ -48,7 +48,7 @@ session when its PR closes is the automatic complement.
 
 ## Rule 8 — Push lanes
 
-In a repo with ONE status log file, every `/ship` inserts at its top, so
+In a repo with ONE status log file, every ship inserts at its top, so
 pushes touching it go one at a time (the status lane). Where
 `docs/status/entries/README.md` exists (this repo, since the per-entry cutover) each
 entry is its own file, two ships never touch the same path, and the lane has no
@@ -160,7 +160,7 @@ when two or more repos wait, they take turns:
 
 **Peak hours.** `lease peak --hours "14:00-20:00"` records the user's
 expensive-token window, Mon-Fri unless a range names days (`@sat+sun`). During it, ship
-built work only (pushes, `/ship`, merges, CI); new coding and chips wait.
+built work only (pushes, ships, merges, CI); new coding and chips wait.
 
 ## Rule 15 — Message budget
 

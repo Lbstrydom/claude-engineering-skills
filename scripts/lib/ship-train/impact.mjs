@@ -160,6 +160,6 @@ export function isTrainDue({ prs, endOfDay = false }) {
   return {
     due: false,
     triggers: [],
-    missing: [`no urgent PR, ${list.length} < ${DUE_PR_COUNT} ship-ready PRs, not end of day — re-run as /ship --train --end-of-day to call it anyway`],
+    missing: [`no urgent PR, ${list.length} < ${DUE_PR_COUNT} ship-ready PRs, not end of day — re-run as /ship-checked --train --end-of-day to call it anyway`],
   };
 }

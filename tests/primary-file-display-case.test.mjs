@@ -17,7 +17,7 @@
  * `agents.md` (17), `skills/persona-test/skill.md` (17), `docs/plans/readme.md` (3).
  *
  * **Why it was invisible here and live elsewhere.** Windows' filesystem is
- * case-insensitive, so `existsSync('skills/ship/skill.md')` is TRUE on the machine
+ * case-insensitive, so `existsSync('skills/ship-checked/skill.md')` is TRUE on the machine
  * that wrote it. On Linux — CI, and any consumer — it is false, and two readers that
  * open the path degrade silently: `remediation-verification.mjs` routes the row to
  * `unresolvablePathSkipped`, and `campaign/cited-source.mjs` cannot centre its window
@@ -56,7 +56,7 @@ describe('displayPathOf — the reporting spelling of a cited path', () => {
     // The whole safety argument. `displayPathOf` is not a second normaliser: it is
     // `extractFileRefs`' first element with its case restored, and nothing else.
     const sections = [
-      'skills/ship/SKILL.md',
+      'skills/ship-checked/SKILL.md',
       'AGENTS.md and CLAUDE.md disagree',
       'docs/plans/README.md §3',
       '`scripts/lib/store/runs-findings.mjs` line 601',
@@ -133,7 +133,7 @@ describe('populateFindingMetadata keeps the two key spaces apart', () => {
     // change cannot invalidate a fingerprint. Asserted rather than reasoned: if it
     // ever did, every historical finding would re-raise as new on the next round and
     // the suppression ledger would silently stop matching.
-    const mk = () => ({ section: 'skills/ship/SKILL.md', detail: 'd', category: 'c' });
+    const mk = () => ({ section: 'skills/ship-checked/SKILL.md', detail: 'd', category: 'c' });
     const a = populateFindingMetadata(mk(), 'structure');
     assert.equal(a._hash, populateFindingMetadata(mk(), 'structure')._hash);
     assert.notEqual(a._primaryFile, a._primaryFile.toLowerCase(), 'guard: the case really did survive');

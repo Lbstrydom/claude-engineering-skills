@@ -1,6 +1,6 @@
 /**
  * @fileoverview The shared "same patches?" predicate (scripts/lib/patch-equivalence.mjs) against REAL git: the guard rails the two callers
- * (the pre-push hook's audit reuse, /ship's AI-Gate provenance) rely on, in both directions.
+ * (the pre-push hook's audit reuse, /ship-checked's AI-Gate provenance) rely on, in both directions.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

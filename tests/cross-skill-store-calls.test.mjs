@@ -90,7 +90,7 @@ describe('record-ship-event — the write template', () => {
 });
 
 describe('upsert-plan — a receipt is not a write', () => {
-  // Locks audit finding d2c4fe8a (aged out of /ship Step 0.5b unlocked, and
+  // Locks audit finding d2c4fe8a (aged out of /ship-checked Step 0.5b unlocked, and
   // unclosable until 2026-08-29 because the close path queried the WINDOWED
   // view). The handler's own comment calls this "the exact shape this handler
   // just closed, one field over": `{ok:true, planId:null}` used to fall
@@ -135,7 +135,7 @@ describe('persona-outcomes — the explicit-required template', () => {
 
   it('label writes through resolveLabelTarget → upsert, with the target repoId (NO --repo — the session is the parent)', async () => {
     // label never resolves --repo: its repo derives from the addressed session
-    // row (the documented invocation the /ship worksheet prints has no --repo).
+    // row (the documented invocation the /ship-checked worksheet prints has no --repo).
     const { deps, calls } = recordingDeps();
     const r = await dispatch(
       argv('persona-outcomes', 'label', '--session', 's1', '--hash', 'h1', '--outcome', 'fixed'),
@@ -473,7 +473,7 @@ describe('snapshot reads bind to the repo the CLI is running in', () => {
   });
 });
 
-describe('persona-outcomes — the ambient READ fallback (/ship gate blindness, 2026-09-07)', () => {
+describe('persona-outcomes — the ambient READ fallback (/ship-checked gate blindness, 2026-09-07)', () => {
   // PERSONA_TEST_REPO_NAME sits in the developer's own .env, and the CLI loads
   // it. Leaving it in scope would make every assertion below pass or fail by
   // WHOSE machine ran the suite — the same class as the AZURE_* scrub.

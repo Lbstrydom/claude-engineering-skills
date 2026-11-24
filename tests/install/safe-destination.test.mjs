@@ -85,7 +85,7 @@ describe('assertContainedDestination — the happy path', () => {
 
   it('accepts existing real (non-link) ancestors', () => {
     fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
-    assert.ok(assertContainedDestination({ root, relPath: '.claude/skills/ship/SKILL.md' }));
+    assert.ok(assertContainedDestination({ root, relPath: '.claude/skills/ship-checked/SKILL.md' }));
   });
 
   it('accepts backslash-separated relative paths (Windows callers)', () => {

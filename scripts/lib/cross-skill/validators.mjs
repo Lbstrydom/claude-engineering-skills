@@ -1,6 +1,6 @@
 /**
  * @fileoverview Value-domain validators shared by the cross-skill commands that
- * issue and accept keyset cursors (`final-review-pending`, and the two /ship
+ * issue and accept keyset cursors (`final-review-pending`, and the two /ship-checked
  * nudge readers). Both bind the decoded members straight into an ordering query,
  * so each must check the VALUE's domain, not just its type.
  *

@@ -538,7 +538,7 @@ after WS1 emits rows). Each WS is independently shippable + auditable
 | `scripts/nav-audit.mjs` | extend (non-discretionary record-nav-audit-run call on completion) | 2 |
 | `scripts/lib/dashboard/collect-nav.mjs` | aging source → cloud-first | 2 |
 | `scripts/lib/dashboard/{collect-telemetry,schema,render}.mjs` + `sections/persona-tests.mjs` | new tab | 3 |
-| `skills/ship/SKILL.md` (Step 0.5a) | open-P0 subtraction | 4 |
+| `skills/ship-checked/SKILL.md` (Step 0.5a) | open-P0 subtraction | 4 |
 | `tests/persona-audit-correlator.test.mjs`, `tests/store-nav-audit.test.mjs`, `tests/persona-outcomes.test.mjs`, dashboard test extensions | new | 1,2,3,4 |
 
 ## 5. Risks
@@ -695,7 +695,7 @@ hard block.
   Cluster 1
 - Files: `supabase/migrations/<ts>_persona_finding_outcomes.sql`
   (create), `scripts/cross-skill.mjs` (modify — add `persona-outcomes`,
-  additive to Clusters 1+2's edits), `skills/ship/SKILL.md` (modify —
+  additive to Clusters 1+2's edits), `skills/ship-checked/SKILL.md` (modify —
   Step 0.5a open-P0 subtraction), `tests/persona-outcomes.test.mjs`
   (create), **additional files reconciled at implementation time**:
   `scripts/lib/store/persona-outcomes.mjs` (create — the declared list

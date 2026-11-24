@@ -86,7 +86,7 @@ cleanest demonstration that the instrument works.
   `skills/ux-lock/SKILL.md:83-134` (LOCK: Step 0 → 1 → 1.5 → 2 generate → 3 run+record —
   no step proves the spec red without the fix);
   `skills/audit-code/SKILL.md:407-428` (Step 4 Fix — ends at ledger update);
-  `skills/ship/SKILL.md:681-778` (Steps 6.5 / 6.6 / 6.7 are all
+  `skills/ship-checked/SKILL.md:681-778` (Steps 6.5 / 6.6 / 6.7 are all
   *"after successful push, advisory"* — the slot Step 6.8 occupies);
   `skills/investigate/SKILL.md:80-128` (Steps 2-4).
 - **Doctrine boundary for item 1**: `scripts/check-docs-refs.mjs:20-26, 191, 310`.
@@ -529,7 +529,7 @@ five SKILL.md edits are judgement-heavy and site-specific: **by hand**, no codem
 | `skills/investigate/SKILL.md` | **Step 2.5 — Verify the attribution, not just the figure** (item 4): after reproducing, test whether the parent already had the credited property; report `figure` and `attribution` as **separate** verdicts. Amend **Step 3** to require `measured` / `derived` / `expected` labels and a named metric (item 2, item 4's 3.6x corollary). Reference-table row. | Items 1, 2, 4. Its Step 3 already half-does item 2; this completes it. |
 | `skills/audit-code/SKILL.md` | **Step 4.5 — Prove the guard (two-direction)**: for any finding fixed *with* a new test/guard, revert → confirm RED → restore → confirm GREEN, one defect at a time where the fix closes independent failure modes. Reference-table row + `examples/` row. | Item 3 + item 5. Placed before Step 5 because Step 5's green is the untrustworthy green. |
 | `skills/ux-lock/SKILL.md` | **Step 2.5 — Prove the spec RED before recording it**, between Step 2 (generate) and Step 3 (run + record). Reference-table row. | Item 3. The 2026-07-19 §7 ask, landed in the flow. |
-| `skills/ship/SKILL.md` | **Step 6.8 — Consumer-side verification (advisory, after successful push)**: fetch the artifact back the way a consumer gets it and check *that*; where impossible, print `unverified` rather than inherit the producer-side green. Reference-table row. | Item 6 + §2 D6. |
+| `skills/ship-checked/SKILL.md` | **Step 6.8 — Consumer-side verification (advisory, after successful push)**: fetch the artifact back the way a consumer gets it and check *that*; where impossible, print `unverified` rather than inherit the producer-side green. Reference-table row. | Item 6 + §2 D6. |
 | `skills/explain/SKILL.md` | Require a commit pin on any `file:line` it emits; cite append-newest-first files by section header. Reference-table row (creates `skills/explain/references/`). | Item 1. `explain` emits citations by design. |
 | `skills/plan/SKILL.md`, `skills/audit-plan/SKILL.md` | Same citation-pinning requirement on §1's Code Trace and on the grounding rubric that reads it — **plus the reference-table row in each**. | Item 1 coverage (round 3, M1). *Gemini round 2 (HIGH): registering a consumer WITHOUT its table row is a build break, not an omission — `lintSkill` emits `Orphan file: … not listed in the reference table` (`scripts/lib/skill-refs-parser.mjs:207`) and `skills:check` fails. Every `EXPECTED_CONSUMERS` entry must land with its SKILL.md row in the same phase.* |
 | `skills/{investigate,audit-code,ux-lock,ship,explain,plan,audit-plan}/gate-contract.json` | Add `kind:"document-only"` entries and/or `ignoredCandidates` with per-line reasons for the new prose. | §2 D4 — mandatory, else `skills:check` fails. |
@@ -548,7 +548,7 @@ Files: `scripts/sync-shared-audit-refs.mjs` (modify),
 `skills/investigate/references/verification-discipline.md` (create),
 `skills/audit-code/references/verification-discipline.md` (create),
 `skills/ux-lock/references/verification-discipline.md` (create),
-`skills/ship/references/verification-discipline.md` (create),
+`skills/ship-checked/references/verification-discipline.md` (create),
 `skills/explain/references/verification-discipline.md` (create),
 `skills/plan/references/verification-discipline.md` (create),
 `skills/audit-plan/references/verification-discipline.md` (create).
@@ -557,7 +557,7 @@ Files: `scripts/sync-shared-audit-refs.mjs` (modify),
 matching contract declarations, landing together because a step without its
 contract entry fails `skills:check`.
 Files: `skills/investigate/SKILL.md` (modify), `skills/audit-code/SKILL.md` (modify),
-`skills/ux-lock/SKILL.md` (modify), `skills/ship/SKILL.md` (modify),
+`skills/ux-lock/SKILL.md` (modify), `skills/ship-checked/SKILL.md` (modify),
 `skills/explain/SKILL.md` (modify),
 `skills/plan/SKILL.md` (modify),
 `skills/audit-plan/SKILL.md` (modify),
@@ -566,7 +566,7 @@ Files: `skills/investigate/SKILL.md` (modify), `skills/audit-code/SKILL.md` (mod
 `skills/investigate/gate-contract.json` (modify),
 `skills/audit-code/gate-contract.json` (modify),
 `skills/ux-lock/gate-contract.json` (modify),
-`skills/ship/gate-contract.json` (modify),
+`skills/ship-checked/gate-contract.json` (modify),
 `skills/explain/gate-contract.json` (modify),
 `skills/audit-code/examples/contract-test-scaffold.md` (create).
 

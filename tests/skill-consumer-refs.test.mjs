@@ -362,21 +362,21 @@ test('a locked skill states the rule in its BODY, where every host reads it', ()
   }
 });
 
-test('/ship is locked — it commits and pushes', () => {
-  // Pinned by name rather than left to the general rule above: /ship is the
+test('/ship-checked is locked — it commits and pushes', () => {
+  // Pinned by name rather than left to the general rule above: /ship-checked is the
   // one skill in the roster whose misfire is not undoable, and it spent its
   // whole life unlocked while its own body asserted twice that it was locked.
   // A regression here is silent, so it gets its own assertion.
-  const ship = readSkill('ship');
-  assert.ok(ship.declared, 'skills/ship/SKILL.md must declare disable-model-invocation: true');
+  const ship = readSkill('ship-checked');
+  assert.ok(ship.declared, 'skills/ship-checked/SKILL.md must declare disable-model-invocation: true');
   assert.match(ship.frontmatter, /DO NOT INVOKE THIS SKILL ON YOUR OWN INITIATIVE/,
     'the description must carry the constraint too — it is what a host reads when DECIDING whether to invoke');
 });
 
 test('a skill claiming disable-model-invocation in its BODY actually declares it', () => {
   // Same prose→contract seam as the rest of this file, one layer up: nothing
-  // type-checks a SKILL.md's claim about its own frontmatter. /ship asserted
-  // "`/ship` is `disable-model-invocation: true`" twice and reasoned from it,
+  // type-checks a SKILL.md's claim about its own frontmatter. /ship-checked asserted
+  // "`/ship-checked` is `disable-model-invocation: true`" twice and reasoned from it,
   // while its frontmatter declared no such key — so the autonomy brake two of
   // its steps were designed around did not exist, in ANY host. Assert on the
   // parsed frontmatter, never on the surrounding prose.
@@ -400,7 +400,7 @@ test('a skill claiming disable-model-invocation in its BODY actually declares it
 test('the two regressions that motivated this gate stay fixed', () => {
   // /ai-context-management named `npm run context:check` in every mode while
   // the detector it wraps was synced all along, so the skill was inert in a
-  // consumer. /security-strategy and /ship reached for
+  // consumer. /security-strategy and /ship-checked reached for
   // `npm run security:refresh --if-present`, which exits 0 having run nothing.
   // Both are now called by path; assert on the emitted text, not on intent.
   const acm = fs.readFileSync(path.join(REPO, 'skills/ai-context-management/SKILL.md'), 'utf-8');
@@ -410,7 +410,7 @@ test('the two regressions that motivated this gate stay fixed', () => {
   // literal would put it back into a scanned file, and `npm-args:gate` reads
   // source text, not intent — it flagged this very assertion the first time.
   const banned = ['npm run security:refresh', '--if', 'present'].join(' ').replace(' present', '-present');
-  for (const rel of ['skills/ship/SKILL.md', 'skills/security-strategy/SKILL.md']) {
+  for (const rel of ['skills/ship-checked/SKILL.md', 'skills/security-strategy/SKILL.md']) {
     const src = fs.readFileSync(path.join(REPO, rel), 'utf-8');
     assert.ok(!src.includes(banned),
       `${rel} must not reach for the --if-present alias — it exits 0 having run nothing`);
@@ -535,8 +535,8 @@ test('T5 — every hook claim states rule, portable path and accelerator', () =>
     const markers = markersIn(body).filter((m) => m.kind === 'hook-rule');
     if (markers.length === 0) {
       // A skill may MENTION a hook without claiming it enforces anything —
-      // but AGENTS.md and /ship both make enforcement claims and must declare.
-      assert.ok(!['AGENTS.md', 'skills/ship/SKILL.md'].includes(rel),
+      // but AGENTS.md and /ship-checked both make enforcement claims and must declare.
+      assert.ok(!['AGENTS.md', 'skills/ship-checked/SKILL.md'].includes(rel),
         `${rel} claims hook-backed enforcement but declares no hook-rule marker`);
       continue;
     }

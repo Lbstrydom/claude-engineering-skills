@@ -74,7 +74,7 @@ const NON_CONFORMING_STATUS = '- **Status**: Bogus-Value-Not-A-Vocabulary-Token\
  * push, but indistinguishable to `push-range.mjs` since it only sees the env
  * var. Every case here that depends on the FALLBACK inference actually
  * running (the RED controls, and the deletion case, which never supplies an
- * explicit base) must scrub it back out, or it fails only under `/ship`,
+ * explicit base) must scrub it back out, or it fails only under `/ship-checked`,
  * never locally — exactly the class of env-leak incident documented for
  * `GIT_WORK_TREE` in prepush-check.mjs.
  */

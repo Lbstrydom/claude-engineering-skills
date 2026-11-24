@@ -161,7 +161,7 @@ export const TELEMETRY_CADENCES = Object.freeze(['weekly', 'on-demand']);
  * registry's consumer *paths* to hang off the main checkout — but the lookup of
  * the file that LISTS them still used `import.meta.dirname`, i.e. the worktree.
  * `consumer-repos.local.json` is gitignored, so `git worktree add` never
- * populates it: a `/ship` from a linked worktree resolved only the two
+ * populates it: a `/ship-checked` from a linked worktree resolved only the two
  * committed `BASE_REPOS`, silently dropped every privately-registered consumer,
  * and printed `Targets: 2/2 reached · Errors: 0` — true of the list it built,
  * and silent about the list it should have built. Measured shipping `bc6487f6`:

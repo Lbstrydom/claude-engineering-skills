@@ -2,7 +2,7 @@
 summary: Step 7 CI wait - every check on the pushed head, into the done report; no merging.
 ---
 
-# CI on the pushed head — `/cycle` reports it, `/ship` merges it
+# CI on the pushed head — `/cycle` reports it, `/ship-checked` merges it
 
 After an autonomous run pushes a branch and opens its PR, nobody was waiting on CI: red runs went unreported and a chip stopped
 with CI still in progress. Run, by path (substitute the PR number and the sha you pushed):
@@ -20,5 +20,5 @@ It waits for EVERY check on the exact head sha (not one named check) and prints 
 - Exit 3: timed out — report what is still pending, as pending. Never write "CI green" for a run that did not finish.
 - **A rerun may diagnose, never clear.** A check that failed on this head stays failed: re-running it and getting green does not
   change the report. Say "failed, then green on rerun" and fix the cause with a new commit; never write "CI green" for that head.
-- `--wait-only` changes nothing. `--autonomous` does not authorize merging, so `/cycle` never passes `--merge`; the human's `/ship`
+- `--wait-only` changes nothing. `--autonomous` does not authorize merging, so `/cycle` never passes `--merge`; the human's `/ship-checked`
   does, once they say to merge. Flags and refusals: the script's own header (`node scripts/ci-merge.mjs` with a bad flag lists them).

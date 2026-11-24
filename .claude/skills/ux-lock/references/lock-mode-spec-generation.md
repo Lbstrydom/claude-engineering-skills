@@ -120,7 +120,7 @@ Other optional flags:
 The runner derives the `description` from the spec filename and supplies the
 required `source_kind`. Cloud off → it runs + prints and skips recording (no
 `specId` needed). A *failing* run is recorded as `passed:false` (the runner's
-exit code is non-zero so `/ship`/CI can gate); it is the natural "regression
+exit code is non-zero so `/ship-checked`/CI can gate); it is the natural "regression
 save" signal — a spec that should pass but doesn't surfaces in the
 `regression_saves` view. Multi-spec runs (`--specs`) emit one
 `regression_spec_runs` row per `spec_path` (passed = AND of that file's tests).

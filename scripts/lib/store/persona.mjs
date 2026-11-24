@@ -462,7 +462,7 @@ export async function recordPersonaPairLink(pair, opts = {}) {
 
 /**
  * Fetch persona-test sessions filtered by repo name. Used by /plan
- * Phase 1, /ship Step 0.5a, and persona-test interop helpers (replaces
+ * Phase 1, /ship-checked Step 0.5a, and persona-test interop helpers (replaces
  * the curl-based anon reads after the 20260507 RLS hardening).
  */
 export async function getPersonaSessionsByRepo({

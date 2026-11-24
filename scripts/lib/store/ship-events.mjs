@@ -1,5 +1,5 @@
 /**
- * @fileoverview `ship_events` — the /ship outcome record.
+ * @fileoverview `ship_events` — the /ship-checked outcome record.
  *
  * Split out of `plans-ship.mjs` (cross-skill-command-registry Phase 6). That
  * module is now a re-export barrel and remains the import name every consumer
@@ -22,7 +22,7 @@ import { isSyncableRepoId } from './bandit-fp.mjs';
 // ── ship_events ────────────────────────────────────────────────────────────
 
 /**
- * Record a /ship outcome.
+ * Record a /ship-checked outcome.
  *
  * Returns a discriminated status for the same reason as
  * `recordRegressionSpecRun` (now `./regression-specs.mjs`) — it used to swallow

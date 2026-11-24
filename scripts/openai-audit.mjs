@@ -495,7 +495,7 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     ctx.auditedTree = auditedTree;
     ctx.auditedSha = auditedSha;
     // The REF the audit ran on, captured here beside the sha so the evidence
-    // marker carries a COMPLETE identity bundle. `/ship`'s guard B falls back to
+    // marker carries a COMPLETE identity bundle. `/ship-checked`'s guard B falls back to
     // this when no --expect-head was passed, and a sha without a ref cannot
     // distinguish two branches sitting on the same commit — which is exactly how
     // a commit lands on `main` instead of a feature branch.

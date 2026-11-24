@@ -1,7 +1,7 @@
-# Plan: Reduce `skills/ship/SKILL.md`'s size via progressive disclosure
+# Plan: Reduce `skills/ship-checked/SKILL.md`'s size via progressive disclosure
 
 - **Date**: 2026-09-16
-- **Status**: Complete — shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured 2026-10-11: 67,933 chars (`wc -c skills/ship/SKILL.md` at 56eb0459), up 2.9% from the 66,002 close-out. Plan audit: (GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no concerns)
+- **Status**: Complete — shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured 2026-10-11: 67,933 chars (`wc -c skills/ship-checked/SKILL.md` at 56eb0459), up 2.9% from the 66,002 close-out. Plan audit: (GPT: 3 rounds, 4→1→0 findings, 100% acceptance both rounds with findings; Gemini: 1 round, APPROVE — no concerns)
 - **Author**: Claude
 - **Scope**: backend/tooling (skill-content reorganization; no code behavior changes)
 - **Target domain(s)**: `skills-content`
@@ -9,7 +9,7 @@
 
 ## Context Summary
 
-`skills/ship/SKILL.md` is the single largest skill in this repo by a wide
+`skills/ship-checked/SKILL.md` is the single largest skill in this repo by a wide
 margin, and the only one whose main document has never had a size-reduction
 pass despite the repo's own stated convention: `SKILL.md ≤3K tokens target +
 references/<topic>.md`, progressive disclosure, "read only when the trigger
@@ -19,7 +19,7 @@ discovery,status-md-format,verification-discipline}.md`, 2.6K–27.7K chars each
 — the pattern is proven in this exact skill, just not applied broadly enough
 to the main document's own bulk.
 
-**Code Trace** (`skills/ship/SKILL.md` @ `16d7b075`, full-file read, all 1716
+**Code Trace** (`skills/ship-checked/SKILL.md` @ `16d7b075`, full-file read, all 1716
 lines): the document's header list (`grep '^#{1,4} '`) shows 40 headings. The
 bulk is concentrated in two families, both flagged "non-blocking" /
 "advisory" in their own section titles:
@@ -81,9 +81,9 @@ inline.
 
 ## Key Design Decision: the gate-honesty D6 check is diff-scoped to `SKILL.md`, not `references/`
 
-`skills/ship/gate-contract.json` carries 10 `gates[]` entries and 141
+`skills/ship-checked/gate-contract.json` carries 10 `gates[]` entries and 141
 `ignoredCandidates[]` entries, and *every one* of the latter is a byte-exact
-`line` string pinned against the CURRENT text of `skills/ship/SKILL.md`. A
+`line` string pinned against the CURRENT text of `skills/ship-checked/SKILL.md`. A
 naive reading of this makes the whole extraction look prohibitively risky —
 moving or rewording any of those 141 lines looks like it breaks its
 disposition.
@@ -126,7 +126,7 @@ the second one cares about which lines moved where.
 
 ```mermaid
 graph LR
-  SKILL["skills/ship/SKILL.md<br/>(core flow, condensed nudges)"]
+  SKILL["skills/ship-checked/SKILL.md<br/>(core flow, condensed nudges)"]
   R1["references/pre-ship-gate-queries.md<br/>(0.5a/b/e/g/h/i incident history)"]
   R2["references/architecture-and-dashboard-refresh.md<br/>(0.5c/0.5d incident history)"]
   R3["references/post-push-advisories.md<br/>(6.5/6.6/6.7/6.8 incident history)"]
@@ -172,13 +172,13 @@ in-sequence, not incident history to defer.
 ## File-Level Plan
 
 **Phase 0 — Confirm current line numbers.** Re-run the heading grep against
-the CURRENT `skills/ship/SKILL.md` (this plan may land after other edits to
+the CURRENT `skills/ship-checked/SKILL.md` (this plan may land after other edits to
 the file); resolve every range in the matrix above against real content
 before editing. Files: none (verification only).
 
 **Every phase below ends with the same three commands, in this order —
 stated once here rather than repeated four times**: `npm run skills:regenerate`
-(regenerates `.claude/skills/ship/**` from the just-edited `skills/ship/**`;
+(regenerates `.claude/skills/ship-checked/**` from the just-edited `skills/ship-checked/**`;
 `skills:check`'s own `regenerate-skill-copies.mjs --check` step fails on a
 stale generated copy, so regeneration must precede the check within the SAME
 phase, never deferred to close-out), then `npm run skills:check`, then
@@ -220,7 +220,7 @@ inspection — merging them onto one line is not forbidden, but it is the shape
 that produced round 2's finding.
 
 **Phase 1 — Extract Step 0.5's nudge family.** Create
-`skills/ship/references/pre-ship-gate-queries.md` (summary frontmatter: one
+`skills/ship-checked/references/pre-ship-gate-queries.md` (summary frontmatter: one
 line covering 0.5a/b/e/g/h/i's shared "why" — non-blocking pre-ship signals,
 their scoping/undercounting incident history, and the disposition rules).
 Move the six sections' incident-history prose verbatim; condense each
@@ -231,32 +231,32 @@ contracted claim (e.g. `unremediated-acceptances-never-blocks`,
 `persona-gate-unmeasured-is-not-silent`) — check each against that gate's
 `stated` substring first; only add an `ignoredCandidates` entry for text with
 no covering `stated` span.
-Files: `skills/ship/references/pre-ship-gate-queries.md` (create),
-`skills/ship/SKILL.md` (modify), `skills/ship/gate-contract.json` (modify, as
-needed per the above), `.claude/skills/ship/**` (regenerated, modify).
+Files: `skills/ship-checked/references/pre-ship-gate-queries.md` (create),
+`skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/gate-contract.json` (modify, as
+needed per the above), `.claude/skills/ship-checked/**` (regenerated, modify).
 
 **Phase 2 — Extract 0.5c/0.5d (architecture + dashboard refresh).** Create
-`skills/ship/references/architecture-and-dashboard-refresh.md`. Move both
+`skills/ship-checked/references/architecture-and-dashboard-refresh.md`. Move both
 sections' incident-history prose verbatim; condense inline per the matrix.
 Add the reference-index row. Gate-contract: same per-line disposition
 discipline as Phase 1. Files:
-`skills/ship/references/architecture-and-dashboard-refresh.md` (create),
-`skills/ship/SKILL.md` (modify), `skills/ship/gate-contract.json` (modify, as
-needed), `.claude/skills/ship/**` (regenerated, modify).
+`skills/ship-checked/references/architecture-and-dashboard-refresh.md` (create),
+`skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/gate-contract.json` (modify, as
+needed), `.claude/skills/ship-checked/**` (regenerated, modify).
 
 **Phase 3 — Extract the post-push advisories (6.5–6.8).** Create
-`skills/ship/references/post-push-advisories.md`. Move all four sections'
+`skills/ship-checked/references/post-push-advisories.md`. Move all four sections'
 incident-history prose verbatim; condense inline per the matrix (6.8's
 retrieval table stays inline — it is operative, not historical). Add the
 reference-index row. Gate-contract: same per-line disposition discipline as
 Phase 1 (e.g. `final-review-credit-advisory-exit-zero`'s `stated` substring
 likely still covers its condensed restatement). Files:
-`skills/ship/references/post-push-advisories.md` (create),
-`skills/ship/SKILL.md` (modify), `skills/ship/gate-contract.json` (modify, as
-needed), `.claude/skills/ship/**` (regenerated, modify).
+`skills/ship-checked/references/post-push-advisories.md` (create),
+`skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/gate-contract.json` (modify, as
+needed), `.claude/skills/ship-checked/**` (regenerated, modify).
 
 **Phase 4 — Extract the AI-Gate/identity deep-dive from 6.2–6.3, and
-close out.** Create `skills/ship/references/commit-provenance-deep-dive.md`
+close out.** Create `skills/ship-checked/references/commit-provenance-deep-dive.md`
 (distinct from the EXISTING `docs/reference/commit-provenance.md`, which
 documents the trailer schema/query cookbook for the whole repo, not this
 skill's specific operational callouts — cross-link the two rather than
@@ -275,9 +275,9 @@ moving on. Then, additionally:
   Testing Strategy results (see the minimum-reduction bar below).
 - Resolve tech-debt topicId `44716fd984ed`.
 
-Files: `skills/ship/references/commit-provenance-deep-dive.md` (create),
-`skills/ship/SKILL.md` (modify), `skills/ship/gate-contract.json` (modify, as
-needed), `.claude/skills/ship/**` (regenerated, modify).
+Files: `skills/ship-checked/references/commit-provenance-deep-dive.md` (create),
+`skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/gate-contract.json` (modify, as
+needed), `.claude/skills/ship-checked/**` (regenerated, modify).
 
 ## Testing Strategy
 
@@ -294,11 +294,11 @@ alone reproduces the whole original verbatim.
 | Invariant | How verified |
 |---|---|
 | No operative content lost — every command, every printed template, every behavior-changing rule survives somewhere reachable | Manual diff review per phase, checked as a union: for each condensed section, confirm (a) every item in the matrix's "keeps" column is present in the new inline text, and (b) every sentence of the ORIGINAL section not covered by (a) is present verbatim in the new reference file — i.e. `original section text` ⊆ `condensed inline text` ∪ `reference file text`, with no sentence appearing in neither. `git diff` reviewed phase-by-phase, not just at the end. |
-| `skills:check` — reference-index row `Summary` byte-matches each new file's `summary:` frontmatter, AND generated-copy parity (`.claude/skills/ship/**` == `skills/ship/**`) | `npm run skills:regenerate` THEN `npm run skills:check`, in that order, at the end of EVERY phase (not deferred to close-out — see the File-Level Plan's shared per-phase closing sequence) |
+| `skills:check` — reference-index row `Summary` byte-matches each new file's `summary:` frontmatter, AND generated-copy parity (`.claude/skills/ship-checked/**` == `skills/ship-checked/**`) | `npm run skills:regenerate` THEN `npm run skills:check`, in that order, at the end of EVERY phase (not deferred to close-out — see the File-Level Plan's shared per-phase closing sequence) |
 | Gate-contract shape validity (`gates[]`/`ignoredCandidates[]` schema, `statedIn` truth) | `npm run gates:check` at the end of every phase, same sequence |
 | Gate-honesty D6 — every enforcement-verb OCCURRENCE (not merely every line) on a changed `SKILL.md` line is covered | Cannot be dry-run standalone (it is diff-scoped against a real git diff at push time — see the Key Design Decision above); mitigated by the File-Level Plan's per-occurrence coverage check (added after plan-audit round 2 M1), applied to every condensed line before that phase's commit, and confirmed for real at Cluster close-out when `/audit-code`'s own push-time verification runs |
-| Size reduced by a concrete floor, not merely "some" | **Minimum bar: `skills/ship/SKILL.md` must drop below 40,000 characters** (from the pre-Phase-1 93,664; verified via `node -e "..."` char-counting the exact Phase 1–3 line ranges, not estimated from line-count proportion: the three ranges total 61,797 of the file's 93,664 chars — removing them entirely would land at 31,867, so a 40,000 floor leaves ~8,100 chars of headroom for every phase's condensed inline replacement, on top of whatever Phase 4 additionally moves out of 6.2–6.3). Measured after every phase (not just Phase 4), so a shortfall is visible before close-out rather than discovered there. If Phase 4 completes above the floor, that is a plan failure to fix (extract more, or reduce a phase's "keeps" list further) before resolving the tech-debt entry — not a result to ship as-is. **CLOSE-OUT RESULT (2026-09-16): the floor was NOT met — final measured size is 66,002 chars (93,664 → 66,002, −29.5%), 26,002 chars above the 40,000 target.** This floor's own derivation was the error, not the extraction: it was computed from the FULL-REMOVAL upper bound (61,797 chars, i.e. near-zero inline residue), which contradicts this same Testing Strategy's first row — "no operative content lost… every command, every printed template, every behavior-changing rule survives somewhere reachable." Across all four phases, every condensed section kept its matrix "keeps" list inline (commands, return shapes, behavior-changing rules, printed templates verbatim), which is real, necessary weight a full-removal calculation cannot see. Confirmed by the audit gates themselves: the same "below 40,000" finding was raised by GPT in all four rounds (Clusters A, B, C, and the union gate) and dismissed each time as "expected interim state" until this close-out, where it is now dispositioned as **accepted, not fixable without violating the no-content-lost invariant** — extracting further would mean moving a command, a return shape, or a printed template out of the routine reading path, which is the band-aid-vs-over-engineering tradeoff this repo's own Design right-sizing principle (AGENTS.md) warns against chasing past the point where it serves the actual requirement. The tech-debt entry (topicId `44716fd984ed`) is resolved on the strength of the achieved reduction (−29.5%, four reference files added, matching the skill's own existing progressive-disclosure pattern) with this shortfall recorded rather than hidden — a future pass revisiting `references/pre-ship-gate-queries.md` (23,830 chars, the largest reference file, itself carrying a lot of near-duplicate incident narrative across 0.5b/0.5e) is the more likely path to further reduction, not a fifth pass over SKILL.md's already-condensed inline text. |
-| Consumer sync unaffected | No consumer-specific content touched; the sync mechanism (`sync-to-repos.mjs`) already handles arbitrary file adds under `skills/ship/references/**` the same way it handles the five existing ones — no new sync logic needed |
+| Size reduced by a concrete floor, not merely "some" | **Minimum bar: `skills/ship-checked/SKILL.md` must drop below 40,000 characters** (from the pre-Phase-1 93,664; verified via `node -e "..."` char-counting the exact Phase 1–3 line ranges, not estimated from line-count proportion: the three ranges total 61,797 of the file's 93,664 chars — removing them entirely would land at 31,867, so a 40,000 floor leaves ~8,100 chars of headroom for every phase's condensed inline replacement, on top of whatever Phase 4 additionally moves out of 6.2–6.3). Measured after every phase (not just Phase 4), so a shortfall is visible before close-out rather than discovered there. If Phase 4 completes above the floor, that is a plan failure to fix (extract more, or reduce a phase's "keeps" list further) before resolving the tech-debt entry — not a result to ship as-is. **CLOSE-OUT RESULT (2026-09-16): the floor was NOT met — final measured size is 66,002 chars (93,664 → 66,002, −29.5%), 26,002 chars above the 40,000 target.** This floor's own derivation was the error, not the extraction: it was computed from the FULL-REMOVAL upper bound (61,797 chars, i.e. near-zero inline residue), which contradicts this same Testing Strategy's first row — "no operative content lost… every command, every printed template, every behavior-changing rule survives somewhere reachable." Across all four phases, every condensed section kept its matrix "keeps" list inline (commands, return shapes, behavior-changing rules, printed templates verbatim), which is real, necessary weight a full-removal calculation cannot see. Confirmed by the audit gates themselves: the same "below 40,000" finding was raised by GPT in all four rounds (Clusters A, B, C, and the union gate) and dismissed each time as "expected interim state" until this close-out, where it is now dispositioned as **accepted, not fixable without violating the no-content-lost invariant** — extracting further would mean moving a command, a return shape, or a printed template out of the routine reading path, which is the band-aid-vs-over-engineering tradeoff this repo's own Design right-sizing principle (AGENTS.md) warns against chasing past the point where it serves the actual requirement. The tech-debt entry (topicId `44716fd984ed`) is resolved on the strength of the achieved reduction (−29.5%, four reference files added, matching the skill's own existing progressive-disclosure pattern) with this shortfall recorded rather than hidden — a future pass revisiting `references/pre-ship-gate-queries.md` (23,830 chars, the largest reference file, itself carrying a lot of near-duplicate incident narrative across 0.5b/0.5e) is the more likely path to further reduction, not a fifth pass over SKILL.md's already-condensed inline text. |
+| Consumer sync unaffected | No consumer-specific content touched; the sync mechanism (`sync-to-repos.mjs`) already handles arbitrary file adds under `skills/ship-checked/references/**` the same way it handles the five existing ones — no new sync logic needed |
 
 **Deliberately not covered**: this plan does not change `ship-commit.mjs`,
 `cross-skill.mjs`, or any of the CLIs the skill invokes — their own test

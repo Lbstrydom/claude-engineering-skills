@@ -1,5 +1,5 @@
 /**
- * @fileoverview Ship-health tab — per-repo /ship outcome mix + recent events.
+ * @fileoverview Ship-health tab — per-repo /ship-checked outcome mix + recent events.
  *
  * Cluster D / Phase 7 of docs/plans/learning-store-signal-recovery.md.
  * Signature: `default({src, shipHealth}, ui) → string`.

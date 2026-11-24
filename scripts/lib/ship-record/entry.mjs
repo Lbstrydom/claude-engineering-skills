@@ -150,7 +150,7 @@ export function renderPrEntry(pr, facts, { repo }) {
     ...listed,
     '',
     '### Provenance',
-    '- Recorded after merge by `ship-record catchup`: no in-band /ship record was found for this PR.',
+    '- Recorded after merge by `ship-record catchup`: no in-band /ship-checked record was found for this PR.',
     `- Squash-commit trailers: ${trailerLine(facts.trailers)}.`,
     ...rollupLines(facts.rollup),
     `- Plan: ${planLine}.`,
@@ -187,7 +187,7 @@ export function renderRunEntry({ nowIso, recorded, backlogLine, suggestions, bas
     `<!-- ship-record-run v1 prs=${nums.join(',')} -->`,
     '',
     '### Changes',
-    `- Recorded ${recorded.length} merged PR(s) into ${sanitizeField(base.branch, 'ref')} that had no /ship record: ${nums.map((n) => `#${n}`).join(', ') || 'none'}.`,
+    `- Recorded ${recorded.length} merged PR(s) into ${sanitizeField(base.branch, 'ref')} that had no /ship-checked record: ${nums.map((n) => `#${n}`).join(', ') || 'none'}.`,
     '',
     backlogLine,
   ];
@@ -220,7 +220,7 @@ export function renderInitReadme() {
   return [
     '# Session log entries',
     '',
-    '**This file is the cutover marker.** While it exists, the session log is one file per entry: a new `/ship` entry is a',
+    '**This file is the cutover marker.** While it exists, the session log is one file per entry: a new `/ship-checked` entry is a',
     'NEW FILE in this directory, and `status.md` at the repo root takes no new entry.',
     '',
     '## The contract',
@@ -230,7 +230,7 @@ export function renderInitReadme() {
     '  Exactly one `## ` heading per file.',
     '- **Immutable**: an entry file is never edited or deleted once it is on the base branch. A correction is a new entry.',
     '- **`status.md` is frozen history**: it gains no new `## ` heading.',
-    '- **Record catch-up**: PRs merged without `/ship` get one entry each (`…-pr-<N>.md`) from `ship-record catchup`; the',
+    '- **Record catch-up**: PRs merged without `/ship-checked` get one entry each (`…-pr-<N>.md`) from `ship-record catchup`; the',
     '  `…-record-floor.md` entry is where per-PR recording starts.',
     '',
   ].join('\n');

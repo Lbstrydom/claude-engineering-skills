@@ -619,8 +619,8 @@ tests/incident-neighbourhood.test.mjs             ← NEW (lift verbatim, adapte
 tests/secret-classifier.test.mjs                  ← NEW (~100 LOC)
 tests/pgvector-fallback.test.mjs                  ← NEW (~60 LOC)
 package.json                                      ← EDIT (add `security:refresh` script)
-.claude/skills/ship/SKILL.md                      ← EDIT (Step 6.5 language Supabase → Postgres)
-.github/skills/ship/SKILL.md                      ← EDIT (mirror)
+.claude/skills/ship-checked/SKILL.md                      ← EDIT (Step 6.5 language Supabase → Postgres)
+.github/skills/ship-checked/SKILL.md                      ← EDIT (mirror)
 ```
 
 **Total**: ~1100 LOC of code (lifted + adapted + new) + ~260 LOC of tests + schema migration + skill text edits.

@@ -324,14 +324,14 @@ const CLI_EXIT_RECIPES = {
   // guard B trigger on GIT INDEX and HEAD state — both constructible right here
   // in the fixture directory, with no store, no network and no browser.
   'ship-unscoped-index-refusal': {
-    args: ['--message-file', 'msg.txt', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--no-run-id'],
+    args: ['--message-file', 'msg.txt', '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', '--no-run-id'],
     fixture(dir) {
       const g = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf-8', windowsHide: true });
       g(['init', '-q', '-b', 'main']);
       g(['config', 'user.email', 'gate@example.com']);
       g(['config', 'user.name', 'Gate']);
       g(['config', 'commit.gpgsign', 'false']);
-      fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'skills', 'ship-checked'), { recursive: true });
       atomicWriteFileSync(path.join(dir, 'msg.txt'), 'test: fixture\n');
       // UNBORN HEAD — deliberately no seed commit. Guard B runs BEFORE guard A
       // (identity is a precondition, checked before the index is inspected), so
@@ -352,14 +352,14 @@ const CLI_EXIT_RECIPES = {
     // guard B is the ONLY thing that can refuse. Without that isolation the
     // recipe would pass for the wrong reason — a green test proving the other
     // gate fired.
-    args: ['--message-file', 'msg.txt', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--no-run-id', '--path', 'work.txt'],
+    args: ['--message-file', 'msg.txt', '--skill', 'ship-checked', '--models', 'claude', '--gate', 'not-run', '--no-run-id', '--path', 'work.txt'],
     fixture(dir) {
       const g = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf-8', windowsHide: true });
       g(['init', '-q', '-b', 'main']);
       g(['config', 'user.email', 'gate@example.com']);
       g(['config', 'user.name', 'Gate']);
       g(['config', 'commit.gpgsign', 'false']);
-      fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'skills', 'ship-checked'), { recursive: true });
       atomicWriteFileSync(path.join(dir, 'msg.txt'), 'test: fixture\n');
       atomicWriteFileSync(path.join(dir, 'seed.txt'), 'seed\n');
       g(['add', 'seed.txt']);

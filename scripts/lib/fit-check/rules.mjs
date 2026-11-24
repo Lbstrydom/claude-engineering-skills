@@ -91,7 +91,7 @@ export const SKILLS = [
     },
   },
   {
-    skill: '/ship',
+    skill: '/ship-checked',
     evaluate: (p) => {
       if (!p.testRunner && p.stack !== 'unknown') {
         return {
@@ -259,7 +259,7 @@ export const SKILLS = [
     },
   },
   {
-    skill: '/ship Step 5.6 (consistency promotion)',
+    skill: '/ship-checked Step 5.6 (consistency promotion)',
     evaluate: (p) => {
       if (p.isPlugin || !p.hasHttpBoundary) {
         return {

@@ -119,7 +119,7 @@ describe('the real skills', () => {
     assert.deepEqual(grants, {
       cycle: `Bash(${PREVIEW})`,
       plan: `Bash(${DETECT})`,
-      ship: `Bash(${DETECT} --include-env-manager)`,
+      'ship-checked': `Bash(${DETECT} --include-env-manager)`,
     });
   });
 

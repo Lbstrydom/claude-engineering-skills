@@ -95,10 +95,10 @@ produced 704 findings of which ~6 were real: all 31 `aria-hidden-focusable`
 findings sat inside one `visibility:hidden` subtree, and 4 of 5 P0s were hidden
 file inputs.
 
-> **Scope note — this is NOT a release-gate fix.** `/ship` does **not** gate on
+> **Scope note — this is NOT a release-gate fix.** `/ship-checked` does **not** gate on
 > click-test P0s: persistence to the shared store is deferred (Phase 7 below), so
-> no `record-click-test` subcommand, table or `/ship` read path exists, and
-> `/ship --ignore-p0` refers to **persona-test** P0s only. The harm being fixed
+> no `record-click-test` subcommand, table or `/ship-checked` read path exists, and
+> `/ship-checked --ignore-p0` refers to **persona-test** P0s only. The harm being fixed
 > is a human reading a P0 list and treating it as blocking, plus the noise ratio.
 > Correcting severity *now* is preventive: it means the deferred v2 persistence
 > cannot turn a cosmetic wrong into a real false gate.

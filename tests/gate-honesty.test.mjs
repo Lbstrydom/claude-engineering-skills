@@ -94,7 +94,7 @@ const PINNED_EXECUTABLE = {
   // Both trigger on GIT INDEX / HEAD state, which a filesystem fixture can
   // construct — unlike the migration-realization gate, whose DATABASE trigger
   // is why it correctly stays document-only.
-  ship: ['guard-a-unscoped-commit-refused', 'guard-b-identity-is-a-precondition'],
+  'ship-checked': ['guard-a-unscoped-commit-refused', 'guard-b-identity-is-a-precondition'],
   cycle: [],
   plan: [],
   // 2026-11-16 (docs/plans/harness-retro.md): enforce refuses an identity no scan
@@ -153,7 +153,7 @@ const PINNED_DOCUMENT_ONLY = {
   // agent-composed report prose over live plan_satisfaction data; same
   // disposition class as status-rubric beside it.
   'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric', 'status-rubric-precedence', 'verify-exit-4-when-not-recorded'],
-  // `unremediated-acceptances-never-blocks` added 2026-07-27 with /ship Step 0.5e.
+  // `unremediated-acceptances-never-blocks` added 2026-07-27 with /ship-checked Step 0.5e.
   // Document-only for the same reason as step-0-5-gates-non-blocking beside it:
   // the READ half is mechanically honest (getUnremediatedAcceptances returns []
   // on cloud-off AND on query failure), but "never blocks the ship" is a claim
@@ -171,7 +171,7 @@ const PINNED_DOCUMENT_ONLY = {
   // zero-count ready, and unrecognised shapes), but "exits 0 therefore cannot
   // stop the ship" is a claim about agent flow, and EVERY cross-skill subcommand
   // exits 0 unconditionally — so a cli-exit oracle would be true but vacuous.
-  // `upstream-queue-never-blocks` added 2026-08-01 with /ship Step 0.5h. Third
+  // `upstream-queue-never-blocks` added 2026-08-01 with /ship-checked Step 0.5h. Third
   // instance of the same shape, and the one that names WHY the level is fixed:
   // the upstream queue is CLOUD state, so the commit being pushed cannot change
   // it — blocking on it would be cried-wolf by construction, not by choice.
@@ -180,7 +180,7 @@ const PINNED_DOCUMENT_ONLY = {
   // DISTINCT entry rather than a widening of its `passed` sibling: that entry's
   // claim is specifically about passed's evidence requirement, and one entry per
   // declared gate state keeps each claim independently traceable.
-  ship: ['gate-passed-refused-without-evidence', 'gate-converged-requires-verified-divergence', 'gate-no-tests-caps-the-verdict', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero', 'upstream-queue-never-blocks', 'persona-gate-unmeasured-is-not-silent'],
+  'ship-checked': ['gate-passed-refused-without-evidence', 'gate-converged-requires-verified-divergence', 'gate-no-tests-caps-the-verdict', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero', 'upstream-queue-never-blocks', 'persona-gate-unmeasured-is-not-silent'],
   // +1 cluster-start-ref-validated-on-use (worktree-identity-guards Phase 5):
   // document-only because /cycle delegates and emits no exit code of its own —
   // the enforcing refusal lives in the audit resolver and IS bound there.
@@ -198,7 +198,7 @@ const PINNED_DOCUMENT_ONLY = {
   // 2026-11-16: the judgment-side claims (see each reason); the CLI halves are pinned by the harness-retro suites.
   'harness-retro': ['propose-never-apply', 'unmeasured-is-not-clean', 'record-refuses-bad-proposals', 'transcripts-never-leave-disk'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit', 'harness-retro'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'fleet', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship-checked', 'skills', 'ux-lock', 'visual-audit', 'harness-retro'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
@@ -268,11 +268,11 @@ describe('gate-honesty — real skills/', () => {
     //   exit 2 is also this CLI's code for argv and schema errors.
     assert.equal(totalExecutable, 19); // +1 harness-retro enforce-refuses-unscanned-identity (2026-11-16)
     // was 18: // +1 ux-lock strict-selectors (Phase C final); +2 round-caps (audit-plan, audit-code; 2026-10-25)
-    // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
+    // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship-checked Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
     // 38 → 39: +1 audit-code (detector-blocks-convergence, /audit-code Step 5.0b, 2026-08-01).
-    // 39 → 40: +1 ship (upstream-queue-never-blocks, /ship Step 0.5h, 2026-08-01).
+    // 39 → 40: +1 ship (upstream-queue-never-blocks, /ship-checked Step 0.5h, 2026-08-01).
     // 41 → 43: +2 persona-test (finding-severity-literal-p0-p3 and
     //   p0p1-shape-mismatch-never-benign, 2026-08-11 — see the comment on the
     //   persona-test row in PINNED_DOCUMENT_ONLY for why neither is executable).
@@ -306,7 +306,7 @@ describe('gate-honesty — real skills/', () => {
     //   shape. Not unchecked prose: the skill TEXT is guarded by
     //   tests/skill-staging-instructions.test.mjs, negative-controlled at the fix.
     // 51 -> 52: +1 ship (persona-gate-unmeasured-is-not-silent, Step 0.5a,
-    //   2026-09-07). Document-only because what it contracts is which CARD /ship
+    //   2026-09-07). Document-only because what it contracts is which CARD /ship-checked
     //   prints from the summary payload; cross-skill.mjs exits 0 for every
     //   subcommand by design, so a cli-exit oracle would assert a code the
     //   command never produces. The DATA half is mechanically covered:

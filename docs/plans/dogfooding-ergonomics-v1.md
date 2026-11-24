@@ -66,8 +66,8 @@ Add a new step (Step 8 or end-of-flow): "Archive completed plans". Invokes `npm 
 | `tests/learning-smoke.test.mjs` | NEW | Live Supabase round-trip; gated on service-role env |
 | `scripts/archive-completed-plans.mjs` | NEW | Pure CLI utility; scans + moves; --dry-run + --force |
 | `package.json` | EDIT | Add `plans:archive` script |
-| `.claude/skills/ship/SKILL.md` | EDIT | Add Step "Archive completed plans" at end |
-| `skills/ship/SKILL.md` | EDIT | Source-of-truth for the SKILL (canonical) |
+| `.claude/skills/ship-checked/SKILL.md` | EDIT | Add Step "Archive completed plans" at end |
+| `skills/ship-checked/SKILL.md` | EDIT | Source-of-truth for the SKILL (canonical) |
 | `AGENTS.md` | EDIT | Document `npm run plans:archive` + auto-archive on /ship |
 | `docs/plans/dogfooding-ergonomics-v1.md` | NEW | This plan (will auto-archive on /ship) |
 
@@ -87,7 +87,7 @@ Out-of-scope (documented but not committed here):
 | AC5 | Archive script moves sibling `*-audit-summary.md` files alongside the parent plan |
 | AC6 | Archive is idempotent — running twice produces same final state |
 | AC7 | `npm run plans:archive` is wired in package.json |
-| AC8 | `/ship` SKILL has a new step that invokes archive (both .claude/skills/ship and skills/ship) |
+| AC8 | `/ship` SKILL has a new step that invokes archive (both .claude/skills/ship-checked and skills/ship-checked) |
 | AC9 | This plan's own status flips to "Complete" when shipped, and the archive step moves it to `docs/completed/` automatically |
 | AC10 | All existing tests stay green |
 

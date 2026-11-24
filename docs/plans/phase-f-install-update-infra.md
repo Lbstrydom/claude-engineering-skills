@@ -131,7 +131,7 @@ All subsequent installs/updates/checks use `node .audit-loop/bootstrap.mjs`.
     },
     "plan-backend": { "path": "skills/plan-backend/SKILL.md", "sha": "...", "size": 10240, "summary": "..." },
     "plan-frontend": { "path": "skills/plan-frontend/SKILL.md", "sha": "...", "size": 14200, "summary": "..." },
-    "ship": { "path": "skills/ship/SKILL.md", "sha": "...", "size": 9100, "summary": "..." },
+    "ship": { "path": "skills/ship-checked/SKILL.md", "sha": "...", "size": 9100, "summary": "..." },
     "audit": { "path": "skills/audit/SKILL.md", "sha": "...", "size": 15300, "summary": "..." }
   }
 }

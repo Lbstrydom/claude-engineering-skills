@@ -341,7 +341,7 @@ source comments that no docs linter sees — stays valid.
 | [Shared cloud-config file for consumer repos](./shared-cloud-config.md) | `Complete` |  |
 | [Shared-Env Loading Root-Fix + Contract Guard (+ cache-seed experiment record)](./shared-env-loading-root-fix.md) | `Complete` |  |
 | [ship-commit refuses an audit marker that describes another branch's code](./ship-commit-marker-provenance.md) | `Complete` | shipped in #262 (status reconciled against merged PRs 2026-10-25) |
-| [Reduce `skills/ship/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Complete` | shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured… |
+| [Reduce `skills/ship-checked/SKILL.md`'s size via progressive disclosure](./ship-skill-size-reduction.md) | `Complete` | shipped 2026-09-16 directly on main (ee0e7da0, 85166fe0, e4edb530), closed out at 360a5abb. Re-measured… |
 | [Close Two Sibling-Path Defects (bandit_arms NULL key + local FP tracker in the ledger branch)](./sibling-path-suppression-defects.md) | `Complete` | implemented + audited via `/cycle --autonomous` (2026-07-18). Plan audit: 4 GPT + 1 Gemini → APPROVE. Code:… |
 | [Four places that report success without establishing it](./silent-success-cluster.md) | `Complete` |  |
 | [Align CES skills with Claude Code skill best practice](./skill-best-practice-alignment.md) | `Complete` | shipped in #326 (01943741). An optional follow-up for pre-existing prose defects is not started. |

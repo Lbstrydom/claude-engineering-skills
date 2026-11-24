@@ -341,7 +341,7 @@ transform (frontmatter → row) over ≥5 files, re-runnable idempotently — th
 - **closure trigger** — the load-bearing logic is a SYNCED command `quality session-review --session <id>`
   (in `lib/friction/commands.mjs`): reads the breadcrumb, lists injected-but-unlinked notes + the
   ready-to-run `quality link` command per note, emits `{ok, cloud, pending:[…]}`. `/ship` is a
-  **user-global** skill (`~/.claude/skills/ship`, NOT repo-synced) — so its prose change ("Step 6.x:
+  **user-global** skill (`~/.claude/skills/ship-checked`, NOT repo-synced) — so its prose change ("Step 6.x:
   run `quality session-review`; ask the user y/N per pending note; `quality link` on yes") is a
   best-effort trigger documented here, while the actual capability ships in the cross-skill command
   (so consumers get it regardless of their `/ship` prose). Advisory, post-push, never blocks.

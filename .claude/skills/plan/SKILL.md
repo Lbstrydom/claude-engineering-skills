@@ -620,7 +620,7 @@ too (→ `references/authoring-rationale.md` §Phase 7.5 — read when asked how
 - **Explore before proposing** — codebase is ground truth, not assumptions; §1's **Code Trace** is the artifact that proves you did (required on non-trivial plans)
 - **Name the principles** — every design choice cites which principle(s) it serves (#N)
 - **One document, one audit** — no merging child plans, no archive cruft
-- **Section 10 acceptance criteria are what `/ux-lock verify` grades** for frontend/full-stack — a **report, not a gate**: verify exits 0 even when criteria fail, and `/ship` does not read `plan_satisfaction`. Write them to be gradeable, not because they block a ship (they don't)
+- **Section 10 acceptance criteria are what `/ux-lock verify` grades** for frontend/full-stack — a **report, not a gate**: verify exits 0 even when criteria fail, and `/ship-checked` does not read `plan_satisfaction`. Write them to be gradeable, not because they block a ship (they don't)
 - **Phase the work only when it's large** — §7b/§11 are conditional (Gate 1: ≥6 files / ≥2 subsystems / dep-chain; Gate 2: ≥2 clusters). Never emit a lone "Phase 1"; cluster coupled phases so the audit sees the seam
 - **A measurement is a campaign** — an eval, labelled test set or experiment takes `--campaign`: `- **Mode**: campaign`, the C1–C12 `## Campaign Contract`, a dress rehearsal before the real run (`references/campaign.md`)
 - **Show every state** — Empty/Loading/Error/Success for any component you design

@@ -213,7 +213,7 @@ describe('sync --target-path — it actually deploys', () => {
     // The three halves that make a consumer functional.
     assert.ok(fs.existsSync(path.join(target, 'scripts', '.claude-skills')),
       'runners must land in the isolated tooling dir');
-    assert.ok(fs.existsSync(path.join(target, '.claude', 'skills', 'ship', 'SKILL.md')),
+    assert.ok(fs.existsSync(path.join(target, '.claude', 'skills', 'ship-checked', 'SKILL.md')),
       'skills must land at the canonical repo-scoped path');
     assert.ok(fs.existsSync(path.join(target, 'scripts', '.sync-manifest.json')),
       'the manifest must be written');
@@ -229,7 +229,7 @@ describe('sync --target-path — it actually deploys', () => {
     assert.equal(sidecar.version, 1);
     assert.equal(sidecar.comparison, 'case-insensitive');
     assert.ok(sidecar.paths.length > 0, 'an empty path set would assert nothing is upstream-owned');
-    assert.ok(sidecar.paths.includes('.claude/skills/ship/SKILL.md'),
+    assert.ok(sidecar.paths.includes('.claude/skills/ship-checked/SKILL.md'),
       'it must cover the COMMITTED surfaces, which git-ignore state and the banner cannot classify');
     assert.ok(sidecar.paths.some((p) => p.startsWith('scripts/.claude-skills/')),
       'and the gitignored tooling tree too');
@@ -238,7 +238,7 @@ describe('sync --target-path — it actually deploys', () => {
 
     // And the whole point of the exercise: the SKILL.md must cite the CONSUMER
     // runner layout, not the source one. This is the bug the plan exists to fix.
-    const ship = fs.readFileSync(path.join(target, '.claude', 'skills', 'ship', 'SKILL.md'), 'utf8');
+    const ship = fs.readFileSync(path.join(target, '.claude', 'skills', 'ship-checked', 'SKILL.md'), 'utf8');
     assert.ok(ship.includes('scripts/.claude-skills/ship-commit.mjs'),
       'runner paths must be rewritten for the consumer layout');
     assert.ok(!/node scripts\/ship-commit\.mjs/.test(ship),

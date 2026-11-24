@@ -19,7 +19,7 @@
  * consumer defect shape (4): "a documented command whose tooling cannot be
  * present where it runs". It then recurred — `/ai-context-management` named
  * `npm run context:check` in every one of its modes while the detector it
- * wraps WAS synced; `/security-strategy` and `/ship` reached for
+ * wraps WAS synced; `/security-strategy` and `/ship-checked` reached for
  * `npm run security:refresh --if-present`, which exits 0 having run nothing;
  * two shared references promised `.audit/` is swept "in every consumer" by a
  * script that was not shipped. Each was invisible to review because each
@@ -88,7 +88,7 @@ export const DISPOSITIONS = new Set([
   // (arch:*, debt:*, skills:hydrate). Still not delivered by the sync, so the
   // skill text must survive its absence — but naming it is not a mistake.
   'consumer-wired',
-  // A PLACEHOLDER inside a worked example — `--path scripts/foo.mjs` in /ship's
+  // A PLACEHOLDER inside a worked example — `--path scripts/foo.mjs` in /ship-checked's
   // commit recipe names no real file in either repo, so "can a consumer resolve
   // it" does not apply. Legal, but only where the surrounding text makes the
   // path's illustrative role obvious.

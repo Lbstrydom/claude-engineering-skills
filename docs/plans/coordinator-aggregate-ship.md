@@ -13,8 +13,8 @@
 Louis runs several chips a night. Each one ends at ship-ready, and he must type `/ship` in each chip session.
 
 `/ship` is user-only:
-- `disable-model-invocation: true` at `skills/ship/SKILL.md:14 (ceea43d2)`.
-- "The `/ship` command IS the user's approval" at `skills/ship/SKILL.md:800 (ceea43d2)`.
+- `disable-model-invocation: true` at `skills/ship-checked/SKILL.md:14 (ceea43d2)`.
+- "The `/ship` command IS the user's approval" at `skills/ship-checked/SKILL.md:800 (ceea43d2)`.
 
 The interim practice is that the coordinator squash-merges each PR under Louis's 2026-10-18 merge grant, then writes ONE record
 PR (`ship-record.mjs catchup --write`, committed via `ship-commit.mjs --record --decision`). For example, CES #381 covered 16 PRs
@@ -39,8 +39,8 @@ All citations are read at `ceea43d2`.
 
 | # | Machinery | What it does | Why it is not the answer today |
 |---|---|---|---|
-| 1 | `/ship` (`skills/ship/SKILL.md`) | Step 2 writes the status entry (`:580-598`). Step 5 writes the plan Status and Implementation Log (`:659-674`). Step 6.3 runs `ship-commit.mjs`, which writes the `AI-*` trailers (`:805-834`). The gate is passed, converged, waived or not-run (`:774-796`). | User-only (`:14`, `:800`). A coordinator cannot type it into another session, and a mid-turn invocation is refused. |
-| 2 | `/ship --train` (`skills/ship/SKILL.md:1082-1092`; `skills/ship/references/train-mode.md:31-67`; `scripts/ship-train.mjs`) | Lands a batch of ship-ready PRs. Per-PR provenance comes from `decideTrainGate` (`scripts/lib/ship-train/provenance.mjs:145`). Squash messages come from `composeSquashMessage` (`:208`). | **Human-only**: "does not relax the explicit-invocation rule" (`SKILL.md:1086`, `train-mode.md:31`). It is source-repo-gated, and `ship-train.mjs` and `lib/ship-train/` are **not synced** to any consumer (checked on disk in wine-cellar-app, storyline and ai-organiser). It checks no final review, sensitive path, migration or policy file, and it writes no per-member plan log. |
+| 1 | `/ship` (`skills/ship-checked/SKILL.md`) | Step 2 writes the status entry (`:580-598`). Step 5 writes the plan Status and Implementation Log (`:659-674`). Step 6.3 runs `ship-commit.mjs`, which writes the `AI-*` trailers (`:805-834`). The gate is passed, converged, waived or not-run (`:774-796`). | User-only (`:14`, `:800`). A coordinator cannot type it into another session, and a mid-turn invocation is refused. |
+| 2 | `/ship --train` (`skills/ship-checked/SKILL.md:1082-1092`; `skills/ship-checked/references/train-mode.md:31-67`; `scripts/ship-train.mjs`) | Lands a batch of ship-ready PRs. Per-PR provenance comes from `decideTrainGate` (`scripts/lib/ship-train/provenance.mjs:145`). Squash messages come from `composeSquashMessage` (`:208`). | **Human-only**: "does not relax the explicit-invocation rule" (`SKILL.md:1086`, `train-mode.md:31`). It is source-repo-gated, and `ship-train.mjs` and `lib/ship-train/` are **not synced** to any consumer (checked on disk in wine-cellar-app, storyline and ai-organiser). It checks no final review, sensitive path, migration or policy file, and it writes no per-member plan log. |
 | 3 | `ship-commit.mjs --preauthorised` / `--check-preauthorised` (`scripts/ship-commit.mjs:154-194`, `:657-684`) + `scripts/lib/ship-preauth.mjs` | A chip ships ITSELF when `evaluatePreauthorisedShip` (`ship-preauth.mjs:67`) holds all six conditions (`:23-25`): gate passed/converged and no `--no-tests`; audit converged per the store; final review APPROVE with result approve, bound to the audited tree and round; and no sensitive, migration or policy path (`:36-50`). It writes `AI-Ship-Authority: launch-prompt` (`ship-commit.mjs:682`) and refuses with exit 2, with no override. | **This is the right per-member mechanism, and it works.** Three such ships are on main: `e564473f`, `81bdd88b` and `7ff8883a`. But it is used only when the coordinator includes the opt-in launch block. Coordinators leave it out because it is "a launch-prompt decision, not a default" (`skills/fleet/references/chip-preamble.md:84`), and no standing grant makes it the default. Nothing checks a self-shipped head again at merge time. |
 | 4 | Chip-preamble PRE-AUTHORISED SHIP block (`skills/fleet/references/chip-preamble.md:57-65`) | The prose that grants item 3 to a chip, approved by the user's chip click (`:17-23`). | Opt-in per launch, "Include only when the user approved it at launch" (`:57`), so the default chip ends at ship-ready (`:53-55`). |
 | 5 | `ship-record.mjs catchup` (`scripts/lib/ship-record/state.mjs:1-20`; `entry.mjs:114-186`) | Records each merged PR once, after the fact. A PR counts as recorded if its own merge commit ADDED a log entry (`state.mjs:11-13`), so a self-shipped PR needs no catch-up entry. | Post-merge record only. It claims no gate: the record commit is `not-run` with `record-catchup` (`scripts/lib/ship-record/authority.mjs:84-125`). |
@@ -394,7 +394,7 @@ go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-
   in a repo whose sync predates the change finds no `--ship-batch` flag and stays on today's flow.
 
 ### 2.8 Docs every member ship still produces (unchanged, and still per member)
-- The status entry file under `docs/status/entries/`, written by the chip in ship Step 2 (`skills/ship/SKILL.md:580-598`).
+- The status entry file under `docs/status/entries/`, written by the chip in ship Step 2 (`skills/ship-checked/SKILL.md:580-598`).
 - The plan `Status:` and `## Implementation Log` line is NOT written by the ship step any more: record catch-up adds it after the merge (see 2.3).
 - The ship commit with `AI-*` trailers, written by `ship-commit.mjs`.
 - The coordinator writes no per-member docs. Its only write is the record PR for members merged without a ship
@@ -442,7 +442,7 @@ go-ahead. Every other `land --approve`, `--confirm`, `--override` and `--accept-
   - `skills/fleet/references/coordinator-playbook.md` (modify: §1 the shipped-head delta rule; a new §7a batch ship; where the
     grant is read from)
   - `skills/fleet/SKILL.md` (modify: the `:88` rule exception, `--ship-batch` usage)
-  - `skills/ship/SKILL.md` (modify: one line saying a coordinator batch lands self-shipped members; `/ship` stays user-only)
+  - `skills/ship-checked/SKILL.md` (modify: one line saying a coordinator batch lands self-shipped members; `/ship` stays user-only)
   - `skills/fleet/references/coordination.md` (modify: rule 4 cross-reference)
 
 **Close-out (not a phase):** `npm run skills:regenerate`, `npm run skills:check`, `npm run skills:size:gate`,

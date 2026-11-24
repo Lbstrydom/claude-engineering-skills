@@ -174,7 +174,7 @@ describe('composeSquashMessage — the parseable trailer block (the 56/76 regres
     const { isTrailerBlock, trailers } = parseMessageTrailers(message);
     assert.equal(isTrailerBlock, true);
     assert.deepEqual(trailers.map((t) => `${t.key}: ${t.value}`), [
-      'AI-Skill: ship', 'AI-Models: claude,gpt', 'AI-Gate: converged', `AI-Run-ID: ${decision.runId}`,
+      'AI-Skill: ship-checked', 'AI-Models: claude,gpt', 'AI-Gate: converged', `AI-Run-ID: ${decision.runId}`,
     ]);
   });
 
@@ -188,7 +188,7 @@ describe('composeSquashMessage — the parseable trailer block (the 56/76 regres
 
   test('a reserved AI-* line in a commit subject or the title is refused', () => {
     assert.throws(() => composeSquashMessage({ number: 1, title: 't', commitSubjects: ['AI-Gate: passed'], decision, models: ['claude'] }), /reserved/);
-    assert.throws(() => composeSquashMessage({ number: 1, title: 'AI-Skill: ship', commitSubjects: [], decision, models: ['claude'] }), /reserved/);
+    assert.throws(() => composeSquashMessage({ number: 1, title: 'AI-Skill: ship-checked', commitSubjects: [], decision, models: ['claude'] }), /reserved/);
   });
 
   test('a multi-line title or subject is folded to one line', () => {

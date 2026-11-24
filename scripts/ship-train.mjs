@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Ship trains — the machinery behind `/ship --train`.
+ * @fileoverview Ship trains — the machinery behind `/ship-checked --train`.
  *
- * One human `/ship --train` lands several already-audited PRs: one status.md
+ * One human `/ship-checked --train` lands several already-audited PRs: one status.md
  * entry, per-PR provenance written into each squash commit, one combined test
  * run (fleet), one consumer sync. Plan: docs/plans/ship-trains.md.
  *
@@ -18,7 +18,7 @@
  *   land     MERGES. Drives fleet's serial landing of a built, approvable train;
  *            fleet calls back at merge time and each squash commit gets the
  *            message decided on the exact head being merged. A stop is resumable
- *            with --resume. Only ever on the user's go-ahead (`/ship --train`).
+ *            with --resume. Only ever on the user's go-ahead (`/ship-checked --train`).
  *   verify   after landing: proves each merged PR is the source the train
  *            tested, checks that every AI-* claim on its squash commit is TRUE,
  *            and reports the final merge OID, interleaved commits and the
@@ -253,7 +253,7 @@ export async function main(argv = process.argv) {
   try {
     if (!VERBS.includes(verb)) throw new ArgvError(`ship-train: unknown verb ${JSON.stringify(verb ?? '')}. Verbs: ${VERBS.join(', ')}`);
     assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'ship-train', from: 3 });
-    // Declared, not evidenced: the model running /ship --train names itself. No
+    // Declared, not evidenced: the model running /ship-checked --train names itself. No
     // silent default — an omitted flag would publish a guess as a participant.
     const composer = flagValue(argv, '--composer');
     if (NEEDS_COMPOSER.includes(verb) && !composer) {

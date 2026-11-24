@@ -4,7 +4,7 @@
  *
  * ## Why this exists
  *
- * `/ship` Step 0.5h read `cross-skill.mjs upstream list`, which queries
+ * `/ship-checked` Step 0.5h read `cross-skill.mjs upstream list`, which queries
  * whatever store `AUDIT_DB_URL` names in THIS repo. That is one store, and
  * consumers are not on one store: measured 2026-08-29, `storyline` files into a
  * corporate Azure Postgres while this repo defaults to the NAS one. The step

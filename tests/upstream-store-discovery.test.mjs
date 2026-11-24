@@ -1,5 +1,5 @@
 /**
- * @fileoverview `/ship` Step 0.5h read ONE store and reported `0 open` while a
+ * @fileoverview `/ship-checked` Step 0.5h read ONE store and reported `0 open` while a
  * consumer on a different store had eight genuinely open reports. These guard
  * the fan-out that replaced it.
  *

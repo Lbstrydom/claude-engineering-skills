@@ -5,7 +5,7 @@
  *
  * ## The defect this closes (2026-08-30)
  *
- * `/ship` Step 0.5g runs `ship-commit --check-migrations`, which asks whether
+ * `/ship-checked` Step 0.5g runs `ship-commit --check-migrations`, which asks whether
  * **this** process's `AUDIT_DB_URL` is current. Consumers are not on one store,
  * and a consumer's own tooling is what notices its own drift — so a consumer
  * whose store falls behind is invisible from here until one of its writes hits

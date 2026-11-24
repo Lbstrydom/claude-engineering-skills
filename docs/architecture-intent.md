@@ -18,7 +18,7 @@
 
 ```mermaid
 graph TB
-  user["👤 Operator: /audit-code, /ship, /cycle"]
+  user["👤 Operator: /audit-code, /ship-checked, /cycle"]
   consumer["Consumer Repos<br/>wine-cellar, ai-organiser, ..."]
   liveapp["Deployed App<br/>(persona/click/nav/visual targets)"]
 
@@ -243,7 +243,7 @@ the pattern of).
 ### `explain`, `ship`
 `scripts/explain*.mjs` (the `/explain` skill — architectural-memory +
 git-history + plan synthesis for "why is this code here") and
-`scripts/ship*.mjs` (the `/ship` skill's commit/push/provenance-trailer
+`scripts/ship*.mjs` (the `/ship-checked` skill's commit/push/provenance-trailer
 mechanics).
 
 ### `scripts`, `skills-content`, `docs`, `supabase`

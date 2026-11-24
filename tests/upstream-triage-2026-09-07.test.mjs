@@ -4,7 +4,7 @@
  *
  *   ea23dfda — the bundle imports 16 npm packages and declared none of them
  *   5bc7ff30 — skills:hydrate copied the tooling and left the bundle stamp behind
- *   b02d80b3 — /ship Step 6.8 overwrote an unread verification note
+ *   b02d80b3 — /ship-checked Step 6.8 overwrote an unread verification note
  *
  * Each one had the same shape: a check that could report health while never
  * having looked. So every case below asserts BOTH directions — the one that must

@@ -25,11 +25,11 @@ import {
   AI_TRAILER_KEYS,
 } from '../scripts/lib/commit-trailers.mjs';
 
-const SKILLS = ['ship', 'audit-code', 'plan'];
+const SKILLS = ['ship-checked', 'audit-code', 'plan'];
 
 function validInput(overrides = {}) {
   return {
-    skill: 'ship',
+    skill: 'ship-checked',
     modelsRaw: 'claude,gpt,gemini',
     gate: 'not-run',
     messageText: 'feat: subject\n\nbody text\n',
@@ -60,7 +60,7 @@ test('skill: enum from directory names; unknown rejected with sorted list in the
   assert.equal(lines.length, 1);
   assert.equal(
     lines[0],
-    'AGENT FIX: --skill: expected one of [audit-code|plan|ship] (skills/ directory names); got "shipping". Example: --skill ship',
+    'AGENT FIX: --skill: expected one of [audit-code|plan|ship-checked] (skills/ directory names); got "shipping". Example: --skill ship-checked',
   );
 });
 
@@ -120,16 +120,16 @@ test('reserved AI-* trailer in the trailer block is detected (case-insensitive)'
 });
 
 test('an AI-* mention in body prose (not the trailer block) is NOT reserved-rejected', () => {
-  const msg = 'docs: explain trailers\n\nThe convention adds AI-Skill: ship to commits.\n\nSee docs for details.\n';
+  const msg = 'docs: explain trailers\n\nThe convention adds AI-Skill: ship-checked to commits.\n\nSee docs for details.\n';
   assert.equal(findReservedTrailers(msg).length, 0);
 });
 
 test('reserved-trailer rejection is the pinned byte format', () => {
-  const messageText = 'feat: x\n\nbody\n\nAI-Skill: ship\n';
+  const messageText = 'feat: x\n\nbody\n\nAI-Skill: ship-checked\n';
   const r = validateTrailerInput(validInput({ messageText }), { skillNames: SKILLS });
   const lines = renderAgentFixLines(r.errors);
   assert.deepEqual(lines, [
-    'AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "AI-Skill: ship" at message line 5. Example: remove the line and pass --skill ship',
+    'AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "AI-Skill: ship-checked" at message line 5. Example: remove the line and pass --skill ship-checked',
   ]);
 });
 
@@ -321,7 +321,7 @@ test('formatTrailerBlock: AI-Audited-Tree is emitted on passed and NEVER on conv
   // unreachable from any ref, gc-prunable, and absent from every clone — a
   // provenance line that looks checkable and is not. Asserted rather than
   // assumed, because an omission nothing tests for is an omission that returns.
-  const base = { skill: 'ship', models: ['claude'], runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE };
+  const base = { skill: 'ship-checked', models: ['claude'], runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE };
   assert.ok(
     formatTrailerBlock({ ...base, gate: 'passed' }).some((l) => l.startsWith('AI-Audited-Tree: ')),
     'passed still carries the identity it compared',
@@ -437,8 +437,8 @@ test('messageFileError: pinned formats for missing / containment (rows 6/6b)', (
 test('formatTrailerBlock: AI-Audited-Tree is emitted on a verified passed', () => {
   const tree = 'b'.repeat(40);
   assert.deepEqual(
-    formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: tree }),
-    ['AI-Skill: ship', 'AI-Models: claude', 'AI-Gate: passed', 'AI-Run-ID: abc12345', `AI-Audited-Tree: ${tree}`],
+    formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: tree }),
+    ['AI-Skill: ship-checked', 'AI-Models: claude', 'AI-Gate: passed', 'AI-Run-ID: abc12345', `AI-Audited-Tree: ${tree}`],
   );
 });
 
@@ -449,15 +449,15 @@ test('formatTrailerBlock: AI-Audited-Tree is refused on any gate other than pass
   // publish an identity claim nothing verified.
   for (const gate of ['waived', 'not-run']) {
     assert.deepEqual(
-      formatTrailerBlock({ skill: 'ship', models: ['claude'], gate, runId: 'abc12345', auditedTree: 'c'.repeat(40) }),
-      ['AI-Skill: ship', 'AI-Models: claude', `AI-Gate: ${gate}`, 'AI-Run-ID: abc12345'],
+      formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate, runId: 'abc12345', auditedTree: 'c'.repeat(40) }),
+      ['AI-Skill: ship-checked', 'AI-Models: claude', `AI-Gate: ${gate}`, 'AI-Run-ID: abc12345'],
     );
   }
 });
 
 test('formatTrailerBlock: a malformed oid emits nothing rather than a bogus identity', () => {
   for (const bad of ['', null, undefined, 'not-a-tree', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41)]) {
-    const lines = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: bad });
+    const lines = formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: bad });
     assert.ok(
       !lines.some((l) => l.startsWith('AI-Audited-Tree:')),
       `expected no identity trailer for ${JSON.stringify(bad)}`,
@@ -472,14 +472,14 @@ test('formatTrailerBlock: the emitted value round-trips through git’s own trai
   // So assert through git itself, not through our own renderer.
   const tree = 'd'.repeat(40);
   const msg = composeFinalMessage('feat: x\n\nbody', {
-    skill: 'ship', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: tree,
+    skill: 'ship-checked', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: tree,
   });
   const out = execFileSync('git', ['interpret-trailers', '--parse'], { input: msg, encoding: 'utf-8' });
   assert.match(out, new RegExp(`^AI-Audited-Tree: ${tree}$`, 'm'));
   // Negative control: the same parse must NOT invent the trailer when the
   // renderer withheld it, or the assertion above proves nothing about the gate.
   const withheld = composeFinalMessage('feat: x\n\nbody', {
-    skill: 'ship', models: ['claude'], gate: 'waived', runId: 'abc12345', auditedTree: tree,
+    skill: 'ship-checked', models: ['claude'], gate: 'waived', runId: 'abc12345', auditedTree: tree,
   });
   const out2 = execFileSync('git', ['interpret-trailers', '--parse'], { input: withheld, encoding: 'utf-8' });
   assert.doesNotMatch(out2, /^AI-Audited-Tree:/m);
@@ -487,30 +487,30 @@ test('formatTrailerBlock: the emitted value round-trips through git’s own trai
 
 test('formatTrailerBlock: fixed key order; AI-Run-ID only when present', () => {
   assert.deepEqual(
-    formatTrailerBlock({ skill: 'ship', models: ['claude', 'gpt'], gate: 'passed', runId: 'abc12345' }),
-    ['AI-Skill: ship', 'AI-Models: claude,gpt', 'AI-Gate: passed', 'AI-Run-ID: abc12345'],
+    formatTrailerBlock({ skill: 'ship-checked', models: ['claude', 'gpt'], gate: 'passed', runId: 'abc12345' }),
+    ['AI-Skill: ship-checked', 'AI-Models: claude,gpt', 'AI-Gate: passed', 'AI-Run-ID: abc12345'],
   );
   assert.deepEqual(
-    formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'not-run', runId: null }),
-    ['AI-Skill: ship', 'AI-Models: claude', 'AI-Gate: not-run'],
+    formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate: 'not-run', runId: null }),
+    ['AI-Skill: ship-checked', 'AI-Models: claude', 'AI-Gate: not-run'],
   );
 });
 
-const VALUES = { skill: 'ship', models: ['claude', 'gpt'], gate: 'not-run', runId: null };
+const VALUES = { skill: 'ship-checked', models: ['claude', 'gpt'], gate: 'not-run', runId: null };
 
 test('compose: plain body → exactly one blank line before the AI block, final newline ensured', () => {
   const out = composeFinalMessage('feat: x\n\nbody', VALUES);
-  assert.equal(out, 'feat: x\n\nbody\n\nAI-Skill: ship\nAI-Models: claude,gpt\nAI-Gate: not-run\n');
+  assert.equal(out, 'feat: x\n\nbody\n\nAI-Skill: ship-checked\nAI-Models: claude,gpt\nAI-Gate: not-run\n');
 });
 
 test('compose: existing trailer block → AI block joins it (one contiguous block for git)', () => {
   const out = composeFinalMessage('feat: x\n\nbody\n\nFixes: #12\n', VALUES);
-  assert.equal(out, 'feat: x\n\nbody\n\nFixes: #12\nAI-Skill: ship\nAI-Models: claude,gpt\nAI-Gate: not-run\n');
+  assert.equal(out, 'feat: x\n\nbody\n\nFixes: #12\nAI-Skill: ship-checked\nAI-Models: claude,gpt\nAI-Gate: not-run\n');
 });
 
 test('compose: CRLF normalized, trailing whitespace trimmed, no-final-newline input handled', () => {
   const out = composeFinalMessage('feat: x\r\n\r\nbody  ', VALUES);
-  assert.equal(out, 'feat: x\n\nbody\n\nAI-Skill: ship\nAI-Models: claude,gpt\nAI-Gate: not-run\n');
+  assert.equal(out, 'feat: x\n\nbody\n\nAI-Skill: ship-checked\nAI-Models: claude,gpt\nAI-Gate: not-run\n');
 });
 
 test('compose: never mutates its input (pure — Gemini G2 is enforced at the CLI seam)', () => {
@@ -523,9 +523,9 @@ test('compose: never mutates its input (pure — Gemini G2 is enforced at the CL
 // ---------------------------------------------------------------- AI-Final-Review (docs/plans/copilot-feedback-item4.md section 2.2 B3)
 
 test('formatTrailerBlock: AI-Final-Review renders each disposition with its trailer spelling, after AI-Audited-Tree and before AI-Ship-Authority', () => {
-  const base = { skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE, shipAuthority: 'launch-prompt' };
+  const base = { skill: 'ship-checked', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', auditedTree: AUDITED_TREE, shipAuthority: 'launch-prompt' };
   assert.deepEqual(formatTrailerBlock({ ...base, finalReview: 'approve_with_debt' }), [
-    'AI-Skill: ship',
+    'AI-Skill: ship-checked',
     'AI-Models: claude',
     'AI-Gate: passed',
     'AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844',
@@ -538,7 +538,7 @@ test('formatTrailerBlock: AI-Final-Review renders each disposition with its trai
 });
 
 test('formatTrailerBlock: AI-Final-Review is absent without a disposition, for an unknown value, and without a run id', () => {
-  const base = { skill: 'ship', models: ['claude'], gate: 'waived', runId: 'ecae388d-c176-4182-9d27-0210b919b844' };
+  const base = { skill: 'ship-checked', models: ['claude'], gate: 'waived', runId: 'ecae388d-c176-4182-9d27-0210b919b844' };
   const has = (v) => formatTrailerBlock(v).some((l) => l.startsWith('AI-Final-Review'));
   assert.equal(has(base), false);
   for (const bad of [null, '', 'approve-with-debt', 'APPROVE', 'approved', true, 'toString', '__proto__']) {
@@ -549,27 +549,27 @@ test('formatTrailerBlock: AI-Final-Review is absent without a disposition, for a
 });
 
 test('composeFinalMessage: AI-Final-Review lands in the parseable trailer block', () => {
-  const msg = composeFinalMessage('feat: x\n\nbody\n', { skill: 'ship', models: ['claude'], gate: 'waived', runId: 'ecae388d-c176-4182-9d27-0210b919b844', finalReview: 'approve_with_debt' });
+  const msg = composeFinalMessage('feat: x\n\nbody\n', { skill: 'ship-checked', models: ['claude'], gate: 'waived', runId: 'ecae388d-c176-4182-9d27-0210b919b844', finalReview: 'approve_with_debt' });
   const { isTrailerBlock, trailers } = parseMessageTrailers(msg);
   assert.equal(isTrailerBlock, true);
   assert.deepEqual(trailers.filter((t) => t.key === 'AI-Final-Review').map((t) => t.value), ['approve-with-debt']);
 });
 
 test('AI_TRAILER_KEYS is exactly what the renderer emits, in block order (the one list readers canonicalise against)', () => {
-  const full = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2', auditedTree: AUDITED_TREE, finalReview: 'approve', shipAuthority: 'launch-prompt' });
+  const full = formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate: 'passed', runId: 'ecae388d-c176-4182-9d27-0210b919b844', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2', auditedTree: AUDITED_TREE, finalReview: 'approve', shipAuthority: 'launch-prompt' });
   // AI-Decision rides only on a RECORD commit (gate not-run, AI-Ship-Authority: record-catchup), which cannot coexist with the
   // passed-gate keys above — so the canonical list is the launch-prompt block followed by the record block's extra key.
-  const record = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'not-run', shipAuthority: 'record-catchup', decision: 'dec-20261116000000-abcd' });
+  const record = formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate: 'not-run', shipAuthority: 'record-catchup', decision: 'dec-20261116000000-abcd' });
   const keys = [...full, ...record].map((l) => l.split(': ')[0]);
   assert.deepEqual(keys.filter((k, i) => keys.indexOf(k) === i), [...AI_TRAILER_KEYS]);
 });
 
 test('AI-Work-Item is validated as a UUIDv7 and only emitted when present', () => {
-  const ok = validateTrailerInput({ skill: 'ship', modelsRaw: 'claude', gate: 'not-run', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2' }, { skillNames: ['ship'] });
+  const ok = validateTrailerInput({ skill: 'ship-checked', modelsRaw: 'claude', gate: 'not-run', workItem: '01a179bd-3d97-739c-b15b-3eb0d65f78b2' }, { skillNames: ['ship-checked'] });
   assert.equal(ok.values.workItem, '01a179bd-3d97-739c-b15b-3eb0d65f78b2');
-  const bad = validateTrailerInput({ skill: 'ship', modelsRaw: 'claude', gate: 'not-run', workItem: 'not-a-uuid' }, { skillNames: ['ship'] });
+  const bad = validateTrailerInput({ skill: 'ship-checked', modelsRaw: 'claude', gate: 'not-run', workItem: 'not-a-uuid' }, { skillNames: ['ship-checked'] });
   assert.ok(bad.errors.some((e) => e.field === '--work-item'));
-  assert.ok(!formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'not-run' }).some((l) => l.startsWith('AI-Work-Item')));
+  assert.ok(!formatTrailerBlock({ skill: 'ship-checked', models: ['claude'], gate: 'not-run' }).some((l) => l.startsWith('AI-Work-Item')));
 });
 
 test('a hand-typed AI-Final-Review in the message is a reserved trailer: it cannot be declared (P-B3)', () => {

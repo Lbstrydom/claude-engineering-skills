@@ -4,7 +4,7 @@
  *
  * WHY MECHANICAL, NOT PROSE. This happened twice. First `dashboard/index.html`
  * (reclassified B → A in 2026-06); the fix was a prose "do NOT stage" note in
- * `/ship`. Then `docs/architecture-map.md` (reclassified B → A on 2026-07-20)
+ * `/ship-checked`. Then `docs/architecture-map.md` (reclassified B → A on 2026-07-20)
  * kept its `git add` line for six days, sitting TWO STEPS ABOVE that very note,
  * and an agent followed it on 2026-07-26. Prose next to the mistake did not stop
  * the mistake.

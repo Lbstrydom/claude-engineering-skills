@@ -5,7 +5,7 @@
  * **The incident (2026-08-30).** A consumer's Azure store sat 2 migrations
  * behind for a day. The `.sql` files had synced to disk and were never applied,
  * so that consumer's code and schema disagreed silently — the `annotation`
- * event shipped the day before could not have worked there. `/ship` Step 0.5g
+ * event shipped the day before could not have worked there. `/ship-checked` Step 0.5g
  * asks only whether the AMBIENT store is current, so nothing in this repo ever
  * asked. It surfaced when a routine upstream-report closure was refused by the
  * write-path realization guard, which is the last possible moment.

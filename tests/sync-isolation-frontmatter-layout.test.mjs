@@ -47,7 +47,7 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3,
 
 describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   it('FAILS on a retired, consumer-resident skill carrying the real inert fixture (the measured case)', () => {
-    const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
+    const manifest = manifestFor([ownedSkill('ship-checked', goodSkill('ship'))]);
     writeFile(root, '.claude/skills/audit/SKILL.md', poison);        // not in the manifest — retired upstream
 
     const res = gate9(root, manifest);
@@ -64,7 +64,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   });
 
   it('gates 2B and 8 are BLIND to that same file (the gate is not redundant)', () => {
-    const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
+    const manifest = manifestFor([ownedSkill('ship-checked', goodSkill('ship'))]);
     writeFile(root, '.claude/skills/audit/SKILL.md', poison);
     assert.equal(gate2B(root, manifest).pass, true, '2B iterates manifest entries; audit is not one');
     assert.equal(gate8(root, manifest).pass, true, '8 asks about .github/.agents roots, not .claude/skills content');
@@ -80,7 +80,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   });
 
   it('PASSES the same tree once the key is dedented (positive control on the fix)', () => {
-    const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
+    const manifest = manifestFor([ownedSkill('ship-checked', goodSkill('ship'))]);
     writeFile(root, '.claude/skills/audit/SKILL.md', dedented);
     const res = gate9(root, manifest);
     assert.equal(res.pass, true, res.error);
@@ -88,7 +88,7 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   });
 
   it('a frontmatter-less CONSUMER skill is unverifiable, reported, and does not fail the gate', () => {
-    const manifest = manifestFor([ownedSkill('ship', goodSkill('ship'))]);
+    const manifest = manifestFor([ownedSkill('ship-checked', goodSkill('ship'))]);
     writeFile(root, '.claude/skills/their-tool/SKILL.md', '# Their skill, no frontmatter\n');
     const res = gate9(root, manifest);
     assert.equal(res.pass, true, res.error);
@@ -96,10 +96,10 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
   });
 
   it('a frontmatter-less OWNED skill DOES fail — ours must be verifiable', () => {
-    const manifest = manifestFor([ownedSkill('ship', '# no frontmatter\n')]);
+    const manifest = manifestFor([ownedSkill('ship-checked', '# no frontmatter\n')]);
     const res = gate9(root, manifest);
     assert.equal(res.pass, false);
-    assert.deepEqual(res.details.owned.map((f) => [f.skill, f.kind]), [['ship', 'no-frontmatter']]);
+    assert.deepEqual(res.details.owned.map((f) => [f.skill, f.kind]), [['ship-checked', 'no-frontmatter']]);
   });
 
   it('says what it checked when .claude/skills/ is absent or holds no skills — never a silent green', () => {
@@ -111,9 +111,9 @@ describe('gate 9 — inert frontmatter declaration in .claude/skills/', () => {
 
   it('ownedSkillNamesFromManifest derives names from manifest keys in either slash style', () => {
     const ours = ownedSkillNamesFromManifest({ files: {
-      '.claude/skills/ship/SKILL.md': 'x', '.claude\\skills\\plan\\references\\a.md': 'y', 'scripts/.claude-skills/x.mjs': 'z',
+      '.claude/skills/ship-checked/SKILL.md': 'x', '.claude\\skills\\plan\\references\\a.md': 'y', 'scripts/.claude-skills/x.mjs': 'z',
     } });
-    assert.deepEqual([...ours].sort(), ['plan', 'ship']);
+    assert.deepEqual([...ours].sort(), ['plan', 'ship-checked']);
     assert.equal(ownedSkillNamesFromManifest(null).size, 0);
   });
 });

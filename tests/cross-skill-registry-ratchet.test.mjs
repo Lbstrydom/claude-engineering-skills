@@ -56,7 +56,7 @@ const CLI_PATH = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta
 //   fleet-telemetry (2026-10-10, docs/plans/fleet-telemetry.md) - the drain and
 //     stats reader for /fleet's usage events; registered directly: 74 + 1 = 75
 //   close-finding (2026-10-02) - by-id discharge of an ordinary-pass finding;
-//     /ship 0.5e's printed final-review-record-fix could not touch one.
+//     /ship-checked 0.5e's printed final-review-record-fix could not touch one.
 //     Registered directly: 75 + 1 = 76, then +1 for the own-model `ledger` verb = 77
 //
 // ZERO is the end state, and the ratchet flips meaning here: from "legacy may

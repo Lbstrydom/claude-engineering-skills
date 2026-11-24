@@ -14,7 +14,7 @@
  * That guard is now GONE, along with the whole install path — not regressed.
  * Field evidence in 2026-07 showed the deeper defect: the global surface writes
  * layout-dependent runner paths into a layout-agnostic directory shared by every
- * repo, so `~/.claude/skills/ship/SKILL.md` cited `scripts/ship-commit.mjs` while
+ * repo, so `~/.claude/skills/ship-checked/SKILL.md` cited `scripts/ship-commit.mjs` while
  * the correct consumer copy cited `scripts/.claude-skills/ship-commit.mjs`. No
  * scope guard fixes that; only removing the surface does.
  *

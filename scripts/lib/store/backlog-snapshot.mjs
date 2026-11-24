@@ -1,7 +1,7 @@
 /**
  * @fileoverview Pure formatter for the per-ship backlog snapshot line.
  *
- * **Why a line per ship.** Three standing queues have been surfaced by `/ship`
+ * **Why a line per ship.** Three standing queues have been surfaced by `/ship-checked`
  * as prose on every push for months, acknowledged, and never worked
  * (`docs/plans/standing-queue-burndown.md`). Prose that scrolls past is not a
  * measurement anyone can trend. One line in the status entry makes the drift
@@ -163,7 +163,7 @@ function parseCodePlan(seg, label) {
 
 /**
  * Parse one line written by {@link renderBacklogSnapshot} — the READER that matches
- * that writer. `/ship` pastes the line into `status.md`, so the producer is a
+ * that writer. `/ship-checked` pastes the line into `status.md`, so the producer is a
  * formatter and the consumer is code with no compiler between them; a round-trip
  * test pins the two, and a REAL line from `status.md` is a fixture.
  *

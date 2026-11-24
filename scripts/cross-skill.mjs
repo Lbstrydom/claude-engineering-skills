@@ -2,7 +2,7 @@
 /**
  * @fileoverview CLI facade for the cross-skill data loop.
  *
- * Skills (/ux-lock, /persona-test, /ship) invoke this script instead of raw curl.
+ * Skills (/ux-lock, /persona-test, /ship-checked) invoke this script instead of raw curl.
  * It handles Supabase auth, repo resolution, JSON I/O, and graceful no-op
  * when cloud store is unavailable — giving every skill a single, testable
  * persistence entrypoint.
@@ -15,11 +15,11 @@
  *   record-regression-spec      — /ux-lock writes a new Playwright spec
  *   record-regression-spec-run  — append a pass/fail run to a spec
  *   record-correlation          — /persona-test links a finding to an audit row
- *   record-ship-event           — /ship writes its outcome
+ *   record-ship-event           — /ship-checked writes its outcome
  *   fleet-telemetry             — drain /fleet's usage spool; stats + weakness findings
- *   list-unlocked-fixes         — /ship reads fixes that need a regression spec
- *   list-unremediated-acceptances — /ship reads accepted findings never remediated
- *   list-recent-p0s             — /ship reads persona-test open P0s (existing query, promoted here)
+ *   list-unlocked-fixes         — /ship-checked reads fixes that need a regression spec
+ *   list-unremediated-acceptances — /ship-checked reads accepted findings never remediated
+ *   list-recent-p0s             — /ship-checked reads persona-test open P0s (existing query, promoted here)
  *   audit-effectiveness         — dashboard rollup (user-visible precision/recall)
  *   whoami                      — print repo_id + cloud-mode status, for diagnostics
  *
@@ -498,7 +498,7 @@ const pageArgsFromFlags = () => ({ limit: argOption('limit'), offset: argOption(
 // cmdFinalReviewAdjudicate moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
 /**
- * Findings awaiting credit — the READ that makes `/ship`'s nudge possible.
+ * Findings awaiting credit — the READ that makes `/ship-checked`'s nudge possible.
  *
  * `final-review-{adjudicate,record-fix}` have existed, tested, since the shadow
  * A/B closed. Nothing called them: no SKILL.md referenced either, so
@@ -507,7 +507,7 @@ const pageArgsFromFlags = () => ({ limit: argOption('limit'), offset: argOption(
  * can act on.
  *
  * **Three states, exit 0 for all of them.** `ready` / `disabled` /
- * `unavailable` — because `/ship` must continue through every one of them. A
+ * `unavailable` — because `/ship-checked` must continue through every one of them. A
  * credit nudge that can fail a ship is worse than no nudge.
  *
  * `--render --commit <sha>` returns the finished card TEXT instead of JSON, so
@@ -805,7 +805,7 @@ const RecordPersonaSessionRequestSchema = z.object({
 // Replaces curl-with-anon-key reads in:
 //   skills/persona-test/references/{interop,session-history}.md
 //   skills/plan/SKILL.md (Phase 1 pre-step)
-//   skills/ship/SKILL.md (Step 0.5a)
+//   skills/ship-checked/SKILL.md (Step 0.5a)
 // after the 20260507 RLS hardening. Anon reads are blocked at the policy
 // boundary; this CLI surface is now the only supported read path.
 

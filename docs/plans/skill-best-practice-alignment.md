@@ -268,8 +268,8 @@ confirm or revise the Phase 2–5 ceiling in §Pilot result. Files:
 `skills/audit-plan/references/convergence-evidence.md` (create),
 `docs/plans/skill-best-practice-alignment.md` (modify).
 
-**Phase 2 — Slim ship**: Files: `skills/ship/SKILL.md` (modify),
-`skills/ship/references/*.md` (create; topics decided by reading — named in §Results).
+**Phase 2 — Slim ship**: Files: `skills/ship-checked/SKILL.md` (modify),
+`skills/ship-checked/references/*.md` (create; topics decided by reading — named in §Results).
 
 **Phase 3 — Slim persona-test**: Files: `skills/persona-test/SKILL.md` (modify),
 `skills/persona-test/references/*.md` (create).
@@ -296,7 +296,7 @@ it stays resident). Files: `tests/*.test.mjs` (modify, only as found).
 
 **Phase 6 — allowed-tools rule + frontmatter**: Files:
 `scripts/lib/skill-frontmatter-layout.mjs` (modify), `tests/skill-allowed-tools.test.mjs` (create),
-`skills/plan/SKILL.md`, `skills/ship/SKILL.md`, `skills/cycle/SKILL.md` (modify — frontmatter only),
+`skills/plan/SKILL.md`, `skills/ship-checked/SKILL.md`, `skills/cycle/SKILL.md` (modify — frontmatter only),
 `docs/reference/skill-surface-ownership.md` (modify).
 
 **Phase 7 — Trim AGENTS.md + lower cap**: Files: `AGENTS.md` (modify),
@@ -442,7 +442,7 @@ Tokens per Appendix A (count_tokens, `claude-opus-5-5`, 2026-11-02); chars = LF-
 
 | File | tokens before | tokens after | Δ tokens | chars before | chars after |
 |---|---:|---:|---:|---:|---:|
-| skills/ship/SKILL.md | 27,043 | 22,318 | −17.5% | 69,344 | 56,894 |
+| skills/ship-checked/SKILL.md | 27,043 | 22,318 | −17.5% | 69,344 | 56,894 |
 | skills/persona-test/SKILL.md | 22,447 | 17,020 | −24.2% | 57,174 | 43,426 |
 | skills/audit-code/SKILL.md | 22,030 | 16,287 | −26.1% | 55,696 | 40,563 |
 | skills/cycle/SKILL.md | 18,621 | 16,316 | −12.4% | 46,673 | 40,966 |

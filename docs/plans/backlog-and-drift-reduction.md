@@ -221,10 +221,10 @@ The design rests on reading these paths at `88025501`:
   (`p === 'status.md'`) and its `BASELINE` is **empty** (`:172`). Neither
   exclusion covers a `docs/status/` prefix. `status.md` holds **M16**: 34 unique
   unresolved targets that are invisible today only because of that exclusion.
-- **The append contract.** `skills/ship/references/status-md-format.md:34-36`
-  (append at the TOP, below the header) and `skills/ship/SKILL.md:1403`
+- **The append contract.** `skills/ship-checked/references/status-md-format.md:34-36`
+  (append at the TOP, below the header) and `skills/ship-checked/SKILL.md:1403`
   (*"status.md is a log — append, never rewrite history"*), `:1316`
-  (*"status.md is append-only"*). `skills/ship/gate-contract.json:332-333`
+  (*"status.md is append-only"*). `skills/ship-checked/gate-contract.json:332-333`
   records the append-only convention as a **documented claim with no enforcing
   gate**.
 - **The incident that proves the gap.** `3a17bbce`
@@ -694,8 +694,8 @@ New structure is on the table three times. Each gets its three lines.
 | `docs/plans/final-review-shadow-bakeoff.md` | modify | Record the handback of the 486-row queue now that the plan is Complete. |
 | `scripts/backlog-snapshot.mjs` | create | Performs the five reads itself in one process (R3-H2), calls the formatter, prints one line to **stdout**. No flags beyond `--json` and `--selfcheck-relocation`. Writes no file, and specifically never touches `status.md`. Read-only: it must issue no write to the store. |
 | `scripts/lib/store/backlog-snapshot.mjs` | create | **Pure formatter over the five results the CLI fetched** (R4-H1) — it performs no I/O and knows nothing about ship steps. Reads `byMode.code`/`byMode.plan` and `counts.totalActionable` — **never `rows.length`**, the capped-reader trap `standing-queue-burndown.md` §1 documents. Any result with `measured:false`, `cloud:false`, or `scope.mode !== 'repo'` renders that field as `unmeasured`, **never `0`** — an unasked question must not render as good news. |
-| `skills/ship/SKILL.md` | modify | Step 2 runs `node scripts/backlog-snapshot.mjs` and pastes its single stdout line into the status entry. **It reuses no envelope from any earlier step** — the CLI does its own reads (R3-H2), which is what lets every field share one timestamp. Step 0.5 is untouched. |
-| `skills/ship/references/status-md-format.md` | modify | Document the line's grammar and each field's read. |
+| `skills/ship-checked/SKILL.md` | modify | Step 2 runs `node scripts/backlog-snapshot.mjs` and pastes its single stdout line into the status entry. **It reuses no envelope from any earlier step** — the CLI does its own reads (R3-H2), which is what lets every field share one timestamp. Step 0.5 is untouched. |
+| `skills/ship-checked/references/status-md-format.md` | modify | Document the line's grammar and each field's read. |
 | `tests/backlog-snapshot.test.mjs` | create | Formatting; `measured:false` → `unmeasured`; a capped envelope must not be read via `rows.length`; and code/plan counts stay distinct. |
 
 ### Cluster D — the file-size ratchet
@@ -737,7 +737,7 @@ New structure is on the table three times. Each gets its three lines.
 - **Phase 7 — The policy, written down**: the third category and the per-rule annotation. Files: `docs/reference/gitignore-policy.md` (create), `docs/README.md` (modify), `.gitignore` (modify).
 - **Phase 8 — The policy, enforced**: category gate, baselined and drift-only. Files: `scripts/check-gitignore-policy.mjs` (create), `.gitignore-policy-baseline.json` (create), `tests/check-gitignore-policy.test.mjs` (create).
 - **Phase 9 — Queue ownership**: refresh Q1/Q2, re-adopt Q3 on its own revisit condition. Files: `docs/plans/standing-queue-burndown.md` (modify), `docs/plans/final-review-shadow-bakeoff.md` (modify).
-- **Phase 10 — Per-ship backlog visibility**: the snapshot line from counts Step 0.5 already has. Files: `scripts/backlog-snapshot.mjs` (create), `scripts/lib/store/backlog-snapshot.mjs` (create), `tests/backlog-snapshot.test.mjs` (create), `skills/ship/SKILL.md` (modify), `skills/ship/references/status-md-format.md` (modify).
+- **Phase 10 — Per-ship backlog visibility**: the snapshot line from counts Step 0.5 already has. Files: `scripts/backlog-snapshot.mjs` (create), `scripts/lib/store/backlog-snapshot.mjs` (create), `tests/backlog-snapshot.test.mjs` (create), `skills/ship-checked/SKILL.md` (modify), `skills/ship-checked/references/status-md-format.md` (modify).
 - **Phase 11 — The size ratchet**: gate, baseline, tests; delete the one dead CLI. Files: `scripts/file-size-ratchet.mjs` (create), `.file-size-baseline.json` (create), `tests/file-size-ratchet.test.mjs` (create), `scripts/migrate-v3-run-metadata.mjs` (delete).
 - **Phase 12 — The conservation guard, proven to fail first**: entry-digest conservation + manifest check, the PR #87 replay, and the re-run-at-a-later-commit property. Files: `scripts/check-status-log-integrity.mjs` (create), `docs/status/rotation-manifest.json` (create), `tests/check-status-log-integrity.test.mjs` (create).
 - **Phase 13 — Rotate under the guard**: extend both exclusions **before** moving content, then rotate, then re-pin the decayed citations. Files: `scripts/check-docs-refs.mjs` (modify), `scripts/check-npm-run-args.mjs` (modify), `tests/check-docs-refs.test.mjs` (modify), `scripts/rotate-status-log.mjs` (create), `docs/status/README.md` (create), `status.md` (modify), `docs/audit/shared-references/verification-discipline.md` (modify), `docs/plans/dead-code-phase-1-orphan-introduced.md` (modify), `docs/plans/verification-discipline-cluster.md` (modify), `docs/plans/self-hosted-runner-management.md` (modify).
@@ -771,7 +771,7 @@ impact-not-authorship rule):
 - **Burning down Q1/Q2/Q3.** Recurring work under the repaired routes, owned by
   `standing-queue-burndown.md`. Independent: this plan changes who owns and how
   it is measured, not the rows.
-- **`skills/ship/SKILL.md` is 75,349 bytes**, far over the ≤3K-token SKILL.md
+- **`skills/ship-checked/SKILL.md` is 75,349 bytes**, far over the ≤3K-token SKILL.md
   target. Noted, not touched. Independent: Phase 10 adds one line to an existing
   step and does not depend on the file's size.
 

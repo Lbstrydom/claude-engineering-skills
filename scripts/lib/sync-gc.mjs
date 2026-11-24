@@ -148,6 +148,7 @@ export function renderGcReport({ gcPlan, gcResult, retiredHeld, overridesPath, c
   for (const f of gcResult.held) out.push(`  ${D}hold${X}  ${f} ${D}(changed between the check and the delete)${X}`);
   for (const f of gcPlan.probeFailed) out.push(`  ${R}gc SKIPPED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}) — no gc this run: nothing is deleted on a guess${X}`);
   for (const f of gcResult.failed) out.push(`  ${R}gc FAILED${X} ${f.path} ${D}(${f.reason.slice(0, 160)}; still tracked — the next run retries)${X}`);
+  for (const d of gcResult.pruneFailed ?? []) out.push(`  ${Y}gc folder kept${X} ${d.path} ${D}(its files were retired but the empty folder could not be removed: ${d.reason.slice(0, 120)}; remove it by hand)${X}`);
   for (const k of gcPlan.unsafeKeys) out.push(`  ${R}gc REFUSED${X} ${k} ${D}(manifest key is not a plain relative path — nothing this sync writes; dropped)${X}`);
   return out;
 }
@@ -217,10 +218,15 @@ export function isManifestHash(v) { return typeof v === 'string' && /^sha256:[0-
  *   re-hashed IMMEDIATELY before the unlink and a mismatch is HELD (`changed-since-probe`), so the probe-to-unlink window is one
  *   read-compare-unlink, not the whole GC loop. An edit landing inside that last window is the stated residual.
  * @param {(abs: string) => string} [args.hashFile]
- * @returns {{deleted: string[], absent: string[], held: string[], failed: Array<{path: string, reason: string}>}}
+ * @param {string[]} [args.pruneEmptyDirsUnder]  repo-relative prefixes (e.g. `.claude/skills/`): after a deletion under one, its
+ *   now-empty parent directories are removed, up to but never including the prefix root. A retired SKILL's leftover empty
+ *   folder is not harmless: a skill-name enum read from directory names (ship-commit `--skill`) would still list it.
+ *   Parents of `absent` files count too: a consumer who removed the files by hand leaves the same empty folder.
+ * @returns {{deleted: string[], absent: string[], held: string[], failed: Array<{path: string, reason: string}>, prunedDirs: string[],
+ *   pruneFailed: Array<{path: string, reason: string}>}}
  */
 export function executeGarbageCollection({
-  root, deletions, unlink = fs.unlinkSync, contain = assertContainedDestination,
+  root, deletions, unlink = fs.unlinkSync, contain = assertContainedDestination, pruneEmptyDirsUnder = [], rmdir = fs.rmdirSync,
   expectHash = {}, hashFile = (abs) => `sha256:${createHash('sha256').update(fs.readFileSync(abs)).digest('hex')}`,
 }) {
   const deleted = [];
@@ -252,7 +258,32 @@ export function executeGarbageCollection({
       else failed.push({ path: rel, reason: `${err?.code ?? 'error'}: ${err?.message ?? String(err)}` });
     }
   }
-  return { deleted, absent, held, failed };
+  const { pruned: prunedDirs, failed: pruneFailed } = pruneEmptyParents({ root, deleted: [...deleted, ...absent], prefixes: pruneEmptyDirsUnder, contain, rmdir });
+  return { deleted, absent, held, failed, prunedDirs, pruneFailed };
+}
+
+/**
+ * Remove directories left empty by `deleted`, walking up from each file to (not including) the matching prefix root.
+ * `rmdirSync` refuses a non-empty directory, so a folder still holding anything (a consumer's own file) stops the walk.
+ * Each directory goes through the same containment oracle as the unlinks. A non-empty directory (ENOTEMPTY / EEXIST) ends
+ * that walk quietly: that is the expected stop. One already gone (ENOENT) is skipped and the walk goes on upward. Anything else, a refused containment check included, is returned in `failed` so the report names it. Never throws.
+ */
+function pruneEmptyParents({ root, deleted, prefixes, contain, rmdir }) {
+  const pruned = new Set();
+  const failed = [];
+  for (const rel of deleted) {
+    const prefix = prefixes.find((p) => rel.startsWith(p));
+    if (!prefix) continue;
+    const stop = prefix.replace(/\/+$/, '');
+    for (let dir = path.posix.dirname(rel); dir.length > stop.length && dir.startsWith(`${stop}/`); dir = path.posix.dirname(dir)) {
+      try { rmdir(contain({ root, relPath: dir })); pruned.add(dir); } catch (err) {
+        if (err?.code === 'ENOENT') continue; // already gone: its parent may still be an empty retired folder
+        if (!['ENOTEMPTY', 'EEXIST'].includes(err?.code)) failed.push({ path: dir, reason: `${err?.code ?? 'refused'}: ${err?.message ?? String(err)}` });
+        break;
+      }
+    }
+  }
+  return { pruned: [...pruned].sort(), failed };
 }
 
 /**

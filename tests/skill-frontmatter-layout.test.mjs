@@ -205,7 +205,7 @@ describe('positive control — the real skills/ tree', () => {
     // ship/security-strategy/skills each carry the flag at column 0 and explain
     // why in their body. If this set shrinks, either a skill dropped the flag on
     // purpose (update this) or the flag went inert (the gate above catches it).
-    for (const expected of ['ship', 'security-strategy', 'skills']) assert.ok(live.includes(expected), `${expected} flag not live: ${live}`);
+    for (const expected of ['ship-checked', 'security-strategy', 'skills']) assert.ok(live.includes(expected), `${expected} flag not live: ${live}`);
   });
 
   it('the generated .claude/skills/ copy agrees (it is what every host actually reads)', () => {
@@ -239,7 +239,7 @@ describe('check-skill-frontmatter.mjs CLI', () => {
     const r = runCli([]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /skill-frontmatter: OK/);
-    assert.match(r.stdout, /ship: disable-model-invocation/);
+    assert.match(r.stdout, /ship-checked: disable-model-invocation/);
   });
 
   it('exit 1 with the gate\'s own message on a tree carrying the fixture (negative control)', () => {
@@ -291,7 +291,7 @@ describe('check-skill-frontmatter.mjs CLI', () => {
     const pill = contract.gates.find((g) => g.implementation === 'scripts/check-skill-frontmatter.mjs');
     assert.ok(pill, 'contract entry missing');
     assert.equal(pill.id, 'skills-check-detects-indented-frontmatter-key');
-    assert.equal(pill.poisonPill.overlay['skills/ship/SKILL.md'], 'tests/fixtures/poison/skill-frontmatter-indented-key.md');
+    assert.equal(pill.poisonPill.overlay['skills/ship-checked/SKILL.md'], 'tests/fixtures/poison/skill-frontmatter-indented-key.md');
     assert.equal(pill.poisonPill.expectStderr, 'indented under a block scalar');
   });
 });

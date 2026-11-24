@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Ship record catch-up — /ship's RECORD half without its push/merge authority
+ * @fileoverview Ship record catch-up — /ship-checked's RECORD half without its push/merge authority
  * (docs/plans/ship-record-catchup.md).
  *
- * Fleet coordinators land PRs without /ship, so the session log, the Backlog line and the ship_event never happen. This
+ * Fleet coordinators land PRs without /ship-checked, so the session log, the Backlog line and the ship_event never happen. This
  * CLI records each merged-but-unrecorded PR exactly once, keyed on the entries themselves (no watermark file), and only
  * ever CREATES files under docs/status/entries/. It never commits, pushes or merges: committing is
  * `ship-commit.mjs --record` (docs-only, code-checked), merging stays the user's.

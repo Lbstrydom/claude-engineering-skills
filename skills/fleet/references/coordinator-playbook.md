@@ -130,14 +130,14 @@ output token across 110 sessions, so a poll loop spends the context N times to l
 ## 7a. Land the chips that shipped themselves, in one action
 
 Under the user's standing grant (their own `~/.claude/CLAUDE.md`, never a message) chips ship themselves and you land the batch
-with `fleet land --ship-batch`, then `land --approve <train> --ship-batch`: one coordinator action, no `/ship` typed per chip. A
-member that does not verify waits for the user's `/ship` in its own session; the rest still land. Runbook and the state table:
+with `fleet land --ship-batch`, then `land --approve <train> --ship-batch`: one coordinator action, nothing typed per chip. A
+member that does not verify waits for the user's `/ship-checked` there; the rest still land. Runbook + state table:
 `references/ship-batch.md`.
 
 ## 7. Record the PRs you merge (the session log)
 
-Merging with `fleet land` or `gh pr merge` skips `/ship`, so nothing writes the session log. **The coordinator owns the
-record catch-up for its repo** — chips never run it, so two runs never race. The full runbook ships with the /ship
+Merging with `fleet land` or `gh pr merge` skips the ship skill, so nothing writes the session log. **The coordinator owns the
+record catch-up for its repo** — chips never run it, so two runs never race. The full runbook ships with the ship
 skill (its record catch-up reference); the coordinator's part:
 
 - **At launch, once**: record the user's standing permission in their exact words, on stdin —
@@ -151,7 +151,7 @@ skill (its record catch-up reference); the coordinator's part:
   `records: N merged PR(s) unrecorded`), and at end of day: `node scripts/ship-record.mjs catchup --write`, paste the
   plan lines it prints, commit with `ship-commit.mjs --record --decision <id>`, open a docs-only PR. The user merges it.
 - **Push lanes (rule 8)**: the per-PR entry FILES are named from the merge, so they never conflict with each other or with
-  `/ship` entries. Two things a record PR can share are NOT conflict-free — a pasted plan line and the one-time floor —
+  `/ship-checked` entries. Two things a record PR can share are NOT conflict-free — a pasted plan line and the one-time floor —
   which is why there is exactly one writer per repo (you): keep one record PR open at a time, and floor once.
 - **`records: UNMEASURED` is not zero**: fix what it names (`--fetch`, `origin/HEAD`, a re-sync) before reading it.
 

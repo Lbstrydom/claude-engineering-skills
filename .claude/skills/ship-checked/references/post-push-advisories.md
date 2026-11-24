@@ -104,7 +104,7 @@ share.
 **One note per ship, and none of them overwrite each other** (2026-09-07,
 upstream b02d80b3). This step used to write ONE fixed filename
 unconditionally, and the gap between a write and the next read is
-unbounded — Step 2 only runs inside `/ship`, and not every status.md commit
+unbounded — Step 2 only runs inside `/ship-checked`, and not every status.md commit
 is a ship. A second ship inside that gap destroyed an unread note by
 following this step as written, silently in both directions. Hit live
 2026-09-06: a verified note was still unread ~10 hours later when the next
@@ -113,7 +113,7 @@ collision is not expressible rather than merely unlikely.
 
 **The MAIN checkout, not the worktree you are standing in** (2026-08-14). A
 ship run from a linked worktree that is then deleted — the normal end of a
-Claude Code session — destroys this note before any later `/ship` can read
+Claude Code session — destroys this note before any later `/ship-checked` can read
 it, so the handoff silently never happens and the only symptom is a note
 that never appears. `.claude/tmp/` resolves per-tree, so a hand-written path
 means a different directory depending on where you are standing. Both the

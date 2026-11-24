@@ -252,7 +252,7 @@ export function summariseRun(run, { tailTree, stoppedReason = null }) {
     first = combination === 'tested' ? `landed ${n} of ${n}; final tree = the combined-tested tree` : `landed ${n} of ${n}; final tree is NOT the combined-tested tree: verify by hand`;
   } else {
     ok = verified.length > 0 && provenance.length === 0 && !run.halt;
-    first = `landed ${landed.length} of ${n}: a SUBSET of the combined-tested set; ${n - landed.length} need the user (/ship in that session)`;
+    first = `landed ${landed.length} of ${n}: a SUBSET of the combined-tested set; ${n - landed.length} need the user (/ship-checked in that session)`;
   }
   if (run.halt) tails.push(`HALT: ${run.halt.code} on ${run.halt.member}; no further member lands in this run, rebuild against the base as it is now`);
   return { ok, combination, trainLanded, first, provenance, tails };

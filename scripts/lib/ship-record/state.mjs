@@ -2,14 +2,14 @@
  * @fileoverview The ONE record-state oracle for the ship record catch-up
  * (docs/plans/ship-record-catchup.md §2.1).
  *
- * Fleet coordinators land PRs without `/ship`, so its record half (status entry,
+ * Fleet coordinators land PRs without `/ship-checked`, so its record half (status entry,
  * Backlog line, ship_event) never happens. The catch-up records each merged PR
  * once. Whether a PR is "recorded" is decided HERE and nowhere else — the CLI,
  * the writer and fleet's nudge all read this function's answer.
  *
  * **The entries are the ledger.** There is no watermark file: a PR is recorded
  * iff a log entry on the BASE tree names it — a catch-up marker carrying its
- * number and merge sha — or its own merge commit ADDED a log entry (`/ship`
+ * number and merge sha — or its own merge commit ADDED a log entry (`/ship-checked`
  * Step 2's footprint). The only stored watermark is one floor entry.
  *
  * Pure: no I/O, no clock. Facts arrive as plain data (lib/ship-record/facts.mjs).

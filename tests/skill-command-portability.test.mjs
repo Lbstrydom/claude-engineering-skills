@@ -60,13 +60,13 @@ const SOURCE_REPO_ONLY = new Map([
   // control is a centralized research baseline that sweeps sibling repos from
   // here rather than fragmenting across consumers.
   ['scripts/solo-control-audit.mjs', 'source-repo-gated research baseline (Step 6.5b says so explicitly)'],
-  // /ship Step 0.5i says so in its own text: "Source-repo-gated — run ONLY
+  // /ship-checked Step 0.5i says so in its own text: "Source-repo-gated — run ONLY
   // when package.json.name === claude-engineering-skills". Model-comparison
   // campaigns are declared in `.campaigns/`, which exists only here; a
   // consumer has no campaign to be stalled on, so shipping the CLI would add
   // a command whose only honest output in a consumer is silence.
   ['scripts/campaign.mjs', 'source-repo-gated: campaigns are declared in .campaigns/, which only this repo has'],
-  // /ship's "Train mode" section and references/train-mode.md open with
+  // /ship-checked's "Train mode" section and references/train-mode.md open with
   // "Source-repo-gated". The train classifies PRs against the sync closure and
   // publishes through this repo's own sync tools; syncing the CLI would pull
   // sync-inventory.mjs and consumer-repos.mjs (both path.resolve(import.meta.dirname,
@@ -91,7 +91,7 @@ const SOURCE_REPO_ONLY = new Map([
  * widen to a skill that does not tell its reader to skip it in a consumer.
  */
 const GATED_ONLY_IN = new Map([
-  ['scripts/ship-train.mjs', ['skills/ship/SKILL.md', 'skills/ship/references/train-mode.md']],
+  ['scripts/ship-train.mjs', ['skills/ship-checked/SKILL.md', 'skills/ship-checked/references/train-mode.md']],
   ['scripts/prepush-check.mjs', ['skills/fleet/references/coordination-rationale.md']],
   ['scripts/test-tier.mjs', ['skills/fleet/references/coordination-rationale.md', 'skills/fleet/references/landing.md']],
 ]);

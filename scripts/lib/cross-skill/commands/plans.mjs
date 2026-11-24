@@ -271,7 +271,7 @@ export async function finalizeOutcomesCmd(ctx) {
  * Note the legacy ORDER, preserved deliberately: the cloud-off degrade is
  * checked BEFORE `--plan-id` is validated, so a cloud-off invocation with no
  * plan id degrades rather than refusing. Reordering would be a silent
- * contract change on a path /ship reads.
+ * contract change on a path /ship-checked reads.
  */
 export async function planSatisfactionCmd(ctx) {
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), row: null, persistentFailures: [] };

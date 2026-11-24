@@ -113,7 +113,7 @@ status rubric fail to surface it.**
 > `document-only` disposition with *"the … status rubric is computed by the
 > verify runner over live plan_satisfaction data."* Measured: `PLAN_SATISFIED`
 > occurs in exactly seven files — three under `skills/ux-lock/`, one under
-> `skills/ship/references/`, and their three generated copies under
+> `skills/ship-checked/references/`, and their three generated copies under
 > `.claude/skills/`. **No script computes it**; it is emitted by the model from
 > prose. The *disposition* is right; its stated *reason* is false. Correcting
 > the reason string is in scope (§3.1).

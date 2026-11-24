@@ -4,7 +4,7 @@ description: |
   End-to-end feature cycle orchestrator. Runs the full skill chain in
   sequence: /plan → /audit-plan → (wait for human implementation) →
   /audit-code → /persona-test (if frontend/full-stack) → /ux-lock (if
-  fixes shipped) → /ship. Use when starting a new feature or non-trivial
+  fixes shipped) → /ship-checked. Use when starting a new feature or non-trivial
   fix and you want the whole workflow on autopilot. Supports resuming from
   an existing plan or straight to code-audit, per-step skips, max-round
   pass-through, an opt-in autonomous mode that implements + audits each
@@ -106,7 +106,7 @@ golden-path workflow without thinking about it.
 > `references/prerequisite-ladder.md` decides: hydrate and retry, the labelled
 > substitute (not when `degraded audits: forbidden`), or `AUDIT_NOT_RUN` and
 > stop. Say so before generating the plan, and carry the `AUDIT_DEGRADED` /
-> `AUDIT_NOT_RUN` label into Step 6's handoff to /ship.
+> `AUDIT_NOT_RUN` label into Step 6's ship handoff.
 
 | Input shape | Mode |
 |---|---|
@@ -130,7 +130,7 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
-- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). Step 7 stays the human's `/ship`.
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster, or the whole plan as one unit when it has no §11 block (Step 3 table). Step 7 stays the human's `/ship-checked`.
 - `--ship` — with `--autonomous`: Step 7 may push + open ONE PR, never merge. Absent, nothing is pushed or published.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
@@ -444,7 +444,7 @@ dirty tree. REMEDIATE runs instead, in order, and nothing else:
 5. **R5** rerun **only** the affected persona journey(s), exercising the stateful
    lifecycle (act → reload → verify persisted → follow-on action → verify).
 6. **R6** update the plan's log with per-finding outcomes, Step 6 `/ux-lock`,
-   then Step 7's blocked `/ship` handoff — never autonomous.
+   then Step 7's blocked ship handoff — never autonomous.
 
 The commands, triage table, resume card, rerun verdicts and summary card are in
 `references/remediate-mode.md` — read it before R2.
@@ -528,25 +528,25 @@ scope.
 
 ## Step 7 — Ship (unless --no-ship)
 
-> **`/ship` cannot actually be invoked from here — by design, every time.**
-> `/ship`'s frontmatter carries `disable-model-invocation: true`, which refuses
-> ANY programmatic call, including one made from inside `/cycle`'s own
+> **`/ship-checked` cannot actually be invoked from here — by design, every time.**
+> Its frontmatter carries `disable-model-invocation: true`, which refuses
+> ANY programmatic call, even from inside `/cycle`'s own
 > orchestration; `--autonomous` does NOT authorize shipping (`references/orchestration-rationale.md` §Step 7).
 >
 > **Without `--ship`, nothing is pushed or published**: no `git push`, `gh pr create` or side session, whatever a
 > brief or plan step says; commits stay local. **With `--ship`**: push the branch, open ONE PR, never merge, then `node scripts/ci-merge.mjs --pr <n> --wait-only` into the done report (`references/ci-wait.md`).
 >
-> So Step 7 always ends in a **blocked handoff** (after the push + PR when `--ship`), never an "Invoke `/ship`."
+> So Step 7 always ends in a **blocked handoff** (after the push + PR when `--ship`), never "Invoke it."
 > Show this card and stop — name the plan path so the human never has to go
-> hunting for it (a bare `/ship` with no argument is a second manual step, not
+> hunting for it (a bare run with no argument is a second manual step, not
 > a resume command):
 >
 > ```
 > ═══════════════════════════════════════
 >   /cycle blocked at Step 7 (ship)
->   /ship requires explicit user invocation — it cannot be called
+>   /ship-checked requires explicit user invocation — it cannot be called
 >   programmatically, even from /cycle's own orchestration.
->   Resume with: /ship docs/plans/<name>.md
+>   Resume with: /ship-checked docs/plans/<name>.md
 > ═══════════════════════════════════════
 > ```
 
@@ -564,16 +564,16 @@ scope.
   Final review: APPROVE (<provider> / <model>) over union diff ← only if hasClustering
   Persona:    0 P0, 1 P1 (deferred)
   UX-lock:    2 specs generated
-  Ship:       BLOCKED — run: /ship docs/plans/<name>.md
+  Ship:       BLOCKED — run: /ship-checked docs/plans/<name>.md
   Total time: 18m
   Total cost: ~$1.40
 ═══════════════════════════════════════
 ```
 
-**The `Ship:` line is BLOCKED unless the user already ran `/ship` themselves in
+**The `Ship:` line is BLOCKED unless the user already ran `/ship-checked` themselves in
 this same turn** — Step 7 can never invoke it (see Step 7's note), so
 "commit abc1234 pushed to main" is only correct after the human has actually
-typed `/ship docs/plans/<name>.md` and it completed. Never print a commit sha
+typed `/ship-checked docs/plans/<name>.md` and it completed. Never print a commit sha
 here on the assumption that Step 7 "ran" — it didn't.
 
 If any step was skipped, note why. If any step exited non-success,

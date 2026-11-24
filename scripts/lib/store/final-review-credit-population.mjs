@@ -3,7 +3,7 @@
  * credit queue", as two SQL branch predicates.
  *
  * **Why this is its own module.** `getFinalReviewStats` reads this population
- * twice: `pendingQueue` builds the LIST the `/ship` credit card prints, and
+ * twice: `pendingQueue` builds the LIST the `/ship-checked` credit card prints, and
  * `actionablePairs` builds the exact TOTALS printed as that list's header. The
  * two must describe the same set of findings, or one of them lies about the
  * other — and they drifted exactly that way.

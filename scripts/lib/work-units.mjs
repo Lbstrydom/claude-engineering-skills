@@ -2,7 +2,7 @@
  * @fileoverview Work units — group open findings into things a refactor can
  * actually be pointed at.
  *
- * WHY (measured 2026-08-13). `/ship`'s unremediated-acceptance gate reported
+ * WHY (measured 2026-08-13). `/ship-checked`'s unremediated-acceptance gate reported
  * **132 rows over 99 distinct `category` strings** for this repo. The category
  * field is very nearly a unique key, so it cannot group anything — yet the
  * meaning IS there: "Error swallowing", "Missing error handling", "Missing Error

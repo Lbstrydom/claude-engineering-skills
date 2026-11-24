@@ -175,7 +175,7 @@ Coverage guarantees (the runner enforces them, plan §2.3):
 - `--plan-id` is required to persist (the `plans` row UUID); without it the run
   prints but records nothing. Cloud off → run + print, skip recording. **Verify
   is a report, not a blocker** — it exits 0 even when criteria fail (consistent
-  with the existing `/ux-lock verify` contract below; `/ship` gates via the
+  with the `/ux-lock verify` contract below; `/ship-checked` gates via the
   status rubric + `plan_satisfaction`). A non-zero exit means the spec could not
   RUN (Playwright missing → 5, fatal → 3), or that it ran but was not
   recorded (exit 4, `error.code: PERSIST_FAILED`, `persistFailed: run|items` —
@@ -248,11 +248,11 @@ passed/failed/skipped, so the coexistence question is about the run-level
 **P2/P3 skipped criteria never affect the label.**
 
 **This label is model-emitted report prose — no script computes it, and it
-is neither persisted nor parsed.** `/ship`'s gate reads
+is neither persisted nor parsed.** The ship gate reads
 `plan_satisfaction.failing_p0_criteria` directly from the store (which
 already excludes skipped items — see `supabase/migrations/
 20260704120000_plan_verify_skipped.sql`), never this label. A skipped P0 is
-therefore invisible to the `/ship` gate **by design** — correctly excluded
+therefore invisible to the ship gate **by design** — correctly excluded
 from failures — which is exactly why this report is the only place it can
 surface, and why omitting the skipped line above would be silent, not
 merely incomplete.
@@ -260,7 +260,7 @@ merely incomplete.
 ## Failure policy
 
 `/ux-lock verify` exits 0 even when criteria fail — it is a **report**,
-not a blocker. To gate shipping on verification, `/ship` reads
+not a blocker. To gate a ship on verification, `/ship-checked` reads
 `plan_satisfaction.failing_p0_criteria` via
 `cross-skill.mjs plan-satisfaction --plan-id <id>` and can be configured
 to treat a non-empty list as a block reason.

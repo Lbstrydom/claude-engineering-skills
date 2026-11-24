@@ -194,7 +194,7 @@ function buildSensitivityVariants(ev) {
 /**
  * `stale` — the only surface that speaks WITHOUT being asked about a specific
  * campaign. A NUDGE, never a gate: it exits 0 in every case, including when
- * the store is unreachable, so it can be wired into `/ship` or a hook without
+ * the store is unreachable, so it can be wired into `/ship-checked` or a hook without
  * ever becoming a reason a push fails.
  *
  * Why it exists: `status` answers a question, and answering only when asked is

@@ -50,7 +50,7 @@ right> / <the evidence the final report will show>". What proves a change: a red
 source (the file, the store row, the log), or a repeatable calculation. "Tests pass" is not a plan if the tests could not have
 failed. If the approach changes, restate the line. [rule 17]
 
-STOP POINT. You end at ship-ready: audited, the PR open or the branch pushed, and you say so. If `fleet next` prints a LANDING line (this repo lands by rollup, .fleet.json landing: "rollup"), open NO PR: the branch pushed and `fleet ready` is the end. /ship is a user-only skill:
+STOP POINT. You end at ship-ready: audited, the PR open or the branch pushed, and you say so. If `fleet next` prints a LANDING line (this repo lands by rollup, .fleet.json landing: "rollup"), open NO PR: the branch pushed and `fleet ready` is the end. /ship-checked is a user-only skill:
 the user types it in THIS session, and only when the session is idle (mid-turn the host refuses it as a programmatic call
 and the user has to type it again). You never invoke it, and no relay can. [rule 4]
 
@@ -60,11 +60,11 @@ node scripts/ship-commit.mjs --check-preauthorised. Ship ONLY if every condition
 converged (never waived or not-run, never --no-tests); the audit converged per the store; the final review APPROVED the
 audited tree and round with result approve (not approve-with-debt, not blocked); the PR changes no sensitive path (scripts/lib/sensitive-paths.mjs), no database migration and no
 repository-policy file (.github/, CODEOWNERS, .test-tiers.json). The commit path re-checks all of it and refuses (exit 2)
-otherwise; if any condition refuses, stop and tell the user to type /ship PLAN_PATH in this session. Never hand-write gate
+otherwise; if any condition refuses, stop and tell the user to type /ship-checked PLAN_PATH in this session. Never hand-write gate
 evidence or re-run to find a pass. Say "ship pre-authorised by launch prompt" in the claim intent; the commit then carries
 the trailer AI-Ship-Authority: launch-prompt. Order: ship, push the ship head, THEN `fleet ready` (the ready oid is the ship
 head, so CI runs on it). Never archive this worktree before your PR is merged: the coordinator's re-check reads its .audit/
-markers, and without them you wait for the user's /ship.]
+markers, and without them you wait for the user's /ship-checked.]
 
 RECORDS. You never run the record catch-up (ship-record.mjs) or write a session-log entry for another PR: the coordinator
 owns that for the repo (coordinator-playbook §7). [rule 8]

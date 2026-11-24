@@ -52,7 +52,7 @@ location**, and is never path-rewritten. Measured on disk:
 | Consumers' project copies | **current** — wine-cellar-app and ai-organiser both 701 lines / 20 rewrites |
 
 Cost already paid: a session read the stale `ship/SKILL.md`, which lacks the
-`byMode.code` guidance at `skills/ship/SKILL.md:106`, and reported an unlocked-fix
+`byMode.code` guidance at `skills/ship-checked/SKILL.md:106`, and reported an unlocked-fix
 backlog of **207** instead of the correct **94**. It also produced live
 `MODULE_NOT_FOUND` in a consumer, because the un-rewritten copy documents
 `scripts/cross-skill.mjs` where the consumer needs `scripts/.claude-skills/`.
@@ -78,7 +78,7 @@ the noise as accepted v2 debt.
 > can surface P0s is **deferred to v2**, and that the required
 > `cross-skill.mjs record-click-test` subcommand, payload schema, table mapping
 > and `/ship` read path **do not exist**. Independently, `/ship`'s gate is
-> persona-test-scoped: `skills/ship/SKILL.md:10` defines `--ignore-p0` as "push
+> persona-test-scoped: `skills/ship-checked/SKILL.md:10` defines `--ignore-p0` as "push
 > despite an unresolved **persona-test** P0", and Step 0.5a (`:53`) reads
 > `cross-skill.mjs persona-outcomes summary`. No machine path carries a
 > click-test P0 to a gate. The claim was inherited from an upstream report and
@@ -110,7 +110,7 @@ Field-confirmed downstream, 2026-07-30: a consumer ran
 un-flagged call. All 207 rows carried one foreign `repo_id`; the local repo's true
 count was **0**. The reported number went 207 → 94 → 0, and *both* of the first two
 were foreign — so the `byMode.code` guidance that shipped 2026-07-29
-(`skills/ship/SKILL.md:106`) is correct but **insufficient**: it fixed the
+(`skills/ship-checked/SKILL.md:106`) is correct but **insufficient**: it fixed the
 code/plan split on a population that was the wrong repo to begin with.
 
 Three findings, of which only the first was in the downstream report:
@@ -122,7 +122,7 @@ Three findings, of which only the first was in the downstream report:
    so accepted-but-inert-for-this-subcommand is **outside the guard's design
    scope**, not a guard bug. Nothing else validates it. Note the asymmetry inside
    one skill: Step 0.5a scopes correctly (`persona-outcomes summary --repo`,
-   `skills/ship/SKILL.md:53`), Step 0.5b passes no repo at all.
+   `skills/ship-checked/SKILL.md:53`), Step 0.5b passes no repo at all.
 2. **The store layer already scopes correctly — this is a caller bug.**
    `getUnlockedFixes` (`scripts/lib/store/plans-ship.mjs:463`) and
    `countUnlockedFixes` (`:500`) both apply `WHERE repo_id = $1` when given one.
@@ -131,7 +131,7 @@ Three findings, of which only the first was in the downstream report:
 3. **A second unscoped call site, not yet hit in the field.**
    `cmdLockWithTestWorksheet` (`:2241`) also calls
    `getUnlockedFixes(argOption('repo-id'))` bare. This is the command Step 0.5b
-   *prints as its own remediation* (`skills/ship/SKILL.md:129`), so the nudge and
+   *prints as its own remediation* (`skills/ship-checked/SKILL.md:129`), so the nudge and
    its fix path are unscoped together: an operator following the printed advice
    gets a worksheet of another repo's findings, each paired with a suggested local
    test file. Acting on one records a `regression_specs` row that closes a foreign
@@ -149,7 +149,7 @@ unscoped ones are the outliers.
 > **Scope check on the impact claim** (applying the round-1 H3 lesson — do not
 > inherit a downstream severity claim unverified). The downstream report called
 > this a false release blocker. **It is not.** Step 0.5b's own banner reads
-> `⚠ REGRESSION LOCK GATE (non-blocking)` (`skills/ship/SKILL.md:123`), and
+> `⚠ REGRESSION LOCK GATE (non-blocking)` (`skills/ship-checked/SKILL.md:123`), and
 > `--skip-ux-lock` appears only in the usage header (`:11`) and as an override
 > recorded in Step 0.5f (`:199`) — there is no code path that blocks a push on
 > this count. Equally, `missing_spec_count` is written to `ship_events`
@@ -186,11 +186,11 @@ inventing one.
   (`input-no-name` P0), `:182-188` (`aria-hidden-focusable` P1), `:226-228` (the
   one existing geometry guard, `rect.width===0` — the scanner already has a
   perceivability notion, applied to exactly one check), `:310` (booked debt).
-  Gate reality: `skills/click-test/SKILL.md:580-599`, `skills/ship/SKILL.md:10,53`.
+  Gate reality: `skills/click-test/SKILL.md:580-599`, `skills/ship-checked/SKILL.md:10,53`.
 - Issue 3: `scripts/nav-audit.mjs:98` (bootstrap warning, wired) vs `:116-164`
   (verify path, unwired) → `scripts/lib/nav/verify.mjs:300-317` (return shape,
   `emptyNavShells` at `:316`) → `scripts/lib/nav/bootstrap-draft.mjs:31-43`.
-- Issue 4: `skills/ship/SKILL.md:98-136` (Step 0.5b, banner `:123`, remediation
+- Issue 4: `skills/ship-checked/SKILL.md:98-136` (Step 0.5b, banner `:123`, remediation
   `:129`) → `scripts/cross-skill.mjs:691` (`cmdListUnlockedFixes`,
   `argOption('repo-id')` only) → `scripts/lib/store/plans-ship.mjs:463`
   (`getUnlockedFixes`, unscoped branch) + `:500` (`countUnlockedFixes`, unscoped
@@ -995,7 +995,7 @@ parallel session owns it). No axe-core dependency. No login-flow automation. No
 | `tests/nav-verify.test.mjs` | modify | Verify-path warning, `mode` text, all 7 D11 truth-table rows, D12 precedence. |
 | `scripts/cross-skill.mjs` | modify | D13 precedence chain in `cmdListUnlockedFixes` (`:691`) **and** `cmdLockWithTestWorksheet` (`:2241`); `--all-repos` opt-in; D19 result schema; D18 explicit scope at all 5 call sites (`:695`, `:701`, `:1780`, `:2211`, `:2243`) + the foreign-`repo_id` write fence at `:2211-2213`. ⚠ **concurrently edited — see below.** |
 | `scripts/lib/store/plans-ship.mjs` | modify | D18 + D21. `getUnlockedFixes` / `countUnlockedFixes` take `{repoId}` \| `{allRepos:true}` and **throw** on an omitted/ambiguous scope (`undefined`/`null`/`{}`/both), moving the unsafe default off the data-access boundary. **New**: `getUnlockedFixById({repoId, findingId})` — queries on both predicates, and takes **no** `allRepos` variant, so the write path structurally cannot go global. Every direct importer of these three is migrated in the same change; no legacy positional call survives. Not under concurrent edit. |
-| `skills/ship/SKILL.md` | modify | Step 0.5b: pass repo scope; state that the count is repo-scoped; note that a `reason` means "not measured", not "zero obligations". |
+| `skills/ship-checked/SKILL.md` | modify | Step 0.5b: pass repo scope; state that the count is repo-scoped; note that a `reason` means "not measured", not "zero obligations". |
 | `tests/cross-skill-unlocked-scope.test.mjs` | create | Tier-1 tests for the D13 chain on both handlers (no existing test file covers these two). |
 | `docs/plans/skill-shadow-and-capture-honesty.md` | create | This plan. |
 
@@ -1007,7 +1007,7 @@ sustained).
 
 > ⚠ **Concurrency hazard (Issue 4 only).** At the time of writing, another
 > session has **uncommitted** changes to `scripts/cross-skill.mjs`,
-> `scripts/lib/store/runs-findings.mjs` and both copies of `skills/ship/SKILL.md`
+> `scripts/lib/store/runs-findings.mjs` and both copies of `skills/ship-checked/SKILL.md`
 > (the final-review-credit workstream, adding Step 6.7). Issue 4 edits two of
 > those four files. Per the shared-working-tree rule: stage by name only, never
 > `git add -A`, and re-read both files immediately before editing rather than
@@ -1077,7 +1077,7 @@ measured". Apply D18 (explicit store scope at all 5 call sites) and add
 the write path so no `allRepos` variant is reachable there. Apply the D19 result
 schema. Re-read both concurrently-edited source files immediately before editing
 (§7). Files: `scripts/cross-skill.mjs` (modify),
-`scripts/lib/store/plans-ship.mjs` (modify), `skills/ship/SKILL.md` (modify),
+`scripts/lib/store/plans-ship.mjs` (modify), `skills/ship-checked/SKILL.md` (modify),
 `tests/cross-skill-unlocked-scope.test.mjs` (create).
 
 **Phase 6 — Backlog re-measurement.** Only after Phase 5. Re-run

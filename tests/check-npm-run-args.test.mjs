@@ -120,7 +120,7 @@ describe('scope — historical surfaces are excluded, instructions are not', () 
   it('does NOT exclude live instruction surfaces', () => {
     assert.equal(isExcludedPath('AGENTS.md'), false);
     assert.equal(isExcludedPath('docs/runbooks/learning-system.md'), false);
-    assert.equal(isExcludedPath('skills/ship/SKILL.md'), false);
+    assert.equal(isExcludedPath('skills/ship-checked/SKILL.md'), false);
     assert.equal(isExcludedPath('package.json'), false);
   });
 

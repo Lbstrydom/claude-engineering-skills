@@ -293,7 +293,7 @@ describe('--check-shipped-head: what changed after the audit', () => {
       assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
       assert.match(reason(env, 'post-audit-delta'), /elsewhere\.md/);
     });
-    it('a plan Status-only edit refuses (the plan is written by record catch-up after the merge, never by /ship)', async () => {
+    it('a plan Status-only edit refuses (the plan is written by record catch-up after the merge, never by /ship-checked)', async () => {
       const { env } = await run((d) => write(d, 'docs/plans/x.md', PLAN.replace('Draft', 'Implemented')));
       assert.deepEqual(failing(env), ['post-audit-delta'], env.refusals.join(' | '));
       assert.match(reason(env, 'post-audit-delta'), /docs\/plans\/x\.md/);

@@ -5,7 +5,7 @@
  *
  * ## The defect this closes
  *
- * `/ship` Step 0.5h ran `cross-skill.mjs upstream list`, which reads whatever
+ * `/ship-checked` Step 0.5h ran `cross-skill.mjs upstream list`, which reads whatever
  * store `AUDIT_DB_URL` names HERE. Consumers are not on one store: measured
  * 2026-08-29, `storyline` files into a corporate Azure Postgres while this repo
  * defaults to the NAS one. The step printed **`0 open`** in the same session in

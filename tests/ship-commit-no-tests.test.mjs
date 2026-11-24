@@ -1,7 +1,7 @@
 /**
  * @fileoverview `--no-tests` — the sanctioned hook-bypass override.
  *
- * WHY THIS EXISTS: `/ship`'s SKILL.md documented `--no-tests` and promised the
+ * WHY THIS EXISTS: `/ship-checked`'s SKILL.md documented `--no-tests` and promised the
  * override would be recorded, but `ship-commit.mjs` (a) rejected it as an
  * unknown flag and (b) committed without `--no-verify`. So the documented
  * escape hatch could not actually be taken. Reported from a consumer repo on
@@ -62,7 +62,7 @@ function arrange(message = 'fix: subject\n\nbody\n') {
 }
 
 const ARGS = (mf, ...extra) =>
-  ['--message-file', mf, '--skill', 'ship', '--models', 'claude', ...extra, ...guardArgs(repo)];
+  ['--message-file', mf, '--skill', 'ship-checked', '--models', 'claude', ...extra, ...guardArgs(repo)];
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-notests-'));
@@ -70,8 +70,8 @@ beforeEach(() => {
   git(['config', 'user.email', 'test@example.com']);
   git(['config', 'user.name', 'Test']);
   git(['config', 'commit.gpgsign', 'false']);
-  fs.mkdirSync(path.join(repo, 'skills', 'ship'), { recursive: true });
-  fs.writeFileSync(path.join(repo, 'skills', 'ship', 'SKILL.md'), '---\nname: ship\n---\n');
+  fs.mkdirSync(path.join(repo, 'skills', 'ship-checked'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'skills', 'ship-checked', 'SKILL.md'), '---\nname: ship\n---\n');
 });
 
 afterEach(() => {

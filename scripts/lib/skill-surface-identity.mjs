@@ -81,7 +81,7 @@ function readSkillsLockNames(repoRoot) {
  *
  * `.agents/skills` joined the list when the `agents` install surface was retired
  * (docs/reference/skill-surface-ownership.md §3). It was found live in a consumer
- * the same day: a stale `ship/SKILL.md` there against the synced `.claude/skills/ship`.
+ * the same day: a stale `ship/SKILL.md` there against the synced `.claude/skills/ship-checked`.
  *
  * ## Ownership is the whole predicate
  *

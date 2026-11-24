@@ -488,7 +488,7 @@ function stepMember(st, i) {
   }
   const ms = upper(d.mergeStateStatus);
   if (ms === 'DIRTY') return fault('conflict', `PR #${s.prNumber} now conflicts with ${run.base} — run \`${restackCmd(s.id)}\` and push, then --resume`);
-  if (ms === 'BEHIND' && policy) return fault('behind', `behind-base: PR #${s.prNumber} is behind ${run.base}; a policy run never updates a branch on the remote — restack, re-ship, or /ship`);
+  if (ms === 'BEHIND' && policy) return fault('behind', `behind-base: PR #${s.prNumber} is behind ${run.base}; a policy run never updates a branch on the remote — restack, re-ship, or /ship-checked`);
   if (ms === 'BEHIND') {
     if (s.updates >= MAX_UPDATES_PER_PR) return fault('update-churn', `PR #${s.prNumber} fell behind ${run.base} ${s.updates} times; the base is moving too fast — resume later`);
     st.setStep(i, { step: 'update', priorHead: h, head: h });
