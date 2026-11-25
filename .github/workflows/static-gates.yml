@@ -9,7 +9,9 @@ name: static-gates
 # `check:static` gate is in neither list. They keep running in the local pre-push hook.
 #
 # The diff-scoped gates refuse to infer a range (AUDIT_PUSH_RANGE_REQUIRED=1, as in the pre-push sandbox), so the range is
-# given explicitly: the PR base..head, or the pushed before..after on main. Standard runner, no artifacts, no cache, a
+# given explicitly: the PR base..head, or the pushed before..after on main. base.sha is main's TIP, not where the PR left it;
+# scripts/lib/push-range.mjs anchors the range at merge-base(base, head), so a PR behind main is not judged on main's newer
+# changes read in reverse (PR #515, 2026-11-24). That needs full history: keep fetch-depth 0. Standard runner, no artifacts, no cache, a
 # superseded run is cancelled (tests/workflow-runner-labels.test.mjs).
 
 on:

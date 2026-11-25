@@ -260,15 +260,18 @@ describe('db-suites-gate CLI under the scoped env (real git range, no docker nee
   const emptyTree = spawnSync('git', ['mktree'], { cwd: ROOT, encoding: 'utf8', input: '', env: sanitizeGitEnv(ROOT) }).stdout.trim();
   const commitEnv = { ...sanitizeGitEnv(ROOT), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const emptyBase = spawnSync('git', ['commit-tree', emptyTree, '-m', 'empty base for gate-path-scope test'], { cwd: ROOT, encoding: 'utf8', env: commitEnv }).stdout.trim();
-  const run = (base) => {
-    const env = { ...process.env, [GATE_SCOPE_ENV]: GATE_SCOPE_PATH, AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: head, AUDIT_PUSH_RANGE_REQUIRED: '1', AUDIT_LOOP_DB_TESTS_SKIP: '1' };
+  // The pushed head must DESCEND from the base: the range is anchored at merge-base(base, head), and an unrelated root has none. So the
+  // head is HEAD's own tree committed on top of the empty base, which still makes every file differ.
+  const headOnEmpty = spawnSync('git', ['commit-tree', `${head}^{tree}`, '-p', emptyBase, '-m', 'HEAD tree on the empty base'], { cwd: ROOT, encoding: 'utf8', env: commitEnv }).stdout.trim();
+  const run = (base, rangeHead = head) => {
+    const env = { ...process.env, [GATE_SCOPE_ENV]: GATE_SCOPE_PATH, AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: rangeHead, AUDIT_PUSH_RANGE_REQUIRED: '1', AUDIT_LOOP_DB_TESTS_SKIP: '1' };
     delete env.AUDIT_LOOP_DB_TESTS_REQUIRED;
     const r = spawnSync(process.execPath, [GATE], { cwd: ROOT, encoding: 'utf8', env });
     return { status: r.status, out: `${r.stdout}${r.stderr}` };
   };
-  it('HARNESS CONTROL: the fixture base is a real commit', () => { assert.match(emptyBase, /^[0-9a-f]{40}$/); assert.match(head, /^[0-9a-f]{40}$/); });
+  it('HARNESS CONTROL: the fixture base is a real commit', () => { assert.match(emptyBase, /^[0-9a-f]{40}$/); assert.match(headOnEmpty, /^[0-9a-f]{40}$/); assert.match(head, /^[0-9a-f]{40}$/); });
   it('POSITIVE: a range that touches the gate\'s inputs runs it (here it then degrades via the operator opt-out)', () => {
-    const r = run(emptyBase);
+    const r = run(emptyBase, headOnEmpty);
     assert.equal(r.status, 0, r.out);
     assert.match(r.out, /db-suites-gate: running \(path-scoped\)/);
     assert.match(r.out, /AUDIT_LOOP_DB_TESTS_SKIP=1/, 'it got past the scope check to the real gate');

@@ -74,8 +74,11 @@ describe('gates:poison CLI under the scoped env (real git ranges)', () => {
   const emptyTree = spawnSync('git', ['mktree'], { cwd: ROOT, encoding: 'utf8', input: '', env: sanitizeGitEnv(ROOT) }).stdout.trim();
   const commitEnv = { ...sanitizeGitEnv(ROOT), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const emptyBase = spawnSync('git', ['commit-tree', emptyTree, '-m', 'empty base for gate-poison-scope test'], { cwd: ROOT, encoding: 'utf8', env: commitEnv }).stdout.trim();
-  const envFor = (base, extra = {}) => {
-    const env = { ...process.env, [GATE_SCOPE_ENV]: GATE_SCOPE_PATH, AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: head, AUDIT_PUSH_RANGE_REQUIRED: '1', ...extra };
+  // The pushed head must DESCEND from the base: the range is anchored at merge-base(base, head), and an unrelated root has none. So the
+  // head is HEAD's own tree committed on top of the empty base, which still makes every file differ.
+  const headOnEmpty = spawnSync('git', ['commit-tree', `${head}^{tree}`, '-p', emptyBase, '-m', 'HEAD tree on the empty base'], { cwd: ROOT, encoding: 'utf8', env: commitEnv }).stdout.trim();
+  const envFor = (base, extra = {}, rangeHead = head) => {
+    const env = { ...process.env, [GATE_SCOPE_ENV]: GATE_SCOPE_PATH, AUDIT_PUSH_RANGE_BASE: base, AUDIT_PUSH_RANGE_HEAD: rangeHead, AUDIT_PUSH_RANGE_REQUIRED: '1', ...extra };
     return env;
   };
   /** Start the gate and stop it as soon as its scope line appears: the full gate takes about a minute and is not what is under test. */
@@ -88,9 +91,9 @@ describe('gates:poison CLI under the scoped env (real git ranges)', () => {
     child.on('exit', (status) => { clearTimeout(timer); resolve({ out, status }); });
   });
 
-  it('HARNESS CONTROL: the fixture base is a real commit', () => { assert.match(emptyBase, /^[0-9a-f]{40}$/); assert.match(head, /^[0-9a-f]{40}$/); });
+  it('HARNESS CONTROL: the fixture base is a real commit', () => { assert.match(emptyBase, /^[0-9a-f]{40}$/); assert.match(headOnEmpty, /^[0-9a-f]{40}$/); assert.match(head, /^[0-9a-f]{40}$/); });
   it('POSITIVE: a range that touches the gate\'s inputs runs it (the scope line says so)', async () => {
-    const r = await firstScopeLine(envFor(emptyBase));
+    const r = await firstScopeLine(envFor(emptyBase, {}, headOnEmpty));
     assert.match(r.out, /gates:poison: running \(path-scoped\) — .* is an input of gates:poison and changed/);
   });
   it('NEGATIVE: an empty range skips with a visible SKIPPED line and exits 0 without running a pill', async () => {

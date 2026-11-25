@@ -195,6 +195,16 @@ resolver. Precedence:
 3. fork-point vs `origin/main` — correct for an unpushed branch.
 4. `HEAD~1` — last resort; scopes to one commit.
 
+An explicit range is **anchored at `merge-base(BASE, HEAD)`**. Gates diff
+`base..head`, which is two-dot: it compares two trees. When HEAD is behind BASE
+(CI hands a PR BASE = main's tip), main's newer changes appear reversed, as the
+branch's own added lines; measured 2026-11-24, PR #515 went red on a line that
+existed only in main's pre-#514 text, and a rebase alone made it green. A
+fast-forward base is returned as given; a merge-base git cannot compute is
+`no-merge-base`, a hard failure, never the two-dot range. `gate-provenance.mjs`
+alone passes `anchor: 'verbatim'`, because it judges a PR by the base tip's gates.
+Proof: [`push-range-merge-base.test.mjs`](../../tests/push-range-merge-base.test.mjs).
+
 Every result carries `source` and `trusted`, and gate summaries print them:
 
 ```
