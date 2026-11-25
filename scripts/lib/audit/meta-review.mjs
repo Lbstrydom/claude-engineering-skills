@@ -54,8 +54,7 @@ export const META_T1_OPT_IN_ENV = 'AUDIT_META_REVIEW_T1';
 
 /**
  * T1 is OFF by default (Louis, 2026-11-25): at the cap the decision cost more than the round it avoided and admitted none
- * (docs/research/pilot-1-meta-step-back-instrument-writeup.md). `AUDIT_META_REVIEW_T1=on|1|true|yes` turns it back on;
- * the opt-out above still wins. Off, the gate neither calls the reviewer at the cap nor honours a recorded T1 admission.
+ * (the Pilot 1 write-up, PR 521). `AUDIT_META_REVIEW_T1=on|1|true|yes` turns it back on; the opt-out above still wins. Off, the gate neither calls the reviewer at the cap nor honours a recorded T1 admission.
  */
 export function isMetaT1Enabled({ env = process.env } = {}) {
   return /^(on|1|true|yes)$/i.test(String(env[META_T1_OPT_IN_ENV] ?? '').trim());
