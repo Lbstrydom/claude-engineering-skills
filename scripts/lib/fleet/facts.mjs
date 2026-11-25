@@ -25,7 +25,7 @@ import {
   DEFAULT_LEASE_MS, buildStatus, checkBlocksApproval, idleMsFrom, isIdleTip, liveness, mergedDone, workRemainingIn, worktreeOf,
 } from './overlap.mjs';
 import { buildCheckPayload, resultsToFindings, runChecks } from './checks.mjs';
-import { CLEAN_PROBE, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
+import { CLEAN_PROBE, cleanProbeBounds, probeWorktrees, uncommittedPaths, worktreeStatus } from './worktree-status.mjs';
 import { VALID, memoPure } from './oid-cache.mjs';
 import { SQUASH_DEPTH, gitAdapters, listMergedPullRequests, mergedEvidenceFor, mergedPrArgs, squashPatchIds } from './merged-facts.mjs';
 
@@ -160,10 +160,14 @@ export function gatherFacts({ cwd, config, now, env = process.env, prs = true, p
   const landed = new Set(Object.entries(mergedFacts.evidence).filter(([n, e]) => e.merged === true && !tracked.has(n)).map(([n]) => n));
   // Uncommitted evidence: every non-terminal session's worktree (`'all'`), the named branches, or none.
   const uncommittedWanted = uncommitted === undefined ? (untracked ? 'all' : false) : uncommitted;
+  // ONE worktree-probe budget for both sweeps below (session worktrees first: that is overlap evidence), so a slow disk
+  // costs one deadline + one timeout in total, never one per sweep. The per-call timeout is the operator's knob.
+  const probeBounds = cleanProbeBounds(env);
+  const probeDeadlineAt = Date.now() + probeBounds.deadlineMs;
   const uncommittedFacts = uncommittedWanted === false ? {}
-    : probeSessionWorktrees({ registry, worktreeList, branches: uncommittedWanted === 'all' ? null : uncommittedWanted });
+    : probeSessionWorktrees({ registry, worktreeList, branches: uncommittedWanted === 'all' ? null : uncommittedWanted, bounds: probeBounds, deadlineAt: probeDeadlineAt });
   return {
-    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config), landed }),
+    worktreeClean: probeWorktreeCleanliness({ branches, worktreeList, base, registry, now, idleMs: idleMsFrom(config), landed, bounds: probeBounds, deadlineAt: probeDeadlineAt }),
     merged: mergedFacts, uncommitted: uncommittedFacts,
     hotFiles: config.hotFiles ?? [],
     findings: pr.findings, evidenceNotes: pr.evidenceNotes, prTrusted: pr.prTrusted, dir, now, leaseMs: leaseMsFrom(env), baseOid: baseOidSnap ?? (() => { const h = headOf(cwd, `refs/heads/${base}`); return h.ok ? h.oid : null; })(),
@@ -318,9 +322,10 @@ export { CLEAN_PROBE };
  * visible. Sequential probes (`probeWorktrees`), the deadline checked before each,
  * so the worst case is deadline + one timeout — never N x timeout.
  * @param {{branches: object, worktreeList: object, registry: object, base: string, now?: Date|number|null,
- *   idleMs?: number, landed?: Set<string>, clock?: () => number}} a - without `now`/`idleMs` only ahead-0 branches are candidates
+ *   idleMs?: number, landed?: Set<string>, clock?: () => number, bounds?: typeof CLEAN_PROBE, deadlineAt?: number|null}} a -
+ *   without `now`/`idleMs` only ahead-0 branches are candidates; `bounds`/`deadlineAt` as `probeWorktrees`
  */
-export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, now = null, idleMs = 0, landed = new Set(), clock = Date.now, probe = (p) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: CLEAN_PROBE.timeoutMs }) }) {
+export function probeWorktreeCleanliness({ branches, worktreeList, registry, base, now = null, idleMs = 0, landed = new Set(), clock = Date.now, bounds = cleanProbeBounds(), deadlineAt = null, probe = (p, o) => runGit(['status', '--porcelain', '--untracked-files=normal'], p, { timeoutMs: o?.timeoutMs ?? bounds.timeoutMs }) }) {
   if (!branches?.queried || !worktreeList?.queried) return {};
   const tracked = new Set((registry?.sessions ?? []).map((s) => s.source?.branch).filter(Boolean));
   const candidates = [];
@@ -330,7 +335,7 @@ export function probeWorktreeCleanliness({ branches, worktreeList, registry, bas
     const wt = (worktreeList.worktrees ?? []).find((w) => w.branch === b.name && !w.bare);
     if (wt) candidates.push(wt.path);
   }
-  const probed = probeWorktrees(candidates, { clock, probe: (p) => ({ queried: true, ...probe(p) }) });
+  const probed = probeWorktrees(candidates, { clock, bounds, deadlineAt, probe: (p, o) => ({ queried: true, ...probe(p, o) }) });
   return Object.fromEntries(Object.entries(probed).map(([p, r]) => [p, r.queried && r.ok ? r.stdout.trim() === '' : null]));
 }
 
@@ -340,12 +345,18 @@ export function probeWorktreeCleanliness({ branches, worktreeList, registry, bas
  * by BRANCH, like `changed`. Bounded by `CLEAN_PROBE`; a worktree over budget or
  * whose probe failed is `{queried:false, reason}`, never `[]`.
  * @param {{registry: object, worktreeList: object, branches?: string[]|null, now?: Date, clock?: () => number,
- *   probe?: (dir: string) => object}} a - `branches` limits the set (null = every non-terminal session)
+ *   bounds?: typeof CLEAN_PROBE, deadlineAt?: number|null, probe?: (dir: string) => object}} a - `branches` limits the
+ *   set (null = every non-terminal session); `bounds`/`deadlineAt` as `probeWorktrees`
  * @returns {Record<string, {queried: boolean, files: string[], worktree: string, reason?: string}>}
  */
-export function probeSessionWorktrees({ registry, worktreeList, branches = null, clock = Date.now, probe = (d) => worktreeStatus(d) }) {
-  if (!worktreeList?.queried) return {};
+export function probeSessionWorktrees({ registry, worktreeList, branches = null, clock = Date.now, bounds = cleanProbeBounds(), deadlineAt = null, probe = (d, o) => worktreeStatus(d, { timeoutMs: o?.timeoutMs ?? bounds.timeoutMs }) }) {
   const want = branches ? new Set(branches) : null;
+  // No worktree list: no session's worktree can be found, so every one is UNMEASURED (its status item says so), never absent.
+  if (!worktreeList?.queried) {
+    const reason = `worktree list not read (${worktreeList?.reason ?? 'not gathered'})`;
+    return Object.fromEntries((registry?.sessions ?? []).filter((s) => s.source?.branch && (!want || want.has(s.source.branch)) && !TERMINAL.has(s.state))
+      .map((s) => [s.source.branch, { queried: false, files: [], worktree: s.worktree ?? null, reason }]));
+  }
   const byBranch = new Map();
   for (const s of registry?.sessions ?? []) {
     const b = s.source?.branch;
@@ -355,7 +366,7 @@ export function probeSessionWorktrees({ registry, worktreeList, branches = null,
     const wt = (worktreeList.worktrees ?? []).find((w) => !w.bare && (w.branch === b || (s.worktree && samePathLoose(w.path, s.worktree))));
     if (wt) byBranch.set(b, wt.path);
   }
-  const probed = probeWorktrees([...byBranch.values()], { clock, probe });
+  const probed = probeWorktrees([...byBranch.values()], { clock, bounds, deadlineAt, probe });
   const out = {};
   for (const [b, p] of byBranch) {
     const r = probed[p];

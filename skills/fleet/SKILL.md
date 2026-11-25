@@ -93,8 +93,8 @@ args, 3 blocked/refused, 4 a train ran red (land). `--json` to parse.
   under the user's standing grant (`references/ship-batch.md`, `references/landing.md`).
 - **Spawn chips from `references/chip-preamble.md`** and put the participant block
   in EVERY chip prompt, verbatim. `start` prints prompts that embed it; do not paraphrase.
-- **A new chip that gets `blocked` (exit 3) stops and reports** which session
-  overlaps; it does not retry, rename its id, or edit around the claim.
+- **A chip `blocked` (exit 3) stops and reports** the overlap; no retry,
+  renaming, or workaround (an intent-only block: participant rule 1).
 - A `registry incomplete` refusal means a record is unreadable: tell the user,
   who may run `repair --quarantine <file>`. Never delete registry files.
 - A blocked session sets `--waiting-on kind:ref[:note]` (kind: session, human, ci, train, external; repeatable;

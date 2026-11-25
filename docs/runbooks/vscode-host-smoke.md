@@ -384,7 +384,8 @@ node scripts/fleet.mjs status
 ```
 
 The intents must differ and the paths are literal files, not globs. Fleet refuses a claim whose intent equals a live
-claim's (exit 3) even when the paths are disjoint, so two `smoke test` claims make B fail for the wrong reason. A literal
+claim's (exit 3) even when the paths are disjoint, by design (an identical intent is a second session for the same work), so
+two `smoke test` claims make B fail for the wrong reason; the refusal says `identical intent to live session smoke-a`. A literal
 path names exactly one file, so the overlap check below compares two named files rather than two patterns.
 
 Record: both `smoke-a` and `smoke-b` appear in `status`. (A warning that the claim id is not the branch name is

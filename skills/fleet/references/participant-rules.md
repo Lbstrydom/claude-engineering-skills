@@ -21,6 +21,9 @@ You are one of several concurrent sessions coordinated by /fleet.
    Stacked on another UNLANDED branch? Add --base <that-branch>, so your overlap is measured from your real fork point.
    It is recorded only once you have a commit of your own beyond that branch: claimed earlier, re-run the claim with --base.
    If the result is BLOCKED (exit 3), STOP and report which session overlaps. Do not retry, rename your id, or use --override.
+   The ONE exception: an intent-only BLOCK ("identical intent to live session <id> (declared paths do not overlap)"). An intent
+   equal to a live claim's blocks on its own, as a second session for the same work. If your work differs, re-claim ONCE with
+   an --intent that names what is yours; if it is the same work, stop and report. Avoid it: never use a generic label as an intent.
 2. Renew your lease while working: node scripts/fleet.mjs touch
    Push your branch early (git push -u origin <your-branch>) and after each meaningful commit, and push an
    integration branch the moment you create it: work only this disk holds is what a crash or an archive loses.
