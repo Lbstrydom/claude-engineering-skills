@@ -27,13 +27,17 @@ gate, so it is the default path on every host.
 | Trigger | When | Audits |
 |---|---|---|
 | **T1** at the cap (**off by default**) | a round refused past the soft cap (plan 4-5, code 7-8), with `AUDIT_META_REVIEW_T1=on` | plan and code |
-| **T2** a spinning signal | code round 4, when a round signal fired at checkpoint 3 | code only |
+| **T2** a spinning signal (**off by default**) | code round 4, when a round signal fired at checkpoint 3, with `AUDIT_META_REVIEW_T2=on` | code only |
 
 It never fires past the absolute cap, for a session with no prior round results, or when opted out.
 
 **T1 is off unless you opt in** (`AUDIT_META_REVIEW_T1=on`). A pilot on code audits found the decision cost more than
 the round it avoided, and it admitted none of the rounds it judged; plan-mode T1 was switched off with it, unmeasured.
 Off, a refused round exits 4 with the human card, no reviewer is called, and an admission recorded earlier is ignored.
+
+**T2 is off unless you opt in** (`AUDIT_META_REVIEW_T2=on`). While HIGHs are open the guard mostly vetoes an early
+stop, the rounds after 4 have stayed productive, and no live decision has reached the store, so a review of it cannot be
+measured. Off, round 4 runs, the signals are not evaluated or logged, and a stop recorded earlier does not block it.
 
 ## The reviewer
 
@@ -80,8 +84,8 @@ was sent). An allowlisted projection (ids, counts, enums; no paths or prose) goe
 - A T1 stop: re-run with `--past-cap "<why>"`, as before; it is recorded as an override of that decision.
 - A T2 stop: re-run the same round with `--meta-override "<why, 15+ chars>"`; refused when there is nothing to override.
 - An admission: `node scripts/audit-structural-card.mjs --sid "$SID" --mode code --revoke-meta-admission --by "<name>" --reason "<why>"`.
-- T1 on: `AUDIT_META_REVIEW_T1=on`. T2 needs no setting.
-- Off for one run: `--no-meta-review`; off everywhere: `AUDIT_META_REVIEW=off` (`npm test` sets it). Both beat the T1 opt-in.
+- T1 on: `AUDIT_META_REVIEW_T1=on`. T2 on: `AUDIT_META_REVIEW_T2=on`.
+- Off for one run: `--no-meta-review`; off everywhere: `AUDIT_META_REVIEW=off` (`npm test` sets it). Both beat either opt-in.
 - A held `.audit/<sid>.meta-review.lock` fails closed to the human path; if no audit of that session is running, a
   crashed one left it: delete it. An attempt **reserved with no decision** (a crash mid-call) also fails closed, for
   that attempt only, and the log keeps it (append-only, charged to the budget): take the human path for that round

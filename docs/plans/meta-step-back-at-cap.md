@@ -7,7 +7,8 @@
 - **Work item**: 01a205ba-b1e4-7e0b-af5e-8004f530efca
 - **Depends on**: none
 - **Changed 2026-11-25**: T1 is off by default (`AUDIT_META_REVIEW_T1=on` opts in), on Louis's decision after the
-  Pilot 1 write-up (PR 521). The T1 behaviour below describes the opted-in case; T2 is unchanged.
+  Pilot 1 write-up (PR 521). T2 is off by default too (`AUDIT_META_REVIEW_T2=on`), on Louis's decision the same day.
+  The behaviour below describes the opted-in case.
 - **⚠ Needs Louis's approval before merge** — three parts loosen a gate (fewer human calls, and in one case fewer
   rounds): **L1**, **L2**, **L3** in §8. Each is marked where it is designed.
 

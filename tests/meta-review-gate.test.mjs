@@ -45,7 +45,7 @@ function harness({ verdict, ledger, signalsFire = false, select = null }) {
       call: async (req) => { calls.push(req); return { text: JSON.stringify(verdict), usage: { input_tokens: 10, output_tokens: 5, usageMissing: false }, sent: true }; } } })),
   };
   const gate = (argv, opts = {}) => gateRoundCap(argv, {
-    cwd: dir, auditDir: dir, env: { AUDIT_META_REVIEW_T1: 'on' }, write: (l) => lines.push(l), metaReview: true, auditorModel: 'gpt-6', metaDeps,
+    cwd: dir, auditDir: dir, env: { AUDIT_META_REVIEW_T1: 'on', AUDIT_META_REVIEW_T2: 'on' }, write: (l) => lines.push(l), metaReview: true, auditorModel: 'gpt-6', metaDeps,
     build: async ({ round, mode, planFile }) => ({ card: { version: 1, round, mode, planFile, summary: { clusters: 0 } }, text: 'CARD' }),
     recordCap: async () => ({ recorded: false, reason: 'test' }),
     ...opts,
@@ -121,9 +121,32 @@ describe('T1 is off by default', () => {
     assert.equal((await h.gate(planArgv(5), { env: {} })).code, 'PAST_CAP_REQUIRED');
     assert.equal(h.calls.length, 1);
   });
-  test('T2 still fires with T1 off', async () => {
+  test('T2 opted in still fires with T1 off', async () => {
     const h = harness({ verdict: stopAll, ledger: [ruled(TH, 2), ruled(TH, 3, 'dismissed'), ruled(TM, 3, 'dismissed')], signalsFire: true });
-    assert.equal((await h.gate(codeArgv(4), { env: {} })).code, 'META_STOP', h.out());
+    assert.equal((await h.gate(codeArgv(4), { env: { AUDIT_META_REVIEW_T2: 'on' } })).code, 'META_STOP', h.out());
+  });
+});
+
+describe('T2 is off by default', () => {
+  const throwing = () => { throw new Error('provider must not be selected'); };
+  const unproductive = [ruled(TH, 2), ruled(TH, 3, 'dismissed'), ruled(TM, 3, 'dismissed')];
+  for (const [label, env] of [['unset', {}], ['AUDIT_META_REVIEW=on alone', { AUDIT_META_REVIEW: 'on' }], ['AUDIT_META_REVIEW_T2=off', { AUDIT_META_REVIEW_T2: 'off' }], ['only T1 opted in', { AUDIT_META_REVIEW_T1: 'on' }]]) {
+    test(`${label}: code round 4 runs, no reviewer, no log`, async () => {
+      const h = harness({ verdict: stopAll, ledger: unproductive, signalsFire: true, select: throwing });
+      const r = await h.gate(codeArgv(4), { env });
+      assert.equal(r.ok, true, h.out());
+      assert.equal(fs.existsSync(metaLogPath(dir, 'c')), false);
+    });
+  }
+  test('a T2 stop recorded while opted in does not block round 4 once T2 is off', async () => {
+    const h = harness({ verdict: stopAll, ledger: unproductive, signalsFire: true });
+    assert.equal((await h.gate(codeArgv(4))).code, 'META_STOP', h.out());
+    assert.equal((await h.gate(codeArgv(4), { env: {} })).ok, true, h.out());
+    assert.equal(h.calls.length, 1);
+  });
+  test('the opt-out beats the opt-in', async () => {
+    const h = harness({ verdict: stopAll, ledger: unproductive, signalsFire: true, select: throwing });
+    assert.equal((await h.gate(codeArgv(4), { env: { AUDIT_META_REVIEW: 'off', AUDIT_META_REVIEW_T2: 'on' } })).ok, true);
   });
 });
 

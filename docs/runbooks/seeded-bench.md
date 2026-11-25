@@ -57,7 +57,7 @@ node scripts/run-heartbeat.mjs run --run-id seeded-bench-pilot1 --stale-after 90
 node scripts/run-heartbeat.mjs run --run-id seeded-bench-pilot1 --stale-after 900 -- node scripts/step-back-replay.mjs continue --dataset C:/tmp/pilot1/dataset.json --set pilot --replicates 2 --max-usd 100 --confirm-spend --results C:/tmp/pilot1/pilot.jsonl
 ```
 
-Each point runs META (the production gate, meta-review on, T1 opted in with `AUDIT_META_REVIEW_T1=on`) then CONTINUE (`--no-meta-review`; at T1 the refused card step then `--past-cap
+Each point runs META (the production gate, meta-review on, both triggers opted in with `AUDIT_META_REVIEW_T1`/`_T2=on`) then CONTINUE (`--no-meta-review`; at T1 the refused card step then `--past-cap
 "seeded-bench continuation control"`), per replicate. Arms share every other argument and the child env (`AUDIT_CANARY=1`, store writes off).
 A META stop records its debt command and never runs it. The rehearsal asserts every evidence field is non-null (the C5 fill-check) and is
 **discarded** from the pilot.

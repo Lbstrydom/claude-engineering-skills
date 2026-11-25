@@ -193,6 +193,7 @@ describe('the continuation contract (§2.1) against the REAL gate', () => {
     }
     assert.deepEqual(childEnv({ base: {}, ledgerFile: 'L' }).AUDIT_BUDGET_LEDGER, 'L');
     assert.equal(childEnv({ base: {}, ledgerFile: 'L' }).AUDIT_META_REVIEW_T1, 'on', 'the META arm opts T1 in: it is off by default');
+    assert.equal(childEnv({ base: {}, ledgerFile: 'L' }).AUDIT_META_REVIEW_T2, 'on', 'and T2, for the same reason');
   });
 
   test('a trigger mismatch, or a T2 whose checkpoint signal is quiet, is unrecoverable and never run', () => {

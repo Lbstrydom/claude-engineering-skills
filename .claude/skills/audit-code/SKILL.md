@@ -302,8 +302,8 @@ Stability uses `_hash` for exact cross-round matching:
 | Round 6, not stable | Run round 7: exit 4, a human call; then REQUIRED Step 7 |
 
 **Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`) with
-the card, never a retry. The **meta-review** (`references/meta-review.md`) runs at round 4 on a fired signal, and
-here only with `AUDIT_META_REVIEW_T1=on` (may admit it). `META_STOP`/`_STRUCTURAL`: run the debt command.
+the card, never a retry. The **meta-review** (`references/meta-review.md`) is off: `AUDIT_META_REVIEW_T2=on` (round 4),
+`_T1=on` (here, may admit it). `META_STOP`/`_STRUCTURAL`: run the debt command.
 
 **Step 7 (final gate) is MANDATORY** after the last audit round,
 regardless of convergence. Ladder (`references/gemini-gate.md`; never

@@ -9,7 +9,8 @@
  * is acted on, and an allowlisted projection goes to the learning store, so the value can be measured.
  *
  * Triggers (`metaTriggerFor`): T1 = a round refused at the cap (`PAST_CAP_REQUIRED`), OFF unless opted in
- * (`isMetaT1Enabled`); T2 = code round 4 (checkpoint 3) when a round signal fires. The gate (`round-cap-gate.mjs`) is the only caller that acts
+ * (`isMetaT1Enabled`); T2 = code round 4 (checkpoint 3) when a round signal fires, also OFF unless opted in
+ * (`isMetaT2Enabled`). The gate (`round-cap-gate.mjs`) is the only caller that acts
  * on a result; this module decides and records.
  *
  * Domain: audit-orchestration.
@@ -58,6 +59,17 @@ export const META_T1_OPT_IN_ENV = 'AUDIT_META_REVIEW_T1';
  */
 export function isMetaT1Enabled({ env = process.env } = {}) {
   return /^(on|1|true|yes)$/i.test(String(env[META_T1_OPT_IN_ENV] ?? '').trim());
+}
+
+export const META_T2_OPT_IN_ENV = 'AUDIT_META_REVIEW_T2';
+
+/**
+ * T2 is OFF by default (Louis, 2026-11-25): an early stop is mostly vetoed by the guard while HIGHs are open, the rounds
+ * after 4 stay productive, and no live decision reaches the store. `AUDIT_META_REVIEW_T2=on|1|true|yes` turns it back
+ * on; the opt-out above still wins. Off, the gate neither evaluates the signals nor calls the reviewer at round 4.
+ */
+export function isMetaT2Enabled({ env = process.env } = {}) {
+  return /^(on|1|true|yes)$/i.test(String(env[META_T2_OPT_IN_ENV] ?? '').trim());
 }
 
 /**
