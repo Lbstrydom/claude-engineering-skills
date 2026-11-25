@@ -284,7 +284,9 @@ describe('FindingJsonSchema (derived)', () => {
     // `is_reopened` (2026-08-14) is REQUIRED on ProducerFindingSchema and
     // optional here for the same reason `classification` is: every finding
     // persisted before that date predates the field.
-    const optional = new Set(['classification', 'verification', 'evidenceType', 'anchor', 'triggerAnchor', 'causalChain', 'is_reopened']);
+    // lineQuote/lineStart/lineEnd (2026-11-23, structured-finding-lines): optional on the persisted shape; lineQuote is the
+    // only producer-side one, and nullable, so old rows and non-LLM constructors stay valid.
+    const optional = new Set(['classification', 'verification', 'evidenceType', 'anchor', 'triggerAnchor', 'causalChain', 'is_reopened', 'lineQuote', 'lineStart', 'lineEnd']);
     const zodKeys = Object.keys(FindingSchema.shape).filter(k => !optional.has(k)).sort();
     assert.deepEqual([...FindingJsonSchema.required].sort(), zodKeys);
   });

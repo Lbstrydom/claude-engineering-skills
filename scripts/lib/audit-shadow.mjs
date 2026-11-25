@@ -120,7 +120,9 @@ const INPUT_EST_SAFETY = 1.2;
 
 /** Shadow pass result schema — the OSS conformance check validates against this. */
 export const ShadowPassSchema = z.object({
-  findings: z.array(ProducerFindingSchema).max(50),
+  // `lineQuote` omitted: the shadow ARMS run the unchanged PASS_PROMPTS seeds without the line-anchor block, so the arms
+  // stay like for like WITH EACH OTHER; the anchor is not a compared dimension (arms are scored on category/section/detail).
+  findings: z.array(ProducerFindingSchema.omit({ lineQuote: true })).max(50),
   summary: z.string().max(1000).default(''),
 });
 

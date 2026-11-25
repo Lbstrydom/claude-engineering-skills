@@ -253,6 +253,23 @@ Populate the \`classification\` field on each finding:
 }
 
 /**
+ * Line-anchor instruction (docs/plans/structured-finding-lines.md). Appended per run, beside the
+ * classification block, to the passes whose response schema is `ProducerFindingSchema` — NOT to the
+ * mechanical/bouncer waves (their schemas cannot carry the field). Asks for a verbatim QUOTE, never a
+ * line number: the code the model is shown has no line gutter, so a counted number would be a guess.
+ * The PASS_PROMPTS seeds above are byte-unchanged.
+ */
+export const LINE_ANCHOR_BLOCK = `
+
+## Line anchor (optional, per finding)
+Set \`lineQuote\` to the EXACT source line (up to 3 consecutive lines, joined by a newline) this finding is
+about, copied character for character from the file AS IT IS AFTER THE CHANGE — keep the leading indentation,
+and never include a diff marker (+/-) or a line number. Quote the line where the defect is, not a heading.
+Use null when the finding is about missing code, the plan, or no specific line, or when the relevant line is
+longer than 400 characters (never truncate a quote).
+`;
+
+/**
  * All pass prompts as a map, for prompt-registry bootstrap.
  */
 /**

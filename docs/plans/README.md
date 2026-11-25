@@ -49,6 +49,7 @@ This is the list to read when asking "what is in flight?".
 | [Solo-control hardening — pre-existing defects PR #413's audit found but did not touch](./solo-control-hardening.md) | `In Progress` | fixes implemented; audit and merge pending |
 | [Solo-control / model-eval leads — triage and fixes (2026-11-22)](./solo-control-leads-2026-11-22.md) | `In Progress` | fixes implemented; audit and merge pending |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q3 RE-ADOPTED 2026-09-04; its own stated revisit condition (§4) is now met on both halves, so this plan… |
+| [structured line anchors on audit findings, so the T2 `reopenRate` signal becomes measurable](./structured-finding-lines.md) | `In Progress` | plan audited 2026-11-23 (3 GPT rounds, Gemini APPROVE); implementation autonomous, no push, no PR |
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
