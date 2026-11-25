@@ -82,7 +82,7 @@ was sent). An allowlisted projection (ids, counts, enums; no paths or prose) goe
 - A held `.audit/<sid>.meta-review.lock` fails closed to the human path; if no audit of that session is running, a
   crashed one left it: delete it. An attempt **reserved with no decision** (a crash mid-call) also fails closed, for
   that attempt only, and the log keeps it (append-only, charged to the budget): take the human path for that round
-  (`--past-cap`, or `--meta-override` at code round 4), or `--no-meta-review`. A changed plan, diff or HEAD is a new attempt.
+  (`--past-cap` at the cap; code round 4 just runs, with no `--meta-override`), or `--no-meta-review`. A changed plan, diff or HEAD is a new attempt.
 
 ## What the operator does with the result
 
