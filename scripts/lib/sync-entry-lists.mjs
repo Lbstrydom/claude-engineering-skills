@@ -202,7 +202,7 @@ export const CORE_ENTRY = [
   // must ship too -- it was registered everywhere and shipped nowhere until
   // 2026-08-20. Walker pulls in lib/install/legacy-surfaces.mjs.
   '.claude/hooks/legacy-surface-advisory.mjs',
-  // PreToolUse Bash nudge toward the Grep tool. Zero imports, fully portable.
+  // PreToolUse Bash/PowerShell nudge toward the Grep tool. Zero imports, fully portable.
   // Same registered-but-unshipped bug as the advisory above.
   '.claude/hooks/bash-grep-nudge.mjs',
   // PostToolUse parse-check for edited .mjs files. Self-contained apart from

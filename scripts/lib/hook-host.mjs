@@ -32,7 +32,7 @@
 /** @typedef {'claude-code'|'copilot'|'unknown'} HookHost */
 /**
  * @typedef {{kind:'file', op:'edit'|'write', filePath:string, text?:string}
- *   | {kind:'shell', command:string}} ToolEvent
+ *   | {kind:'shell', shell:'bash'|'powershell', command:string}} ToolEvent
  *   `text` is absent when the payload carries no text field; a path-only event is
  *   still a valid `file` event (syntax-check needs only the path).
  */
@@ -67,8 +67,9 @@ export function detectHookHost(payload) {
  * Normalise a tool event to the one shape the hooks consume.
  *
  * Claude shape only (see the module header for why Copilot is `null`):
- *   Bash  -> `{kind:'shell', command}`
- *   Edit  -> `{kind:'file', op:'edit', filePath, text?}`   (`text` = `new_string`)
+ *   Bash  -> `{kind:'shell', shell:'bash', command}`
+ *   PowerShell -> `{kind:'shell', shell:'powershell', command}`
+ *   Edit -> `{kind:'file', op:'edit', filePath, text?}`   (`text` = `new_string`)
  *   Write -> `{kind:'file', op:'write', filePath, text?}`  (`text` = `content`)
  * `filePath` is `file_path` or `filePath`. A variant missing a REQUIRED field
  * (`command`, `filePath`) is `null`; a missing optional `text` is not.
@@ -84,8 +85,9 @@ export function normaliseToolEvent(payload) {
   const input = isObject(payload.tool_input) ? payload.tool_input : {};
   switch (payload.tool_name) {
     case 'Bash':
+    case 'PowerShell':
       return nonEmptyString(input.command) && input.command.trim()
-        ? { kind: 'shell', command: input.command }
+        ? { kind: 'shell', shell: payload.tool_name === 'Bash' ? 'bash' : 'powershell', command: input.command }
         : null;
     case 'Edit':
     case 'Write': {

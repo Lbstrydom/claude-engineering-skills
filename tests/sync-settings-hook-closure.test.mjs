@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getSyncClosure } from '../scripts/lib/sync-inventory.mjs';
+import { renderOutbound } from '../scripts/lib/sync-outbound.mjs';
 
 const HOOK_REF = /[.]claude[\\\/]+hooks[\\\/]+([A-Za-z0-9._-]+[.](?:mjs|sh))/g;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -71,5 +72,31 @@ describe('synced settings.json hook closure', () => {
   it('negative control: a hook path that exists only as text is not in the bundle', () => {
     assert.equal(SHIPPED.has('.claude/hooks/a-hook-nobody-ships.mjs'), false);
     assert.equal(SHIPPED.has('.claude/hooks/arch-memory-check.sh'), true, 'and a real one is');
+  });
+});
+
+describe('the grep nudge matcher covers both shell tools, here and in a consumer', () => {
+  const source = fs.readFileSync(path.join(REPO_ROOT, '.claude', 'settings.json'), 'utf-8');
+  /** Claude Code reads a matcher made of names and `|` as a list of exact tool names. */
+  const nudgedTools = (settings) => settings.hooks.PreToolUse
+    .filter((g) => g.hooks.some((h) => h.command.includes('bash-grep-nudge.mjs')))
+    .flatMap((g) => g.matcher.split('|'))
+    .sort();
+
+  it('registers the nudge for Bash AND PowerShell', () => {
+    assert.deepEqual(nudgedTools(JSON.parse(source)), ['Bash', 'PowerShell']);
+  });
+
+  it('a consumer still on the Bash-only matcher receives the new one from the sync merge', () => {
+    const old = JSON.parse(source);
+    for (const g of old.hooks.PreToolUse) g.matcher = 'Bash';
+    old.consumerKey = true;
+    const { content } = renderOutbound({
+      srcRel: '.claude/settings.json', dstRel: '.claude/settings.json', srcContent: source,
+      existingContent: JSON.stringify(old), rewriteConfig: { ownedSourceTails: new Set() },
+    });
+    const out = JSON.parse(content);
+    assert.deepEqual(nudgedTools(out), ['Bash', 'PowerShell']);
+    assert.equal(out.consumerKey, true, 'control: it was a merge with the consumer file, not a replace');
   });
 });
