@@ -63,7 +63,7 @@ async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, writ
  * With `metaReview: true` (only `openai-audit.mjs` `main()` passes it: library and test callers never spend) and no
  * opt-out (`--no-meta-review` / `AUDIT_META_REVIEW=off`), the AUTOMATIC META-REVIEW (docs/plans/meta-step-back-at-cap.md)
  * decides at two triggers: T1, a round refused at the soft cap, only with `AUDIT_META_REVIEW_T1=on` (off by default;
- * admit within the absolute cap — L1 — or stop / structural, with the open topics captured as debt — L3); and T2, code round 4 when a round signal fires (an early
+ * admit within the absolute cap — L1 — or stop / structural, with the open topics captured as debt — L3); and T2, only with `AUDIT_META_REVIEW_T2=on` (off by default), code round 4 when a round signal fires (an early
  * stop only when the last round is measured unproductive — L2). Its module is loaded lazily, only when eligible.
  * Every non-decision (no route, invalid, budget, malformed log) leaves today's behaviour exactly as it was.
  *
@@ -165,7 +165,7 @@ export async function gateRoundCap(argv, {
     write(`  [meta-review] override recorded against ${res.attemptId}: the round runs\n`);
   }
 
-  if (meta && !v.pastCap && !mo.present && meta.metaTriggerFor({ mode, round }) === 'T2') {
+  if (meta && !v.pastCap && !mo.present && meta.metaTriggerFor({ mode, round }) === 'T2' && meta.isMetaT2Enabled({ env })) {
     const res = await meta.runMetaReview({ trigger: 'T2', ...metaArgs }, metaDeps);
     for (const l of res.lines) write(`${l}\n`);
     if (res.honoured && (res.effect === 'stop' || res.effect === 'structural')) {

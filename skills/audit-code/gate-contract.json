@@ -532,7 +532,7 @@
       "reason": "The convergence-table row for the cap: it restates the round-caps gate (round 7 exits 4 and a human decides), bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs. Reworded 2026-11-25 when the meta-review at the cap became opt-in."
     },
     {
-      "line": "the card, never a retry. The **meta-review** (`references/meta-review.md`) runs at round 4 on a fired signal, and",
+      "line": "the card, never a retry. An opted-in **meta-review** (`references/meta-review.md`: `AUDIT_META_REVIEW_T2=on` round 4,",
       "reason": "Continuation of the round-caps gate statement (the first line of the cap paragraph is the gate's `stated`; the sentence wraps across lines), pointing at the reference file, or the reference index row for it. Not a separate claim: the cap and exit 4 are bound executably by the round-caps cli-exit scenarios and tests/audit-round-cap-cli.test.mjs."
     },
     {
