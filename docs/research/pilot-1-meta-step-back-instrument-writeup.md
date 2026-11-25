@@ -47,7 +47,8 @@ experiment rows excluded), the rounds a session ran from round 7 onward:
 | Before the cap | 1351 | 339 | 223 | 3.16 | $1.88 / $0.29 |
 
 Limits: sessions are reconstructed (same repo, branch and plan file; a new session when the round number stops rising
-or after 48 h), because session ids exist only from 2026-11-23. The cost is the store's estimate for GPT passes. Agent
+or after 48 h), because session ids exist only from 2026-11-23. A session's era is that of its last round. A missing cost
+would count as zero; no round from 7 onward lacked one on this read. The cost is the store's estimate for GPT passes. Agent
 tokens spent fixing findings are **not measured**. The final gate runs after a stop too, so a stop does not avoid it.
 Query: appendix.
 
@@ -66,10 +67,12 @@ The last row treats 10/69 as the override rate. It is an upper bound on override
 
 ### 2.4 The counterfactual
 
-With the meta-review off, production **refuses** at the cap (exit 4 and the structural card). The CONTINUE arm models a
-human who always overrides. The reviewer rendered 22 decisions and all 22 were `stop`: it admitted no round, so in no
-run did it change what production without it would have done. Its possible value at T1 is limited to talking a human
-out of an override, which this pilot does not measure.
+With the meta-review off, production **refuses** at the cap (exit 4 and the structural card), and a human decides.
+The CONTINUE arm models a human who always overrides. The reviewer rendered 22 decisions and all 22 were `stop`, so it
+admitted no round that production without it would not already have refused. The two workflows still differ: an honoured
+stop (12 runs) settles the decision without asking a human, where meta-off leaves a card that a human may override. The
+step-back's possible value at T1 is therefore saved human attention and avoided overrides. This pilot measures neither,
+and the 10/69 share is observational: it is not an override rate measured with the meta-review off.
 
 **Conclusion.** The one-round frame alone made Keep unreachable, which is a pre-registration flaw. Correcting it does
 not rescue Keep except under "a human always overrides", at the boundary, on 10 sessions. On the economics, the honest
@@ -107,27 +110,33 @@ the be-routes and be-services lenses reliably report.
 
 ## 5. Re-run plan (conditional; not recommended)
 
-Run it only if Louis wants a measured miss rate despite §2, for instance to judge the step-back on quality rather
+This is an outline, not a pre-registration: nothing here may be run from it. Run it only if Louis wants a measured miss rate despite §2, for instance to judge the step-back on quality rather
 than cost. It would then need a new pre-registration, because the cost condition of the decision table cannot pass.
+
+A miss, a novel finding, an actionable label and the judge keep the definitions of plan §2.2 and §1.4. The signed
+pre-registration must fix the thresholds, the interval method (exact one-sided binomial is proposed) and what happens
+when too few stop points remain (Inconclusive).
 
 1. **Decision rule first.** Replace "cost saved" with a stated avoided-cost frame and counterfactual (meta off =
    refusal), or drop cost from Keep. Signed before any run.
 2. **Instrument.** One fixed canary per lens, within that lens's remit, in a file the pass receives; be-routes is
    exercised through backend. No seed bank. Calibrate on the 30 calibration-set points, never on re-run points. Gate on
    the whole run (≥ 85% of at least 20 calibration runs detect every planted canary); a lens that fails is excluded in
-   advance and named. Freeze before the confirmatory run.
-3. **Validity.** Fixed batch with a hard cap. No "run until N valid". A provider or infrastructure failure gets one
-   predeclared replacement; a canary miss never does. Attrition ceiling 25%. Report the miss rate with all excluded
+   advance and named, points whose round needs that lens are not eligible, the whole-run gate is recomputed on the rest,
+   and the claim covers only them. One canary shows that the lens saw that defect, not its general sensitivity. Freeze before the confirmatory run.
+3. **Validity.** Fixed batch with a hard cap. No "run until N valid". A run lost to a provider or infrastructure failure is rerun once, same point,
+   replicate and arm, so the pair is preserved; a canary miss never is. Attrition ceiling 25%. Report the miss rate with all excluded
    pairs counted as missed and as not missed.
 4. **Sample size.** Distinct stop points, not runs. With zero misses, 5 points bound the miss rate only below 45%;
    14 are needed for below 20% (one-sided 95%). Draw 24 points from the repeat set, 1 replicate, plus a second CONTINUE
-   replicate on 8 of them for A/A variance. A wider interval than 20% is a predeclared, informative Inconclusive.
+   replicate on 8 of them for A/A variance. Points are
+   chosen by a seeded shuffle and frozen with the dataset hash before any run. A wider interval than 20% is a predeclared, informative Inconclusive.
 5. **Fallbacks.** Counted as production counts them. Reviewer-rendered decisions are reported separately. A change to
    the meta call is a new pinned treatment revision.
 
 **Cost (`expected`)**: canary calibration ≈ $5; 24 META runs × $0.52 ≈ $12; 32 CONTINUE runs × $0.40 ≈ $13; judge
-≈ $5. About **$35**, hard cap **$50**. Human labelling of novel findings is additional and unpriced. Not included: a
-signed approval, which each paid step needs.
+≈ $5. About **$35**, hard cap **$50**. Human labelling of novel findings is additional and unpriced. Every call goes through one budget ledger
+(plan §2.6) holding that cap, calibration, reruns and judge included. Each paid step needs its own signed approval.
 
 ## 6. Salvage
 
