@@ -198,7 +198,7 @@ is not a stop signal — fixes create new surface; evidence in
 
 **Cap: 3 rounds, 5 absolute — enforced by `openai-audit.mjs`.** Round 4 exits
 `4` (`CAPPED`), a stop for a human call, never a retry, unless the **meta-review**
-(`references/meta-review.md`, off unless `AUDIT_META_REVIEW_T1=on`) admits it. On `META_*` run the debt command;
+(`references/meta-review.md`, off unless `AUDIT_META_REVIEW_T1=on`) admits it. On `META_STOP`/`_STRUCTURAL` run its debt command;
 on `PAST_CAP_REQUIRED` present the card (`references/round-cap-and-structural-card.md`)
 to the operator: STOP / STRUCTURAL / CONTINUE, their call.
 **Implementation-completeness** findings belong to the code audit. Record the
