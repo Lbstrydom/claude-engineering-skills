@@ -8,8 +8,8 @@
  * and never raises a cap. Every decision is persisted to an append-only per-session event log BEFORE it
  * is acted on, and an allowlisted projection goes to the learning store, so the value can be measured.
  *
- * Triggers (`metaTriggerFor`): T1 = a round refused at the cap (`PAST_CAP_REQUIRED`); T2 = code round 4
- * (checkpoint 3) when a round signal fires. The gate (`round-cap-gate.mjs`) is the only caller that acts
+ * Triggers (`metaTriggerFor`): T1 = a round refused at the cap (`PAST_CAP_REQUIRED`), OFF unless opted in
+ * (`isMetaT1Enabled`); T2 = code round 4 (checkpoint 3) when a round signal fires. The gate (`round-cap-gate.mjs`) is the only caller that acts
  * on a result; this module decides and records.
  *
  * Domain: audit-orchestration.
@@ -48,6 +48,17 @@ const red = (s) => redactSecrets(String(s ?? '')).text;
 /** `--no-meta-review` or `AUDIT_META_REVIEW=off|0|false|no`. Opted out, the gate behaves exactly as before this module. */
 export function isMetaReviewOptedOut({ argv = [], env = process.env } = {}) {
   return argv.includes('--no-meta-review') || /^(off|0|false|no)$/i.test(String(env.AUDIT_META_REVIEW ?? '').trim());
+}
+
+export const META_T1_OPT_IN_ENV = 'AUDIT_META_REVIEW_T1';
+
+/**
+ * T1 is OFF by default (Louis, 2026-11-25): at the cap the decision cost more than the round it avoided and admitted none
+ * (docs/research/pilot-1-meta-step-back-instrument-writeup.md). `AUDIT_META_REVIEW_T1=on|1|true|yes` turns it back on;
+ * the opt-out above still wins. Off, the gate neither calls the reviewer at the cap nor honours a recorded T1 admission.
+ */
+export function isMetaT1Enabled({ env = process.env } = {}) {
+  return /^(on|1|true|yes)$/i.test(String(env[META_T1_OPT_IN_ENV] ?? '').trim());
 }
 
 /**

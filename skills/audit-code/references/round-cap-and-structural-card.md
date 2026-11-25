@@ -100,8 +100,8 @@ fix range, ≥ 0.5 fires), **severity drift** (median per-file change in max sev
 **retired** (accepted topics closed; ≤ 1 for two consecutive rounds fires). An unmeasured signal (no `audited_sha`, no cited
 lines, no ledger) never fires and is never read as quiet; the card says the trigger is unmeasured.
 
-When one fires at checkpoint 3, and at every refused round past the soft cap (plan too), the **automatic meta-review**
-runs inside the gate: `meta-review.md` (opt out with `--no-meta-review`). The manual
+When one fires at checkpoint 3 (and, only with `AUDIT_META_REVIEW_T1=on`, at a refused round past the soft cap) the
+**automatic meta-review** runs inside the gate: `meta-review.md` (opt out with `--no-meta-review`). The manual
 `--step-back` (`--step-back-arm same|different|higher`) remains, advisory: `structural`, `stop` or `defect`, no `continue`.
 
 After round 6 the default is **stop-to-debt or a human**; rounds 7-8 need `--past-cap` or a meta-review admission. The 6/8 caps are unchanged.

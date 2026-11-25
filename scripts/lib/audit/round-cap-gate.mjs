@@ -62,8 +62,8 @@ async function emitCard({ argv, sid, mode, round, caps, auditDir, cwd, env, writ
  *
  * With `metaReview: true` (only `openai-audit.mjs` `main()` passes it: library and test callers never spend) and no
  * opt-out (`--no-meta-review` / `AUDIT_META_REVIEW=off`), the AUTOMATIC META-REVIEW (docs/plans/meta-step-back-at-cap.md)
- * decides at two triggers: T1, a round refused at the soft cap (admit within the absolute cap — L1 — or stop /
- * structural, with the open topics captured as debt — L3); and T2, code round 4 when a round signal fires (an early
+ * decides at two triggers: T1, a round refused at the soft cap, only with `AUDIT_META_REVIEW_T1=on` (off by default;
+ * admit within the absolute cap — L1 — or stop / structural, with the open topics captured as debt — L3); and T2, code round 4 when a round signal fires (an early
  * stop only when the last round is measured unproductive — L2). Its module is loaded lazily, only when eligible.
  * Every non-decision (no route, invalid, budget, malformed log) leaves today's behaviour exactly as it was.
  *
@@ -120,7 +120,7 @@ export async function gateRoundCap(argv, {
   }
 
   if (!v.ok) {
-    const t1 = meta && v.code === 'PAST_CAP_REQUIRED';
+    const t1 = Boolean(meta) && v.code === 'PAST_CAP_REQUIRED' && meta.isMetaT1Enabled({ env });
     if (t1) {
       const adm = admissionOf(meta, { argv, mode, sid, auditDir, round });
       if (adm) return passed({ pastCap: true, pastCapReason: `meta-review ${adm.attemptId}: ${adm.verdict?.reason ?? 'admitted'}`.slice(0, 500), cardSummary: null });
