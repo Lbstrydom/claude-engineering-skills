@@ -9,6 +9,12 @@
 Figure labels: `measured` = read from the run files or the store; `derived` = arithmetic on measured figures;
 `expected` = a forecast.
 
+Population: measured from 1 store — d5a9d07b (self, wine, ai, story).
+
+The store-derived figures are those of §2.2 and §2.3: the appendix query over `audit_runs`, code mode, experiment rows
+excluded, no repo predicate; 2043 reconstructed sessions (692 with the cap enforced), read 2026-11-25. All other figures
+come from the local run files.
+
 ## 1. What ran (`measured`)
 
 | Run | Cost | Result |
