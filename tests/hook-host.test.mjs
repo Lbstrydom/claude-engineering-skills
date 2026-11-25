@@ -79,7 +79,13 @@ describe('detectHookHost', () => {
 
 describe('normaliseToolEvent', () => {
   it('maps Bash to a shell event with no path', () => {
-    assert.deepEqual(normaliseToolEvent({ tool_name: 'Bash', tool_input: { command: 'rg x' } }), { kind: 'shell', command: 'rg x' });
+    assert.deepEqual(normaliseToolEvent({ tool_name: 'Bash', tool_input: { command: 'rg x' } }), { kind: 'shell', shell: 'bash', command: 'rg x' });
+  });
+  it('maps PowerShell to a shell event that names its dialect', () => {
+    assert.deepEqual(
+      normaliseToolEvent({ tool_name: 'PowerShell', tool_input: { command: 'sls x a.txt' } }),
+      { kind: 'shell', shell: 'powershell', command: 'sls x a.txt' });
+    assert.equal(normaliseToolEvent({ tool_name: 'PowerShell', tool_input: { command: '  ' } }), null);
   });
   it('merges Edit and Write into ONE file kind, discriminated by op', () => {
     assert.deepEqual(
@@ -276,6 +282,81 @@ describe('spawned hook: what the process receives and does', () => {
         assert.deepEqual([r.status, r.stdout], [0, ''], command);
       }
     });
+    const runShell = (tool_name, command, options) =>
+      spawnHook('bash-grep-nudge.mjs', claude('PreToolUse', { tool_name, tool_input: { command, description: 'd' } }), options);
+    const reasonOf = (r) => JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason;
+
+    it('PowerShell: a leading file search is denied with a PowerShell-accurate message', () => {
+      const r = runShell('PowerShell', 'Select-String -Pattern foo -Path src\\*.mjs');
+      assert.equal(r.status, 0);
+      assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
+      assert.equal(reasonOf(r), [
+        'PowerShell leading command is `Select-String` — use the Grep tool instead.',
+        'Grep wraps ripgrep with correct permissions and supports',
+        'output_mode/head_limit/context/-A/-B/-C/glob/type filters,',
+        'which removes the need for `| Select-Object -First` and similar pipe shaping.',
+        'Pipe-filter uses (e.g. `Get-Process | Select-String node`) are fine — only',
+        'file-content search is blocked.',
+        'Disable per-session: BASH_GREP_NUDGE_DISABLE=1',
+      ].join(' '));
+    });
+    it('PowerShell: Get-ChildItem piped to Select-String is named as a file-content search', () => {
+      const r = runShell('PowerShell', 'Get-ChildItem -Recurse -Filter *.mjs | Select-String foo');
+      assert.match(reasonOf(r), /^PowerShell `Get-ChildItem \| Select-String` is a file-content search — use the Grep tool/);
+    });
+    for (const command of [
+      // Leading search command: the first word decides, as for Bash.
+      'sls foo src/a.mjs', 'SELECT-STRING foo a.txt', 'findstr /s foo *.js', 'findstr.exe foo a.txt', 'rg foo src', 'rg.exe foo', 'grep -r foo .',
+      '& rg foo', '\n  rg foo', 'Select-String `\n  -Pattern foo -Path a.txt', 'Select-String -Pattern " -InputObject" -Path a.txt',
+      'Select-String -InputObject $out -Pattern foo',
+      // The strict listing-to-search shape.
+      'gci -r src | sls foo', 'ls -Recurse | Select-String foo', 'dir *.cs | sls foo', 'gci $root -r | sls foo',
+      'Get-ChildItem -Name:$false | Select-String foo', 'gci C:\\env -r | sls foo', 'gci .\\variable -r | sls foo',
+      // A single-quoted value is literal in PowerShell, and the search side's arguments are not restricted.
+      "gci -Filter 'report`*$.txt' | sls error", 'gci | sls (Get-Content patterns.txt)', 'gci | sls "$env:SEARCH_PATTERN"',
+      'Get-ChildItem -r |\n  Select-String foo', 'Get-ChildItem C:\\src -Filter "*.mjs" | Select-String -Pattern \'a|b\'',
+      // A plain quoted value is not read: switch-like or pipe-like text inside it changes nothing.
+      "Get-ChildItem -Filter ' -Name' | Select-String foo", "gci | sls -Pattern 'x -InputObject y'", 'gci | sls foo; Write-Output $("bar")',
+    ]) {
+      it(`PowerShell nudged: ${JSON.stringify(command)}`, () => {
+        const r = runShell('PowerShell', command);
+        assert.equal(r.status, 0);
+        assert.notEqual(r.stdout, '', command);
+        assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny');
+      });
+    }
+    for (const command of [
+      'Get-Process | Select-String node', 'git log --oneline | sls fix', 'Get-Content a.log | Select-String error',
+      'npm test 2>&1 | findstr fail', 'Get-ChildItem src', 'gci | findstr foo', 'Write-Output "rg foo"', 'grep-report --all', 'git grep foo',
+      '$hits = rg foo', 'Get-ChildItem; $x | Select-String foo', 'Get-ChildItem\n$x | Select-String foo', 'gci && git log | sls foo',
+      'gci || sls foo', "Get-ChildItem -Filter 'a | sls x'", 'gci # | sls foo', 'ls.exe | sls foo',
+      // The listing emits names, or the search reads a value in memory.
+      'Get-ChildItem -Name | Select-String foo', 'gci -Name:$true | sls foo', 'Get-ChildItem -Directory | Select-String node_modules',
+      'gci -dir -r | sls foo','gci | sls -InputObject $out -Pattern foo',
+      'gci | Select-String -inp $out foo',
+      // A non-file provider drive lists objects, not files.
+      'Get-ChildItem Env: | Select-String PATH', 'gci -Path variable: | sls foo', 'ls alias:\\ | sls git', 'dir HKCU:\\Software | sls foo',
+      'gci -Path:Function: | sls foo',
+      // Anything beyond the strict shape is allowed, never parsed.
+      'gci | Where-Object Name | sls foo', 'gci | sort.exe | sls foo', 'gci | ForEach-Object Name | sls foo',
+      'gci -Path (Get-Location) | sls foo', 'gci "$env:TEMP" | sls foo', 'Get-ChildItem -Filter "$("x | Select-String y")"',
+      'gci `\n| sls foo', '# find it\nrg foo', 'Get-ChildItem > files.txt | Select-String foo', 'gci -r 2>$null | sls foo',
+    ]) {
+      it(`PowerShell allowed: ${JSON.stringify(command)}`, () => {
+        const r = runShell('PowerShell', command);
+        assert.deepEqual([r.status, r.stdout], [0, ''], command);
+      });
+    }
+    it('PowerShell syntax is not applied to Bash: Select-String and findstr under Bash stay silent', () => {
+      for (const command of ['Select-String foo a.txt', 'findstr foo a.txt', 'ls | sls foo']) {
+        const r = runShell('Bash', command);
+        assert.deepEqual([r.status, r.stdout], [0, ''], command);
+      }
+    });
+    it('the disable env var covers PowerShell', () => {
+      const r = runShell('PowerShell', 'rg foo', { env: { BASH_GREP_NUDGE_DISABLE: '1' } });
+      assert.deepEqual([r.status, r.stdout], [0, '']);
+    });
     it('Tier 1: a Copilot-envelope Bash event is silent', () => {
       const r = spawnHook('bash-grep-nudge.mjs', copilot('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'rg foo' } }));
       assert.deepEqual([r.status, r.stdout], [0, '']);
@@ -362,6 +443,11 @@ describe('spawned hook: what the process receives and does', () => {
       assert.equal(b.stdout, GREP_DENY_SNAPSHOT);
       assert.deepEqual([a.status, b.status], [0, 0]);
       assert.match(b.stderr, /\[bash-grep-nudge\] hook-host unavailable — legacy Claude path/);
+      const ps = { tool_name: 'PowerShell', tool_input: { command: 'gci -r | sls foo' } };
+      const c = spawnHook('bash-grep-nudge.mjs', ps, { cwd: os.tmpdir(), hooksDir: withLib.hooksDir });
+      const d = spawnHook('bash-grep-nudge.mjs', ps, { cwd: os.tmpdir(), hooksDir: without.hooksDir });
+      assert.notEqual(c.stdout, '');
+      assert.equal(d.stdout, c.stdout);
     });
     it('syntax-check', () => {
       const withLib = relocatedHooks('syn-with', { withHostLib: true });
