@@ -45,7 +45,7 @@ function harness({ verdict, ledger, signalsFire = false, select = null }) {
       call: async (req) => { calls.push(req); return { text: JSON.stringify(verdict), usage: { input_tokens: 10, output_tokens: 5, usageMissing: false }, sent: true }; } } })),
   };
   const gate = (argv, opts = {}) => gateRoundCap(argv, {
-    cwd: dir, auditDir: dir, env: {}, write: (l) => lines.push(l), metaReview: true, auditorModel: 'gpt-6', metaDeps,
+    cwd: dir, auditDir: dir, env: { AUDIT_META_REVIEW_T1: 'on' }, write: (l) => lines.push(l), metaReview: true, auditorModel: 'gpt-6', metaDeps,
     build: async ({ round, mode, planFile }) => ({ card: { version: 1, round, mode, planFile, summary: { clusters: 0 } }, text: 'CARD' }),
     recordCap: async () => ({ recorded: false, reason: 'test' }),
     ...opts,
@@ -104,11 +104,34 @@ describe('T1 — at the cap', () => {
   });
 });
 
+describe('T1 is off by default', () => {
+  const throwing = () => { throw new Error('provider must not be selected'); };
+  for (const [label, env] of [['unset', {}], ['AUDIT_META_REVIEW=on alone', { AUDIT_META_REVIEW: 'on' }], ['AUDIT_META_REVIEW_T1=off', { AUDIT_META_REVIEW_T1: 'off' }]]) {
+    test(`${label}: the cap refuses as before, no reviewer, no log (plan and code)`, async () => {
+      const h = harness({ verdict: stopAll, ledger: [ruled(TH, 2)], select: throwing });
+      assert.equal((await h.gate(planArgv(4), { env })).code, 'PAST_CAP_REQUIRED');
+      assert.equal((await h.gate(codeArgv(7), { env })).code, 'PAST_CAP_REQUIRED');
+      assert.equal(fs.existsSync(metaLogPath(dir, 's')), false);
+      assert.equal(fs.existsSync(metaLogPath(dir, 'c')), false);
+    });
+  }
+  test('an admission recorded while opted in does not lift the cap once T1 is off', async () => {
+    const h = harness({ verdict: { action: 'admit', assessment: A, rounds: 2, topics: [TH], reason: 'r' }, ledger: [] });
+    assert.equal((await h.gate(planArgv(4))).ok, true, h.out());
+    assert.equal((await h.gate(planArgv(5), { env: {} })).code, 'PAST_CAP_REQUIRED');
+    assert.equal(h.calls.length, 1);
+  });
+  test('T2 still fires with T1 off', async () => {
+    const h = harness({ verdict: stopAll, ledger: [ruled(TH, 2), ruled(TH, 3, 'dismissed'), ruled(TM, 3, 'dismissed')], signalsFire: true });
+    assert.equal((await h.gate(codeArgv(4), { env: {} })).code, 'META_STOP', h.out());
+  });
+});
+
 describe('opt-out and eligibility never reach a provider', () => {
   const throwing = () => { throw new Error('provider must not be selected'); };
   test('AUDIT_META_REVIEW=off', async () => {
     const h = harness({ verdict: stopAll, ledger: [ruled(TH, 2)], select: throwing });
-    const r = await h.gate(planArgv(4), { env: { AUDIT_META_REVIEW: 'off' } });
+    const r = await h.gate(planArgv(4), { env: { AUDIT_META_REVIEW: 'off', AUDIT_META_REVIEW_T1: 'on' } });
     assert.equal(r.code, 'PAST_CAP_REQUIRED'); assert.equal(fs.existsSync(metaLogPath(dir, 's')), false);
   });
   test('--no-meta-review', async () => {
@@ -122,7 +145,7 @@ describe('opt-out and eligibility never reach a provider', () => {
   test('opt-out ignores an admission on disk', async () => {
     const h = harness({ verdict: { action: 'admit', assessment: A, rounds: 2, topics: [TH], reason: 'r' }, ledger: [] });
     await h.gate(planArgv(4));
-    assert.equal((await h.gate(planArgv(5), { env: { AUDIT_META_REVIEW: 'off' } })).code, 'PAST_CAP_REQUIRED');
+    assert.equal((await h.gate(planArgv(5), { env: { AUDIT_META_REVIEW: 'off', AUDIT_META_REVIEW_T1: 'on' } })).code, 'PAST_CAP_REQUIRED');
   });
 });
 

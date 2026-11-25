@@ -128,7 +128,7 @@ describe('the continuation contract (§2.1) against the REAL gate', () => {
       record: () => 'k', flush: async () => {},
       selectProvider: () => ({ ok: true, arm: 'higher', family: 'claude', auditorFamily: 'gpt', provider: { model: 'claude-opus-5-5', sentinel: 'latest-opus', outputCeilingTokens: 4000, call: async (req) => { seen.push(req); return { text: JSON.stringify({ action: 'admit', assessment: { sustainability: 's', efficiency: 'e', effectiveness: 'x' }, rounds: 1, topics: topics.slice(0, 1), reason: 'a real defect remains' }), usage: { input_tokens: 10, output_tokens: 5, usageMissing: false }, sent: true }; } } }),
     };
-    const gate = (argv) => gateRoundCap(argv, { cwd: dir, auditDir, env: {}, write: (l) => lines.push(l), metaReview: true, auditorModel: 'gpt-6', metaDeps, build: async ({ round, mode, planFile }) => ({ card: { version: 1, round, mode, planFile, summary: { clusters: 0 } }, text: 'CARD' }), recordCap: async () => ({ recorded: false, reason: 'test' }) });
+    const gate = (argv) => gateRoundCap(argv, { cwd: dir, auditDir, env: childEnv({ base: {}, ledgerFile: 'L' }), write: (l) => lines.push(l), metaReview: true, auditorModel: 'gpt-6', metaDeps, build: async ({ round, mode, planFile }) => ({ card: { version: 1, round, mode, planFile, summary: { clusters: 0 } }, text: 'CARD' }), recordCap: async () => ({ recorded: false, reason: 'test' }) });
     return { dir, auditDir, sid, seen, lines, gate, snapshot };
   }
 
@@ -192,6 +192,7 @@ describe('the continuation contract (§2.1) against the REAL gate', () => {
       assert.notDeepEqual(stripMetaFlags(leaky), meta[0]);
     }
     assert.deepEqual(childEnv({ base: {}, ledgerFile: 'L' }).AUDIT_BUDGET_LEDGER, 'L');
+    assert.equal(childEnv({ base: {}, ledgerFile: 'L' }).AUDIT_META_REVIEW_T1, 'on', 'the META arm opts T1 in: it is off by default');
   });
 
   test('a trigger mismatch, or a T2 whose checkpoint signal is quiet, is unrecoverable and never run', () => {

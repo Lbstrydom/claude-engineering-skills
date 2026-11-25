@@ -299,11 +299,11 @@ Stability uses `_hash` for exact cross-round matching:
 | Summary line ends `— not convergence evidence` | **Not stable, whatever H/M/L say** — the change was not read (`changed-lines-unread` / `unrecognised-files-unreviewed` / `required-subjects-not-full`). Re-run short files with `--files`; too big alone → report not converged. Details: `references/convergence-report.md` §not-convergence remedies |
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Same file/concern recurs 3 rounds running | **Pivot**: stop, propose a new design (`references/pivot-rule.md`) |
-| Round 6, not stable | Run round 7: the meta-review decides; then REQUIRED Step 7 |
+| Round 6, not stable | Run round 7: exit 4, a human call; then REQUIRED Step 7 |
 
 **Max 6 rounds for code audits, 8 absolute — enforced by `openai-audit.mjs`.** Round 7 exits `4` (`CAPPED`) with
-the card, never a retry, unless the **meta-review** (`references/meta-review.md`, also round 4 on a fired signal)
-admits it; on `META_*` run the printed debt command.
+the card, never a retry. The **meta-review** (`references/meta-review.md`) runs at round 4 on a fired signal, and
+here only with `AUDIT_META_REVIEW_T1=on` (may admit it). `META_STOP`/`_STRUCTURAL`: run the debt command.
 
 **Step 7 (final gate) is MANDATORY** after the last audit round,
 regardless of convergence. Ladder (`references/gemini-gate.md`; never

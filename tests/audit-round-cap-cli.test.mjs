@@ -111,7 +111,7 @@ describe('plan audit round cap (spawned CLI)', () => {
     const sid = newSid('audit-plan');
     seedRound3(sid);
     const r = await run(['plan', PLAN, '--mode', 'plan', '--round', '4', '--out', path.join(AUDIT_DIR, `${sid}-r4-result.json`)], {
-      extraEnv: { AUDIT_META_REVIEW: 'on', AUDIT_CARD_NO_ARCH: '1', ANTHROPIC_API_KEY: 'sk-ant-fake-for-the-no-network-preload', CLAUDE_BACKEND: 'sdk', GEMINI_API_KEY: '' },
+      extraEnv: { AUDIT_META_REVIEW: 'on', AUDIT_META_REVIEW_T1: 'on', AUDIT_CARD_NO_ARCH: '1', ANTHROPIC_API_KEY: 'sk-ant-fake-for-the-no-network-preload', CLAUDE_BACKEND: 'sdk', GEMINI_API_KEY: '' },
       timeoutMs: 120_000,
     });
     assert.equal(r.code, 4, r.stderr);
@@ -127,10 +127,22 @@ describe('plan audit round cap (spawned CLI)', () => {
     assert.equal(decision.sent, true); assert.equal(decision.spendSource, 'estimate', 'a sent request with no usage is charged an estimate, never 0');
   });
 
+  it('META-REVIEW T1 by default: the real CLI at the cap sends nothing and writes no decision log', async () => {
+    const sid = newSid('audit-plan');
+    seedRound3(sid);
+    const r = await run(['plan', PLAN, '--mode', 'plan', '--round', '4', '--out', path.join(AUDIT_DIR, `${sid}-r4-result.json`)], {
+      extraEnv: { AUDIT_META_REVIEW: 'on', AUDIT_META_REVIEW_T1: '', AUDIT_CARD_NO_ARCH: '1', ANTHROPIC_API_KEY: 'sk-ant-fake-for-the-no-network-preload', CLAUDE_BACKEND: 'sdk', GEMINI_API_KEY: '' },
+    });
+    assert.equal(r.code, 4, r.stderr);
+    assert.match(r.stderr, /\[PAST_CAP_REQUIRED\]/);
+    assert.deepEqual(r.attempts, []);
+    assert.equal(fs.existsSync(path.join(AUDIT_DIR, `${sid}-meta-review.jsonl`)), false);
+  });
+
   it('META-REVIEW opted out with --no-meta-review: zero attempts and no decision log, even with prior rounds', async () => {
     const sid = newSid('audit-plan');
     seedRound3(sid);
-    const r = await run(['plan', PLAN, '--mode', 'plan', '--round', '4', '--no-meta-review', '--out', path.join(AUDIT_DIR, `${sid}-r4-result.json`)], { extraEnv: { AUDIT_META_REVIEW: 'on' } });
+    const r = await run(['plan', PLAN, '--mode', 'plan', '--round', '4', '--no-meta-review', '--out', path.join(AUDIT_DIR, `${sid}-r4-result.json`)], { extraEnv: { AUDIT_META_REVIEW: 'on', AUDIT_META_REVIEW_T1: 'on' } });
     assert.equal(r.code, 4, r.stderr);
     assert.deepEqual(r.attempts, []);
     assert.equal(fs.existsSync(path.join(AUDIT_DIR, `${sid}-meta-review.jsonl`)), false);

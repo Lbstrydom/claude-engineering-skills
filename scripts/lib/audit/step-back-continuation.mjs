@@ -74,6 +74,7 @@ export function childEnv({ base = process.env, ledgerFile }) {
     AUDIT_CANARY: '1', AUDIT_ALLOW_FOREIGN_CWD: '1', AUDIT_BUDGET_LEDGER: ledgerFile,
     AUDIT_DB_URL: '', // the air-gap signal: a pilot round must not write the real audit store
     LEARNING_DISABLE: '1', AUDIT_TOOL_VERSION_CHECK: 'skip', AUDIT_CARD_NO_ARCH: '1', AUDIT_META_REVIEW: '',
+    AUDIT_META_REVIEW_T1: 'on', // T1 is off by default; the META arm measures it (CONTINUE's --no-meta-review still wins)
   };
 }
 
