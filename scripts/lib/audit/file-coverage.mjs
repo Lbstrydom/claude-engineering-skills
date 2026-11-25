@@ -224,9 +224,11 @@ export function makeRenderFor(recorder, getDiffMap, { plain, annotated }, getHun
     const hunkMap = getHunkMap ? getHunkMap() : null;
     // The annotated reader is handed the SAME hunks the ledger measures against (D7) — verified, with the
     // wholly-changed fallback — in the diffMap shape it reads. No hunk map → the caller's diffMap, as before.
+    // No diff evidence at all (an explicit file list, no change record): an over-budget file grows whole into the
+    // pass's leftover budget instead of staying head-cut; with diff evidence its hunk window already grows.
     const { context, stats } = useAnnotated
       ? annotated(files, hunkMap ? hunkMap.asDiffMap() : getDiffMap(), opts)
-      : plain(files, hunkMap?.applicable ? { ...opts, hunksFor: hunkMap.hunksFor } : opts);
+      : plain(files, hunkMap?.applicable ? { ...opts, hunksFor: hunkMap.hunksFor } : { ...opts, growUnknownWhole: true });
     recorder.recordRead(pass, stats);
     return context;
   };

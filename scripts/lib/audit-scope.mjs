@@ -199,15 +199,22 @@ const SPAN_COLLAPSE_CHARS = 200;
  *
  * `growWholeUpTo` (docs/plans/final-review-hunk-windows.md D2; 0 = off, the default): a file with KNOWN hunks (an array,
  * even empty) that is at most this long offers the WHOLE file as its `grown` variant, so leftover budget restores
- * whole-file context once every file's window is placed. Unknown hunks (null) never grow — today's head cut, unchanged.
+ * whole-file context once every file's window is placed. Unknown hunks (null) never grow — today's head cut, unchanged —
+ * unless `growUnknownWhole` is set.
+ *
+ * `growUnknownWhole` (the audit's measured reader sets it only when the round has NO diff evidence): a file with
+ * unknown hunks (null) offers the WHOLE file as its `grown` variant, so leftover budget reads it in full rather than
+ * at a head cut. Without hunks every line is a candidate change, so the whole file is that file's "every changed
+ * line" — the same growth a windowed file gets. A file the budget cannot hold whole stays head-cut (and PARTIAL).
  */
-function plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote, growWholeUpTo = 0) {
+function plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote, growWholeUpTo = 0, growUnknownWhole = false) {
   const lang = fenceLanguageFor(relPath);
   const wrap = (header, body) => `### ${relPath}${header}\n\`\`\`${lang}\n${body}\n\`\`\`\n${redactionNote}`;
   if (raw.length <= maxPerFile) return { base: wrap('', raw), baseMeta: { cut: false } };
   const lines = raw.split('\n');
   const changed = changedLineRanges(fileHunks, lines.length);
-  const whole = Array.isArray(fileHunks) && raw.length <= growWholeUpTo ? { grown: wrap('', raw), grownMeta: { cut: false } } : null;
+  const whole = (Array.isArray(fileHunks) ? raw.length <= growWholeUpTo : growUnknownWhole)
+    ? { grown: wrap('', raw), grownMeta: { cut: false } } : null;
   if (changed.length === 0) {
     return {
       base: wrap('', raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`),
@@ -235,7 +242,7 @@ function plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote, gro
  *   grow into budget the other files left unused (docs/plans/audit-hunk-window-coverage.md D2-D3). Absent → the
  *   render is byte-identical to the reader before windows existed.
  */
-export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true, hunksFor = null, growWholeUpTo = 0 } = {}) {
+export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true, hunksFor = null, growWholeUpTo = 0, growUnknownWhole = false } = {}) {
   let total = '';
   let omitted = 0;
   let sensitive = 0;
@@ -314,7 +321,7 @@ export function readFilesAsContextDetailed(filePaths, { maxPerFile = 10000, maxT
       : '';
     const fileHunks = typeof hunksFor === 'function' ? hunksFor(relPath) : null;
     stats.lineCounts[relPath] = raw.split('\n').length;
-    entries.push({ relPath, charsOnDisk: result.content.length, ...plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote, growWholeUpTo) });
+    entries.push({ relPath, charsOnDisk: result.content.length, ...plainFileBlocks(relPath, raw, fileHunks, maxPerFile, redactionNote, growWholeUpTo, growUnknownWhole) });
   }
 
   // Breadth first: every file's base block under today's omit rule, then leftover budget grows windowed files.
