@@ -67,7 +67,7 @@ otherwise; a failed or blocked check is an observation too. Earlier, a consumer 
 | Survives closing the window | doc: no | doc: yes while the Agent Host runs | not stated | not stated |
 | Subagents | doc: stateless, no follow-up | doc | doc: separate context | doc: provider-native |
 | Agent-callable session list/spawn/message | none documented | obs: spawn and message (names unrecorded); list not exercised | obs: list; spawn and message only self-reported | not stated |
-| Hooks | doc: 8 events; Claude-format files need `chat.useClaudeHooks`, matchers ignored | doc: Copilot SDK. obs: `.github/hooks` fired UserPromptSubmit only (24 captures), no Pre/PostToolUse after shell and edit prompts; Tier 2 deferred | doc: Claude SDK (the captures were not session-bound, so Copilot vs Claude is unsplit) | doc: Codex runtime |
+| Hooks | doc: 8 events; Claude-format files need `chat.useClaudeHooks`, matchers ignored | doc: Copilot SDK. obs: `.github/hooks` fired UserPromptSubmit only (24 captures), no Pre/PostToolUse after shell and edit prompts; Tier 2 deferred | doc: Claude SDK, hooks from `.claude/settings*.json`; `.github/hooks` is not a documented source, so the run's captures are not evidence for this column | doc: Codex runtime |
 | Claude Code desktop tools (`start_session`, `SendMessage`, titles) | n/a | obs: not exposed | n/a | n/a |
 | `rg` on the agent's shell PATH | n/a | obs: yes (15.0.0), not blocked | obs FAIL: not found | untested |
 | MCP servers from `.mcp.json` | untested | obs FAIL: `playwright`, `mermaid` listed once each, both Error, cause unknown | untested | untested |
