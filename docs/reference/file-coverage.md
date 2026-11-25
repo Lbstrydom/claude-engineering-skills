@@ -42,6 +42,13 @@ and the tool/wave states. Counts are **recomputed from `files[]`**; a violated i
 | `none` | changed source existed and **nothing** was audited | `fail` → the round is `INCOMPLETE` (exit 3), never converged |
 | `incomplete` | the ledger contradicts itself | `fail` |
 
+**What a pass is shown of a file over its per-file cut.** With diff evidence (a change record or `--diff`), a hunk-centred
+window that grows into the pass's leftover budget to every changed line. With **none** (an explicit file list and no `--diff`),
+the whole file grows into that leftover budget (`growUnknownWhole`, set by `makeRenderFor`) — every line is a candidate change —
+so a mid-size file such as an 11K git hook reads `full`; one no pass's total budget can hold stays head-cut and reads PARTIAL.
+Growth is breadth-first: every file's base block is placed first, so it never omits another file. Map-reduce chunking applies
+only to a file over a whole unit's budget (~120K chars).
+
 A `warn` never makes a round `INCOMPLETE` — it changes the **wording**: the summary line and the `CONVERGED` banner carry a suffix
 naming the files ("`coverage: PARTIAL — 3 of 12 changed source file(s) not fully audited; 2 unrecognised file type(s): xyz ×2`").
 Two shortfalls **also withhold convergence** (`_convergence.converged: false`, so `AI-Gate` refuses and the verdict line ends

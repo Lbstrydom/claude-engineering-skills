@@ -243,11 +243,14 @@ describe('R1 --files + --diff: the supplied diff windows the read (no change rec
     assert.equal(f.changedLinesUnread, 0);
   });
 
-  it('control — the same R1 run without --diff stays head-cut and never shows the change', async () => {
+  it('control — the same R1 run without --diff has no hunks to centre on: never windowed, the file grows whole', async () => {
+    // No diff evidence: the 21K file is over quickfix's 4000 per-file cut but inside its 60000 total, so it is read whole
+    // (audit-scope.mjs `growUnknownWhole`) rather than head-cut — before that, the 4000-char head never reached line 300.
     const { res, sent } = await runR1(null);
     const f = file(res._coverage, BIG);
-    assert.equal(f.read.state, 'head-cut');
-    assert.ok(!sent.includes('MARK_300 '), 'the 4000-char head cannot reach line 300');
+    assert.equal(f.read.state, 'full', JSON.stringify(f.read));
+    assert.ok(sent.includes('MARK_300 '), 'the whole file reached the model');
+    assert.ok(!sent.includes('[WINDOWED'), 'no diff evidence: never a hunk window');
   });
 });
 
