@@ -41,7 +41,8 @@ and log the deferral in the words it gives (participant rule 4a). Mind the cost 
 coding during the hours `node scripts/fleet.mjs lease peak` shows (weekdays unless a range names days; shipping is fine). [rule 14]
 
 CLAIM. Run fleet claim --id CHIP_ID --intent "ONE LINE" --paths "GLOBS" from INSIDE your worktree before editing. If it is
-BLOCKED (exit 3), STOP and report which session overlaps: never retry, rename the id or use --override. Claim the paths each
+BLOCKED (exit 3), STOP and report which session overlaps: never retry, rename the id or use --override (sole exception: an
+intent-only block, participant rule 1). Claim the paths each
 PR really touches when it starts, and release the claim between PRs. Record every finding at once with fleet propose
 (what, where, why, evidence), one record each. [rules 10, 13]
 

@@ -186,7 +186,13 @@ export function renderClaimVerdict(v, ctx = {}) {
   const who = ctx.id ? ` for ${ctx.id}` : '';
   if (v.verdict === 'refused') return `REFUSED${who}: ${v.reason}. Run \`${ctx.cmd ?? 'fleet'} repair --quarantine <file>\` after reading the invalid record.`;
   const lines = [];
-  const head = { ok: `OK${who}`, warn: `WARN${who}: overlapping live work (advisory)`, blocked: `BLOCKED${who}: overlapping live work — stop and report` }[v.verdict];
+  // Identical intent blocks on its own (a second session for the same work), even when no path or file overlaps: the
+  // header must say THAT, naming the session, or "overlapping live work" over disjoint paths reads as a bug (VS Code smoke 2026-11-24).
+  const blocking = v.verdict === 'blocked' ? v.conflicts.filter(isBlockingConflict) : [];
+  const intentOnly = blocking.length > 0 && blocking.every((c) => c.via.length === 1 && c.via[0] === 'intent');
+  const intentIds = blocking.map((c) => c.with).join(', ');
+  const head = { ok: `OK${who}`, warn: `WARN${who}: overlapping live work (advisory)`,
+    blocked: intentOnly ? `BLOCKED${who}: identical intent to live session ${intentIds} (declared paths do not overlap) — stop and report` : `BLOCKED${who}: overlapping live work — stop and report` }[v.verdict];
   lines.push(head ?? `${v.verdict}${who}`);
   // Only worth saying beside a conflict: it is what tells a reader whether the overlap is real.
   const measured = v.conflicts.length ? describeMeasurement(ctx.measure, ctx.baseName) : null;
@@ -197,7 +203,7 @@ export function renderClaimVerdict(v, ctx = {}) {
     if (c.abstractPaths?.length) detail.push(`patterns meet only on names no tracked file has: ${c.abstractPaths.slice(0, 3).map(([a, b]) => `${a} ~ ${b}`).join(', ')} (disclosed, not blocking)`);
     if (c.files?.length) detail.push(`files ${c.files.slice(0, 5).join(', ')}`);
     if (c.uncommittedFiles?.length) detail.push(`UNCOMMITTED in their worktree: ${c.uncommittedFiles.slice(0, 5).join(', ')} (advisory)`);
-    if (c.via.includes('intent')) detail.push('identical intent');
+    if (c.via.includes('intent')) detail.push(c.via.length === 1 ? 'identical intent (no path or file overlap)' : 'identical intent');
     if (c.hotFiles?.length) detail.push(`hot files ${c.hotFiles.slice(0, 5).join(', ')} (${c.hotOnly ? 'disclosed, not blocking' : 'not counted'})`);
     if (c.holderMerged) detail.push(`the holder's work is ${c.holderMerged}; if that session is finished, retire its record: \`${ctx.cmd ?? 'fleet'} ${renderCommand(['release', '--id', c.with])}\``);
     lines.push(`  ${c.known ? '[known] ' : ''}${c.hotOnly ? '[hot] ' : ''}${c.abstractOnly ? '[abstract] ' : ''}${c.with}: ${c.via.join('+')}${detail.length ? ` — ${detail.join('; ')}` : ''}`);
@@ -205,6 +211,7 @@ export function renderClaimVerdict(v, ctx = {}) {
   for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
   for (const u of v.changedUnknown ?? []) lines.push(`  warn: overlap by files unknown for ${u.with} (${u.reason})`);
   for (const f of v.finished ?? []) lines.push(`  note: ${f.with} not counted as an overlap — ${f.note}, worktree clean; retire its record: \`${ctx.cmd ?? 'fleet'} ${renderCommand(['release', '--id', f.with])}\``);
+  if (intentOnly) lines.push(`  if this is different work, re-claim once with an --intent that names what is yours; if it is the same work, stop and report: ${intentIds} already holds it (--override is for a human only)`);
   const hint = sharedFilesHint(v, ctx.sharedConfig);
   if (hint) lines.push(hint);
   return lines.join('\n');

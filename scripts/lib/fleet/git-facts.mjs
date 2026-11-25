@@ -8,7 +8,9 @@
  *
  * Process hygiene: `GIT_TERMINAL_PROMPT=0` (a missing credential fails instead
  * of blocking on a prompt), `GIT_NO_LAZY_FETCH=1` (a partial clone cannot reach
- * the network behind a local read), `LC_ALL=C`, a timeout on every call, and
+ * the network behind a local read), `GIT_OPTIONAL_LOCKS=0` (a `git status` probe
+ * never rewrites the index, so a read-only verb cannot contend for `index.lock` with
+ * an editor's own git polling), `LC_ALL=C`, a timeout on every call, and
  * `sanitizeGitEnv` so a hook-exported `GIT_DIR` cannot redirect a query. All
  * list output is NUL-delimited — worktree paths with spaces, CRLF in porcelain
  * output, and branch names are parsed from `-z` records, never from lines.
@@ -62,6 +64,8 @@ export function runGit(args, cwd, { timeoutMs = LOCAL_TIMEOUT_MS, input, env: ex
     ...sanitizeGitEnv(cwd),
     GIT_TERMINAL_PROMPT: '0',
     GIT_NO_LAZY_FETCH: '1',
+    // Only the opportunistic index refresh of status/diff takes an OPTIONAL lock; every other git operation is unchanged.
+    GIT_OPTIONAL_LOCKS: '0',
     LC_ALL: 'C',
     ...(extraEnv ?? {}),
   };

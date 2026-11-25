@@ -170,10 +170,13 @@ export function remedyFor({ worktree, scope }, mainCheckout, target) {
  * Which other worktrees' hooks live inside `target`, or pass through it?
  * @param {string} target the worktree about to be removed
  * @param {Array<{path: string, bare?: boolean, missing?: boolean}>} worktrees a `git worktree list` (main first)
+ * @param {{git?: typeof runGit, locate?: (worktree: string) => ReturnType<typeof hooksLocation>}} [deps] - `locate` lets a
+ *   caller judging SEVERAL targets read each worktree's hooks location once (`planPrune`: N worktrees × M candidates
+ *   was ~1000 git calls, 20 s, on a 47-worktree repo), since the location does not depend on the target
  * @returns {{ok: boolean, dependents: Array<{worktree: string, scope: string, value: string, via: string, remedy: string}>, unreadable: Array<{worktree: string, reason: string}>}}
  *   `ok` is true only when every other worktree was read and none depends on `target`.
  */
-export function hooksPathDependents(target, worktrees, { git = runGit, realpath = fs.realpathSync.native, stat = fs.statSync, lstat, readlink, readdir } = {}) {
+export function hooksPathDependents(target, worktrees, { git = runGit, realpath = fs.realpathSync.native, stat = fs.statSync, lstat, readlink, readdir, locate = (w) => hooksLocation(w, { git, lstat, readlink, readdir }) } = {}) {
   const dependents = []; const unreadable = [];
   const done = () => ({ ok: !dependents.length && !unreadable.length, dependents, unreadable });
   let targetReal;
@@ -195,7 +198,7 @@ export function hooksPathDependents(target, worktrees, { git = runGit, realpath 
   const located = [];
   for (const w of worktrees) {
     if (w.bare || w.missing || samePath(w.path, target)) continue;
-    const loc = hooksLocation(w.path, { git, lstat, readlink, readdir });
+    const loc = locate(w.path);
     if (!loc.ok) { unreadable.push({ worktree: w.path, reason: loc.reason }); continue; }
     let via;
     try { via = insideTarget(loc.entries); } catch (e) { unreadable.push({ worktree: w.path, reason: `the hooks path cannot be resolved (${e.message})` }); continue; }

@@ -779,6 +779,11 @@ export function buildStatus(facts) {
   }
   // Uncommitted evidence (a registered session's worktree): advisory, volatile, never counted as committed.
   const uncommittedOf = (i) => (i.tracked && facts.uncommitted?.[i.branch]?.queried ? facts.uncommitted[i.branch].files ?? [] : []);
+  // A probe that did not answer (timed out, over budget) is said on the item: its uncommitted overlaps are UNKNOWN, not none.
+  for (const i of active) {
+    const u = i.tracked ? facts.uncommitted?.[i.branch] : null;
+    if (u && !u.queried) i.notes.push(`uncommitted files not measured (${u.reason ?? 'not probed'}): overlaps with them are unknown`);
+  }
   for (let x = 0; x < active.length; x += 1) {
     for (let y = x + 1; y < active.length; y += 1) {
       const a = active[x]; const b = active[y];

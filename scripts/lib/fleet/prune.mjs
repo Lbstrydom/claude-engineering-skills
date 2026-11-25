@@ -50,7 +50,7 @@ import { gatherFacts, buildStatusFrom } from './facts.mjs';
 import { DEFAULT_STALE_WORKTREE_DAYS, hideReason, idleMsFrom, landedReason } from './overlap.mjs';
 import { archiveReport } from './lifecycle.mjs';
 import { headOf, isAncestor, listWorktrees, remoteRefOid, repoToplevel, runGit } from './git-facts.mjs';
-import { hooksPathDependents, hooksPathRefusals } from './hooks-path-guard.mjs';
+import { hooksLocation, hooksPathDependents, hooksPathRefusals } from './hooks-path-guard.mjs';
 import { transact } from './registry.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { samePath as samePathOnPlatform } from '../harness-paths.mjs';
@@ -136,6 +136,10 @@ export function planPrune(ctx, { facts = null, report = archiveReport, deadlineA
   let unjudged = 0;
   const past = () => deadlineAt !== null && clock() >= deadlineAt;
   const git = clippedGit(rawGit, deadlineAt, clock);
+  // Each worktree's hooks location, read ONCE per plan and under the budget: it does not depend on which candidate is
+  // being judged. A failed read is cached too, and keeps refusing — "could not tell" never becomes "no dependents".
+  const hooksAt = new Map();
+  const locateHooks = (p) => { if (!hooksAt.has(p)) hooksAt.set(p, hooksLocation(p, { git })); return hooksAt.get(p); };
   if (!hctx.prsComplete) notJudged.push('the open-PR list is incomplete or was not read, so no branch can be shown to have no open PR');
   // Without the worktree list a branch's checkout cannot be found, so no branch is judged removable.
   if (!wt.queried) return { candidates, excluded, notJudged: [...notJudged, `the worktree list could not be read (${wt.reason}), so no branch can be shown to be checked out nowhere`], complete: false, unjudged, review, orphans: null, upstreamGone: [], detached: emptyDetached(), registered: null };
@@ -218,7 +222,10 @@ export function planPrune(ctx, { facts = null, report = archiveReport, deadlineA
         continue;
       }
       // Another worktree whose core.hooksPath lies inside this one would lose its hooks without a word (2026-10-12).
-      const hooks = hooksPathRefusals(hooksPathDependents(item.worktree, wt.worktrees), item.worktree);
+      const hv = hooksPathDependents(item.worktree, wt.worktrees, { git, locate: locateHooks });
+      // A hooks read the budget cut short says nothing about this worktree: not judged, rather than refused.
+      if (hv.unreadable.length && past()) { unjudged += 1; continue; }
+      const hooks = hooksPathRefusals(hv, item.worktree);
       if (hooks.length) { excluded.push({ branch: item.branch, worktree: item.worktree, reason: hooks.join('; ') }); continue; }
       steps.push({ kind: 'worktree', argv: ['git', 'worktree', 'remove', item.worktree] });
     }
