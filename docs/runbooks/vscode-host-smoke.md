@@ -310,7 +310,15 @@ Also count anything the hook could not parse as JSON; it is evidence, not noise:
 ```
 
 A count of zero in the first command after four prompts means this harness did not run the capture hook. Record `hooks: no capture` and carry
-on; that is a finding (it also means `.github/hooks` is not read there). Then check whether the repo's own
+on. In **H1** that is a finding. In **H2 and H3** it is expected and says nothing about their hooks: only the Copilot
+harness documents `.github/hooks` as a source ([VS Code hooks](https://code.visualstudio.com/docs/agent-customization/hooks)),
+while Claude reads hooks from its settings files ([Claude Code hooks](https://code.claude.com/docs/en/hooks)).
+
+**Known limit of this capture hook** (unfixed): §1.3 writes nested Claude-style groups with no `version`, but the
+[Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference) documents `version: 1` with
+flat entries. Whether that is why the 2026-11-23 run captured no tool event is **unmeasured**.
+
+Then check whether the repo's own
 `.claude/settings.json` hooks left a trace: `Get-Content .audit\quickfix-hits.jsonl -ErrorAction SilentlyContinue`.
 Record whether a new line mentioning `smoke-b.mjs` exists (that proves the quick-fix hook parsed that harness's payload).
 
@@ -437,9 +445,11 @@ Add-Content -LiteralPath $record -Value 'fleet-claim|smoke-a'
 ## 5. Can the Copilot harness run the repo's `.sh` hook on Windows?
 
 One more observation, free, while the capture runs. In H1, the repo's `arch-memory-check.sh` is configured with
-`"shell": "bash"`. Whether Copilot on Windows *can* execute a `.sh` hook is unverified. Look
-in the VS Code Output panel for the channel named for hooks (`Output: Focus on Output View`, then choose the Copilot or
-hooks channel) and record any error mentioning `arch-memory-check.sh`, or `none seen`.
+`"shell": "bash"`. Whether Copilot on Windows *can* execute a `.sh` hook is unverified. Turn on
+`chat.hooks.showWarnings` and watch the chat, and open the agent debug logs; the **GitHub Copilot Chat Hooks** output
+channel belongs to the deprecated Local harness only
+([VS Code hooks](https://code.visualstudio.com/docs/agent-customization/hooks), Troubleshoot hooks). Record any error
+mentioning `arch-memory-check.sh`, or `none seen`.
 
 ## 6. Turn the captures into fixtures
 
