@@ -58,7 +58,7 @@ function pidFile() {
       try {
         for (const pid of Object.values(JSON.parse(fs.readFileSync(file, 'utf8')))) if (!seenDead.has(pid) && alive(pid)) stopTree(pid, { force: true });
       } catch { /* nothing recorded */ }
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     },
   };
 }
@@ -94,12 +94,12 @@ describe('hang protection, real runner', { concurrency: true, timeout: DEADLINE_
   it('a test file the caller names outside node\'s default patterns is instrumented by name', { timeout: DEADLINE_MS + 15_000 }, async () => {
     const dir = fs.mkdtempSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests-hang', 'tmp-'));
     try {
-      const odd = path.join(dir, 'oddly-named.mjs');
+      const odd = path.join(dir, 'oddly-named');   // no extension at all: node still runs a file it is named
       fs.copyFileSync(path.join(ROOT, FIX, 'hang.test.mjs'), odd);
       const r = await runRunner(['--test-reporter=spec', path.relative(ROOT, odd)], STALL);
       assert.equal(r.code, 1, r.stderr);
-      assert.match(r.stderr, /oddly-named\.mjs \(pid \d+\), over the 8s per-test limit:\s+- hangs forever/);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      assert.match(r.stderr, /oddly-named \(pid \d+\), over the 8s per-test limit:\s+- hangs forever/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a busy loop is stopped at the per-test limit and named; the other file passes', { timeout: DEADLINE_MS + 15_000 }, async () => {
@@ -164,7 +164,7 @@ describe('hang protection, real runner', { concurrency: true, timeout: DEADLINE_
       });
       assert.deepEqual(out, { code: 0, s: '{"ok":true}' });
       assert.equal(fs.readFileSync(progress, 'utf8'), '');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('refuses an override that is not a positive integer, before running anything', { timeout: DEADLINE_MS }, async () => {

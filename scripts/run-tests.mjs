@@ -827,11 +827,12 @@ async function main() {
   if (limits.watchdogMs <= limits.stallMs) process.stderr.write('run-tests: note: the idle watchdog is at or below the per-test limit, so it may stop a lone slow test first.\n');
   // Files the caller named that match no default test-file pattern: the preload instruments them by name (it otherwise skips
   // such files, so that a plain script a test spawns with process.execArgv records nothing).
-  // A glob is expanded the way node expands it (fs.globSync), so a quoted pattern selecting an oddly named file counts too.
+  // Any regular file the caller names counts, whatever its extension (node runs it); a glob is expanded the way node expands
+  // it (fs.globSync), so a quoted pattern selecting an oddly named file counts too.
   const namedFiles = [...new Set(userArgs.filter((a) => !a.startsWith('-')).flatMap((a) => {
     if (/[*?[{!]/.test(a)) { try { return fs.globSync(a); } catch { return []; } }
-    return fs.existsSync(a) ? [a] : [];
-  }).filter((a) => /\.(c|m)?js$/.test(a)).map((a) => path.resolve(a)).filter((a) => !isNodeTestFileName(a)))];
+    return [a];
+  }).filter((a) => { try { return fs.statSync(a).isFile(); } catch { return false; } }).map((a) => path.resolve(a)).filter((a) => !isNodeTestFileName(a)))];
 
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-guard-'));
   const reportPath = path.join(reportDir, 'report.json');
