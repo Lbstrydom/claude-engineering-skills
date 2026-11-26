@@ -185,6 +185,12 @@ ${r.stderr}`);
     assert.doesNotMatch(r.stderr, /GUARD ERROR|PER-TEST LIMIT/);
   });
 
+  it('a test that skips itself and then hangs is still timed and stopped (t.skip does not end the body)', { timeout: DEADLINE_MS + 15_000 }, async () => {
+    const r = await runRunner(['--test-reporter=spec', `${FIX}/skip-then-hang.test.mjs`], STALL);
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /skip-then-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:\s+- skips, then hangs/);
+  });
+
   it('refuses an override that is not a positive integer, before running anything', { timeout: DEADLINE_MS }, async () => {
     const r = await runRunner([`${FIX}/ok.test.mjs`], { TEST_IDLE_WATCHDOG_MS: 'off' });
     assert.equal(r.code, 2);

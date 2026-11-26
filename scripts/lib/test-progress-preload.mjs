@@ -7,8 +7,8 @@
  *
  * - Writes are SYNCHRONOUS (`appendFileSync`), so the start line of a test that then busy-loops is already on disk, and the
  *   `exit` line lands from `process.on('exit')`.
- * - Each instance gets a unique `id` from a WeakMap on node's test context (node passes the same context object to
- *   `beforeEach` and `afterEach`), so concurrent and same-named tests pair exactly. `seq` counts this process's lines, so the
+ * - Each instance gets a unique `id` in `beforeEach`, and its own `t.after()` writes the end with that id, so concurrent and
+ *   same-named tests pair exactly. `seq` counts this process's lines, so the
  *   runner can see a lost one. `proc` is a random nonce, so a reused pid cannot merge two processes.
  * - Every write is in a try/catch: instrumentation must never fail a test.
  * - It does nothing unless the runner set TEST_PROGRESS_FILE, node set NODE_TEST_CONTEXT (this is a test child), and the entry
@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { beforeEach, afterEach } from 'node:test';
+import { beforeEach } from 'node:test';
 
 import { PROGRESS_EXTRA_FILES_ENV, PROGRESS_FILE_ENV, PROGRESS_VERSION, isNodeTestFileName } from './test-hang-guard.mjs';
 
@@ -40,7 +40,6 @@ if (target && process.env.NODE_TEST_CONTEXT && (isNodeTestFileName(entry) || nam
   const proc = randomBytes(6).toString('hex');
   let seq = 0;
   let nextId = 0;
-  const ids = new WeakMap();
   const write = (fields) => {
     seq += 1;
     try { fs.appendFileSync(target, `${JSON.stringify({ v: PROGRESS_VERSION, proc, seq, file: entry, at: Date.now(), ...fields })}\n`); } catch { /* never fail a test */ }
@@ -48,18 +47,15 @@ if (target && process.env.NODE_TEST_CONTEXT && (isNodeTestFileName(entry) || nam
   write({ ev: 'load', pid: process.pid, ppid: process.ppid });
   process.on('exit', () => write({ ev: 'exit' }));
   // Root-level hooks run for every test instance in the file, at any nesting depth, including `t.test` subtests.
+  // The END is the test's own `t.after()` hook, not a root afterEach: node skips afterEach for a test that calls `t.skip()` at
+  // run time, which would leave a healthy skipped test open forever (a false stall, a false incomplete record). `t.after` runs
+  // for every outcome, skip and todo included, and only once the body has finished (probed on v22.23.2: skip, then 500 ms of
+  // work, ends at 516 ms), so a body that skips and then hangs is still timed.
   beforeEach((t) => {
     nextId += 1;
     const id = nextId;
-    ids.set(t, id);
-    write({ ev: 'start', id, name: t.fullName ?? t.name });
-    // A runtime `t.skip()` ends the test WITHOUT running afterEach (probed on v22.23.2), which would leave a healthy skipped
-    // test open forever: a false stall and a false incomplete record. The context is the same object the body gets, so the
-    // end line is written here, once, when the test skips itself.
-    if (typeof t.skip === 'function') {
-      const skip = t.skip.bind(t);
-      t.skip = (...a) => { if (ids.get(t) === id) { ids.set(t, -id); write({ ev: 'end', id, name: t.fullName ?? t.name }); } return skip(...a); };
-    }
+    const name = t.fullName ?? t.name;
+    write({ ev: 'start', id, name });
+    t.after(() => write({ ev: 'end', id, name }));
   });
-  afterEach((t) => { const id = ids.get(t); if (id > 0) write({ ev: 'end', id, name: t.fullName ?? t.name }); });
 }
