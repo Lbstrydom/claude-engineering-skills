@@ -51,16 +51,31 @@
  * (scripts/lib/test-timing-reporter.mjs) that is deliberately independent of the guard:
  * it can only ever add lines, never change the verdict. Plan: docs/plans/gate-cost-slice-1.md.
  *
+ * **Hang protection** (docs/plans/test-runner-hang-guard.md, rev 2). The child preload (lib/test-progress-preload.mjs) writes
+ * each test instance's start/end synchronously; node delivers a file's own events only after it ends. From that record this
+ * runner enforces a PER-TEST limit (stop that child's tree; node fails just that file; the test is named), an idle watchdog
+ * above it (kill the whole tree), and an end-of-run record check, all failing closed through `adjudicateRun`. Two measured
+ * profiles, CI and local (lib/test-hang-guard.mjs). Node's `--test-timeout` is not added: it bounds a whole FILE (measured on
+ * v22.23.2); a caller's is forwarded untouched. Limits: a child with no `load` line is bounded only by the watchdog; a stall
+ * kill confirms the pid first (parent, creation time), but node has no pidfd; orphans are swept after the run.
+ *
  * @module scripts/run-tests
  */
 
-import './lib/help-guard-run.mjs'; import { spawnSync } from 'node:child_process';
+import './lib/help-guard-run.mjs'; import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { argOption, assertKnownFlags, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
+import { argOption, assertKnownFlags, finishAndExit, hasFlag, toShellExitCode } from './lib/cli-io.mjs';
+import { stopTree } from './lib/fleet/lease-spawn.mjs';
+import { REAP_WIN_ORPHANS_JS } from './lib/fleet/reap.mjs';
+import { StringDecoder } from 'node:string_decoder';
+import {
+  IDLE_WATCHDOG_ENV, PROGRESS_EXTRA_FILES_ENV, PROGRESS_FILE_ENV, STALL_TIMEOUT_ENV, childrenToSweep, createIdleWatchdog, createProgressTracker,
+  describeInFlight, describeStalls, findStalls, identityMatches, isNodeTestFileName, reconcileRecord, resolveLimits, timedOutFiles,
+} from './lib/test-hang-guard.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
 import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeAgainstList } from './lib/test-tier.mjs';
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
@@ -122,8 +137,11 @@ export function scrubRoutingEnv(env) {
  * test that spawns the runner would otherwise inherit it and a nested run would write
  * to the operator's path: observed 2026-10-12, a nested runner clobbered a measurement
  * file mid-run. The runner reads it from its own env before scrubbing.
+ *
+ * The hang guard's overrides and its named-file manifest are the same kind of instruction: a nested runner started from a test
+ * uses its own profile and manifest, never the outer run's (the runner sets the manifest itself, after this scrub, when it has one).
  */
-export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP']);
+export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP', IDLE_WATCHDOG_ENV, STALL_TIMEOUT_ENV, PROGRESS_EXTRA_FILES_ENV]);
 
 /** Pure: the full child env — routing selectors AND runner state removed. */
 export function scrubChildEnv(env) {
@@ -346,10 +364,32 @@ export function buildReporterArgs(forwarded, { isTTY, reportPath, timingEnabled 
  * (the repo's sandbox-honesty rule). The reporter emits even in the
  * zero-failure case precisely so absence is unambiguous.
  *
- * @param {{status: number|null, reportText: string|null}} input
+ * The hang guard is checked FIRST (docs/plans/test-runner-hang-guard.md section 2.2): a fired idle watchdog, a test
+ * process the runner stopped for running past the per-test limit, or a progress record that lost lines where a stall had to
+ * be decided. Whatever status the runner left behind (even 0) says nothing about tests it was stopped from running, and
+ * this is the one function that can say "pass", so none of the three can ever become exit 0.
+ *
+ * @param {{status: number|null, reportText: string|null,
+ *          watchdog?: {idleForMs: number, idleMs: number, detail?: string[]}|null,
+ *          hang?: {stallLines: string[], gapFiles: string[], errors?: string[]}|null}} input
  * @returns {{exitCode: number, message: string|null}}
  */
-export function adjudicateRun({ status, reportText }) {
+export function adjudicateRun({ status, reportText, watchdog = null, hang = null }) {
+  const secs = (ms) => Math.round(ms / 1000);
+  const guard = [];
+  if (watchdog) {
+    guard.push(`run-tests: IDLE WATCHDOG — no test started or finished for ${secs(watchdog.idleForMs)}s (limit ${secs(watchdog.idleMs)}s), `
+      + 'so the whole test process tree was killed. Refusing to report a pass on a run that did not finish.', ...(watchdog.detail ?? []));
+  }
+  if (hang?.stallLines?.length) guard.push('run-tests: PER-TEST LIMIT — a test ran past the limit:', ...hang.stallLines);
+  if (hang?.gapFiles?.length) {
+    guard.push('run-tests: GUARD ERROR — the progress record lost lines for a test process that looked stalled, so the stall could '
+      + 'not be proven and nothing was stopped. The instrument broke; this is not a test failure and not a pass:', ...hang.gapFiles.map((f) => `  - ${f}`));
+  }
+  if (hang?.errors?.length) {
+    guard.push('run-tests: GUARD ERROR — the hang guard cannot vouch for this run (its own check failed, or its progress record is incomplete). Not a pass:', ...hang.errors.map((e) => `  - ${e}`));
+  }
+  if (guard.length) return { exitCode: 1, message: guard.join('\n') };
   // Signal-kill, or the child already failed: the runner's own verdict stands.
   // The guard exists only to close the green-when-actually-failed direction, so
   // there is nothing to add here.
@@ -429,8 +469,11 @@ export function adjudicateRun({ status, reportText }) {
  *          tier?: {skipped: Array<{file: string, why: string}>, expected: Set<string>}|null}} input
  * @returns {{exitCode: number, lines: string[]}}
  */
-export function finishRun({ status, reportText, timingText = null, preflight = null, tier = null, root = process.cwd() }) {
-  const out = finishRunVerdict({ status, reportText, timingText, preflight, tier });
+export function finishRun({ status, reportText, timingText = null, preflight = null, tier = null, root = process.cwd(), watchdog = null, hang = null, hangLines = [] }) {
+  const out = finishRunVerdict({ status, reportText, timingText, preflight, tier, watchdog, hang });
+  // What the progress file shows was still running when the run ended (e.g. a caller's --test-timeout let node kill a file).
+  // Naming only: never moves the exit code.
+  if (out.exitCode !== 0 && !watchdog && hangLines.length) out.lines.push('run-tests: what was still running when the run ended:', ...hangLines);
   // On any failing run, ONE machine line naming the failing test files, read by the CI flake classifier
   // (`test-tier.mjs ci-verdict --rerun-unrelated-flake`). It never moves the exit code.
   if (out.exitCode !== 0) out.lines.push(failedFilesLine(reportText, root));
@@ -463,8 +506,8 @@ export function failedFilesLine(reportText, root) {
   return `${FAILED_FILES_MARKER} ${JSON.stringify([...files].sort())}`;
 }
 
-function finishRunVerdict({ status, reportText, timingText, preflight, tier }) {
-  const verdict = adjudicateRun({ status, reportText });
+function finishRunVerdict({ status, reportText, timingText, preflight, tier, watchdog, hang }) {
+  const verdict = adjudicateRun({ status, reportText, watchdog, hang });
   const lines = [];
   if (verdict.message) lines.push(verdict.message);
   lines.push(...summariseTiming(timingText).lines);
@@ -549,7 +592,146 @@ export function readTierSkip(file, { readFile = (p) => fs.readFileSync(p, 'utf-8
   return { envelope: parsed.envelope, skipped: parsed.envelope.skipped.map((f) => ({ file: f, why: why.get(f) })) };
 }
 
-function main() {
+/** The child preload that writes the progress file (the watchdog's heartbeat, and how a hung test is named). */
+const PROGRESS_PRELOAD = pathToFileURL(path.join(import.meta.dirname, 'lib', 'test-progress-preload.mjs')).href;
+// After a tree kill, the wait for the runner's `close`; the orphan sweep's whole budget, and each Windows child's share of it.
+const KILL_SETTLE_MS = 10_000, SWEEP_BUDGET_MS = 60_000, SWEEP_CHILD_MS = 10_000;
+
+/**
+ * Spawn `node --test` and own its whole lifecycle: settles exactly once, on the first of a spawn error, `close`, or the idle
+ * watchdog (which stops the tree with `stopTree` and then waits for `close`, bounded). ONE timer drives everything: each tick
+ * runs `onTick(runnerPid)` (the per-test stall check) and then the watchdog. SIGINT and SIGTERM are forwarded to the tree,
+ * because on POSIX the child leads its own process group (so the group can be signalled) and no longer gets the terminal's
+ * Ctrl-C. The timer and the signal handlers are removed on every path. Dependencies are injectable for tests.
+ *
+ * @returns {Promise<{status: number|null, signal: string|null, spawnError: Error|null, unsettled?: boolean, pid: number|null,
+ *   watchdog: {idleForMs: number, idleMs: number}|null, interrupted: {signal: string, code: number}|null, killNote: string|null}>}
+ */
+export function runSupervised({
+  cmd, args, env, idleMs, probe, onIdle = () => {}, onTick = () => {}, onTickError = () => {}, everyMs = 5_000, platform = process.platform,
+  spawnFn = spawn, stop = stopTree, signals = process, schedule = setInterval, cancel = clearInterval,
+}) {
+  return new Promise((resolve) => {
+    let child = null;
+    let dog = null;
+    let timer = null;
+    let settled = false;
+    let settleTimer = null;
+    let watchdog = null;
+    let interrupted = null;
+    let killNote = null;
+    const handlers = [];
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      dog?.stop();
+      if (timer !== null) cancel(timer);
+      clearTimeout(settleTimer);
+      for (const [s, h] of handlers) signals.off(s, h);
+      resolve({ ...r, pid: child?.pid ?? null, watchdog, interrupted, killNote });
+    };
+    const killTree = () => {
+      if (settled || settleTimer !== null || !child?.pid) return;
+      const r = stop(child.pid, { force: true });
+      if (!r.ok) killNote = r.why;
+      settleTimer = setTimeout(() => finish({ status: null, signal: null, spawnError: null, unsettled: true }), KILL_SETTLE_MS);
+    };
+    try {
+      child = spawnFn(cmd, args, { stdio: 'inherit', env, detached: platform !== 'win32' });
+    } catch (err) {
+      finish({ status: null, signal: null, spawnError: err });
+      return;
+    }
+    child.once('error', (err) => finish({ status: null, signal: null, spawnError: err }));
+    child.once('close', (status, signal) => finish({ status, signal, spawnError: null }));
+    dog = createIdleWatchdog({ idleMs, probe, onIdle: (idleForMs) => { watchdog = { idleForMs, idleMs }; onIdle(idleForMs); killTree(); } });
+    dog.start();
+    timer = schedule(() => {
+      if (settled || watchdog) return;
+      // A failure here goes to onTickError, which the caller turns into a guard error (never only a log line).
+      try { onTick(child.pid); } catch (err) { onTickError(err); }
+      dog.tick();
+    }, everyMs);
+    for (const [s, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+      const h = () => { interrupted = { signal: s, code }; killTree(); };
+      handlers.push([s, h]);
+      signals.on(s, h);
+    }
+  });
+}
+
+/** A stall's identity query is synchronous (once per stall, never on a healthy run), so it is bounded tightly. */
+const ROW_QUERY_MS = 5_000;
+
+/**
+ * One process-table read for the stall kill's identity check: the pid's parent and creation time, or null when it cannot be
+ * read (gone, or the query failed; the caller then kills nothing). Only called when a stall is being decided.
+ * @param {number} pid
+ * @returns {{ppid: number, createdMs: number}|null}
+ */
+function readProcessRow(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    if (process.platform === 'win32') {
+      const ps = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { [string]$p.ParentProcessId + ' ' + ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() }`;
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: ROW_QUERY_MS });
+      const m = /^(\d+) (\d+)\s*$/.exec(String(r.stdout ?? '').trim());
+      return m ? { ppid: Number(m[1]), createdMs: Number(m[2]) } : null;
+    }
+    const r = spawnSync('ps', ['-o', 'ppid=,etimes=', '-p', String(pid)], { encoding: 'utf8', timeout: ROW_QUERY_MS });
+    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(String(r.stdout ?? ''));
+    return m ? { ppid: Number(m[1]), createdMs: Date.now() - Number(m[2]) * 1000 } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** fleet's one Windows orphan reaper (scripts/lib/fleet/reap.mjs), run as `node -e` exactly as fleet's supervisors run it. */
+function reapWindowsChild({ pid, at }) {
+  const src = `const { spawnSync } = require('node:child_process');\n${REAP_WIN_ORPHANS_JS}\n`
+    + `process.stdout.write(JSON.stringify(reapWinOrphans(${Number(pid)}, ${Number(at ?? 0)}, ${SWEEP_CHILD_MS})));`;
+  const r = spawnSync(process.execPath, ['-e', src], { encoding: 'utf8', windowsHide: true, timeout: SWEEP_CHILD_MS + 5_000 });
+  if (r.error) return { ok: false, killed: 0, reason: r.error.code === 'ETIMEDOUT' ? 'the reaper timed out' : r.error.message };
+  try { return JSON.parse(String(r.stdout).trim()); } catch { return { ok: false, killed: 0, reason: `the reaper printed no result (exit ${r.status})` }; }
+}
+
+/**
+ * Sweep orphans after the run. POSIX: signal the dead runner's process group (an orphan stays in it unless it called setsid).
+ * Windows: the reaper from each child's dead pid, one budget. Never moves the verdict; lists what it missed. @returns {string[]}
+ */
+export function sweepOrphans({
+  children, runnerPid, groupNeeded = false, platform = process.platform, stop = stopTree, reap = reapWindowsChild, clock = Date.now,
+  show = (f) => f,
+}) {
+  const lines = [];
+  if (platform !== 'win32') {
+    if (!children.length && !groupNeeded) return lines;
+    const r = stop(runnerPid, { force: true });
+    if (!r.ok) lines.push(`run-tests: orphan sweep: ${r.why}`);
+    return lines;
+  }
+  const deadline = clock() + SWEEP_BUDGET_MS;
+  const missed = [];
+  // After a whole-tree kill (watchdog, interrupt), also walk from the dead RUNNER: `taskkill /T` snapshots the tree, so a test
+  // child the runner spawned at that moment escapes it and is left with the dead runner as its recorded parent.
+  const roots = groupNeeded ? [{ file: '(the test runner)', pid: runnerPid, at: null }, ...children] : children;
+  for (const c of roots) {
+    if (clock() >= deadline) { missed.push(c); continue; }
+    const r = reap(c);
+    if (r.killed > 0) lines.push(`run-tests: orphan sweep: stopped ${r.killed} process(es) left by ${show(c.file)} (pid ${c.pid})`);
+    if (!r.ok) lines.push(`run-tests: orphan sweep: ${show(c.file)} (pid ${c.pid}): ${r.reason}`);
+  }
+  for (const c of missed) lines.push(`run-tests: orphan sweep: not reached within ${SWEEP_BUDGET_MS / 1000}s: ${show(c.file)} (pid ${c.pid})`);
+  return lines;
+}
+
+/** What the record shows still running at the end (a child that never exited), or nothing when every child exited. */
+function stillRunning(tracker, show) {
+  const open = tracker.owned().some((p) => !p.exited && !p.superseded && (p.active.size > 0 || p.started === 0));
+  return open ? describeInFlight(tracker, { now: Date.now(), show }) : [];
+}
+
+async function main() {
   const forwarded = process.argv.slice(2);
   // This CLI forwards every other flag to `node --test`, which rejects what it does not know,
   // so only the flag THIS file owns is validated here: `--preflight` and anything spelled like
@@ -618,29 +800,162 @@ function main() {
     process.stderr.write(`BRANCH TIER — not the full suite. Skipped ${selection.skipped.length} heavy file(s): ${selection.skipped.map((x) => x.file.replace(/^tests\//, '')).join(', ') || 'none'}.\n`);
   }
 
+  // Hang protection (docs/plans/test-runner-hang-guard.md): a per-test stall limit and an idle watchdog from the profile in force
+  // (CI or local). A caller's --test-timeout is node's own file option and is forwarded untouched. Validated before any spawn.
+  let limits;
+  try { limits = resolveLimits({ env: process.env, argv: userArgs }); } catch (err) {
+    process.stderr.write(`run-tests: ${err.message}\n`);
+    await finishAndExit(2);
+    return;
+  }
+  const secs = (ms) => `${Math.round(ms / 1000)}s`;
+  const nodeTimeout = limits.fileTimeoutMs === null ? '' : `, node file timeout ${Number.isFinite(limits.fileTimeoutMs) ? secs(limits.fileTimeoutMs) : 'none'} (caller)`;
+  process.stderr.write(`run-tests: per-test limit ${secs(limits.stallMs)} (${limits.stallSource}), idle watchdog ${secs(limits.watchdogMs)} (${limits.watchdogSource})${nodeTimeout}\n`);
+  if (limits.watchdogMs <= limits.stallMs) process.stderr.write('run-tests: note: the idle watchdog is at or below the per-test limit, so it may stop a lone slow test first.\n');
+  // Files the caller named that match no default test-file pattern: the preload instruments them by name (it otherwise skips
+  // such files, so that a plain script a test spawns with process.execArgv records nothing).
+  // Any regular file the caller names counts, whatever its extension (node runs it); a glob is expanded the way node expands
+  // it (fs.globSync), so a quoted pattern selecting an oddly named file counts too.
+  // Operands: before `--`, every token that is not an option; after it, every token (a file may itself begin with `-`).
+  const cut = userArgs.indexOf('--');
+  const operands = cut < 0 ? userArgs.filter((a) => !a.startsWith('-')) : [...userArgs.slice(0, cut).filter((a) => !a.startsWith('-')), ...userArgs.slice(cut + 1)];
+  const namedFiles = [...new Set(operands.flatMap((a) => {
+    if (/[*?[{!]/.test(a)) { try { return fs.globSync(a); } catch { return []; } }
+    return [a];
+  }).filter((a) => { try { return fs.statSync(a).isFile(); } catch { return false; } }).map((a) => path.resolve(a)).filter((a) => !isNodeTestFileName(a)))];
+
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-guard-'));
   const reportPath = path.join(reportDir, 'report.json');
   const timingPath = path.join(reportDir, 'timing.json');
+  const progressPath = path.join(reportDir, 'progress.jsonl');
+  // An unguarded run is not offered as a fallback, the same rule as the guard report.
+  // The named-file list goes in a manifest file, not an env string: a glob can select more paths than one variable can hold.
+  const namedPath = path.join(reportDir, 'named-files.json');
+  try {
+    fs.writeFileSync(progressPath, '');
+    if (namedFiles.length) fs.writeFileSync(namedPath, JSON.stringify(namedFiles));
+  } catch (err) {
+    process.stderr.write(`run-tests: cannot create the progress file ${progressPath} (${err.code ?? err.message}); refusing to run without hang protection.\n`);
+    fs.rmSync(reportDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    await finishAndExit(2);
+    return;
+  }
+  const readOrNull = (p) => {
+    try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }   // adjudicateRun fails closed on a missing guard report
+  };
+  const show = (f) => { const rel = path.relative(process.cwd(), f); return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : f; };
 
-  // NOTE: no try/finally around the exit — `process.exit()` does not run
-  // `finally` blocks, so cleanup happens explicitly before exiting.
   const reporterArgs = buildReporterArgs(caller.pairs, {
     isTTY: Boolean(process.stdout.isTTY),
     reportPath,
     timingEnabled: true,
   });
+  // The progress file is read INCREMENTALLY (a decoder keeps a split UTF-8 character whole): a tick costs only the growth.
+  const tracker = createProgressTracker();
+  const progressFd = fs.openSync(progressPath, 'r');
+  const decoder = new StringDecoder('utf8');
+  let progressOffset = 0;
+  const pump = () => {
+    const size = fs.fstatSync(progressFd).size;
+    while (progressOffset < size) {
+      const buf = Buffer.alloc(Math.min(size - progressOffset, 1 << 20));
+      const n = fs.readSync(progressFd, buf, 0, buf.length, progressOffset);
+      if (n <= 0) break;
+      progressOffset += n;
+      tracker.feed(decoder.write(buf.subarray(0, n)));
+    }
+    return progressOffset;
+  };
+
+  const stopped = new Set();      // procs already decided (stopped, or refused): never decided twice
+  const stallRecords = [];
+  const gapFiles = [];
+  const gapSeen = new Set();
+  const tickErrors = [];
+  let watchdogDetail = [];
+  const runStartMs = Date.now();
+  let lastRunnerPid = null;
+  const onTick = (runnerPid) => {
+    lastRunnerPid = runnerPid;
+    tracker.setOwner(runnerPid);   // a record whose parent is not the runner (a helper a test spawned) is ignored
+    pump();
+    const { stalls, gaps } = findStalls(tracker, { now: Date.now(), stallMs: limits.stallMs, stopped });
+    for (const g of gaps) {
+      if (gapSeen.has(g.proc)) continue;
+      gapSeen.add(g.proc);
+      gapFiles.push(`${show(g.file)}${g.pid ? ` (pid ${g.pid})` : ''}`);
+      process.stderr.write(`\nrun-tests: GUARD ERROR — lost progress lines for ${show(g.file)}; not stopping it, since the stall cannot be proven.\n`);
+    }
+    for (const s of stalls) {
+      stopped.add(s.proc);
+      const what = s.overdue.length ? s.overdue.map((o) => o.name).join('; ') : 'outside any test';
+      if (!identityMatches({ row: readProcessRow(s.pid), runnerPid, runStartMs, loadAt: s.loadAt })) {
+        stallRecords.push({ ...s, stopped: false, why: 'its process could not be confirmed as the one that wrote the record (gone, reused, or unreadable), so nothing was killed; the idle watchdog still bounds the run' });
+        continue;
+      }
+      const r = stopTree(s.pid, { force: true });
+      stallRecords.push({ ...s, stopped: r.ok, why: r.ok ? undefined : r.why });
+      process.stderr.write(`\nrun-tests: PER-TEST LIMIT — ${what} in ${show(s.file)} passed ${secs(limits.stallMs)}; ${r.ok ? 'stopped its process' : `could not stop it (${r.why})`}.\n`);
+    }
+  };
+
   const startedMs = performance.now();   // monotonic: a wall-clock step must not corrupt the recorded duration
-  const res = spawnSync(process.execPath, ['--test', ...reporterArgs, ...caller.pairs, ...args], {
-    stdio: 'inherit',
-    env: { ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath },
+  const res = await runSupervised({
+    cmd: process.execPath,
+    args: ['--test', '--import', PROGRESS_PRELOAD, ...reporterArgs, ...caller.pairs, ...args],
+    env: {
+      ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath, [PROGRESS_FILE_ENV]: progressPath,
+      ...(namedFiles.length ? { [PROGRESS_EXTRA_FILES_ENV]: namedPath } : {}),
+    },
+    idleMs: limits.watchdogMs,
+    everyMs: Math.max(250, Math.min(5_000, Math.floor(Math.min(limits.stallMs, limits.watchdogMs) / 8))),
+    probe: pump,
+    onTick,
+    onTickError: (err) => {
+      const msg = String(err?.message ?? err);
+      if (tickErrors.length < 5) tickErrors.push(msg);
+      process.stderr.write(`\nrun-tests: GUARD ERROR — the per-test check failed (${msg}); the run will fail, and the watchdog still runs.\n`);
+    },
+    onIdle: (idleForMs) => {
+      // Named NOW, from the record as it stands, before the kill changes anything.
+      try { pump(); } catch { /* name what was already read */ }
+      watchdogDetail = describeInFlight(tracker, { now: Date.now(), show });
+      process.stderr.write(`\nrun-tests: idle watchdog fired after ${secs(idleForMs)} with no test starting or finishing; killing the test process tree.\n`);
+      // Each live test child's own tree first (one taskkill /T from the runner has left a grandchild under load); at most 10.
+      for (const p of tracker.owned().filter((q) => !q.exited && !q.superseded && Number.isInteger(q.pid)).slice(0, 10)) {
+        if (identityMatches({ row: readProcessRow(p.pid), runnerPid: lastRunnerPid, runStartMs, loadAt: p.loadAt })) stopTree(p.pid, { force: true });
+      }
+    },
   });
   const wallMs = performance.now() - startedMs;
 
-  const readOrNull = (p) => {
-    try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }   // adjudicateRun fails closed on a missing guard report
-  };
+  try { pump(); } catch { /* the record as last read */ }
+  tracker.feed(decoder.end());
+  tracker.end();
+  fs.closeSync(progressFd);
   const reportText = readOrNull(reportPath);
   const timingText = readOrNull(timingPath);
+  const extraLines = [];
+  if (res.spawnError) extraLines.push(`run-tests: could not start node --test (${res.spawnError.message}).`);
+  if (res.killNote) extraLines.push(`run-tests: the tree kill reported a failure: ${res.killNote}`);
+  if (res.unsettled) extraLines.push(`run-tests: the test process did not exit within ${KILL_SETTLE_MS / 1000}s of being killed; pid ${res.pid} may still be running.`);
+  if (res.pid) tracker.setOwner(res.pid);
+  const failed = res.status !== 0 || res.watchdog || res.interrupted || stallRecords.length > 0;
+  // A run that would otherwise pass must have a complete record (no lost line; an unavailable inventory is a guard error).
+  if (!failed) {
+    const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const named = new Set(namedFiles.map(fold));
+    const listed = ranFiles(timingText);
+    const ran = listed === null ? null : [...listed].map((f) => path.resolve(process.cwd(), f));
+    for (const p of reconcileRecord(tracker, { ran, eligible: (f) => isNodeTestFileName(f) || named.has(fold(f)), fold, show })) tickErrors.push(p);
+  }
+  if (failed && res.pid) {
+    const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const children = childrenToSweep(tracker, { timedOut: timedOutFiles(reportText), sameFile: (a, b) => fold(a) === fold(b), stopped });
+    // POSIX: a stopped child's own descendants stay in the runner's group (the child is not a group leader), so the group is
+    // swept whenever the runner stopped anything.
+    extraLines.push(...sweepOrphans({ children, groupNeeded: Boolean(res.watchdog || res.interrupted || stallRecords.length), runnerPid: res.pid, show }));
+  }
   // TEST_TIMING_KEEP=<file> keeps the full per-file report (the printed table is only the top 8,
   // and a family's share needs every row). Best-effort: a failed copy is a note, never a verdict.
   const keep = process.env.TEST_TIMING_KEEP;
@@ -660,13 +975,23 @@ function main() {
     userArgs,
     wallMs,
     cwd: process.cwd(),
+    watchdog: res.watchdog ? { ...res.watchdog, detail: watchdogDetail } : null,
+    hang: stallRecords.length || gapFiles.length || tickErrors.length ? { stallLines: describeStalls(stallRecords, { stallMs: limits.stallMs, show }), gapFiles, errors: tickErrors } : null,
+    hangLines: stallRecords.length ? [] : stillRunning(tracker, show),
   });
+  lines.push(...extraLines);
   if (keepNote) lines.push(keepNote);
+  // An interrupt is the operator's decision: report it as one, with the conventional 128+signal code, never as a pass.
+  const finalCode = res.interrupted ? res.interrupted.code : exitCode;
+  if (res.interrupted) lines.push(`run-tests: interrupted by ${res.interrupted.signal}; the test process tree was stopped.`);
   if (lines.length) process.stderr.write(`\n${lines.join('\n')}\n`);
-  process.exit(exitCode);
+  await finishAndExit(finalCode);
 }
 
 // Import-safe: tests import { scrubRoutingEnv } without spawning anything.
 if (isInvokedAsScript(import.meta.url)) {
-  main();
+  main().catch(async (err) => {
+    process.stderr.write(`run-tests: ${err?.stack ?? err}\n`);
+    await finishAndExit(1);
+  });
 }
