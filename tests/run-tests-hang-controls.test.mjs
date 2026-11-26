@@ -191,6 +191,12 @@ ${r.stderr}`);
     assert.match(r.stderr, /skip-then-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:\s+- skips, then hangs/);
   });
 
+  it('a test whose own after hook hangs is stopped at the limit, named by the test that last finished', { timeout: DEADLINE_MS + 15_000 }, async () => {
+    const r = await runRunner(['--test-reporter=spec', `${FIX}/after-hook-hang.test.mjs`], STALL);
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /after-hook-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:\s+- outside any test \(in a hook or teardown after "teardown hangs" finished\)/);
+  });
+
   it('refuses an override that is not a positive integer, before running anything', { timeout: DEADLINE_MS }, async () => {
     const r = await runRunner([`${FIX}/ok.test.mjs`], { TEST_IDLE_WATCHDOG_MS: 'off' });
     assert.equal(r.code, 2);

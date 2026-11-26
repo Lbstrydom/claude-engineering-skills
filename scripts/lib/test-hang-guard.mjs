@@ -127,7 +127,7 @@ export function createProgressTracker() {
   const procOf = (e) => {
     let p = procs.get(e.proc);
     if (!p) {
-      p = { proc: e.proc, file: e.file, pid: null, ppid: null, loadAt: null, lastAt: null, lastSeq: 0, gap: false, exited: false, superseded: false, active: new Map(), started: 0 };
+      p = { proc: e.proc, file: e.file, pid: null, ppid: null, loadAt: null, lastAt: null, lastSeq: 0, gap: false, exited: false, superseded: false, active: new Map(), started: 0, lastEnded: null };
       procs.set(e.proc, p);
     }
     return p;
@@ -155,7 +155,7 @@ export function createProgressTracker() {
     }
     if (e.ev === 'exit') { p.exited = true; return; }
     if (e.ev === 'start' && Number.isInteger(e.id)) { p.active.set(e.id, { name: String(e.name ?? '<unnamed>'), startAt: e.at }); p.started += 1; return; }
-    if (e.ev === 'end' && Number.isInteger(e.id)) { p.active.delete(e.id); return; }
+    if (e.ev === 'end' && Number.isInteger(e.id)) { p.active.delete(e.id); p.lastEnded = String(e.name ?? '<unnamed>'); return; }
     torn += 1;
   };
   let owner = null;
@@ -201,7 +201,7 @@ export function findStalls(tracker, { now, stallMs, stopped }) {
     const outside = p.active.size === 0 && quietMs >= stallMs;
     if (!overdue.length && !outside) continue;
     if (p.gap) { gaps.push({ proc: p.proc, file: p.file, pid: p.pid }); continue; }
-    stalls.push({ proc: p.proc, file: p.file, pid: p.pid, loadAt: p.loadAt, overdue, quietMs });
+    stalls.push({ proc: p.proc, file: p.file, pid: p.pid, loadAt: p.loadAt, overdue, quietMs, lastEnded: p.lastEnded });
   }
   return { stalls, gaps };
 }
@@ -318,7 +318,7 @@ export function describeStalls(stalls, { stallMs, show = (f) => f }) {
   for (const x of stalls) {
     const what = x.overdue.length
       ? x.overdue.map((o) => `    - ${o.name} (running ${s(o.ageMs)})`).join('\n')
-      : `    - outside any test (loading, or in a hook): no progress for ${s(x.quietMs)}`;
+      : `    - outside any test (${x.lastEnded ? `in a hook or teardown after "${x.lastEnded}" finished` : 'loading, or in a hook'}): no progress for ${s(x.quietMs)}`;
     lines.push(`  ${show(x.file)}${x.pid ? ` (pid ${x.pid})` : ''}, over the ${s(stallMs)} per-test limit:\n${what}`);
     lines.push(x.stopped ? '      its process was stopped; node fails the file and the run went on.' : `      NOT stopped: ${x.why}`);
   }
