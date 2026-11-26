@@ -17,6 +17,28 @@
 | R5 | PASS | 0 | 1 | 1 / 0 | the manifest variable is scrubbed from children |
 | R6 | PASS | 0 | 0 | — | delta after a full-suite failure of the watchdog control under load: the watchdog now stops each live test child's tree before the runner's; the control waits for termination |
 
+## Second session — a false failure the full run found (`audit-code-1795733760260-34540`)
+
+A full `npm test` on the R6 head passed every test (27,720 pass, 0 fail) and still exited 1. The end-of-run record check named
+9 healthy files with a test that "never ended". Cause, probed on node v22.23.2: a test that calls `t.skip()` at run time ends
+without running `afterEach`. The same gap would have let the per-test limit stop a long healthy file. The original session was
+at its 6-round cap, so this fix was audited as its own session, on its own diff:
+
+| Round | Verdict | H | M | Fix |
+|---|---|---|---|---|
+| R1 | SIGNIFICANT_ISSUES | 3 | 0 | `t.skip()` does not stop the body, so writing the end at that call was premature; the end became a `t.after()` hook |
+| R2 | SIGNIFICANT_ISSUES | 1 | 1 | the guard's `t.after` ran before the test's own hooks; it is now registered as late as possible (from `afterEach`, or from the skip call) |
+| R3 | SIGNIFICANT_ISSUES | 2 | 0 | a hung teardown beside a busy concurrent sibling (controls added) |
+| R4 | SIGNIFICANT_ISSUES | 2 | 0 | a hook registered after the end hook; the end hook now re-registers itself behind any later registration |
+| R5 | PASS | 0 | 0 | — |
+
+Final gate: APPROVE, 0 blocking, 0 debt. New controls, each seen red against the previous preload:
+- runtime skip, healthy (must exit 0);
+- skip, then hang;
+- hung after hook;
+- hung after hook beside a concurrent sibling;
+- skip, then a hanging after hook.
+
 Dismissed (R1): M8, a coverage bound of the adjacency wave (`maxContainers`), not a defect; M9, the preload has no static
 importer by design (node loads it through `--import`). M7 (duplication with fleet's private `isTestFile`) carries a
 `@duplicate-justification` pragma: different contract, and shared-lib may not import fleet.
