@@ -79,8 +79,8 @@ import { stopTree } from './lib/fleet/lease-spawn.mjs';
 import { REAP_WIN_ORPHANS_JS } from './lib/fleet/reap.mjs';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  IDLE_WATCHDOG_ENV, PROGRESS_FILE_ENV, STALL_TIMEOUT_ENV, childrenToSweep, createIdleWatchdog, createProgressTracker,
-  describeInFlight, describeStalls, findStalls, identityMatches, isNodeTestFileName, resolveLimits, timedOutFiles,
+  IDLE_WATCHDOG_ENV, PROGRESS_EXTRA_FILES_ENV, PROGRESS_FILE_ENV, STALL_TIMEOUT_ENV, childrenToSweep, createIdleWatchdog, createProgressTracker,
+  describeInFlight, describeStalls, findStalls, identityMatches, isNodeTestFileName, reconcileRecord, resolveLimits, timedOutFiles,
 } from './lib/test-hang-guard.mjs';
 import { GUARD_REPORT_VERSION } from './lib/test-guard-reporter.mjs';
 import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeAgainstList } from './lib/test-tier.mjs';
@@ -377,7 +377,7 @@ export function buildReporterArgs(forwarded, { isTTY, reportPath, timingEnabled 
  *
  * @param {{status: number|null, reportText: string|null,
  *          watchdog?: {idleForMs: number, idleMs: number, detail?: string[]}|null,
- *          hang?: {stallLines: string[], gapFiles: string[]}|null}} input
+ *          hang?: {stallLines: string[], gapFiles: string[], errors?: string[]}|null}} input
  * @returns {{exitCode: number, message: string|null}}
  */
 export function adjudicateRun({ status, reportText, watchdog = null, hang = null }) {
@@ -391,6 +391,9 @@ export function adjudicateRun({ status, reportText, watchdog = null, hang = null
   if (hang?.gapFiles?.length) {
     guard.push('run-tests: GUARD ERROR — the progress record lost lines for a test process that looked stalled, so the stall could '
       + 'not be proven and nothing was stopped. The instrument broke; this is not a test failure and not a pass:', ...hang.gapFiles.map((f) => `  - ${f}`));
+  }
+  if (hang?.errors?.length) {
+    guard.push('run-tests: GUARD ERROR — the hang guard cannot vouch for this run (its own check failed, or its progress record is incomplete). Not a pass:', ...hang.errors.map((e) => `  - ${e}`));
   }
   if (guard.length) return { exitCode: 1, message: guard.join('\n') };
   // Signal-kill, or the child already failed: the runner's own verdict stands.
@@ -614,7 +617,7 @@ const SWEEP_CHILD_MS = 10_000;
  *   watchdog: {idleForMs: number, idleMs: number}|null, interrupted: {signal: string, code: number}|null, killNote: string|null}>}
  */
 export function runSupervised({
-  cmd, args, env, idleMs, probe, onIdle = () => {}, onTick = () => {}, everyMs = 5_000, platform = process.platform,
+  cmd, args, env, idleMs, probe, onIdle = () => {}, onTick = () => {}, onTickError = () => {}, everyMs = 5_000, platform = process.platform,
   spawnFn = spawn, stop = stopTree, signals = process, schedule = setInterval, cancel = clearInterval,
 }) {
   return new Promise((resolve) => {
@@ -654,7 +657,8 @@ export function runSupervised({
     dog.start();
     timer = schedule(() => {
       if (settled || watchdog) return;
-      try { onTick(child.pid); } catch (err) { process.stderr.write(`run-tests: the stall check failed (${err?.message ?? err}); the watchdog still runs.\n`); }
+      // A failure here goes to onTickError, which the caller turns into a guard error (never only a log line).
+      try { onTick(child.pid); } catch (err) { onTickError(err); }
       dog.tick();
     }, everyMs);
     for (const [s, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
@@ -664,6 +668,9 @@ export function runSupervised({
     }
   });
 }
+
+/** A stall's identity query is synchronous (once per stall, never on a healthy run), so it is bounded tightly. */
+const ROW_QUERY_MS = 5_000;
 
 /**
  * One process-table read for the stall kill's identity check: the pid's parent and creation time, or null when it cannot be
@@ -676,11 +683,11 @@ function readProcessRow(pid) {
   try {
     if (process.platform === 'win32') {
       const ps = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { [string]$p.ParentProcessId + ' ' + ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() }`;
-      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: ROW_QUERY_MS });
       const m = /^(\d+) (\d+)\s*$/.exec(String(r.stdout ?? '').trim());
       return m ? { ppid: Number(m[1]), createdMs: Number(m[2]) } : null;
     }
-    const r = spawnSync('ps', ['-o', 'ppid=,etimes=', '-p', String(pid)], { encoding: 'utf8', timeout: 15_000 });
+    const r = spawnSync('ps', ['-o', 'ppid=,etimes=', '-p', String(pid)], { encoding: 'utf8', timeout: ROW_QUERY_MS });
     const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(String(r.stdout ?? ''));
     return m ? { ppid: Number(m[1]), createdMs: Date.now() - Number(m[2]) * 1000 } : null;
   } catch {
@@ -808,14 +815,16 @@ async function main() {
   let limits;
   try { limits = resolveLimits({ env: process.env, argv: userArgs }); } catch (err) {
     process.stderr.write(`run-tests: ${err.message}\n`);
-    process.exit(2);
+    await finishAndExit(2);
+    return;
   }
   const secs = (ms) => `${Math.round(ms / 1000)}s`;
   const nodeTimeout = limits.fileTimeoutMs === null ? '' : `, node file timeout ${Number.isFinite(limits.fileTimeoutMs) ? secs(limits.fileTimeoutMs) : 'none'} (caller)`;
   process.stderr.write(`run-tests: per-test limit ${secs(limits.stallMs)} (${limits.stallSource}), idle watchdog ${secs(limits.watchdogMs)} (${limits.watchdogSource})${nodeTimeout}\n`);
   if (limits.watchdogMs <= limits.stallMs) process.stderr.write('run-tests: note: the idle watchdog is at or below the per-test limit, so it may stop a lone slow test first.\n');
-  const uninstrumented = userArgs.filter((a) => !a.startsWith('-') && /\.(c|m)?js$/.test(a) && fs.existsSync(a) && !isNodeTestFileName(path.resolve(a)));
-  if (uninstrumented.length) process.stderr.write(`run-tests: no per-test limit for ${uninstrumented.join(', ')} (not a node test-file name); only the idle watchdog bounds it.\n`);
+  // Files the caller named that match no default test-file pattern: the preload instruments them by name (it otherwise skips
+  // such files, so that a plain script a test spawns with process.execArgv records nothing).
+  const namedFiles = userArgs.filter((a) => !a.startsWith('-') && /\.(c|m)?js$/.test(a) && fs.existsSync(a) && !isNodeTestFileName(path.resolve(a))).map((a) => path.resolve(a));
 
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-guard-'));
   const reportPath = path.join(reportDir, 'report.json');
@@ -825,7 +834,8 @@ async function main() {
   try { fs.writeFileSync(progressPath, ''); } catch (err) {
     process.stderr.write(`run-tests: cannot create the progress file ${progressPath} (${err.code ?? err.message}); refusing to run without hang protection.\n`);
     fs.rmSync(reportDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-    process.exit(2);
+    await finishAndExit(2);
+    return;
   }
   const readOrNull = (p) => {
     try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }   // adjudicateRun fails closed on a missing guard report
@@ -859,9 +869,11 @@ async function main() {
   const stallRecords = [];
   const gapFiles = [];
   const gapSeen = new Set();
+  const tickErrors = [];
   let watchdogDetail = [];
   const runStartMs = Date.now();
   const onTick = (runnerPid) => {
+    tracker.setOwner(runnerPid);   // a record whose parent is not the runner (a helper a test spawned) is ignored
     pump();
     const { stalls, gaps } = findStalls(tracker, { now: Date.now(), stallMs: limits.stallMs, stopped });
     for (const g of gaps) {
@@ -887,11 +899,19 @@ async function main() {
   const res = await runSupervised({
     cmd: process.execPath,
     args: ['--test', '--import', PROGRESS_PRELOAD, ...reporterArgs, ...caller.pairs, ...args],
-    env: { ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath, [PROGRESS_FILE_ENV]: progressPath },
+    env: {
+      ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath, [PROGRESS_FILE_ENV]: progressPath,
+      ...(namedFiles.length ? { [PROGRESS_EXTRA_FILES_ENV]: JSON.stringify(namedFiles) } : {}),
+    },
     idleMs: limits.watchdogMs,
     everyMs: Math.max(250, Math.min(5_000, Math.floor(Math.min(limits.stallMs, limits.watchdogMs) / 8))),
     probe: pump,
     onTick,
+    onTickError: (err) => {
+      const msg = String(err?.message ?? err);
+      if (tickErrors.length < 5) tickErrors.push(msg);
+      process.stderr.write(`\nrun-tests: GUARD ERROR — the per-test check failed (${msg}); the run will fail, and the watchdog still runs.\n`);
+    },
     onIdle: (idleForMs) => {
       // Named NOW, from the record as it stands, before the kill changes anything.
       try { pump(); } catch { /* name what was already read */ }
@@ -911,7 +931,16 @@ async function main() {
   if (res.spawnError) extraLines.push(`run-tests: could not start node --test (${res.spawnError.message}).`);
   if (res.killNote) extraLines.push(`run-tests: the tree kill reported a failure: ${res.killNote}`);
   if (res.unsettled) extraLines.push(`run-tests: the test process did not exit within ${KILL_SETTLE_MS / 1000}s of being killed; pid ${res.pid} may still be running.`);
+  if (res.pid) tracker.setOwner(res.pid);
   const failed = res.status !== 0 || res.watchdog || res.interrupted || stallRecords.length > 0;
+  // A run that would otherwise pass must have a complete record (no lost load/exit lines): an instrument that failed quietly
+  // must never pass over a run it did not watch. Files the timing report cannot list are not checked for a missing load.
+  if (!failed) {
+    const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+    const named = new Set(namedFiles.map(fold));
+    const ran = [...(ranFiles(timingText) ?? [])].map((f) => path.resolve(process.cwd(), f));
+    for (const p of reconcileRecord(tracker, { ran, eligible: (f) => isNodeTestFileName(f) || named.has(fold(f)), fold, show })) tickErrors.push(p);
+  }
   if (failed && res.pid) {
     const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
     const children = childrenToSweep(tracker, { timedOut: timedOutFiles(reportText), sameFile: (a, b) => fold(a) === fold(b), stopped });
@@ -939,7 +968,7 @@ async function main() {
     wallMs,
     cwd: process.cwd(),
     watchdog: res.watchdog ? { ...res.watchdog, detail: watchdogDetail } : null,
-    hang: stallRecords.length || gapFiles.length ? { stallLines: describeStalls(stallRecords, { stallMs: limits.stallMs, show }), gapFiles } : null,
+    hang: stallRecords.length || gapFiles.length || tickErrors.length ? { stallLines: describeStalls(stallRecords, { stallMs: limits.stallMs, show }), gapFiles, errors: tickErrors } : null,
     hangLines: stallRecords.length ? [] : stillRunning(tracker, show),
   });
   lines.push(...extraLines);

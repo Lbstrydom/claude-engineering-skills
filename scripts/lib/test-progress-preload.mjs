@@ -12,7 +12,9 @@
  *   runner can see a lost one. `proc` is a random nonce, so a reused pid cannot merge two processes.
  * - Every write is in a try/catch: instrumentation must never fail a test.
  * - It does nothing unless the runner set TEST_PROGRESS_FILE, node set NODE_TEST_CONTEXT (this is a test child), and the entry
- *   script matches node's own default test-file patterns, so a plain script a test spawns with `process.execArgv` records nothing.
+ *   script matches node's own default test-file patterns or is a file the caller named (TEST_PROGRESS_EXTRA_FILES), so a plain
+ *   script a test spawns with `process.execArgv` records nothing. `load` carries `ppid`, and the runner ignores any record whose
+ *   parent is not itself (a helper named like a test file).
  *
  * @module scripts/lib/test-progress-preload
  */
@@ -21,12 +23,14 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { beforeEach, afterEach } from 'node:test';
 
-import { PROGRESS_FILE_ENV, PROGRESS_VERSION, isNodeTestFileName } from './test-hang-guard.mjs';
+import { PROGRESS_EXTRA_FILES_ENV, PROGRESS_FILE_ENV, PROGRESS_VERSION, isNodeTestFileName } from './test-hang-guard.mjs';
 
 const target = process.env[PROGRESS_FILE_ENV];
 const entry = process.argv[1] ? path.resolve(process.argv[1]) : '';
+const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+const named = (() => { try { return new Set(JSON.parse(process.env[PROGRESS_EXTRA_FILES_ENV] || '[]').map((p) => fold(path.resolve(p)))); } catch { return new Set(); } })();
 
-if (target && process.env.NODE_TEST_CONTEXT && isNodeTestFileName(entry)) {
+if (target && process.env.NODE_TEST_CONTEXT && (isNodeTestFileName(entry) || named.has(fold(entry)))) {
   const proc = randomBytes(6).toString('hex');
   let seq = 0;
   let nextId = 0;
@@ -35,7 +39,7 @@ if (target && process.env.NODE_TEST_CONTEXT && isNodeTestFileName(entry)) {
     seq += 1;
     try { fs.appendFileSync(target, `${JSON.stringify({ v: PROGRESS_VERSION, proc, seq, file: entry, at: Date.now(), ...fields })}\n`); } catch { /* never fail a test */ }
   };
-  write({ ev: 'load', pid: process.pid });
+  write({ ev: 'load', pid: process.pid, ppid: process.ppid });
   process.on('exit', () => write({ ev: 'exit' }));
   // Root-level hooks run for every test instance in the file, at any nesting depth, including `t.test` subtests.
   beforeEach((t) => { nextId += 1; ids.set(t, nextId); write({ ev: 'start', id: nextId, name: t.fullName ?? t.name }); });

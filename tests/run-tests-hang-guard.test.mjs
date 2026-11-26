@@ -12,7 +12,7 @@ import { EventEmitter } from 'node:events';
 
 import {
   PROFILES, callerTestTimeout, childrenToSweep, createIdleWatchdog, createProgressTracker, describeInFlight, describeStalls,
-  findStalls, identityMatches, isNodeTestFileName, resolveLimits, timedOutFiles,
+  findStalls, identityMatches, isNodeTestFileName, reconcileRecord, resolveLimits, timedOutFiles,
 } from '../scripts/lib/test-hang-guard.mjs';
 import { SCRUBBED_RUNNER_ENV, adjudicateRun, finishRun, runSupervised, sweepOrphans } from '../scripts/run-tests.mjs';
 import { GUARD_REPORT_VERSION } from '../scripts/lib/test-guard-reporter.mjs';
@@ -38,6 +38,10 @@ describe('a caller\'s --test-timeout is node\'s own, read from node\'s option re
     assert.equal(callerTestTimeout(['a.test.mjs', '--', '--test-timeout=5']).present, false);
     assert.deepEqual(callerTestTimeout(['--test-timeout']), { present: true, ms: null });
     assert.equal(callerTestTimeout(['--test-timeout=Infinity']).ms, Infinity);
+  });
+  it('a repeated option keeps the LAST occurrence, as node does', () => {
+    assert.deepEqual(callerTestTimeout(['--test-timeout=1000', '--test-timeout', '2000', '--test-timeout=3000']), { present: true, ms: 3000 });
+    assert.deepEqual(callerTestTimeout(['--test-timeout', '2000', 'a.test.mjs']), { present: true, ms: 2000 });
   });
 });
 
@@ -148,8 +152,49 @@ describe('the progress tracker', () => {
     assert.equal(t.torn, 1);
     assert.match(describeInFlight(t, { now: 4000 }).join('\n'), /- t\s+in \/r\/new\.test\.mjs \(pid 5\), running 4s[\s\S]*1 progress line/);
   });
+  it('ignores a record whose parent is not the runner (a helper a test spawned with the preload)', () => {
+    const w = writer();
+    const t = feedAll([
+      w({ ev: 'load', proc: 'mine', pid: 1, ppid: 100, at: 0 }), w({ ev: 'start', proc: 'mine', id: 1, name: 't', at: 0 }),
+      w({ ev: 'load', proc: 'helper', pid: 2, ppid: 1, at: 0 }), w({ ev: 'start', proc: 'helper', id: 1, name: 'h', at: 0 }),
+    ]);
+    t.setOwner(100);
+    assert.deepEqual(findStalls(t, { now: 5000, stallMs: 3000, stopped: none }).stalls.map((s) => s.proc), ['mine']);
+  });
+  it('a later load under the same pid supersedes a record that never exited: it is never a candidate again', () => {
+    const w = writer();
+    const t = feedAll([
+      w({ ev: 'load', proc: 'old', pid: 5, at: 0 }), w({ ev: 'start', proc: 'old', id: 1, name: 'killed by node', at: 0 }),
+      w({ ev: 'load', proc: 'new', pid: 5, at: 4000 }), w({ ev: 'start', proc: 'new', id: 1, name: 'fresh', at: 4000 }),
+    ]);
+    assert.equal(t.procs.get('old').superseded, true);
+    assert.deepEqual(findStalls(t, { now: 5000, stallMs: 3000, stopped: none }).stalls, []);
+    assert.deepEqual(childrenToSweep(t, { timedOut: [], sameFile: (a, b) => a === b, stopped: none }).map((c) => c.pid), [5]);
+  });
   it('an empty record says no progress was recorded, which is not the same as naming a test', () => {
     assert.deepEqual(describeInFlight(createProgressTracker(), { now: 0 }), ['  no progress was recorded: no test file had loaded.']);
+  });
+});
+
+describe('the end-of-run record check (a passing run must have a complete record)', () => {
+  const id = (p) => p;
+  it('is empty for a complete record', () => {
+    const w = writer();
+    const t = feedAll([w({ ev: 'load', proc: 'a', pid: 1, at: 0 }), w({ ev: 'exit', proc: 'a', at: 1 })]);
+    assert.deepEqual(reconcileRecord(t, { ran: ['/r/a.test.mjs'], eligible: () => true, fold: id }), []);
+  });
+  it('names a file that ran with no load record, and a record with no exit', () => {
+    const w = writer();
+    const t = feedAll([w({ ev: 'load', proc: 'a', pid: 1, at: 0 }), w({ ev: 'start', proc: 'a', id: 1, name: 't', at: 0 })]);
+    assert.deepEqual(reconcileRecord(t, { ran: ['/r/a.test.mjs', '/r/silent.test.mjs', '/r/x.mjs'], eligible: (f) => f.endsWith('.test.mjs'), fold: id }), [
+      '/r/silent.test.mjs: ran, but no progress record (load) arrived',
+      '/r/a.test.mjs (pid 1): no exit record, so its record is incomplete',
+    ]);
+  });
+  it('a superseded record is not incomplete (its process is provably gone)', () => {
+    const w = writer();
+    const t = feedAll([w({ ev: 'load', proc: 'o', pid: 5, at: 0 }), w({ ev: 'load', proc: 'n', pid: 5, at: 1 }), w({ ev: 'exit', proc: 'n', at: 2 })]);
+    assert.deepEqual(reconcileRecord(t, { ran: [], eligible: () => true, fold: id }), []);
   });
 });
 
@@ -249,6 +294,9 @@ describe('a hang can never read as a pass', () => {
     const gap = adjudicateRun({ status: 0, reportText: clean, hang: { stallLines: [], gapFiles: ['z.test.mjs'] } });
     assert.equal(gap.exitCode, 1);
     assert.match(gap.message, /GUARD ERROR[\s\S]*z\.test\.mjs/);
+    const broke = adjudicateRun({ status: 0, reportText: clean, hang: { stallLines: [], gapFiles: [], errors: ['EBADF'] } });
+    assert.equal(broke.exitCode, 1);
+    assert.match(broke.message, /cannot vouch for this run[\s\S]*EBADF/);
   });
   it('end-of-run naming lines go on a failing run only, and never move its exit code', () => {
     const failing = JSON.stringify({ version: GUARD_REPORT_VERSION, failures: [{ name: 'f', file: null, error: 'x' }] });
@@ -280,6 +328,16 @@ describe('runSupervised settles exactly once and cleans up on every path', () =>
   it('a spawn error resolves with it', async () => {
     const r = await runSupervised({ cmd: 'x', args: [], env: {}, idleMs: 60_000, probe: () => 0, spawnFn: () => { throw new Error('ENOENT'); }, signals: new EventEmitter(), ...noTimer });
     assert.match(r.spawnError.message, /ENOENT/);
+  });
+  it('a stall check that throws is handed to onTickError, never swallowed', async () => {
+    const child = fakeChild();
+    let tick;
+    const errors = [];
+    const p = runSupervised({ cmd: 'x', args: [], env: {}, idleMs: 60_000, probe: () => 0, spawnFn: () => child, signals: new EventEmitter(), onTick: () => { throw new Error('EBADF'); }, onTickError: (e) => errors.push(e.message), schedule: (fn) => { tick = fn; return 'h'; }, cancel: () => {} });
+    tick();
+    child.emit('close', 0, null);
+    await p;
+    assert.deepEqual(errors, ['EBADF']);
   });
   it('each tick runs the stall check with the runner pid, then the watchdog', async () => {
     const child = fakeChild();

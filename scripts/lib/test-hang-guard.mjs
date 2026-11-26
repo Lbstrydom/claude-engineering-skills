@@ -30,6 +30,9 @@ export const IDLE_WATCHDOG_ENV = 'TEST_IDLE_WATCHDOG_MS';
 /** The absolute path of the progress file, set by the runner for its children only. */
 export const PROGRESS_FILE_ENV = 'TEST_PROGRESS_FILE';
 
+/** A JSON array of absolute paths the caller named explicitly that match no default pattern; the preload instruments them too. */
+export const PROGRESS_EXTRA_FILES_ENV = 'TEST_PROGRESS_EXTRA_FILES';
+
 /** The progress line schema's version (`test-progress/v1`); a line of any other version is ignored. */
 export const PROGRESS_VERSION = 1;
 
@@ -44,16 +47,19 @@ const TIMEOUT_FLAG = '--test-timeout';
  * @returns {{present: boolean, ms: number|null}} `ms` is null for a bare flag with no value (node refuses that itself)
  */
 export function callerTestTimeout(argv) {
+  // Node keeps the LAST occurrence of a repeated option, so this does too.
+  let found = { present: false, ms: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--') break;
-    if (a.startsWith(`${TIMEOUT_FLAG}=`)) return { present: true, ms: Number(a.slice(TIMEOUT_FLAG.length + 1)) };
-    if (a === TIMEOUT_FLAG) {
+    if (a.startsWith(`${TIMEOUT_FLAG}=`)) found = { present: true, ms: Number(a.slice(TIMEOUT_FLAG.length + 1)) };
+    else if (a === TIMEOUT_FLAG) {
       const v = argv[i + 1];
-      return { present: true, ms: v === undefined || v === '--' ? null : Number(v) };
+      found = { present: true, ms: v === undefined || v === '--' ? null : Number(v) };
+      if (v !== undefined && v !== '--') i += 1;
     }
   }
-  return { present: false, ms: null };
+  return found;
 }
 
 function parsePositiveMs(name, raw) {
@@ -98,6 +104,7 @@ export function resolveLimits({ env, argv }) {
  * `process.execArgv` records nothing.
  * @param {string} file
  */
+// @duplicate-justification: target=scripts/lib/fleet/shared-surface.mjs:isTestFile reason=that one is fleet's private, extension-agnostic reach classifier; this one is node's default test-file contract (.js/.mjs/.cjs plus a test/ directory), and shared-lib may not import fleet
 export function isNodeTestFileName(file) {
   const parts = String(file).split(/[\\/]/);
   const base = parts.at(-1) ?? '';
@@ -120,7 +127,7 @@ export function createProgressTracker() {
   const procOf = (e) => {
     let p = procs.get(e.proc);
     if (!p) {
-      p = { proc: e.proc, file: e.file, pid: null, loadAt: null, lastAt: null, lastSeq: 0, gap: false, exited: false, active: new Map(), started: 0 };
+      p = { proc: e.proc, file: e.file, pid: null, ppid: null, loadAt: null, lastAt: null, lastSeq: 0, gap: false, exited: false, superseded: false, active: new Map(), started: 0 };
       procs.set(e.proc, p);
     }
     return p;
@@ -138,13 +145,25 @@ export function createProgressTracker() {
     }
     p.lastAt = Math.max(p.lastAt ?? e.at, e.at);
     lastEventAt = Math.max(lastEventAt ?? e.at, e.at);
-    if (e.ev === 'load') { p.pid = Number.isInteger(e.pid) ? e.pid : null; p.loadAt = e.at; return; }
+    if (e.ev === 'load') {
+      p.pid = Number.isInteger(e.pid) ? e.pid : null;
+      p.ppid = Number.isInteger(e.ppid) ? e.ppid : null;
+      p.loadAt = e.at;
+      // A later process loading under the same pid proves the earlier one is gone: its record can never be a candidate again.
+      if (p.pid !== null) for (const q of procs.values()) if (q !== p && q.pid === p.pid && !q.exited) q.superseded = true;
+      return;
+    }
     if (e.ev === 'exit') { p.exited = true; return; }
     if (e.ev === 'start' && Number.isInteger(e.id)) { p.active.set(e.id, { name: String(e.name ?? '<unnamed>'), startAt: e.at }); p.started += 1; return; }
     if (e.ev === 'end' && Number.isInteger(e.id)) { p.active.delete(e.id); return; }
     torn += 1;
   };
+  let owner = null;
   return {
+    /** The runner's pid: a record whose parent is anything else (a helper a test spawned with the preload) is ignored. */
+    setOwner(pid) { owner = Number.isInteger(pid) ? pid : null; },
+    /** The records of the runner's own test children; a record without a parent pid is kept (best effort, never dropped). */
+    owned() { return [...procs.values()].filter((p) => owner === null || p.ppid === null || p.ppid === owner); },
     feed(chunk) {
       const text = rest + chunk;
       const parts = text.split('\n');
@@ -175,8 +194,8 @@ const deepestFirst = (a, b) => (b.name.split(' > ').length - a.name.split(' > ')
 export function findStalls(tracker, { now, stallMs, stopped }) {
   const stalls = [];
   const gaps = [];
-  for (const p of tracker.procs.values()) {
-    if (p.exited || stopped.has(p.proc)) continue;
+  for (const p of tracker.owned()) {
+    if (p.exited || p.superseded || stopped.has(p.proc)) continue;
     const overdue = [...p.active.values()].map((i) => ({ name: i.name, ageMs: now - i.startAt })).filter((i) => i.ageMs >= stallMs).sort(deepestFirst);
     const quietMs = now - (p.lastAt ?? now);
     const outside = p.active.size === 0 && quietMs >= stallMs;
@@ -196,6 +215,26 @@ export function findStalls(tracker, { now, stallMs, stopped }) {
 export function identityMatches({ row, runnerPid, runStartMs, loadAt }) {
   if (!row || !Number.isInteger(row.ppid) || !Number.isFinite(row.createdMs) || !Number.isFinite(loadAt)) return false;
   return row.ppid === runnerPid && row.createdMs >= runStartMs - IDENTITY_SLACK_MS && row.createdMs <= loadAt + IDENTITY_SLACK_MS;
+}
+
+/**
+ * End-of-run integrity check, for a run that would otherwise PASS: every eligible file that ran must have a `load` record, and
+ * every one of the runner's own records must end in `exit` (or be superseded by a later process under the same pid). A child
+ * whose appends failed can finish normally, so its lost `end`/`exit` lines would never trip the stall limit or the watchdog;
+ * this is the check that makes that instrument failure fail the run instead of passing over an incomplete record.
+ *
+ * @param {ReturnType<typeof createProgressTracker>} tracker
+ * @param {{ran: Iterable<string>, eligible: (absFile: string) => boolean, fold: (p: string) => string, show?: (f: string) => string}} o
+ *   `ran` = absolute paths of the files node reports having run
+ * @returns {string[]} one line per problem; empty when the record is complete
+ */
+export function reconcileRecord(tracker, { ran, eligible, fold, show = (f) => f }) {
+  const problems = [];
+  const owned = tracker.owned();
+  const loaded = new Set(owned.map((p) => fold(p.file)));
+  for (const f of [...ran].sort()) if (eligible(f) && !loaded.has(fold(f))) problems.push(`${show(f)}: ran, but no progress record (load) arrived`);
+  for (const p of owned) if (!p.exited && !p.superseded) problems.push(`${show(p.file)}${p.pid ? ` (pid ${p.pid})` : ''}: no exit record, so its record is incomplete`);
+  return problems;
 }
 
 /**
@@ -222,8 +261,8 @@ export function timedOutFiles(reportText) {
  */
 export function childrenToSweep(tracker, { timedOut, sameFile, stopped }) {
   const out = new Map();
-  for (const p of tracker.procs.values()) {
-    if (!Number.isInteger(p.pid) || stopped.has(p.proc) || out.has(p.pid)) continue;
+  for (const p of tracker.owned()) {
+    if (!Number.isInteger(p.pid) || p.superseded || stopped.has(p.proc) || out.has(p.pid)) continue;
     if (!p.exited || timedOut.some((f) => sameFile(f, p.file))) out.set(p.pid, { file: p.file, pid: p.pid, at: p.loadAt });
   }
   return [...out.values()].sort((a, b) => a.file.localeCompare(b.file));
@@ -239,8 +278,8 @@ export function describeInFlight(tracker, { now, show = (f) => f }) {
   const lines = [];
   const running = [];
   const idle = [];
-  for (const p of tracker.procs.values()) {
-    if (p.exited) continue;
+  for (const p of tracker.owned()) {
+    if (p.exited || p.superseded) continue;
     if (p.active.size) for (const i of p.active.values()) running.push({ ...i, file: p.file, pid: p.pid });
     else if (p.started === 0) idle.push(p);
   }
