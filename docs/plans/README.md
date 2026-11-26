@@ -54,7 +54,7 @@ This is the list to read when asking "what is in flight?".
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
 | [Telemetry linkage as a structural contract](./telemetry-linkage-structural.md) | `In Progress` |  |
-| [make `npm test` hang-proof (a per-test stall limit and an idle watchdog)](./test-runner-hang-guard.md) | `In Progress` |  |
+| [make `npm test` hang-proof (a per-test stall limit and an idle watchdog)](./test-runner-hang-guard.md) | `In Progress` | implemented and audited on branch claude/wonderful-vaughan-7cdb0c; PR open, merge pending |
 | [Verification lessons — no retry-to-green, gates judged from main, step-back, diff-triggered checklist](./verification-lessons.md) | `Approved` |  |
 | [VS Code compatibility — host facts, MCP, hook portability, fleet on VS Code](./vscode-compatibility.md) | `In Progress` | Clusters A-E landed (#478-#486); Cluster A smoke run done 2026-11-23/24, PARTIAL; Cluster D is Tier 1 only,… |
 
@@ -439,6 +439,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
 | [/audit-code summary — sync-output-drift-classification](./sync-output-drift-classification-audit-summary.md) |  |
 | [Audit summary: sync-to-repos failure honesty](./sync-to-repos-failure-honesty-audit-summary.md) |  |
+| [Audit summary — test-runner-hang-guard](./test-runner-hang-guard-audit-summary.md) |  |
 | [Audit Summary: triage-independence-test-and-write-boundary-fixes](./triage-independence-test-and-write-boundary-fixes-audit-summary.md) |  |
 | [Audit Summary — vcs-parsing-and-rmsync-scope-hardening](./vcs-parsing-and-rmsync-scope-hardening-audit-summary.md) |  |
 | [Audit Summary: visual-contract-semantic-validation](./visual-contract-semantic-validation-audit-summary.md) |  |

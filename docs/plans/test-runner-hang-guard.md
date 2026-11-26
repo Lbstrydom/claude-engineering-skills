@@ -1,6 +1,6 @@
 # Plan: make `npm test` hang-proof (a per-test stall limit and an idle watchdog)
 - **Date**: 2026-11-26
-- **Status**: In progress
+- **Status**: In progress — implemented and audited on branch claude/wonderful-vaughan-7cdb0c; PR open, merge pending
 - **Author**: Claude + Louis
 - **Scope**: backend (test runner only; no UI) · stack `js-ts`
 - **Target domain(s)**: `scripts`, `shared-lib`, `tests`
@@ -248,3 +248,7 @@ workflow, so the watchdog is never the larger of two nested budgets. It also ass
 - R3 (the cap): H:3 M:1, 4/4 accepted: eligibility follows node's default test-file patterns, with a start warning for explicit
   files outside them; a per-process `seq` turns a lost line into a guard error that blocks the kill; the unit-test text now matches
   the caller-timeout contract; overdue instances are all listed, no single innermost claimed. GPT loop stopped at its 3-round cap.
+- Code audit `audit-code-1795728511480-92916`: R1 H:9 M:9, R2 H:1 M:3, R3 H:1 M:1, R4 H:2 M:1, R5 PASS H:0 M:1 (fixed); 26/28 accepted.
+  Final gate (Gemini) APPROVE, 0 blocking, 0 debt. Detail: [test-runner-hang-guard-audit-summary.md](test-runner-hang-guard-audit-summary.md).
+  Added beyond the plan text by the audit: an end-of-run record check (a passing run must have a load and an exit line for
+  every file that ran, and no lost line), a ppid owner filter, pid-reuse supersede, and a named-file manifest.
