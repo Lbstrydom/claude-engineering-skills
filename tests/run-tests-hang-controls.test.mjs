@@ -191,10 +191,16 @@ ${r.stderr}`);
     assert.match(r.stderr, /skip-then-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:\s+- skips, then hangs/);
   });
 
-  it('a test whose own after hook hangs is stopped at the limit, named by the test that last finished', { timeout: DEADLINE_MS + 15_000 }, async () => {
+  it('a test whose own after hook hangs is stopped at the limit and named (the guard ends a test after its own hooks)', { timeout: DEADLINE_MS + 15_000 }, async () => {
     const r = await runRunner(['--test-reporter=spec', `${FIX}/after-hook-hang.test.mjs`], STALL);
     assert.equal(r.code, 1, r.stderr);
-    assert.match(r.stderr, /after-hook-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:\s+- outside any test \(in a hook or teardown after "teardown hangs" finished\)/);
+    assert.match(r.stderr, /after-hook-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:\s+- teardown hangs \(running/);
+  });
+
+  it('a hung after hook beside a busy concurrent sibling is still named and stopped', { timeout: DEADLINE_MS + 15_000 }, async () => {
+    const r = await runRunner(['--test-reporter=spec', `${FIX}/concurrent-teardown-hang.test.mjs`], STALL);
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /concurrent-teardown-hang\.test\.mjs \(pid \d+\), over the 8s per-test limit:[\s\S]*?- pair > teardown hangs \(running/);
   });
 
   it('refuses an override that is not a positive integer, before running anything', { timeout: DEADLINE_MS }, async () => {
