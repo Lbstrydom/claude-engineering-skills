@@ -70,7 +70,7 @@ describe('resolveLimits', () => {
     }
   });
   it('both overrides are scrubbed from the test children, so a nested runner never inherits them', () => {
-    assert.ok(SCRUBBED_RUNNER_ENV.includes('TEST_IDLE_WATCHDOG_MS') && SCRUBBED_RUNNER_ENV.includes('TEST_STALL_TIMEOUT_MS'));
+    for (const k of ['TEST_IDLE_WATCHDOG_MS', 'TEST_STALL_TIMEOUT_MS', 'TEST_PROGRESS_EXTRA_FILES']) assert.ok(SCRUBBED_RUNNER_ENV.includes(k), k);
   });
   it('the preload\'s eligibility follows node\'s default test-file patterns', () => {
     for (const ok of ['/r/a.test.mjs', '/r/a.test.cjs', '/r/a-test.js', '/r/a_test.mjs', '/r/test-a.js', '/r/test.js', '/r/test/x.mjs']) assert.ok(isNodeTestFileName(ok), ok);

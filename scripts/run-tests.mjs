@@ -51,19 +51,13 @@
  * (scripts/lib/test-timing-reporter.mjs) that is deliberately independent of the guard:
  * it can only ever add lines, never change the verdict. Plan: docs/plans/gate-cost-slice-1.md.
  *
- * **Hang protection** (docs/plans/test-runner-hang-guard.md, revision 2). The child preload
- * (scripts/lib/test-progress-preload.mjs) writes every test instance's start and end synchronously to a progress file; node
- * itself delivers a file's events only after the file ends, and none from a busy-looping one. From that record this runner
- * enforces a PER-TEST limit (each instance timed from its own start; a child outside any test from its last event): it stops
- * that child's tree, node fails just that file, the run goes on, and the test is named. An idle watchdog above it kills the
- * whole tree when no child shows any progress. Both fail closed through `adjudicateRun`. Limits come from two measured
- * profiles, CI and local (scripts/lib/test-hang-guard.mjs), because local load stretches durations about 10x. Node's own
- * `--test-timeout` is not added: under process isolation it bounds a whole FILE (its timer always beats the child's per-test
- * copy, measured on v22.23.2), and a healthy file took 23.7 min under load. A caller's `--test-timeout` is forwarded untouched.
- * Stated limits: a child that never writes its `load` line is bounded only by the watchdog, once the other files finish; a
- * stall kill needs the pid confirmed as the recorded child (parent and creation time), and the check-then-signal gap is node's
- * no-pidfd limit; anything node's own file timeout orphans is swept after the run (POSIX: the runner's process group; Windows:
- * fleet's reaper from the dead pid), except a POSIX helper that left the group or a Windows double fork.
+ * **Hang protection** (docs/plans/test-runner-hang-guard.md, rev 2). The child preload (lib/test-progress-preload.mjs) writes
+ * each test instance's start/end synchronously; node delivers a file's own events only after it ends. From that record this
+ * runner enforces a PER-TEST limit (stop that child's tree; node fails just that file; the test is named), an idle watchdog
+ * above it (kill the whole tree), and an end-of-run record check, all failing closed through `adjudicateRun`. Two measured
+ * profiles, CI and local (lib/test-hang-guard.mjs). Node's `--test-timeout` is not added: it bounds a whole FILE (measured on
+ * v22.23.2); a caller's is forwarded untouched. Limits: a child with no `load` line is bounded only by the watchdog; a stall
+ * kill confirms the pid first (parent, creation time), but node has no pidfd; orphans are swept after the run.
  *
  * @module scripts/run-tests
  */
@@ -144,10 +138,10 @@ export function scrubRoutingEnv(env) {
  * to the operator's path: observed 2026-10-12, a nested runner clobbered a measurement
  * file mid-run. The runner reads it from its own env before scrubbing.
  *
- * `TEST_IDLE_WATCHDOG_MS` and `TEST_STALL_TIMEOUT_MS` are the same kind of instruction (this runner's hang limits). A nested
- * runner started from inside a test must use its own profile, never the outer run's override.
+ * The hang guard's overrides and its named-file manifest are the same kind of instruction: a nested runner started from a test
+ * uses its own profile and manifest, never the outer run's (the runner sets the manifest itself, after this scrub, when it has one).
  */
-export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP', IDLE_WATCHDOG_ENV, STALL_TIMEOUT_ENV]);
+export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP', IDLE_WATCHDOG_ENV, STALL_TIMEOUT_ENV, PROGRESS_EXTRA_FILES_ENV]);
 
 /** Pure: the full child env — routing selectors AND runner state removed. */
 export function scrubChildEnv(env) {
@@ -705,12 +699,8 @@ function reapWindowsChild({ pid, at }) {
 }
 
 /**
- * Sweep what node's own file timeout (or the watchdog) orphaned. POSIX: signal the dead runner's process group, which an
- * orphan stays in unless it called setsid (a group id is not reused while a member lives; the residual window is the pid-reuse
- * limit reap.mjs documents). Windows: run the reaper from each swept child's pid, bounded as a whole. Never moves the verdict;
- * every child it could not reach or fully reap is listed.
- *
- * @returns {string[]} lines to print
+ * Sweep orphans after the run. POSIX: signal the dead runner's process group (an orphan stays in it unless it called setsid).
+ * Windows: the reaper from each child's dead pid, one budget. Never moves the verdict; lists what it missed. @returns {string[]}
  */
 export function sweepOrphans({
   children, runnerPid, groupNeeded = false, platform = process.platform, stop = stopTree, reap = reapWindowsChild, clock = Date.now,
@@ -740,7 +730,7 @@ export function sweepOrphans({
 
 /** What the record shows still running at the end (a child that never exited), or nothing when every child exited. */
 function stillRunning(tracker, show) {
-  const open = [...tracker.procs.values()].some((p) => !p.exited && (p.active.size > 0 || p.started === 0));
+  const open = tracker.owned().some((p) => !p.exited && !p.superseded && (p.active.size > 0 || p.started === 0));
   return open ? describeInFlight(tracker, { now: Date.now(), show }) : [];
 }
 
