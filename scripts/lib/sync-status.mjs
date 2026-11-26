@@ -172,12 +172,14 @@ function hasUnambiguousIndexState(status) {
  *
  * @param {{entries: Array<{status: string, path: string, origPath: string|null}>,
  *           isUpstreamOwned: (rel: string) => boolean,
- *           isVerifiedSyncOutput: (entry: {path: string, origPath: string|null}) => boolean}} input
+ *           isVerifiedSyncOutput: (entry: {path: string, origPath: string|null}) => boolean,
+ *           retirementOf?: (rel: string) => 'retired'|'unverified'|null}} input — a deletion's verdict, asked first
+ *           (`createRetirementVerifier`): `retired` with an unambiguous index state -> syncOwned, `unverified` -> needsReview
  * @returns {{syncOwned: Array<{status: string, path: string, origPath: string|null}>,
  *            needsReview: Array<{status: string, path: string, origPath: string|null}>,
  *            other: Array<{status: string, path: string, origPath: string|null}>}}
  */
-export function classifyDirtyEntries({ entries, isUpstreamOwned, isVerifiedSyncOutput }) {
+export function classifyDirtyEntries({ entries, isUpstreamOwned, isVerifiedSyncOutput, retirementOf = () => null }) {
   const list = entries ?? [];
   // Every path this snapshot reports as its OWN current entry — checked
   // before classifying any rename's origin, since a live entry can be added
@@ -193,6 +195,16 @@ export function classifyDirtyEntries({ entries, isUpstreamOwned, isVerifiedSyncO
   const needsReview = new Map();
   const other = new Map();
   for (const entry of list) {
+    // A deletion has no bytes to verify: its evidence is the sync's own record of retiring it (`createRetirementVerifier`).
+    // A deleted path some OTHER entry reoccupies (`D ` then a recreated `?? path`, or a directory there) is not a clean
+    // deletion: staging it would add the new bytes, so it goes to review (audit R1 H2/H6). That includes a collapsed
+    // untracked ANCESTOR (`?? dir/` under the default `--untracked-files=normal`; classifyRepo asks for `all`, but this
+    // function is pure and cannot know its caller did) (audit R2 H1/H2).
+    const retired = isDeletionEntry(entry) ? retirementOf(entry.path) : null;
+    const reoccupied = retired && (livePaths.filter((p) => p === entry.path).length > 1
+      || livePaths.some((p) => p.startsWith(`${entry.path}/`) || (p.endsWith('/') && entry.path.startsWith(p))));
+    if (retired === RETIREMENT.RETIRED && !reoccupied && hasUnambiguousIndexState(entry.status)) { syncOwned.set(entry.path, entry); continue; }
+    if (retired) { needsReview.set(entry.path, entry); continue; }
     const candidates = entry.origPath ? [entry.path, entry.origPath] : [entry.path];
     const isExtraArtifact = candidates.some((p) => EXTRA_SYNC_ARTIFACTS.has(comparisonKey(p)));
     const owned = isExtraArtifact || candidates.some((p) => isUpstreamOwned(p));
@@ -234,6 +246,75 @@ export function createProvenanceVerifier({ manifestFiles, hashOf }) {
     if (!expected) return false;
     const actual = hashOf(entry.path);
     return typeof actual === 'string' && actual === expected;
+  };
+}
+
+/** The two verdicts `createRetirementVerifier` can give a deleted path (anything else is `null`: not the sync's deletion). */
+export const RETIREMENT = Object.freeze({ RETIRED: 'retired', UNVERIFIED: 'unverified' });
+
+/**
+ * Is this `git status` entry a plain deletion of a tracked path: `D` in either column, and not a rename or copy?
+ *
+ * @param {{status: string, origPath: string|null}} entry
+ * @returns {boolean}
+ */
+export function isDeletionEntry(entry) {
+  return !entry?.origPath && (entry?.status?.[0] === 'D' || entry?.status?.[1] === 'D');
+}
+
+/**
+ * Build the evidence check for a DELETED path: did the sync itself retire it?
+ *
+ * A sync's gc deletes a retired tracked skill (`ship/` after the `ship` -> `ship-checked` rename) only when the PRIOR
+ * manifest recorded it and its bytes still matched, and records each deletion under the receipt's `gcDeleted`. By then the
+ * new sidecar no longer lists the path, so the ownership oracle calls the deletion "not ours" and sync:pr left it uncommitted:
+ * the consumer's main kept BOTH skills (storyline #625, 2026-11-26). The record of that decision is the receipt, and the
+ * receipt's own bytes are vouched for by the current manifest — so the chain is manifest -> receipt -> `gcDeleted`, never HEAD.
+ *
+ * A path is `retired` only when ALL hold:
+ *   - the evidence is an entry whose retirement of THIS path is not yet consumed. `committedAsOf(rel)` names the entries
+ *     already in the receipt as of the last commit that touched the path: the path changed after those retirements
+ *     landed (a re-creation the consumer committed), so they can never vouch for today's deletion (audit R1 H1/H4/H7).
+ *     Consumption is per PATH, not per entry, so a receipt committed without its deletions keeps them pending (audit R3
+ *     H1/M1). HEAD only REVOKES evidence, never grants ownership; `null` (cannot tell) makes the path `unverified`;
+ *   - the newest unconsumed mention of the path (across `created`, `updated`, `gcDeleted`) is a `gcDeleted`, so a later
+ *     sync that wrote it again revokes the retirement;
+ *   - the match is on the EXACT path gc recorded, never a case-folded key: on a case-sensitive filesystem
+ *     `ship/SKILL.md` and `Ship/SKILL.md` are two tracked files (audit R1 H3/H5/H8);
+ *   - the current manifest does not intend it (case-folded, the conservative direction: a deletion of a live synced file
+ *     is a person's); and `receiptVerified`.
+ * A receipt the manifest does not vouch for still NAMES the path, so it reads `unverified` (needs review), never silently
+ * "not ours"; and an unreadable receipt (`receiptEntries: null`) can name nothing, so EVERY deletion reads `unverified`
+ * (audit R3 H2). PURE apart from the injected `committedAsOf`, which is asked only for a path some entry retired.
+ *
+ * @param {{receiptEntries: object[]|null, committedAsOf: (rel: string) => object[]|null, receiptVerified: boolean,
+ *   manifestFiles: Record<string,string>|null}} input
+ * @returns {(rel: string) => 'retired'|'unverified'|null}
+ */
+export function createRetirementVerifier({ receiptEntries, committedAsOf, receiptVerified, manifestFiles }) {
+  const entries = Array.isArray(receiptEntries) ? receiptEntries : null;
+  const intended = new Set(Object.keys(manifestFiles ?? {}).map((p) => comparisonKey(p)));
+  const names = (entry, field, rel) => Array.isArray(entry?.[field]) && entry[field].includes(rel);
+  // One sync run's identity: when it ran and from which source commit — never the entry's serialisation, whose key order
+  // a formatter may change (audit R4 H4).
+  const idOf = (entry) => `${entry?.syncedAt}\u0000${entry?.source?.commitSha ?? ''}`;
+  const newestAction = (rel, consumed) => {
+    for (const entry of entries) {
+      if (consumed.has(idOf(entry))) continue;
+      if (names(entry, 'gcDeleted', rel)) return 'deleted';
+      if (names(entry, 'created', rel) || names(entry, 'updated', rel)) return 'written';
+    }
+    return null;
+  };
+  return (rel) => {
+    if (intended.has(comparisonKey(rel))) return null;
+    if (!entries) return RETIREMENT.UNVERIFIED;
+    if (!entries.some((e) => names(e, 'gcDeleted', rel))) return null;
+    // An unvouched receipt decides nothing — not even that a newer entry revoked the retirement (audit R4 M1).
+    if (!receiptVerified) return RETIREMENT.UNVERIFIED;
+    const consumed = typeof committedAsOf === 'function' ? committedAsOf(rel) : null;
+    if (!Array.isArray(consumed)) return RETIREMENT.UNVERIFIED;
+    return newestAction(rel, new Set(consumed.map(idOf))) === 'deleted' ? RETIREMENT.RETIRED : null;
   };
 }
 
