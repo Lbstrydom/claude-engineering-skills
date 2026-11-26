@@ -4,7 +4,7 @@
 - **Date**: 2026-11-26
 - **Session**: `audit-code-1795728511480-92916`
 - **Scope**: `--scope diff` R1 over `d5c6a3b0` (11 files), then R2+ diff-scoped to each round's fix commit.
-- **Audited head**: `20108ad6` (R5).
+- **Audited head**: R6, the commit after `c61657fa`. Final gate: APPROVE in round 1 (R5) and round 2 (R6), 0 blocking.
 
 ## Result — final gate APPROVE (round 5 PASS, H:0 M:1 fixed)
 
@@ -15,6 +15,7 @@
 | R3 | SIGNIFICANT_ISSUES | 1 | 1 | 2 / 0 | any named regular file is instrumented (extensionless included) |
 | R4 | SIGNIFICANT_ISSUES | 2 | 1 | 3 / 0 | named-file manifest instead of one env string; operands after `--` |
 | R5 | PASS | 0 | 1 | 1 / 0 | the manifest variable is scrubbed from children |
+| R6 | PASS | 0 | 0 | — | delta after a full-suite failure of the watchdog control under load: the watchdog now stops each live test child's tree before the runner's; the control waits for termination |
 
 Dismissed (R1): M8, a coverage bound of the adjacency wave (`maxContainers`), not a defect; M9, the preload has no static
 importer by design (node loads it through `--import`). M7 (duplication with fleet's private `isTestFile`) carries a
