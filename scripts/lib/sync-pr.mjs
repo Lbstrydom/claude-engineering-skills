@@ -82,7 +82,7 @@ import { spawnSync } from 'node:child_process';
 import { RECEIPT_PATH, readSyncReceipt, latestReceiptEntry } from './sync-receipt.mjs';
 import { OVERRIDES_PATH } from './sync-overrides.mjs';
 import { comparisonKey, isUpstreamOwned, isUsableSidecar, OWNED_SIDECAR_RELATIVE_PATH } from './sync-owned-sidecar.mjs';
-import { pathspecsForCommit } from './sync-status.mjs';
+import { pathspecsForCommit, isDeletionEntry } from './sync-status.mjs';
 import { SYNC_BRANCH_PREFIX } from './sync-divergence.mjs';
 import { classifyBundleFreshness, gatherSourceFacts, gatherGitignoreTransition, createManagedBlockTransitionReader, heldBackManagedBlocks, GITIGNORE_PATH, GITIGNORE_PATH_STATE, GITIGNORE_LEFT_BEHIND_REASON } from './sync-pr-facts.mjs';
 import { MANAGED_BLOCK_FILES } from './sync-path-map.mjs';
@@ -124,13 +124,13 @@ export function branchNameFor(commitSha) {
 /**
  * Commit title/message + PR body for one consumer. Pure text.
  *
- * @param {{repo: string, commitSha: string, surface: string[], leftBehind: string[], consumerName: string, autoMerge?: boolean}} input — `autoMerge: false`: never claim it is armed
+ * @param {{repo: string, commitSha: string, surface: string[], leftBehind: string[], consumerName: string, autoMerge?: boolean, deleted?: string[]}} input — `autoMerge: false`: never claim it is armed; `deleted`: paths gc retired
  * @returns {{title: string, message: string, body: string}}
  */
-export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName, autoMerge = true }) {
+export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName, autoMerge = true, deleted = [] }) {
   const short = String(commitSha).slice(0, 8);
   const title = `chore(sync): bundle sync from ${repo} ${short}`;
-  const fileList = surface.map((p) => `- \`${p}\``).join('\n');
+  const fileList = surface.map((p) => `- \`${p}\`${deleted.includes(p) ? ' — deleted (retired by the sync, listed under `gcDeleted` in `.sync-receipt.json`)' : ''}`).join('\n');
   const message = [
     title,
     '',
@@ -146,7 +146,7 @@ export function buildPrText({ repo, commitSha, surface, leftBehind, consumerName
     '',
     `Tracked artifacts of the bundle sync from \`${repo}\` at https://github.com/${repo}/commit/${commitSha}, for consumer \`${consumerName}\`.`,
     '',
-    `Every path below was classified **sync-owned** by \`sync-status.mjs\` — owned by the sync AND byte-identical to the hash the sync recorded — so nothing here is a hand edit:`,
+    `Every path below was classified **sync-owned** by \`sync-status.mjs\` — owned by the sync AND byte-identical to the hash the sync recorded (a deletion: retired by the sync, per the manifest-verified receipt) — so nothing here is a hand edit:`,
     '',
     fileList,
     '',
@@ -278,7 +278,7 @@ function planConsumerPrCore({
     ...heldBackManagedBlocks(transitions).map(({ file, state }) => `${file} (${GITIGNORE_LEFT_BEHIND_REASON[state] ?? 'could not be verified as managed-block-only'})`),
   ].sort();
   const repo = manifest.repo ?? DEFAULT_REPO;
-  const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName, autoMerge });
+  const text = buildPrText({ repo, commitSha, surface, leftBehind, consumerName, autoMerge, deleted: classified.syncOwned.filter(isDeletionEntry).map((e) => e.path) });
   return {
     action: 'pr',
     branch,

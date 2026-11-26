@@ -37,6 +37,7 @@
  *
  * @module scripts/sync-status
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -44,8 +45,9 @@ import { assertKnownFlags, ArgvError, finishAndExit } from './lib/cli-io.mjs';
 import { createUpstreamOwnershipOracle } from './lib/upstream-ownership.mjs';
 import { MANIFEST_RELATIVE_PATH, hashFile } from './lib/sync-manifest.mjs';
 import {
-  parsePorcelainZ, classifyDirtyEntries, createProvenanceVerifier, buildCommitSuggestion,
+  parsePorcelainZ, classifyDirtyEntries, createProvenanceVerifier, createRetirementVerifier, buildCommitSuggestion,
 } from './lib/sync-status.mjs';
+import { RECEIPT_PATH, readSyncReceipt } from './lib/sync-receipt.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 
 const KNOWN_FLAGS = ['--format', '--repo-root', '--selfcheck-relocation'];
@@ -74,6 +76,90 @@ function loadManifestFiles(repoRoot) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Receipt text -> its entries, newest first: `[]` for an absent file, `null` for one present but unreadable, malformed or
+ * of a shape this code cannot read (audit R3 H2: a broken receipt must not read as "no retirements"). `null` makes every
+ * deletion `unverified` — reviewed, never committed and never silently "not ours".
+ *
+ * @param {string|null} text — `null` when the file does not exist
+ * @returns {object[]|null}
+ */
+function receiptEntriesOf(text) {
+  if (text === null) return [];
+  try {
+    const read = readSyncReceipt(JSON.parse(text));
+    return read.status === 'ok' ? read.entries : read.status === 'absent' ? [] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The working tree's receipt, read ONCE: the entries and the verdict on them come from the same bytes, so a receipt
+ * replaced between a hash read and a parse read can never lend its verdict to the other snapshot (audit R5 H2).
+ *
+ * @param {string} repoRoot
+ * @param {Record<string,string>|null} manifestFiles
+ * @returns {{entries: object[]|null, verified: boolean}}
+ */
+function loadReceipt(repoRoot, manifestFiles) {
+  let bytes;
+  try { bytes = fs.readFileSync(path.join(repoRoot, RECEIPT_PATH)); } catch (err) { return { entries: err.code === 'ENOENT' ? [] : null, verified: false }; }
+  const expected = manifestFiles?.[RECEIPT_PATH];
+  const verified = typeof expected === 'string' && expected === `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+  return { entries: receiptEntriesOf(bytes.toString('utf-8')), verified };
+}
+
+/**
+ * Per PATH, the receipt entries whose retirement of it is already CONSUMED (`createRetirementVerifier`'s `committedAsOf`).
+ *
+ * A retirement is consumed once the path changed AFTER the entry was committed: the receipt as of the LAST commit that
+ * touched the path already holds the entry. That is a re-creation (or a deletion) the consumer committed on top of the
+ * retirement, so the record can no longer vouch for today's deletion (audit R1 H1). Where the entry is in HEAD's receipt but
+ * the path is untouched since — an earlier sync PR committed the receipt without its deletions, the pre-fix behaviour —
+ * the retirement is still pending, so it still rides (audit R3 H1/M1). HEAD only ever subtracts evidence; it never grants
+ * ownership. Any git failure answers `null` (cannot tell), which makes a named deletion `unverified`.
+ *
+ * The receipt as of that commit misses one case: the consumer re-created the file and committed it ALONE while the
+ * retirement was still uncommitted (audit R5 H1). So a working-tree entry is consumed too when that commit is dated at or
+ * after the entry's `syncedAt` — the path changed after the retirement, whatever that commit's receipt says. An entry whose
+ * `syncedAt` or that commit's date cannot be parsed counts as consumed (the conservative direction).
+ *
+ * @param {string} repoRoot
+ * @param {object[]} workingEntries — the working tree's receipt entries
+ * @returns {(rel: string) => object[]|null}
+ */
+function createCommittedReceiptReader(repoRoot, workingEntries) {
+  const git = (args) => spawnSync('git', ['--literal-pathspecs', '-C', repoRoot, ...args], { encoding: 'utf-8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+  const byCommit = new Map();
+  let shallow;
+  return (rel) => {
+    // A shallow clone's boundary reads as a root, so "the last commit that touched it" may be a commit history never had
+    // (audit R4 H2): cannot tell.
+    shallow ??= git(['rev-parse', '--is-shallow-repository']);
+    if (shallow.status !== 0 || shallow.stdout.trim() !== 'false') return null;
+    // `--first-parent`: default simplification (and `--full-history`, which drops a merge TREESAME to ANY parent) follows the
+    // side of a merge that brought the path's content, so a merge carrying a side branch's edit onto the mainline after the
+    // retirement would be dated to the side commit, before the retirement (audit R4 H1/H3). On the mainline that merge IS
+    // the change: it consumes the retirement, the conservative direction.
+    const last = git(['log', '-1', '--first-parent', '--format=%H %cI', 'HEAD', '--', rel]);
+    if (last.status !== 0) return null;
+    const [sha, committedAt] = last.stdout.trim().split(' ');
+    if (!sha) return []; // never committed: nothing to consume
+    const at = Date.parse(committedAt);
+    const after = (workingEntries ?? []).filter((e) => !(Date.parse(e?.syncedAt) > at));
+    if (!byCommit.has(sha)) {
+      const listed = git(['ls-tree', '--name-only', sha, '--', RECEIPT_PATH]);
+      const shown = listed.status === 0 && listed.stdout.trim() !== '' ? git(['show', `${sha}:${RECEIPT_PATH}`]) : null;
+      byCommit.set(sha, listed.status !== 0 ? null
+        : shown === null ? []
+          : shown.status === 0 ? receiptEntriesOf(shown.stdout) : null);
+    }
+    const atCommit = byCommit.get(sha);
+    return atCommit === null ? null : [...atCommit, ...after];
+  };
 }
 
 /**
@@ -123,8 +209,16 @@ export function classifyRepo(repoRoot) {
       try { return hashFile(path.join(repoRoot, relPath)); } catch { return null; }
     },
   });
+  // The receipt's `gcDeleted` is the sync's record of what it retired; its bytes must match the manifest to count.
+  const receipt = loadReceipt(repoRoot, manifestFiles);
+  const retirementOf = createRetirementVerifier({
+    receiptEntries: receipt.entries,
+    committedAsOf: createCommittedReceiptReader(repoRoot, receipt.entries),
+    receiptVerified: receipt.verified,
+    manifestFiles,
+  });
   const { syncOwned, needsReview, other } = classifyDirtyEntries({
-    entries, isUpstreamOwned: oracle.isUpstreamOwned, isVerifiedSyncOutput,
+    entries, isUpstreamOwned: oracle.isUpstreamOwned, isVerifiedSyncOutput, retirementOf,
   });
   return {
     ok: true, clean: false, syncOwned, needsReview, other,
