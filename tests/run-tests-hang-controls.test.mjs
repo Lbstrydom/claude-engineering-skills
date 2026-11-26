@@ -53,7 +53,14 @@ function pidFile() {
   return {
     file,
     read: () => JSON.parse(fs.readFileSync(file, 'utf8')),
-    dead: (pid) => { const gone = !alive(pid); if (gone) seenDead.add(pid); return gone; },
+    // Polls: a process stopped by taskkill on a loaded machine can take a few seconds to finish terminating.
+    gone: async (pid, ms = 10_000) => {
+      const until = Date.now() + ms;
+      while (alive(pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 250));
+      const g = !alive(pid);
+      if (g) seenDead.add(pid);
+      return g;
+    },
     cleanup: () => {
       try {
         for (const pid of Object.values(JSON.parse(fs.readFileSync(file, 'utf8')))) if (!seenDead.has(pid) && alive(pid)) stopTree(pid, { force: true });
@@ -79,8 +86,10 @@ describe('hang protection, real runner', { concurrency: true, timeout: DEADLINE_
       assert.match(r.stdout, /✔ ok one/);
       assert.match(r.stdout, /✔ ok two/);
       const { test, grandchild } = pids.read();
-      assert.equal(pids.dead(test), true, 'the hung test process is gone');
-      assert.equal(pids.dead(grandchild), true, 'the grandchild it spawned is gone too');
+      assert.equal(await pids.gone(test), true, `the hung test process is gone
+${r.stderr}`);
+      assert.equal(await pids.gone(grandchild), true, `the grandchild it spawned is gone too
+${r.stderr}`);
     } finally { pids.cleanup(); }
   });
 
@@ -140,8 +149,10 @@ describe('hang protection, real runner', { concurrency: true, timeout: DEADLINE_
       assert.match(r.stderr, /IDLE WATCHDOG — no test started or finished for \d+s \(limit 6s\)/);
       assert.match(r.stderr, /- hangs forever\s+in tests\/fixtures\/run-tests-hang\/hang\.test\.mjs/);
       const { test, grandchild } = pids.read();
-      assert.equal(pids.dead(test), true, 'the hung test process is gone');
-      assert.equal(pids.dead(grandchild), true, 'the grandchild it spawned is gone too');
+      assert.equal(await pids.gone(test), true, `the hung test process is gone
+${r.stderr}`);
+      assert.equal(await pids.gone(grandchild), true, `the grandchild it spawned is gone too
+${r.stderr}`);
     } finally { pids.cleanup(); }
   });
 

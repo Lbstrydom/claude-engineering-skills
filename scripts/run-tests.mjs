@@ -594,11 +594,8 @@ export function readTierSkip(file, { readFile = (p) => fs.readFileSync(p, 'utf-8
 
 /** The child preload that writes the progress file (the watchdog's heartbeat, and how a hung test is named). */
 const PROGRESS_PRELOAD = pathToFileURL(path.join(import.meta.dirname, 'lib', 'test-progress-preload.mjs')).href;
-/** After a tree kill, how long to wait for the runner's `close` before reporting it may still be running. */
-const KILL_SETTLE_MS = 10_000;
-/** The orphan sweep's whole budget, and each Windows child's share of it. */
-const SWEEP_BUDGET_MS = 60_000;
-const SWEEP_CHILD_MS = 10_000;
+// After a tree kill, the wait for the runner's `close`; the orphan sweep's whole budget, and each Windows child's share of it.
+const KILL_SETTLE_MS = 10_000, SWEEP_BUDGET_MS = 60_000, SWEEP_CHILD_MS = 10_000;
 
 /**
  * Spawn `node --test` and own its whole lifecycle: settles exactly once, on the first of a spawn error, `close`, or the idle
@@ -853,8 +850,7 @@ async function main() {
     reportPath,
     timingEnabled: true,
   });
-  // The progress file is read INCREMENTALLY (only the bytes since the last tick; a decoder keeps a split UTF-8 character whole),
-  // so a tick costs the growth, not the whole file.
+  // The progress file is read INCREMENTALLY (a decoder keeps a split UTF-8 character whole): a tick costs only the growth.
   const tracker = createProgressTracker();
   const progressFd = fs.openSync(progressPath, 'r');
   const decoder = new StringDecoder('utf8');
@@ -878,7 +874,9 @@ async function main() {
   const tickErrors = [];
   let watchdogDetail = [];
   const runStartMs = Date.now();
+  let lastRunnerPid = null;
   const onTick = (runnerPid) => {
+    lastRunnerPid = runnerPid;
     tracker.setOwner(runnerPid);   // a record whose parent is not the runner (a helper a test spawned) is ignored
     pump();
     const { stalls, gaps } = findStalls(tracker, { now: Date.now(), stallMs: limits.stallMs, stopped });
@@ -923,6 +921,10 @@ async function main() {
       try { pump(); } catch { /* name what was already read */ }
       watchdogDetail = describeInFlight(tracker, { now: Date.now(), show });
       process.stderr.write(`\nrun-tests: idle watchdog fired after ${secs(idleForMs)} with no test starting or finishing; killing the test process tree.\n`);
+      // Each live test child's own tree first (one taskkill /T from the runner has left a grandchild under load); at most 10.
+      for (const p of tracker.owned().filter((q) => !q.exited && !q.superseded && Number.isInteger(q.pid)).slice(0, 10)) {
+        if (identityMatches({ row: readProcessRow(p.pid), runnerPid: lastRunnerPid, runStartMs, loadAt: p.loadAt })) stopTree(p.pid, { force: true });
+      }
     },
   });
   const wallMs = performance.now() - startedMs;
@@ -939,8 +941,7 @@ async function main() {
   if (res.unsettled) extraLines.push(`run-tests: the test process did not exit within ${KILL_SETTLE_MS / 1000}s of being killed; pid ${res.pid} may still be running.`);
   if (res.pid) tracker.setOwner(res.pid);
   const failed = res.status !== 0 || res.watchdog || res.interrupted || stallRecords.length > 0;
-  // A run that would otherwise pass must have a complete record (no lost load/exit lines): an instrument that failed quietly
-  // must never pass over a run it did not watch. An inventory the timing report cannot give is itself a guard error.
+  // A run that would otherwise pass must have a complete record (no lost line; an unavailable inventory is a guard error).
   if (!failed) {
     const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
     const named = new Set(namedFiles.map(fold));
