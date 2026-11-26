@@ -94,9 +94,10 @@ describe('hang protection, real runner', { concurrency: true, timeout: DEADLINE_
   it('a test file the caller names outside node\'s default patterns is instrumented by name', { timeout: DEADLINE_MS + 15_000 }, async () => {
     const dir = fs.mkdtempSync(path.join(ROOT, 'tests', 'fixtures', 'run-tests-hang', 'tmp-'));
     try {
-      const odd = path.join(dir, 'oddly-named');   // no extension at all: node still runs a file it is named
+      // No extension, and a leading dash, so it can only be named after `--`: node still runs a file it is named.
+      const odd = path.join(dir, '-oddly-named');
       fs.copyFileSync(path.join(ROOT, FIX, 'hang.test.mjs'), odd);
-      const r = await runRunner(['--test-reporter=spec', path.relative(ROOT, odd)], STALL);
+      const r = await runRunner(['--test-reporter=spec', '--', path.relative(ROOT, odd)], STALL);
       assert.equal(r.code, 1, r.stderr);
       assert.match(r.stderr, /oddly-named \(pid \d+\), over the 8s per-test limit:\s+- hangs forever/);
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }

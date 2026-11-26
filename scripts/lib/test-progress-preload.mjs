@@ -28,7 +28,13 @@ import { PROGRESS_EXTRA_FILES_ENV, PROGRESS_FILE_ENV, PROGRESS_VERSION, isNodeTe
 const target = process.env[PROGRESS_FILE_ENV];
 const entry = process.argv[1] ? path.resolve(process.argv[1]) : '';
 const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
-const named = (() => { try { return new Set(JSON.parse(process.env[PROGRESS_EXTRA_FILES_ENV] || '[]').map((p) => fold(path.resolve(p)))); } catch { return new Set(); } })();
+// The runner's manifest of files the caller named that match no default pattern (a file, not an env string: a glob can select
+// more paths than one variable holds). Unreadable → empty; the runner's end-of-run check then reports the missing record.
+const named = (() => {
+  const manifest = process.env[PROGRESS_EXTRA_FILES_ENV];
+  if (!manifest) return new Set();
+  try { return new Set(JSON.parse(fs.readFileSync(manifest, 'utf8')).map((p) => fold(path.resolve(p)))); } catch { return new Set(); }
+})();
 
 if (target && process.env.NODE_TEST_CONTEXT && (isNodeTestFileName(entry) || named.has(fold(entry)))) {
   const proc = randomBytes(6).toString('hex');

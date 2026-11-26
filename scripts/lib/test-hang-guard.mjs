@@ -30,7 +30,7 @@ export const IDLE_WATCHDOG_ENV = 'TEST_IDLE_WATCHDOG_MS';
 /** The absolute path of the progress file, set by the runner for its children only. */
 export const PROGRESS_FILE_ENV = 'TEST_PROGRESS_FILE';
 
-/** A JSON array of absolute paths the caller named explicitly that match no default pattern; the preload instruments them too. */
+/** The path of a JSON manifest: absolute paths the caller named that match no default pattern; the preload instruments them too. */
 export const PROGRESS_EXTRA_FILES_ENV = 'TEST_PROGRESS_EXTRA_FILES';
 
 /** The progress line schema's version (`test-progress/v1`); a line of any other version is ignored. */

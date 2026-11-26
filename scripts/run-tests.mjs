@@ -829,7 +829,10 @@ async function main() {
   // such files, so that a plain script a test spawns with process.execArgv records nothing).
   // Any regular file the caller names counts, whatever its extension (node runs it); a glob is expanded the way node expands
   // it (fs.globSync), so a quoted pattern selecting an oddly named file counts too.
-  const namedFiles = [...new Set(userArgs.filter((a) => !a.startsWith('-')).flatMap((a) => {
+  // Operands: before `--`, every token that is not an option; after it, every token (a file may itself begin with `-`).
+  const cut = userArgs.indexOf('--');
+  const operands = cut < 0 ? userArgs.filter((a) => !a.startsWith('-')) : [...userArgs.slice(0, cut).filter((a) => !a.startsWith('-')), ...userArgs.slice(cut + 1)];
+  const namedFiles = [...new Set(operands.flatMap((a) => {
     if (/[*?[{!]/.test(a)) { try { return fs.globSync(a); } catch { return []; } }
     return [a];
   }).filter((a) => { try { return fs.statSync(a).isFile(); } catch { return false; } }).map((a) => path.resolve(a)).filter((a) => !isNodeTestFileName(a)))];
@@ -839,7 +842,12 @@ async function main() {
   const timingPath = path.join(reportDir, 'timing.json');
   const progressPath = path.join(reportDir, 'progress.jsonl');
   // An unguarded run is not offered as a fallback, the same rule as the guard report.
-  try { fs.writeFileSync(progressPath, ''); } catch (err) {
+  // The named-file list goes in a manifest file, not an env string: a glob can select more paths than one variable can hold.
+  const namedPath = path.join(reportDir, 'named-files.json');
+  try {
+    fs.writeFileSync(progressPath, '');
+    if (namedFiles.length) fs.writeFileSync(namedPath, JSON.stringify(namedFiles));
+  } catch (err) {
     process.stderr.write(`run-tests: cannot create the progress file ${progressPath} (${err.code ?? err.message}); refusing to run without hang protection.\n`);
     fs.rmSync(reportDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     await finishAndExit(2);
@@ -909,7 +917,7 @@ async function main() {
     args: ['--test', '--import', PROGRESS_PRELOAD, ...reporterArgs, ...caller.pairs, ...args],
     env: {
       ...scrubChildEnv(process.env), [TIMING_REPORT_ENV]: timingPath, [PROGRESS_FILE_ENV]: progressPath,
-      ...(namedFiles.length ? { [PROGRESS_EXTRA_FILES_ENV]: JSON.stringify(namedFiles) } : {}),
+      ...(namedFiles.length ? { [PROGRESS_EXTRA_FILES_ENV]: namedPath } : {}),
     },
     idleMs: limits.watchdogMs,
     everyMs: Math.max(250, Math.min(5_000, Math.floor(Math.min(limits.stallMs, limits.watchdogMs) / 8))),
