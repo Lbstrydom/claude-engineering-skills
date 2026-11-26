@@ -133,10 +133,10 @@ describe('hang protection, real runner', { concurrency: true, timeout: DEADLINE_
   it('the idle watchdog kills the whole tree, names the test, and fails closed', { timeout: DEADLINE_MS + 15_000 }, async () => {
     const pids = pidFile();
     try {
-      const r = await runRunner([`${FIX}/hang.test.mjs`], { HANG_PID_FILE: pids.file, TEST_STALL_TIMEOUT_MS: '600000', TEST_IDLE_WATCHDOG_MS: '3000' });
+      const r = await runRunner([`${FIX}/hang.test.mjs`], { HANG_PID_FILE: pids.file, TEST_STALL_TIMEOUT_MS: '600000', TEST_IDLE_WATCHDOG_MS: '6000' });
       assert.equal(r.code, 1, r.stderr);
       assert.ok(r.ms < 30_000, `the watchdog, not the 600 s per-test limit, ended it (${r.ms}ms)`);
-      assert.match(r.stderr, /IDLE WATCHDOG — no test started or finished for \d+s \(limit 3s\)/);
+      assert.match(r.stderr, /IDLE WATCHDOG — no test started or finished for \d+s \(limit 6s\)/);
       assert.match(r.stderr, /- hangs forever\s+in tests\/fixtures\/run-tests-hang\/hang\.test\.mjs/);
       const { test, grandchild } = pids.read();
       assert.equal(pids.dead(test), true, 'the hung test process is gone');

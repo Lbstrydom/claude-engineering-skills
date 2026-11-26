@@ -191,6 +191,28 @@ describe('the end-of-run record check (a passing run must have a complete record
       '/r/a.test.mjs (pid 1): no exit record, so its record is incomplete',
     ]);
   });
+  it('a lost start, a lost load or a lost end each make the record incomplete, even when exit arrived', () => {
+    const t = feedAll([
+      // lost start (seq 2): end and exit arrive
+      JSON.stringify({ v: 1, seq: 1, proc: 'gap', file: '/r/gap.test.mjs', ev: 'load', pid: 1, at: 0 }),
+      JSON.stringify({ v: 1, seq: 3, proc: 'gap', file: '/r/gap.test.mjs', ev: 'end', id: 1, name: 't', at: 1 }),
+      JSON.stringify({ v: 1, seq: 4, proc: 'gap', file: '/r/gap.test.mjs', ev: 'exit', at: 2 }),
+      // lost load (seq 1)
+      JSON.stringify({ v: 1, seq: 2, proc: 'noload', file: '/r/noload.test.mjs', ev: 'exit', at: 2 }),
+      // lost end: exited with a test still open
+      JSON.stringify({ v: 1, seq: 1, proc: 'noend', file: '/r/noend.test.mjs', ev: 'load', pid: 3, at: 0 }),
+      JSON.stringify({ v: 1, seq: 2, proc: 'noend', file: '/r/noend.test.mjs', ev: 'start', id: 1, name: 't', at: 0 }),
+      JSON.stringify({ v: 1, seq: 3, proc: 'noend', file: '/r/noend.test.mjs', ev: 'exit', at: 1 }),
+    ]);
+    const out = reconcileRecord(t, { ran: ['/r/gap.test.mjs', '/r/noload.test.mjs', '/r/noend.test.mjs'], eligible: () => true, fold: id });
+    assert.ok(out.includes('/r/gap.test.mjs (pid 1): its record lost lines (a gap in its sequence)'), out.join('\n'));
+    assert.ok(out.includes('/r/noload.test.mjs: ran, but no progress record (load) arrived'), out.join('\n'));
+    assert.ok(out.includes('/r/noload.test.mjs: its record has no load line'), out.join('\n'));
+    assert.ok(out.includes('/r/noend.test.mjs (pid 3): exited with 1 test(s) whose end line never arrived'), out.join('\n'));
+  });
+  it('an unavailable file inventory is itself a problem, never an empty pass', () => {
+    assert.equal(reconcileRecord(createProgressTracker(), { ran: null, eligible: () => true, fold: id }).length, 1);
+  });
   it('a superseded record is not incomplete (its process is provably gone)', () => {
     const w = writer();
     const t = feedAll([w({ ev: 'load', proc: 'o', pid: 5, at: 0 }), w({ ev: 'load', proc: 'n', pid: 5, at: 1 }), w({ ev: 'exit', proc: 'n', at: 2 })]);

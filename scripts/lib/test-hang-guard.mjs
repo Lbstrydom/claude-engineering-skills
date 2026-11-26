@@ -224,16 +224,25 @@ export function identityMatches({ row, runnerPid, runStartMs, loadAt }) {
  * this is the check that makes that instrument failure fail the run instead of passing over an incomplete record.
  *
  * @param {ReturnType<typeof createProgressTracker>} tracker
- * @param {{ran: Iterable<string>, eligible: (absFile: string) => boolean, fold: (p: string) => string, show?: (f: string) => string}} o
- *   `ran` = absolute paths of the files node reports having run
+ * @param {{ran: Iterable<string>|null, eligible: (absFile: string) => boolean, fold: (p: string) => string, show?: (f: string) => string}} o
+ *   `ran` = absolute paths of the files node reports having run; null when that inventory is unavailable, which is itself a
+ *   problem (nothing could be reconciled)
  * @returns {string[]} one line per problem; empty when the record is complete
  */
 export function reconcileRecord(tracker, { ran, eligible, fold, show = (f) => f }) {
   const problems = [];
+  if (ran === null) return ['the timing report cannot list the files that ran, so the progress record cannot be checked against them'];
   const owned = tracker.owned();
-  const loaded = new Set(owned.map((p) => fold(p.file)));
+  const loaded = new Set(owned.filter((p) => p.loadAt !== null).map((p) => fold(p.file)));
   for (const f of [...ran].sort()) if (eligible(f) && !loaded.has(fold(f))) problems.push(`${show(f)}: ran, but no progress record (load) arrived`);
-  for (const p of owned) if (!p.exited && !p.superseded) problems.push(`${show(p.file)}${p.pid ? ` (pid ${p.pid})` : ''}: no exit record, so its record is incomplete`);
+  for (const p of owned) {
+    if (p.superseded) continue;
+    const who = `${show(p.file)}${p.pid ? ` (pid ${p.pid})` : ''}`;
+    if (p.loadAt === null) problems.push(`${who}: its record has no load line`);
+    if (p.gap) problems.push(`${who}: its record lost lines (a gap in its sequence)`);
+    if (!p.exited) problems.push(`${who}: no exit record, so its record is incomplete`);
+    else if (p.active.size) problems.push(`${who}: exited with ${p.active.size} test(s) whose end line never arrived`);
+  }
   return problems;
 }
 

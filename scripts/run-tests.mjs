@@ -725,7 +725,10 @@ export function sweepOrphans({
   }
   const deadline = clock() + SWEEP_BUDGET_MS;
   const missed = [];
-  for (const c of children) {
+  // After a whole-tree kill (watchdog, interrupt), also walk from the dead RUNNER: `taskkill /T` snapshots the tree, so a test
+  // child the runner spawned at that moment escapes it and is left with the dead runner as its recorded parent.
+  const roots = groupNeeded ? [{ file: '(the test runner)', pid: runnerPid, at: null }, ...children] : children;
+  for (const c of roots) {
     if (clock() >= deadline) { missed.push(c); continue; }
     const r = reap(c);
     if (r.killed > 0) lines.push(`run-tests: orphan sweep: stopped ${r.killed} process(es) left by ${show(c.file)} (pid ${c.pid})`);
@@ -824,7 +827,11 @@ async function main() {
   if (limits.watchdogMs <= limits.stallMs) process.stderr.write('run-tests: note: the idle watchdog is at or below the per-test limit, so it may stop a lone slow test first.\n');
   // Files the caller named that match no default test-file pattern: the preload instruments them by name (it otherwise skips
   // such files, so that a plain script a test spawns with process.execArgv records nothing).
-  const namedFiles = userArgs.filter((a) => !a.startsWith('-') && /\.(c|m)?js$/.test(a) && fs.existsSync(a) && !isNodeTestFileName(path.resolve(a))).map((a) => path.resolve(a));
+  // A glob is expanded the way node expands it (fs.globSync), so a quoted pattern selecting an oddly named file counts too.
+  const namedFiles = [...new Set(userArgs.filter((a) => !a.startsWith('-')).flatMap((a) => {
+    if (/[*?[{!]/.test(a)) { try { return fs.globSync(a); } catch { return []; } }
+    return fs.existsSync(a) ? [a] : [];
+  }).filter((a) => /\.(c|m)?js$/.test(a)).map((a) => path.resolve(a)).filter((a) => !isNodeTestFileName(a)))];
 
   const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-guard-'));
   const reportPath = path.join(reportDir, 'report.json');
@@ -934,11 +941,12 @@ async function main() {
   if (res.pid) tracker.setOwner(res.pid);
   const failed = res.status !== 0 || res.watchdog || res.interrupted || stallRecords.length > 0;
   // A run that would otherwise pass must have a complete record (no lost load/exit lines): an instrument that failed quietly
-  // must never pass over a run it did not watch. Files the timing report cannot list are not checked for a missing load.
+  // must never pass over a run it did not watch. An inventory the timing report cannot give is itself a guard error.
   if (!failed) {
     const fold = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
     const named = new Set(namedFiles.map(fold));
-    const ran = [...(ranFiles(timingText) ?? [])].map((f) => path.resolve(process.cwd(), f));
+    const listed = ranFiles(timingText);
+    const ran = listed === null ? null : [...listed].map((f) => path.resolve(process.cwd(), f));
     for (const p of reconcileRecord(tracker, { ran, eligible: (f) => isNodeTestFileName(f) || named.has(fold(f)), fold, show })) tickErrors.push(p);
   }
   if (failed && res.pid) {
