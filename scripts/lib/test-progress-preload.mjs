@@ -51,16 +51,26 @@ if (target && process.env.NODE_TEST_CONTEXT && (isNodeTestFileName(entry) || nam
   // The END is a `t.after()` hook registered as LATE as possible, so it runs after the body AND after the test's own after
   // hooks (node runs a root afterEach first, then t.after hooks in registration order; probed on v22.23.2). It is registered
   // from afterEach, or, for a test that calls `t.skip()` at run time (node then skips afterEach), from that call: t.after still
-  // runs once the body finishes, so a body that skips and then hangs stays timed. Once per test.
-  const ended = new WeakSet();
+  // runs once the body finishes, so a body that skips and then hangs stays timed.
+  // A hook the test registers AFTER the end hook (after a t.skip, or from a user afterEach) would still run later, so the end
+  // hook counts registrations and, if any arrived since it was armed, re-registers itself behind them instead of writing.
   beforeEach((t) => {
     nextId += 1;
     const id = nextId;
     const name = t.fullName ?? t.name;
     write({ ev: 'start', id, name });
-    const end = () => { if (ended.has(t)) return; ended.add(t); t.after(() => write({ ev: 'end', id, name })); };
-    ends.set(t, end);
-    if (typeof t.skip === 'function') { const skip = t.skip.bind(t); t.skip = (...a) => { end(); return skip(...a); }; }
+    if (typeof t.after !== 'function') return;
+    const after = t.after.bind(t);
+    let registered = 0;
+    let seen = -1;
+    t.after = (...a) => { registered += 1; return after(...a); };
+    const endHook = () => {
+      if (registered > seen) { seen = registered; after(endHook); return; }
+      write({ ev: 'end', id, name });
+    };
+    const arm = () => { if (seen >= 0) return; seen = registered; after(endHook); };
+    ends.set(t, arm);
+    if (typeof t.skip === 'function') { const skip = t.skip.bind(t); t.skip = (...a) => { arm(); return skip(...a); }; }
   });
   afterEach((t) => ends.get(t)?.());
 }
