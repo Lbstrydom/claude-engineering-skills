@@ -48,6 +48,18 @@ if (target && process.env.NODE_TEST_CONTEXT && (isNodeTestFileName(entry) || nam
   write({ ev: 'load', pid: process.pid, ppid: process.ppid });
   process.on('exit', () => write({ ev: 'exit' }));
   // Root-level hooks run for every test instance in the file, at any nesting depth, including `t.test` subtests.
-  beforeEach((t) => { nextId += 1; ids.set(t, nextId); write({ ev: 'start', id: nextId, name: t.fullName ?? t.name }); });
-  afterEach((t) => write({ ev: 'end', id: ids.get(t) ?? -1, name: t.fullName ?? t.name }));
+  beforeEach((t) => {
+    nextId += 1;
+    const id = nextId;
+    ids.set(t, id);
+    write({ ev: 'start', id, name: t.fullName ?? t.name });
+    // A runtime `t.skip()` ends the test WITHOUT running afterEach (probed on v22.23.2), which would leave a healthy skipped
+    // test open forever: a false stall and a false incomplete record. The context is the same object the body gets, so the
+    // end line is written here, once, when the test skips itself.
+    if (typeof t.skip === 'function') {
+      const skip = t.skip.bind(t);
+      t.skip = (...a) => { if (ids.get(t) === id) { ids.set(t, -id); write({ ev: 'end', id, name: t.fullName ?? t.name }); } return skip(...a); };
+    }
+  });
+  afterEach((t) => { const id = ids.get(t); if (id > 0) write({ ev: 'end', id, name: t.fullName ?? t.name }); });
 }

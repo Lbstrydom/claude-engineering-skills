@@ -179,6 +179,12 @@ ${r.stderr}`);
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  it('a healthy file whose tests skip themselves at run time passes, with a complete record and no stall', { timeout: DEADLINE_MS + 15_000 }, async () => {
+    const r = await runRunner(['--test-reporter=spec', `${FIX}/runtime-skip.test.mjs`], STALL);
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /GUARD ERROR|PER-TEST LIMIT/);
+  });
+
   it('refuses an override that is not a positive integer, before running anything', { timeout: DEADLINE_MS }, async () => {
     const r = await runRunner([`${FIX}/ok.test.mjs`], { TEST_IDLE_WATCHDOG_MS: 'off' });
     assert.equal(r.code, 2);
