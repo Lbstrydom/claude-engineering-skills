@@ -1,9 +1,8 @@
 # Moving wine-cellar-app into a personal GitHub organisation
 
-- **Status**: Draft
+- **Status**: In progress (transferred 2026-11-26; record in §9)
 
-Planning only. Nothing here has been executed by this plan: no transfer, no repo setting changed, no store
-row written. The target is the owner's organisation **`Creathyst`**, created 2026-11-23 on GitHub **Team**,
+Written as a plan; the transfer ran on 2026-11-26, and §9 records what was done and measured. The target is the owner's organisation **`Creathyst`**, created 2026-11-23 on GitHub **Team**,
 so D0 is decided as option A (§1).
 
 **Org settings the owner reports applied (2026-11-23):** two-factor authentication required; base
@@ -603,6 +602,33 @@ transfer decision and its own look at the host-lock work in the sibling notes. N
 
   If the go/no-go fails, the whole chain slips day for day, and RQ4 moves so that it keeps three clean days
   after the RC. The owner-held promotion PR stays held unless Louis merges it first.
+
+## 9. Execution record (2026-11-26)
+
+The transfer ran in the afternoon buffer rather than the morning window. Each row was measured with `gh api`
+against `repos/Creathyst/wine-cellar-app` unless it says otherwise. Times are UTC.
+
+| Step | State | Evidence |
+|---|---|---|
+| 6 Freeze | done | `allow_auto_merge: false`; WCA held the workers. Dependabot opened #1439–#1442 just after the transfer; they are held until step 16. |
+| 7 Transfer | done | `full_name: Creathyst/wine-cellar-app`, private; `Lbstrydom/wine-cellar-app` now redirects. |
+| 8 Rulesets | done | `main protection`, `Protect E5b evidence` and `Protect E5b evidence tags`, all `active`; the owner compared them with the baseline. |
+| 8R Runner | done, **kept at repo level** | The repo-level registration survived the transfer: `wsl2-ubuntu-louis` is online with the same six labels. The owner chose to keep it at repo level rather than move it into the org runner group (§3), so the step 13 row "org-level, in the group" is replaced by "repo-level, same name and labels, online". The empty `wine` org runner group is harmless. |
+| 8N Negative control | **passed** | #1443: `Required gate` completed as failed 23 minutes after the PR opened, the merge state was `BLOCKED`, and the only unit failure was the planted test. Closed, branch deleted. All its jobs ran on GitHub-hosted runners, so it did not exercise the self-hosted runner. |
+| Runner proof | **passed** | #1445 (head `b0d85bfe7`): Unit Tests, Lint Check, Test PostgreSQL Compatibility and Integration all ran on `wsl2-ubuntu-louis` between 15:33 and 15:38, and `Required gate` went green. Runner placement is decided per run (wine #1434's heavy-job lock), which is why #1443 stayed hosted. The planned `deploy-config-drift` dispatch was not needed. |
+| 9 Clones and env | done | The one clone's origin points at Creathyst, and its worktrees share that remote; WSL has no clone. In `.env`, `LEARNING_REPO_NAME` and **`PERSONA_TEST_REPO_NAME`** both hold the Creathyst slug, one line each, and no line names the old owner (the owner edited the file; no value was printed). `PERSONA_TEST_REPO_NAME` was missing from §2.3 and is added here. The bridge file goes in WCA's canary PR. |
+| 10 Store | structural (D2) | The views join on `repo_id` (CES #506). The row rename happens on the first profiled audit from a repointed checkout. |
+| 11 Runner-status token | done | `RUNNER_STATUS_TOKEN` was updated at 15:20 (the old value dated from 2026-11-07); the runner-health path works, as #1445 shows. |
+| 12 Railway | **open** | The most recent `railway-app[bot]` deployment was at 03:53, before the transfer, and there was no PR-preview deployment for #1443–#1445. Re-linking the Railway app on Creathyst (part 7) was still in progress. |
+| 12S Code security | done | Equal to baseline, all off: Dependabot alerts off, security fixes `enabled: false`, code scanning unavailable without Code Security. |
+| Settings checks | done | One webhook (Snyk), active; 17 Actions secrets; default workflow permission `read`; Actions may create and approve PRs. |
+| 14 Canary, 16 Unfreeze | open | Waits on step 12. |
+
+**Found during the move: gitleaks.** `gitleaks/gitleaks-action` needs a license for an organisation-owned
+repo, so the secret scan failed on every PR from the transfer onwards. It is not a required check, so it
+blocked no merge. The owner chose to switch to the gitleaks CLI, which needs no license or secret (wine #1444:
+audited, gitleaks green on the PR). WCA lands it after the unfreeze. Separately, wine's daily full-history
+scan has failed since late October on unallowlisted fixture hits. That predates the move and is its own task.
 
 ## Audit trail
 
