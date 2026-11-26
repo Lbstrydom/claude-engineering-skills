@@ -1,9 +1,8 @@
 # Moving wine-cellar-app into a personal GitHub organisation
 
-- **Status**: Draft
+- **Status**: Complete (transferred 2026-11-26; record in §9)
 
-Planning only. Nothing here has been executed by this plan: no transfer, no repo setting changed, no store
-row written. The target is the owner's organisation **`Creathyst`**, created 2026-11-23 on GitHub **Team**,
+Written as a plan; the transfer ran on 2026-11-26, and §9 records what was done and measured. The target is the owner's organisation **`Creathyst`**, created 2026-11-23 on GitHub **Team**,
 so D0 is decided as option A (§1).
 
 **Org settings the owner reports applied (2026-11-23):** two-factor authentication required; base
@@ -603,6 +602,36 @@ transfer decision and its own look at the host-lock work in the sibling notes. N
 
   If the go/no-go fails, the whole chain slips day for day, and RQ4 moves so that it keeps three clean days
   after the RC. The owner-held promotion PR stays held unless Louis merges it first.
+
+## 9. Execution record (2026-11-26)
+
+The transfer ran in the afternoon buffer rather than the morning window. Each row was measured with `gh api`
+against `repos/Creathyst/wine-cellar-app` unless it says otherwise. Times are UTC.
+
+| Step | State | Evidence |
+|---|---|---|
+| 6 Freeze | done | `allow_auto_merge: false`; WCA held the workers. Dependabot opened #1439–#1442 just after the transfer; they are held until step 16. |
+| 7 Transfer | done | `full_name: Creathyst/wine-cellar-app`, private; `Lbstrydom/wine-cellar-app` now redirects. |
+| 8 Rulesets | done | `main protection`, `Protect E5b evidence` and `Protect E5b evidence tags`, all `active`; the owner compared them with the baseline. |
+| 8R Runner | done, **kept at repo level** | The repo-level registration survived the transfer: `wsl2-ubuntu-louis` is online with the same six labels. The owner chose to keep it at repo level rather than move it into the org runner group (§3), so the step 13 row "org-level, in the group" is replaced by "repo-level, same name and labels, online". The empty `wine` org runner group is harmless. |
+| 8N Negative control | **passed** | #1443: `Required gate` completed as failed 23 minutes after the PR opened, the merge state was `BLOCKED`, and the only unit failure was the planted test. Closed, branch deleted. All its jobs ran on GitHub-hosted runners, so it did not exercise the self-hosted runner. |
+| Runner proof | **passed** | #1445 (head `b0d85bfe7`): Unit Tests, Lint Check, Test PostgreSQL Compatibility and Integration all ran on `wsl2-ubuntu-louis` between 15:33 and 15:38, and `Required gate` went green. Runner placement is decided per run (wine #1434's heavy-job lock), which is why #1443 stayed hosted. The planned `deploy-config-drift` dispatch was not needed. |
+| 9 Clones and env | done | The one clone's origin points at Creathyst, and its worktrees share that remote; WSL has no clone. In `.env`, `LEARNING_REPO_NAME` and **`PERSONA_TEST_REPO_NAME`** both hold the Creathyst slug, one line each, and no line names the old owner (the owner edited the file; no value was printed). `PERSONA_TEST_REPO_NAME` was missing from §2.3 and is added here. The bridge file goes in WCA's canary PR. |
+| 10 Store | structural (D2) | The views join on `repo_id` (CES #506). The row rename happens on the first profiled audit from a repointed checkout. |
+| 11 Runner-status token | done | `RUNNER_STATUS_TOKEN` was updated at 15:20 (the old value dated from 2026-11-07); the runner-health path works, as #1445 shows. |
+| 12 Railway | done (owner-reported); **deploy unverified** | The owner reports the Railway service deploys from `Creathyst/wine-cellar-app`, branch `main`, with auto-deploy on and "Wait for CI" on. The most recent `railway-app[bot]` deployment was at 03:53, before the transfer. No commit has reached `main` since, so no deploy was expected. The canary merge (step 14) is the check: its sha has to appear as a `production` deployment. |
+| Snyk webhook | **broken by the move; owner's call** | The hook still reads `active` with a last response of 202, but its most recent delivery was at 08:52, before the transfer. Nothing has been delivered since, although there have been pushes and comments. GitHub shows "This hook has been denied access by an organization administrator": the hook belongs to Snyk's OAuth app, and Creathyst's third-party (OAuth app) access policy does not approve that app. To fix it, approve Snyk under Creathyst → Settings → Third-party access → OAuth app policy. That is an org setting only the owner can change. **Resolved 2026-11-26: the owner approved Snyk on Creathyst.** Snyk is not in use at present, so no delivery is required and the "Webhook" verification item is dropped. If Snyk is taken up again, the first new delivery in the hook's log confirms it. |
+| 12S Code security | done | Equal to baseline, all off: Dependabot alerts off, security fixes `enabled: false`, code scanning unavailable without Code Security. |
+| Settings checks (part 7) | done | The owner confirmed that everything matches the baseline apart from the Snyk webhook (row above). One webhook; 17 Actions secrets; default workflow permission `read`; Actions may create and approve PRs. |
+| 14 Canary | **merged, deploy SKIPPED** | The canary merged as `d98e8042f`. Railway recorded a `production` deployment for it at 16:32 but skipped it, so production stays healthy on `a2be4fce4`. The cause is a deadlock that the move created. The Railway source was re-linked with "Wait for CI" on, which waits for every check on the commit. The push-triggered `sql-schema-compat` (`compat`) check, and on some pushes `consistency-canary` and `visual-audit`, themselves wait for production to serve that commit. `compat` timed out after 5 minutes and failed (measured: `compat failure` on `main`), and Railway skipped the deploy. Before the move "Wait for CI" was off. **Resolved; canary PASSED.** The owner turned "Wait for CI" off, which is the pre-move setup (read back: `checkSuites: false`, nothing staged), and deployed by hand. Production now runs `d98e8042f` with status `SUCCESS` (`railway status --json`), and `/health` returns 200. WCA's rerun of `compat` against live production passed. **Lesson for any re-link:** Railway's source re-link can switch "Wait for CI" on. With a check that waits for its own deploy, that blocks every deploy, so read `checkSuites` back after a re-link. Railway deploys `main` for now and moves to `release` before live testers (owner's decision). |
+| PR previews | **open, owner's Railway setting** | Only `production` was re-linked. `pr-preview-base` and the old PR-preview environments still read `source.repo: Lbstrydom/wine-cellar-app` (`railway status --json`), which is why no PR has had a preview since the move. Re-link `pr-preview-base` to `Creathyst/wine-cellar-app`. The old PR environments can be left as they are or deleted. Production's Railway variables include `PERSONA_TEST_REPO_NAME`: the owner should check whether its value still names the old slug (no value was read here). |
+| 16 Unfreeze | **done ~17:45** | The owner said "unfreeze". Auto-merge is back on (`allow_auto_merge: true`, read back). All workflows were already active, so nothing needed re-enabling. WCA merges #1444 (the gitleaks CLI) and then #1445 one at a time, checking the deploy and `/health` after each. #1446 follows once the owner answers it. Dependabot #1439–#1442 are released. **The move is complete**, apart from the PR-preview re-link above. |
+
+**Found during the move: gitleaks.** `gitleaks/gitleaks-action` needs a license for an organisation-owned
+repo, so the secret scan failed on every PR from the transfer onwards. It is not a required check, so it
+blocked no merge. The owner chose to switch to the gitleaks CLI, which needs no license or secret (wine #1444:
+audited, gitleaks green on the PR). WCA lands it after the unfreeze. Separately, wine's daily full-history
+scan has failed since late October on unallowlisted fixture hits. That predates the move and is its own task.
 
 ## Audit trail
 
