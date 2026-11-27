@@ -227,6 +227,32 @@ describe('no-sub-command path — byte-for-byte unchanged (R1 M3)', () => {
   }
 });
 
+// An unknown sub-command used to fall through to the no-sub-command path,
+// whose capability probe requests and PRINTS a registration token (2026-11-27,
+// a consumer's typo minted a live token). Under the `viable` stub that path
+// prints a token, so an empty stdout proves the probe never ran.
+describe('unknown sub-command — refused before any gh call', () => {
+  const SLUG = 'example-owner/example-repo';
+  for (const args of [['status', '--repo', SLUG], ['--repo', SLUG, 'remove-verify'], ['--json', 'locl']]) {
+    it(`refuses ${JSON.stringify(args)} with exit 1 and makes zero gh calls`, () => {
+      const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gh-calls-')), 'calls.log');
+      const r = runCli(args, { env: { GH_STUB_SCENARIO: 'viable', GH_STUB_CALL_LOG: log } });
+      assert.equal(r.status, 1, `stdout=${r.stdout}`);
+      assert.match(r.stderr, /unknown sub-command "[^"]+" — valid: local, remove/);
+      assert.equal(r.stdout, '', 'the capability probe (which prints a registration token) must not run');
+      assert.equal(fs.existsSync(log) ? fs.readFileSync(log, 'utf-8') : '', '', 'no gh invocation at all');
+    });
+  }
+
+  it('positive control: the same viable stub IS called, and prints, on the no-sub-command path', () => {
+    const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gh-calls-')), 'calls.log');
+    const r = runCli(['--repo', SLUG], { env: { GH_STUB_SCENARIO: 'viable', GH_STUB_CALL_LOG: log } });
+    assert.equal(r.status, 0);
+    assert.notEqual(r.stdout, '');
+    assert.match(fs.readFileSync(log, 'utf-8'), /registration-token/, 'the call log records the token request');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // local --json
 // ─────────────────────────────────────────────────────────────────────────

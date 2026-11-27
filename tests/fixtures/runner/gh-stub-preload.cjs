@@ -36,6 +36,14 @@
  */
 const path = require('path');
 
+// GH_STUB_CALL_LOG: when set, every invocation of the gh stand-in (this node
+// binary copied as gh/gh.exe) appends one line, so a test can assert that a
+// path made ZERO gh calls, not merely that it printed nothing.
+if (process.env.GH_STUB_ACTIVE === '1' && process.env.GH_STUB_CALL_LOG
+  && /^gh(\.exe)?$/i.test(path.basename(process.execPath))) {
+  require('fs').appendFileSync(process.env.GH_STUB_CALL_LOG, `${process.argv.slice(1).join(' ')}\n`);
+}
+
 if (process.env.GH_STUB_ACTIVE === '1' && path.basename(process.argv[1] || '') === 'api') {
   const args = process.argv.slice(2);
 
