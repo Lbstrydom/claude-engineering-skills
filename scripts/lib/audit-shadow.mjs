@@ -29,6 +29,7 @@
  * @module scripts/lib/audit-shadow
  */
 
+import { geminiClientOptions } from './gemini-client.mjs';
 import { z } from 'zod';
 import { ProducerFindingSchema } from './schemas.mjs';
 import { PASS_PROMPTS } from './prompt-seeds.mjs';
@@ -684,7 +685,7 @@ async function callGeminiDefault({ collectedFindings, redactedContext, planConte
   }
   const { GoogleGenAI } = await import('@google/genai');
   const { zodToGeminiSchema } = await import('./schemas.mjs');
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI(geminiClientOptions());
   const priorList = (collectedFindings || []).slice(0, 40).map((f) => `- [${f.severity}] ${f.category}: ${f.detail?.slice(0, 160)}`).join('\n');
   const prompt = [
     'You are the final-gate reviewer. Below are findings already raised by a prior audit.',

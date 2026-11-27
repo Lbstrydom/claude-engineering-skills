@@ -8,6 +8,7 @@
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
 import './lib/help-guard-run.mjs'; import { loadOutcomes, computePassEffectiveness, computePassEWR } from './lib/findings.mjs';
+import { geminiClientOptions } from './lib/gemini-client.mjs';
 import { sanitizeOutcomes } from './lib/sanitizer.mjs';
 import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';
@@ -197,7 +198,7 @@ async function suggestRefinements(passName, outcomesPath) {
   if (!suggestion && process.env.GEMINI_API_KEY) {
     try {
       const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI(geminiClientOptions());
       const response = await ai.models.generateContent({
         model: briefConfig.geminiModel,
         contents: `Outcome data:\n\n${statsBlock}${exampleBlock}\n\nSuggest prompt refinements to reduce false positives.`,

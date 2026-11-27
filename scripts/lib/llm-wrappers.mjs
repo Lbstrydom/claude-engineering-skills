@@ -5,6 +5,7 @@
  * @module scripts/lib/llm-wrappers
  */
 
+import { geminiClientOptions } from './gemini-client.mjs';
 import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { openaiConfig, briefConfig } from './config.mjs';
@@ -22,7 +23,7 @@ export async function getGeminiClient() {
   if (_geminiClient) return _geminiClient;
   if (!process.env.GEMINI_API_KEY) return null;
   const { GoogleGenAI } = await import('@google/genai');
-  _geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  _geminiClient = new GoogleGenAI(geminiClientOptions());
   return _geminiClient;
 }
 

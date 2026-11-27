@@ -25,6 +25,7 @@
  */
 
 import './lib/help-guard-run.mjs'; import './lib/load-env.mjs';
+import { geminiClientOptions } from './lib/gemini-client.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { computePassEffectiveness, FalsePositiveTracker } from './lib/findings.mjs';
@@ -320,7 +321,7 @@ export async function runLLMAssessment(metrics, samples, fpPatterns) {
 
   if (model.startsWith('gemini') && process.env.GEMINI_API_KEY) {
     const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = new GoogleGenAI(geminiClientOptions());
     const jsonSchema = zodToGeminiSchema(MetaAssessmentSchema);
 
     const response = await ai.models.generateContent({

@@ -20,6 +20,7 @@
  * @module scripts/lib/model-eval/provider-adapter
  */
 
+import { geminiClientOptions } from '../gemini-client.mjs';
 import { z } from 'zod';
 import { createOpenAIClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
@@ -241,7 +242,7 @@ async function invokeNativeGemini({ route, messages, schema, signal, dials }) {
     throw new Error('invokeStructured: no Azure-hosted Gemini transport exists — a google-lineage azure-deployment profile is unsupported');
   }
   const { GoogleGenAI } = await import('@google/genai');
-  const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const client = new GoogleGenAI(geminiClientOptions());
   const system = messages.find((m) => m.role === 'system')?.content;
   const userText = messages.filter((m) => m.role !== 'system').map((m) => m.content).join('\n\n');
   // Implementation M8/M12 fix — `signal` is not a top-level generateContent

@@ -1,3 +1,4 @@
+import { geminiClientOptions } from '../../gemini-client.mjs';
 import { normalizeGeminiUsage } from '../../gemini-usage.mjs';
 /**
  * @fileoverview Shared free-text model dispatch for arm-eval producers.
@@ -47,7 +48,7 @@ export async function callModelFreeText({ model, system, userPrompt, maxTokens =
   }
   if (provider === 'gemini') {                         // Gemini via @google/genai
     const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = new GoogleGenAI(geminiClientOptions());
     const resp = await ai.models.generateContent({ model: resolved, contents: `${system}\n\n${userPrompt}`, config: { maxOutputTokens: maxTokens } });
     // `reasoning_tokens` is THIS module's established field name (every branch
     // records it — see the note above), so the oracle's `thinking_tokens` is

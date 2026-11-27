@@ -21,6 +21,7 @@
  * @module scripts/model-eval-decision
  */
 
+import { geminiClientOptions } from './lib/gemini-client.mjs';
 import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -332,7 +333,7 @@ async function cmdCrossGrade(argv, root) {
   const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
   const graders = [
     { name: 'gpt', model: resolveModel('latest-gpt', { silent: true }), client: await createOpenAIClient({ purpose: 'gpt' }), maxOutputTokens: DEFAULT_JUDGE_MAX_OUTPUT_TOKENS },
-    { name: 'gemini', model: resolveModel('latest-pro', { silent: true }), invoke: makeGeminiInvoker({ genai: new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), toGeminiSchema: zodToGeminiSchema }), maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, reasoningEffort: null },
+    { name: 'gemini', model: resolveModel('latest-pro', { silent: true }), invoke: makeGeminiInvoker({ genai: new GoogleGenAI(geminiClientOptions()), toGeminiSchema: zodToGeminiSchema }), maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, reasoningEffort: null },
   ];
   const sample = summary.spotSampleIds.map((gid) => { const r = calls.find((x) => x.gradeId === gid); return { gradeId: gid, kind: 'arm', caseId: r.caseId, text: r.text }; });
   const caseById = Object.fromEntries(cases.map((c) => [c.id, c]));

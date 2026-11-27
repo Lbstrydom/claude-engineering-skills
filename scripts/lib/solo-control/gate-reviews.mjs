@@ -5,6 +5,7 @@
  * the CLI that already holds that dependency hands it in instead.
  * @module scripts/lib/solo-control/gate-reviews
  */
+import { geminiClientOptions } from '../gemini-client.mjs';
 import { buildToolUseRequest } from '../anthropic-tool-choice.mjs';
 import { PASS_PROMPTS } from '../prompt-seeds.mjs';
 import { assertEgressSafe } from '../sensitive-egress-gate.mjs';
@@ -36,7 +37,7 @@ export function createGateReviews({ ShadowPassSchema }) {
     if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
     const { GoogleGenAI } = await import('@google/genai');
     const { zodToGeminiSchema } = await import('../schemas.mjs');
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = new GoogleGenAI(geminiClientOptions());
     const prompt = buildGateReviewPrompt(collected, diff);
     assertEgressSafe(prompt, { label: 'apparatus:gemini' });
     const resp = await ai.models.generateContent({
@@ -135,7 +136,7 @@ export function createGateReviews({ ShadowPassSchema }) {
     if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
     const { GoogleGenAI } = await import('@google/genai');
     const { zodToGeminiSchema } = await import('../schemas.mjs');
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const ai = new GoogleGenAI(geminiClientOptions());
     const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
     const userPrompt = [
       `## Task\nAudit the code below for the "${passName}" concern. Return findings per the schema.`,
