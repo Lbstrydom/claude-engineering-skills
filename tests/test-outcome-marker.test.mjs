@@ -35,6 +35,7 @@ describe('classifyOutcome — the one reader', () => {
     [{ testsFailed: 0, guards: [] }, 'unclassified'],
     [{ testsFailed: null, guards: [{ id: 'idle-watchdog', kind: 'timeout' }, { id: 'guard-report', kind: 'instrument' }] }, 'timeout'],
     [{ testsFailed: 3, guards: [{ id: 'per-test-limit', kind: 'timeout' }] }, 'timeout'],
+    [{ testsFailed: null, guards: [{ id: 'guard-report', kind: 'instrument' }] }, 'instrument'],
   ];
   for (const [o, kind] of rows) it(`${JSON.stringify(o)} → ${kind}`, () => assert.equal(classifyOutcome(o), kind));
 });

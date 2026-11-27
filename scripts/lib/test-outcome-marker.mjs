@@ -60,9 +60,10 @@ export function classifyOutcome(o) {
   if (!o) return 'unclassified';
   // A run stopped for time is a timeout whatever else it counted: the same load stops a rerun again, at the full cost.
   if (o.guards.some((g) => g.kind === 'timeout')) return 'timeout';
-  if (o.testsFailed === null) return 'unclassified';
-  if (o.testsFailed > 0) return 'test-failure';
+  if (o.testsFailed !== null && o.testsFailed > 0) return 'test-failure';
+  // The apparatus failed (a missing report, a killed child): rerun-eligible, and never mistaken for a clean count.
   if (o.guards.some((g) => g.kind === 'instrument')) return 'instrument';
+  if (o.testsFailed === null) return 'unclassified';
   return o.guards.length ? 'guard' : 'unclassified';
 }
 

@@ -202,7 +202,8 @@ Every tier result gains `reasonCode` from `TIER_REASON_CODES` (exported from `tr
 
 ## 6. Sustainability Notes
 
-- The marker grammar is the extension point: a consumer runner gains classification by printing one line; a new guard
+- The marker grammar is the extension point: a consumer runner gains classification by writing one line to
+  `FLEET_TEST_OUTCOME_FILE` (and hiding that variable from its tests); a new guard
   kind is a grammar version bump, not a fleet code path.
 - Right-sizing gate: **band-aid** — grep the log for "slow" and skip the rerun. **Over-built** — a pluggable
   per-runner result-parser registry (JUnit, pytest, TAP …). **Chosen** — one versioned line any runner can print, read

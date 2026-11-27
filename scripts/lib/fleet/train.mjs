@@ -615,6 +615,12 @@ const SAFE_FILE = /^[A-Za-z0-9_@+=:,./-]+$/;
 /** The file the runner writes one attempt's machine lines to (`FLEET_TEST_OUTCOME_FILE`), beside the tier log. */
 export const outcomePathOf = (logPath, n) => `${logPath}.attempt-${n}.outcome`;
 const OUTCOME_BYTES = 64 * 1024;
+/** The WHOLE outcome file, or null when absent/unreadable, or `{tooLarge: true}`: a tail could hide a second marker. */
+function readOutcomeFile(file) {
+  let size;
+  try { size = fs.statSync(file).size; } catch { return null; }
+  return size > OUTCOME_BYTES ? { tooLarge: true } : readTail(file, OUTCOME_BYTES);
+}
 
 /**
  * The argv of a targeted rerun: the tier's `rerunFailedCommand` with `{files}` replaced by the failing files the runner's
@@ -668,8 +674,8 @@ function runOneTier({ tier, train, dir, deps }) {
     if (r.exitCode === null || r.exitCode === undefined) {
       return { result: 'red', reason: `killed (${r.signal ?? 'no exit code'})`, reasonCode: 'unclassified-failure', failureKind: 'unclassified', classifyWhy: 'the tier did not exit normally' };
     }
-    const segment = readTail(outcomePathOf(logPath, n), OUTCOME_BYTES);
-    const c = segment === null ? { kind: 'unclassified', outcome: null, why: `the runner wrote no outcome file (${TEST_OUTCOME_FILE_ENV})` } : classifyAttemptLog(segment);
+    const segment = readOutcomeFile(outcomePathOf(logPath, n));
+    const c = segment?.tooLarge ? { kind: 'unclassified', outcome: null, why: `the outcome file is over ${OUTCOME_BYTES} bytes (only machine lines belong there)` } : segment === null ? { kind: 'unclassified', outcome: null, why: `the runner wrote no outcome file (${TEST_OUTCOME_FILE_ENV})` } : classifyAttemptLog(segment);
     return {
       result: 'red', reason: `exit ${r.exitCode ?? r.signal ?? 'unknown'}${c.kind === 'unclassified' ? '' : ` (${c.kind})`}`, reasonCode: KIND_CODE[c.kind],
       failureKind: c.kind, ...(c.outcome ? { testsFailed: c.outcome.testsFailed, guards: c.outcome.guards } : { classifyWhy: c.why }), segment,
@@ -743,8 +749,13 @@ export function runTiers({ dir, trainId, deps }) {
     train = patchTrain(dir, trainId, { tierResults, result: worstResult(tierResults.map((r) => r.result)) }, deps);
     deps.log?.(`tier ${tier.name}: ${entry.result}${entry.reason ? ` (${entry.reason})` : ''}`);
     deps.hooks?.afterTier?.(tier.name);
-    // A tier whose cleanup failed may have left a process running: the next tier never starts beside it.
-    if ((entry.result !== 'green' && entry.result !== 'green-after-rerun' && !guardOnlyRed(entry)) || entry.cleanupWarning) break;
+    // A tier whose cleanup failed may have left a process running: the next tier never starts beside it, and a train whose
+    // pre-land tiers did not all run is never recorded as green (`none`); it is rebuilt, never resumed.
+    if (entry.cleanupWarning && pre.some((t) => !(train.tierResults ?? []).some((r) => r.name === t.name))) {
+      const notes = [...(train.notes ?? []), `stopped after tier ${tier.name}: cleanup failed (${entry.cleanupWarning}) — a process it started may still be running; later tiers did not run, rebuild the train`];
+      return patchTrain(dir, trainId, { phase: 'tested', result: worstResult([...tierResults.map((r) => r.result), 'none']), notes }, deps);
+    }
+    if (entry.result !== 'green' && entry.result !== 'green-after-rerun' && !guardOnlyRed(entry)) break;
   }
   return patchTrain(dir, trainId, { phase: 'tested', result: worstResult((train.tierResults ?? []).map((r) => r.result)) }, deps);
 }

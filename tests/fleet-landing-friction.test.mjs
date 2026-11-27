@@ -369,5 +369,25 @@ describe('a failed reap: no second attempt, no next tier', () => {
     const green = run('t-20261127000000-0002', [{ exitCode: 0, timedOut: false, error: null, signal: null }]);
     assert.deepEqual(green.calls, ['one'], 'the next tier never starts');
     assert.equal(green.t.tierResults[0].warnings[0].code, 'cleanup-warning');
+    assert.equal(green.t.result, 'none', 'a train with an unrun pre-land tier is never recorded green');
+    assert.ok(green.t.notes.some((x) => /later tiers did not run/.test(x)));
+  });
+});
+
+describe('an oversized outcome file is never read as its tail', () => {
+  it('over 64 KiB → unclassified (a tail could hide a second marker)', () => {
+    const dir = tmpRoot();
+    const script = path.join(dir, 'big.cjs');
+    fs.writeFileSync(script, `const fs = require('fs');
+fs.writeFileSync(process.env.FLEET_TEST_OUTCOME_FILE, ${JSON.stringify(`${FAIL_LINE}
+${'x'.repeat(70000)}
+${GUARD_LINE}
+`)});
+process.exit(1);
+`);
+    const big = ['node', fwd(script)];
+    const t = land(withTiers([{ name: 'full', command: big }])).json.train;
+    assert.equal(t.tierResults[0].reasonCode, 'unclassified-failure');
+    assert.match(t.tierResults[0].classifyWhy, /over 65536 bytes/);
   });
 });
