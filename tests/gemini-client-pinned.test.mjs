@@ -25,6 +25,26 @@ function* scriptFiles() {
   }
 }
 
+/**
+ * An aliased or namespace import would let a construction escape the
+ * `new GoogleGenAI(` census below, so it is refused outright.
+ * @param {string} src
+ * @returns {string[]}
+ */
+export function evasiveImports(src) {
+  const out = [];
+  const re = /import\s*(?:\{([^}]*)\}|\*\s+as\s+\w+)\s*from\s*['"]@google\/genai['"]/g;
+  const dyn = /await\s+import\(\s*['"]@google\/genai['"]\s*\)/g;
+  let m;
+  while ((m = re.exec(src))) {
+    if (m[1] === undefined || /GoogleGenAI\s+as\s+/.test(m[1])) out.push(m[0]);
+  }
+  // A dynamic import is fine only when destructured by its own name.
+  const dynLines = src.split('\n').filter((l) => dyn.test(l) && (dyn.lastIndex = 0, true));
+  for (const l of dynLines) if (!/\{\s*GoogleGenAI\s*\}\s*=\s*await\s+import/.test(l)) out.push(l.trim());
+  return out;
+}
+
 export function unpinnedConstructions(src) {
   const out = [];
   const re = /new\s+GoogleGenAI\s*\(\s*([^)]*)\)/g;
@@ -41,11 +61,12 @@ describe('Gemini clients pin their API version', () => {
     let seen = 0;
     for (const { rel, src } of scriptFiles()) {
       if (!src.includes('GoogleGenAI')) continue;
-      const bad = unpinnedConstructions(src);
+      const bad = [...unpinnedConstructions(src), ...evasiveImports(src)];
       seen += (src.match(/new\s+GoogleGenAI\s*\(/g) || []).length;
       for (const b of bad) offenders.push(`${rel}: ${b}`);
     }
-    assert.ok(seen >= 14, `vacuous-pass guard: expected >=14 constructions, saw ${seen}`);
+    // Vacuous-pass guard: a walk that found NO constructions measured nothing.
+    assert.ok(seen > 0, `vacuous-pass guard: saw ${seen} constructions — the walk read nothing`);
     assert.deepEqual(offenders, [], 'route these through geminiClientOptions() (scripts/lib/gemini-client.mjs)');
   });
 
@@ -53,6 +74,11 @@ describe('Gemini clients pin their API version', () => {
     assert.equal(unpinnedConstructions('new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })').length, 1);
     assert.equal(unpinnedConstructions('new GoogleGenAI({})').length, 1);
     assert.equal(unpinnedConstructions('new GoogleGenAI(geminiClientOptions())').length, 0);
+    assert.equal(evasiveImports("import { GoogleGenAI as G } from '@google/genai';").length, 1);
+    assert.equal(evasiveImports("import * as genai from '@google/genai';").length, 1);
+    assert.equal(evasiveImports("const genai = await import('@google/genai');").length, 1);
+    assert.equal(evasiveImports("import { GoogleGenAI } from '@google/genai';").length, 0);
+    assert.equal(evasiveImports("const { GoogleGenAI } = await import('@google/genai');").length, 0);
   });
 
   it('the options pin v1beta, keep the env key, and cannot be overridden by httpOptions', () => {
@@ -63,8 +89,24 @@ describe('Gemini clients pin their API version', () => {
     assert.equal(geminiClientOptions({ apiKey: 'k' }).apiKey, 'k');
   });
 
-  it('a client built from them really targets v1beta (the SDK reads the option)', () => {
-    const c = new GoogleGenAI(geminiClientOptions({ apiKey: 'test-not-a-key' }));
-    assert.equal(c.apiClient?.clientOptions?.httpOptions?.apiVersion, 'v1beta');
+  it('the EMITTED request goes to /v1beta/ (observed at fetch, not SDK internals)', async () => {
+    const urls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      urls.push(String(input?.url ?? input));
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    try {
+      // This repo's SDK (2.x) already defaults to v1beta, so an unpinned client
+      // would pass here too. Ask for v1 — the 3.x default a consumer gets — and
+      // require the pin to win; that is what makes this a negative control.
+      const c = new GoogleGenAI(geminiClientOptions({ apiKey: 'test-not-a-key', httpOptions: { apiVersion: 'v1' } }));
+      await c.models.generateContent({ model: 'gemini-pro-latest', contents: 'hi', config: { systemInstruction: 's' } });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    assert.equal(urls.length, 1, `one request, saw ${urls.length}`);
+    assert.match(urls[0], /\/v1beta\/models\/gemini-pro-latest:generateContent/);
   });
 });
