@@ -117,7 +117,15 @@ function firstPositionalToken(argv) {
 }
 
 const _firstPositional = firstPositionalToken(process.argv);
-const SUBCOMMAND = (_firstPositional === 'local' || _firstPositional === 'remove') ? _firstPositional : null;
+const KNOWN_SUBCOMMANDS = Object.freeze(['local', 'remove']);
+const SUBCOMMAND = KNOWN_SUBCOMMANDS.includes(_firstPositional) ? _firstPositional : null;
+// Fixed 2026-11-27: an UNKNOWN positional (a typo like `remove-verify`, or
+// `status`) used to resolve to null and fall through to the no-sub-command
+// path, whose capability probe REQUESTS AND PRINTS a registration token — a
+// live credential the operator never asked for. The default path now runs
+// only when there is no positional at all; anything else is refused before
+// any gh call.
+const UNKNOWN_SUBCOMMAND = _firstPositional !== null && SUBCOMMAND === null ? _firstPositional : null;
 
 // Single oracle for "--json was passed" (Fixed 2026-08-24, same finding):
 // this used to be a bare `process.argv.includes('--json')` here, while
@@ -618,6 +626,13 @@ function runGuarded(fn) {
   }
 }
 
-if (SUBCOMMAND === 'local') runGuarded(runLocal);
+if (UNKNOWN_SUBCOMMAND !== null) {
+  runGuarded(() => {
+    throw new ArgvError(
+      `actions-runner-doctor: unknown sub-command "${UNKNOWN_SUBCOMMAND}" — valid: ${KNOWN_SUBCOMMANDS.join(', ')}, `
+      + 'or none (the capability check). Nothing was run.',
+    );
+  });
+} else if (SUBCOMMAND === 'local') runGuarded(runLocal);
 else if (SUBCOMMAND === 'remove') runGuarded(runRemove);
 else runGuarded(main);

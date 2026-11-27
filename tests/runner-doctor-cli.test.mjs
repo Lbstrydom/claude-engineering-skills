@@ -227,6 +227,28 @@ describe('no-sub-command path — byte-for-byte unchanged (R1 M3)', () => {
   }
 });
 
+// An unknown sub-command used to fall through to the no-sub-command path,
+// whose capability probe requests and PRINTS a registration token (2026-11-27,
+// a consumer's typo minted a live token). Under the `viable` stub that path
+// prints a token, so an empty stdout proves the probe never ran.
+describe('unknown sub-command — refused before any gh call', () => {
+  const SLUG = 'example-owner/example-repo';
+  for (const args of [['status', '--repo', SLUG], ['--repo', SLUG, 'remove-verify'], ['--json', 'locl']]) {
+    it(`refuses ${JSON.stringify(args)} with exit 1 and prints no token`, () => {
+      const r = runCli(args, { env: { GH_STUB_SCENARIO: 'viable' } });
+      assert.equal(r.status, 1, `stdout=${r.stdout}`);
+      assert.match(r.stderr, /unknown sub-command "[^"]+" — valid: local, remove/);
+      assert.equal(r.stdout, '', 'the capability probe (which prints a registration token) must not run');
+    });
+  }
+
+  it('positive control: the same viable stub DOES print output on the no-sub-command path', () => {
+    const r = runCli(['--repo', SLUG], { env: { GH_STUB_SCENARIO: 'viable' } });
+    assert.equal(r.status, 0);
+    assert.notEqual(r.stdout, '');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // local --json
 // ─────────────────────────────────────────────────────────────────────────
