@@ -11,7 +11,8 @@ import path from 'node:path';
 import { git } from './helpers/git.mjs';
 import { cleanupFleetRoots, writeFile } from './helpers/fleet-repo.mjs';
 import { setup, sessionRec } from './helpers/fleet-cli-harness.mjs';
-import { nearestOf } from '../scripts/lib/fleet/stack-ancestry.mjs';
+import { nearestOf, withoutCoTips } from '../scripts/lib/fleet/stack-ancestry.mjs';
+import { sameSessions } from '../scripts/lib/fleet/commands.mjs';
 import { decideClaim } from '../scripts/lib/fleet/overlap.mjs';
 import { sharedFilesHint } from '../scripts/lib/fleet/render.mjs';
 
@@ -119,6 +120,94 @@ describe('a claim is never blocked by its own ancestor', () => {
     assert.equal(c.json.verdict, 'blocked');
   });
 
+  it('two fresh co-children of one parent (one tip) never exempt each other, and both still see the parent (audit R1 H2)', () => {
+    const s = withParent();
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'c1', 'parent'], r);
+    assert.equal(s.f(['claim', '--id', 'c1', '--intent', 'c1 work', '--paths', 'x/**']).status, 0);
+    assert.equal(sessionRec(s.fx, 'c1').source.baseRef, 'parent');
+    git(['checkout', '-q', '-b', 'c2', 'parent'], r);
+    const c = s.f(['claim', '--id', 'c2', '--intent', 'c2 work', '--paths', 'x/**,p/**', '--json']);
+    assert.equal(c.status, 3, c.stdout + c.stderr);
+    assert.deepEqual(c.json.conflicts.map((x) => x.with), ['c1'], 'the co-child blocks; the parent does not');
+  });
+
+  it('a recorded fork point keeps the declared base an ancestor after the parent commits again (audit R1 M3)', () => {
+    const s = withParent({ ready: false });
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'child', 'parent'], r);
+    commit(r, 'c/a.txt');
+    assert.equal(s.f(['claim', '--id', 'child', '--intent', 'child work', '--paths', 'c/**']).status, 0);
+    assert.equal(stackRecords(s.fx).length, 1, 'fork point recorded at the first claim');
+    git(['checkout', '-q', 'parent'], r); commit(r, 'p/b.txt');
+    git(['checkout', '-q', 'child'], r); commit(r, 'c/b.txt');
+    const c = s.f(['claim', '--id', 'child', '--paths', 'c/**,p/**', '--json']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.deepEqual(c.json.conflicts, [], 'the parent that moved on is still not a conflict');
+    assert.equal(c.json.stackBaseUnanchored, undefined);
+  });
+
+  it('a FRESH child whose parent moved on before a fork point was recorded is warned, never silently exempted (audit R2 H1)', () => {
+    const s = withParent({ ready: false });
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'child', 'parent'], r);
+    assert.equal(s.f(['claim', '--id', 'child', '--intent', 'child work', '--paths', 'c/**']).status, 0);
+    git(['checkout', '-q', 'parent'], r); commit(r, 'p/b.txt');
+    git(['checkout', '-q', 'child'], r); commit(r, 'c/a.txt');
+    const c = s.f(['claim', '--id', 'child', '--paths', 'c/**,p/**', '--json']);
+    assert.ok(c.json.conflicts.some((x) => x.with === 'parent'), c.stdout + c.stderr);
+    assert.match(c.json.stackBaseUnanchored, /stacked on parent, which is no longer history of this branch \(it moved on or was rewritten\), and no fork point was recorded.*restack onto parent/);
+  });
+
+  it('a declared parent RESET away from the recorded fork point is no longer an ancestor, though they still share an unlanded commit (audit R2 H1)', () => {
+    const s = withParent({ ready: false });
+    const r = s.fx.repo;
+    git(['checkout', '-q', 'parent'], r); commit(r, 'p/b.txt'); // A (p/a) then B (p/b)
+    git(['checkout', '-q', '-b', 'child', 'parent'], r); commit(r, 'c/a.txt');
+    assert.equal(s.f(['claim', '--id', 'child', '--intent', 'child work', '--paths', 'c/**']).status, 0); // fork point B
+    // parent drops B and goes on: the child still shares A with it (unlanded), but B is no longer parent history.
+    git(['checkout', '-q', 'parent'], r); git(['reset', '-q', '--hard', 'HEAD~1'], r); commit(r, 'p/c.txt');
+    git(['checkout', '-q', 'child'], r);
+    const c = s.f(['claim', '--id', 'child', '--paths', 'c/**,p/**', '--json']);
+    assert.ok(c.json.conflicts.some((x) => x.with === 'parent'), c.stdout + c.stderr);
+  });
+
+  it('three sessions on one tip: --base names the parent, and the parent and ITS base are both exempt (audit R3 H1)', () => {
+    const s = withParent();
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'c', 'parent'], r);
+    assert.equal(s.f(['claim', '--id', 'c', '--intent', 'c work', '--paths', 'x/**']).status, 0);
+    git(['checkout', '-q', '-b', 'd', 'c'], r);
+    assert.equal(s.f(['claim', '--id', 'd', '--intent', 'd work', '--paths', 'x/**,p/**']).status, 3, 'without --base, c may be a sibling: it blocks');
+    const c = s.f(['claim', '--id', 'd', '--intent', 'd work', '--paths', 'x/**,p/**', '--base', 'c', '--json']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.deepEqual(c.json.conflicts, []);
+  });
+
+  it('a grandparent that moved on stays an ancestor through the parent\'s recorded fork point (audit R3 H2)', () => {
+    const s = withParent({ ready: false });
+    const r = s.fx.repo;
+    git(['checkout', '-q', '-b', 'mid', 'parent'], r); commit(r, 'm/a.txt');
+    assert.equal(s.f(['claim', '--id', 'mid', '--intent', 'mid work', '--paths', 'm/**']).status, 0);
+    git(['checkout', '-q', '-b', 'child', 'mid'], r); commit(r, 'c/a.txt');
+    assert.equal(s.f(['claim', '--id', 'child', '--intent', 'child work', '--paths', 'c/**']).status, 0);
+    git(['checkout', '-q', 'parent'], r); commit(r, 'p/b.txt');
+    git(['checkout', '-q', 'child'], r);
+    const c = s.f(['claim', '--id', 'child', '--paths', 'c/**,p/**', '--json']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.deepEqual(c.json.conflicts, [], 'the grandparent is still history of the child');
+  });
+
+  it('a tag sharing the parent\'s name does not hide it (audit R1 H6)', () => {
+    const s = withParent();
+    git(['tag', 'parent', 'main'], s.fx.repo);
+    git(['checkout', '-q', '-b', 'child', 'refs/heads/parent'], s.fx.repo);
+    commit(s.fx.repo, 'c/a.txt');
+    const c = s.f(['claim', '--id', 'child', '--intent', 'child work', '--paths', 'p/**', '--json']);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.equal(c.json.stackBaseInferred, 'parent');
+  });
+
   it('two fresh siblings at main never exempt each other', () => {
     const s = setup();
     const r = s.fx.repo;
@@ -137,6 +226,29 @@ describe('pure parts', () => {
     assert.deepEqual(nearestOf([A, B], [A.oid, B.oid]), { nearest: null, ambiguous: ['a', 'b'] });
     assert.deepEqual(nearestOf([A, { ...B, oid: A.oid }], [A.oid]), { nearest: null, ambiguous: ['a', 'b'] });
     assert.deepEqual(nearestOf([], []), { nearest: null, ambiguous: null });
+  });
+
+  it('withoutCoTips: one tip, one root is kept; co-children and unresolvable groups exempt nobody', () => {
+    const P = { id: 'p', gen: 1, branch: 'p', oid: 'x' };
+    const C = { id: 'c', gen: 1, branch: 'c', oid: 'x' };
+    const D = { id: 'd', gen: 1, branch: 'd', oid: 'x' };
+    const reg = (base) => new Map([['p', { source: { baseRef: 'main' } }], ['c', { source: { baseRef: base } }], ['d', { source: { baseRef: 'main' } }]]);
+    assert.deepEqual(withoutCoTips([P, C], reg('p')), [P]);
+    assert.deepEqual(withoutCoTips([P, C], reg('main')), [], 'no declared parentage: neither');
+    assert.deepEqual(withoutCoTips([P, C, D], reg('p')), [], 'two roots on one tip: neither');
+    assert.deepEqual(withoutCoTips([P, { ...C, oid: 'y' }], reg('main')), [P, { ...C, oid: 'y' }]);
+  });
+
+  it('sameSessions: an ancestry fact exempts only the same id, gen and branch on the locked read (audit R1 H11)', () => {
+    const facts = [{ id: 'p', gen: 1, branch: 'p', oid: 'x' }];
+    const rec = (over) => [{ id: 'p', gen: 1, state: 'working', source: { kind: 'branch', branch: 'p' }, ...over }];
+    assert.deepEqual(sameSessions(facts, rec({})), ['p']);
+    assert.deepEqual(sameSessions(facts, rec({ gen: 2 })), []);
+    assert.deepEqual(sameSessions(facts, rec({ source: { kind: 'branch', branch: 'q' } })), []);
+    assert.deepEqual(sameSessions(facts, rec({ state: 'done' })), []);
+    assert.deepEqual(sameSessions([{ ...facts[0], baseRef: 'g' }], rec({ source: { kind: 'branch', branch: 'p', baseRef: 'h' } })), [], 'declared base changed (audit R4 H1)');
+    assert.deepEqual(sameSessions([{ ...facts[0], baseRef: 'g' }], rec({ source: { kind: 'branch', branch: 'p', baseRef: 'g' } })), ['p']);
+    assert.deepEqual(sameSessions(facts, []), []);
   });
 
   it('decideClaim: an ancestor is skipped and disclosed; every other session is judged as before', () => {

@@ -37,7 +37,7 @@ import {
 import { renderChipPrompt, renderOpenTrains } from './render-train.mjs';
 import { WaitingOnSchema, listTrains, probesDir, quarantine, transact } from './registry.mjs';
 import { readySet, testedTogether, testedTogetherLine } from './tested-together.mjs';
-import { writeStackBase } from './stack-bases.mjs';
+import { stackBaseFor, writeStackBase } from './stack-bases.mjs';
 import { stackAncestry } from './stack-ancestry.mjs';
 import { FULL_SUITE_LOG_LINE, fullSuiteOf, landingOf, landingRollupLine } from './config.mjs';
 import {
@@ -384,6 +384,20 @@ function inferredStackBase(ctx, ancestry, cur, branch) {
   return { name: n.branch, oid: n.oid, inferred: true, ...forkPointCheck(ctx, n.branch, n.oid, branch, { inferred: true }) };
 }
 
+/**
+ * The ancestry facts (read before the lock) that still name the SAME session on the locked read: same id, gen, branch and
+ * declared base (a tie on one tip was broken by it), not terminal. A retired id reused by another session, or a record moved to another branch, is judged as an ordinary session.
+ * @returns {string[]} the ids still exempt
+ */
+export function sameSessions(facts, sessions) {
+  const byId = new Map((sessions ?? []).map((s) => [s.id, s]));
+  return facts.filter((a) => {
+    const s = byId.get(a.id);
+    return s && s.gen === a.gen && s.source?.kind === 'branch' && s.source.branch === a.branch
+      && (s.source.baseRef ?? null) === (a.baseRef ?? null) && !isTerminalState(s.state);
+  }).map((a) => a.id);
+}
+
 /** May an inferred base be recorded on this record (absent = a new claim)? One predicate, read before AND under the lock. */
 function mayInferOnto(cur, name, baseBranch) {
   if (claimMode(cur) === 'new') return true;
@@ -405,12 +419,19 @@ export function cmdClaim(ctx, flags) {
   const gathered = gatherFacts({ cwd: ctx.cwd, config: ctx.config, now: ctx.now, env: ctx.env, prs: false, patches: false, worktrees: true, untracked: false, uncommitted: 'all' });
   // The registered sessions this branch is stacked on: the inferred base (without --base), and the sessions whose claims
   // never block this one. Measured against the same base overlap is.
+  const preCur = gathered.registry.sessions.find((s) => s.id === id) ?? null;
+  // The record's own declared base, anchored at its RECORDED fork point (none recorded: no anchor, so not an ancestor once it moves).
+  const forkPointOf = (s) => { const fp = stackBaseFor(ctx.dir, s); return fp.ok ? fp.oid : null; };
+  const declaredBase = preCur?.source?.kind === 'branch' && preCur.source.baseRef && preCur.source.baseRef !== ctx.config.baseBranch
+    ? { name: preCur.source.baseRef, anchor: forkPointOf(preCur) }
+    : null;
   const ancestry = stackAncestry(ctx.cwd, {
-    branch, selfId: id, sessions: gathered.registry.sessions, baseBranch: ctx.config.baseBranch,
+    branch, selfId: id, sessions: gathered.registry.sessions, baseBranch: ctx.config.baseBranch, declaredBase, forkPointOf,
     baseRev: gathered.base?.measure?.ok ? gathered.base.measure.oid : ctx.config.baseBranch,
+    prefer: explicitBase?.name ?? declaredBase?.name ?? null,
   });
   const ancestors = ancestry.ancestors.map((a) => a.id);
-  const stackBase = explicitBase ?? inferredStackBase(ctx, ancestry, gathered.registry.sessions.find((s) => s.id === id) ?? null, branch);
+  const stackBase = explicitBase ?? inferredStackBase(ctx, ancestry, preCur, branch);
   // Merged evidence only for the holders of an overlap that would BLOCK (judged on the pre-lock read): a merged, clean holder
   // is finished work, not an overlap. The common no-conflict path asks `gh` nothing. A holder registered after this read has
   // no evidence and is judged as before (live) — the safe side.
@@ -440,7 +461,7 @@ export function cmdClaim(ctx, flags) {
     const verdict = decideClaim({
       claim: { id, intent, paths: claimPaths, knownOverlaps: mode === 'adopt' ? cur.knownOverlaps : [] },
       mode, others: othersFor(facts, id, ctx.now, t.sessions), complete: t.complete, hotFiles: ctx.config.hotFiles ?? [],
-      trackedFiles: tracked, ancestors,
+      trackedFiles: tracked, ancestors: sameSessions(ancestry.ancestors, t.sessions),
     });
     const blocking = verdict.conflicts.filter(isBlockingConflict);
     const overriding = Boolean(flags['--override']) && blocking.length > 0 && verdict.verdict !== 'refused';
@@ -490,6 +511,14 @@ export function cmdClaim(ctx, flags) {
     ? `${id} descends from more than one session's branch (${ancestry.ambiguous.join(', ')}), so no stack base was inferred and overlap is measured from ${ctx.config.baseBranch}; name the one it is stacked on with --base`
     : null;
   if (ambiguous) process.stderr.write(`warning: fleet claim: ${ambiguous}\n`);
+  // Declared stacked on a live session's branch that is no longer history of this one, with no fork point recorded to anchor
+  // it: that session's claim is judged like any other. Read from the pre-lock record, so a BLOCKED claim (no record) says it too.
+  const declaredLive = declaredBase && gathered.registry.sessions.some((s) => s.id !== id && !isTerminalState(s.state) && s.source?.kind === 'branch' && s.source.branch === declaredBase.name);
+  const unanchored = ancestry.queried && !explicitBase && declaredLive && !declaredBase.anchor && !v.stack
+    && !ancestry.ancestors.some((a) => a.branch === declaredBase.name)
+    ? `${id} is stacked on ${declaredBase.name}, which is no longer history of this branch (it moved on or was rewritten), and no fork point was recorded (the claim came before a commit of its own), so ${declaredBase.name}'s claim is judged like any other; restack onto ${declaredBase.name}, then re-run claim`
+    : null;
+  if (unanchored) process.stderr.write(`warning: fleet claim: ${unanchored}\n`);
   const text = renderClaimVerdict(v.verdict, { id, cmd: ctx.cmd, measure: facts.base.measure, baseName: ctx.config.baseBranch, sharedConfig: ctx.config })
     + (!start.ok && v.mode === 'new' && v.record ? `
 warning: startOid not recorded — ${start.reason}` : '')
@@ -505,6 +534,7 @@ warning: startOid not recorded — ${start.reason}` : '')
     ...(forkRefused ? { stackBaseWarning: forkRefused } : {}),
     ...(v.stack?.inferred && v.record ? { stackBaseInferred: v.stack.name } : {}),
     ...(ambiguous ? { stackBaseAmbiguous: ancestry.ambiguous } : {}),
+    ...(unanchored ? { stackBaseUnanchored: unanchored } : {}),
     ...(broad.length ? { broadPatterns: broad } : {}),
     conflicts: v.verdict.conflicts, ...(v.verdict.reason ? { reason: v.verdict.reason } : {}), ...(v.record ? { record: v.record } : {}), text,
   };
