@@ -1,3 +1,4 @@
+import { geminiClientOptions } from '../gemini-client.mjs';
 import { GoogleGenAI } from '@google/genai';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
@@ -7,7 +8,7 @@ import { truncatedMessage } from './depth-config.mjs';
 
 let _client = null;
 function client() {
-  if (!_client) _client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  if (!_client) _client = new GoogleGenAI(geminiClientOptions());
   return _client;
 }
 

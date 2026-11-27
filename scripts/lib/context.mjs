@@ -5,6 +5,7 @@
  * @module scripts/lib/context
  */
 
+import { geminiClientOptions } from './gemini-client.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -364,7 +365,7 @@ async function _llmCondense(content) {
     if (budget) {
       try {
         const { GoogleGenAI } = await import('@google/genai');
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const ai = new GoogleGenAI(geminiClientOptions());
         const model = briefConfig.geminiModel;
         process.stderr.write(`  [brief] Generating via ${model}...\n`);
         const startMs = Date.now();

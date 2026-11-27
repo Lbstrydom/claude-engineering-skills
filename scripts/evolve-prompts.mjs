@@ -15,6 +15,7 @@
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
 import './lib/help-guard-run.mjs'; import fs from 'node:fs';
+import { geminiClientOptions } from './lib/gemini-client.mjs';
 import path from 'node:path';
 import { z } from 'zod';
 import { PromptBandit } from './bandit.mjs';
@@ -389,7 +390,7 @@ async function main() {
     const providers = {};
     if (process.env.GEMINI_API_KEY) {
       const { GoogleGenAI } = await import('@google/genai');
-      providers.gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      providers.gemini = new GoogleGenAI(geminiClientOptions());
     }
     // PINNED `backend:'sdk'`, and gated on that same backend. This client is
     // handed to `createLearningAdapter`, whose `callClaude` passes

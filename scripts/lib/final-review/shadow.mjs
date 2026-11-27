@@ -42,6 +42,7 @@
  *
  * @module scripts/lib/final-review/shadow
  */
+import { geminiClientOptions } from '../gemini-client.mjs';
 import { GoogleGenAI } from '@google/genai';
 import { createOpenAIClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
@@ -118,7 +119,7 @@ export function resolveShadow({
  */
 export async function buildShadowClient(canonicalProvider) {
   if (canonicalProvider === 'gemini') {
-    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    return new GoogleGenAI(geminiClientOptions());
   }
   if (canonicalProvider === 'openrouter') {
     // Delegates to the PRIMARY route's own credential resolver rather than

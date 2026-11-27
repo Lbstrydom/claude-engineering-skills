@@ -20,6 +20,7 @@
  *
  * @module scripts/lib/final-review/providers
  */
+import { geminiClientOptions } from '../gemini-client.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,7 +81,7 @@ export const PROVIDERS = {
     assertReady: (env = process.env) => {
       if (!env.GEMINI_API_KEY) { throw new ProviderNotReadyError('provider "gemini" requires GEMINI_API_KEY'); }
     },
-    buildClient: async () => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
+    buildClient: async () => new GoogleGenAI(geminiClientOptions()),
   },
   'claude-opus': {
     id: 'claude-opus',
