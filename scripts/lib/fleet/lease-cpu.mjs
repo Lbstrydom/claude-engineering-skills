@@ -71,6 +71,27 @@ export function treeOf(rows, root) {
   return out;
 }
 
+/**
+ * The ancestors of `pid` (parent first), at most `depth`, from one table read: what launched a `lease run` (plan
+ * fleet-lease-orphan-waiters-and-priority D3). The chain, not the parent alone, because a Windows launcher usually spawns through
+ * `cmd.exe` or `npm.cmd`, which outlive their killed parent. It stops at the system roots (pid <= 4), at a cycle, and at a
+ * "parent" that STARTED AFTER its child: Windows keeps a dead parent's pid as `ParentProcessId`, and a process that later
+ * reused that pid is not the launcher (it would die for unrelated reasons and read as one gone).
+ */
+export function launcherChain(rows, pid, depth = 3) {
+  const byPid = new Map(rows.map((r) => [r.pid, r]));
+  const out = [];
+  let cur = byPid.get(pid);
+  while (cur && out.length < depth) {
+    const p = byPid.get(cur.ppid);
+    if (!p || p.pid <= 4 || p.pid === cur.pid || p.pid === pid || out.includes(p.pid)) break;
+    if (p.startedAt && cur.startedAt && p.startedAt > cur.startedAt) break;
+    out.push(p.pid);
+    cur = p;
+  }
+  return out;
+}
+
 /** Total CPU of a tree (from `treeOf`), or null. */
 export const treeCpuMs = (rows, root) => { const t = treeOf(rows, root); return t ? t.reduce((a, r) => a + r.cpuMs, 0) : null; };
 

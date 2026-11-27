@@ -14,7 +14,7 @@
  */
 import path from 'node:path';
 import { ArgvError } from '../cli-io.mjs';
-import { exitCodeForSignal, runUnderLease } from './lease-run.mjs';
+import { exitCodeForSignal, launcherWatch, runUnderLease } from './lease-run.mjs';
 import { runChild, describeSpawnFailure } from './lease-spawn.mjs';
 import { cpuSaturationLine, machineCpu, sampleTree } from './lease-cpu.mjs';
 import { failed, ok, refused, selfId } from './commands.mjs';
@@ -39,7 +39,7 @@ export const ALLOWED = Object.freeze({
   log: ['--limit'],
   grant: ['--window', '--from', '--until', '--to', '--id'],
   turn: ['--minutes', '--clear'],
-  run: ['--kind', '--for', '--wait', '--timeout', '--end-turn', '--note', '--id'],
+  run: ['--kind', '--for', '--wait', '--timeout', '--end-turn', '--note', '--id', '--priority'],
 });
 
 const hhmm = (d) => `${d.toISOString().slice(11, 16)}Z`;
@@ -109,7 +109,9 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
   const t0 = ctx.now.getTime(); const r0 = Date.now();
   const res = await runUnderLease({
     dir, identity: { repoKey: repo.repoKey, holder: String(selfId(ctx, flags)) }, repo: repo.repo, kind: text(flags['--kind']), forMin,
-    note: text(flags['--note']), waitMin, ceilingMin: timeoutMin, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
+    note: text(flags['--note']), waitMin, ceilingMin: timeoutMin, priority: text(flags['--priority']),
+    // A waiting runner stops when what launched it is gone (a killed train script): it would otherwise start the job for nobody.
+    launcher: waitMin > 0 ? launcherWatch() : null, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
     pollMs: Number(ctx.env.FLEET_LEASE_POLL_MS) > 0 ? Number(ctx.env.FLEET_LEASE_POLL_MS) : undefined, // a test seam for the wait loop's interval only
     now: () => new Date(t0 + (Date.now() - r0)),
     // Sampled after the grant and before the job starts, so the reading is the load that was ALREADY running.
@@ -131,6 +133,14 @@ export function leaseRunResult(res, { say = () => {}, cmd, timeoutMin, cmdName =
   const done = (exitCode, extra = {}) => ({ ok: exitCode === 0, code: exitCode === 0 ? 'ok' : 'error', exitCode, quiet: true, text: '', ...extra });
   if (!res.ran) {
     if (res.outcome === 'bad-request') throw new ArgvError(`fleet lease run: ${res.reason}`);
+    if (res.outcome === 'not-granted' && res.code === 'stopped') {
+      say(`stopped by ${res.signalled} while waiting for the slot; it left the queue. The command did NOT run.`);
+      return { ...done(exitCodeForSignal(res.signalled)), code: 'refused', ran: false, outcome: res.outcome };
+    }
+    if (res.outcome === 'not-granted' && res.code === 'orphaned') {
+      say(`${res.reason}; it left the queue. The command did NOT run.`);
+      return { ...done(75), code: 'refused', ran: false, outcome: res.outcome };
+    }
     if (res.outcome === 'not-granted') {
       say(`REFUSED (${res.code}): ${res.reason}${res.queued ? ` This repo is now waiting for the slot (\`${cmdName} lease wait --cancel\` withdraws it).` : ''} The command did NOT run.`);
       return { ...done(75), code: 'refused', ran: false, outcome: res.outcome };

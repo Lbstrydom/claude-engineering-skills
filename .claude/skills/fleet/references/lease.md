@@ -28,19 +28,23 @@ provider, so it NEVER takes the slot (a chip holding it for "audit-code r1" kept
 | `lease turn --minutes <15-240>` / `--clear` | This machine's turn length (default 60). |
 | `lease status` / `lease log [--limit n]` | Read the slot, windows, waiters, turn, peak hours / the journal, oldest first. |
 | `lease peak --hours "14:00-20:00[@days],..."` / `--clear` | Peak-cost hours (machine-local). A range runs Mon-Fri unless it names days: `@sat+sun`, `@mon+wed`, `@daily`. One crossing midnight belongs to its start day. |
-| `lease run [--kind] [--for 1-180] [--wait 0-720] [--timeout 1-720] [--end-turn] [--note] -- <cmd> [args...]` | Take the slot (waiting in the queue up to `--wait` minutes), run the command, release on every exit, exit with ITS code. See below. |
+| `lease run [--kind] [--for 1-180] [--wait 0-720] [--timeout 1-720] [--end-turn] [--priority high] [--note] -- <cmd> [args...]` | Take the slot (waiting in the queue up to `--wait` minutes), run the command, release on every exit, exit with ITS code. See below. |
 
 ## Running a command under the lease (`lease run`)
 
 `lease acquire` then `release` is a protocol every caller has to get right, and two callers did not: a wrapper that ignored a
 REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper that SIGTERMed the push it was protecting
-(2026-10-15). `lease run -- <cmd>` is that protocol in one verb, and `sync:pr` uses the same code (it leases as the SOURCE repo, holder `sync-pr:<target>`, so it takes CES's turns; the CI window it records stays the TARGET's):
+(2026-10-15). `lease run -- <cmd>` is that protocol in one verb; `sync:pr` uses the same code (as the SOURCE repo, holder `sync-pr:<target>`; its CI window is the TARGET's):
 
 - It takes the slot **exclusively** (a second run under the same session is refused, never silently rotated), recording the
   runner's own pid, then runs `<cmd>` with its argv **verbatim** (no shell; a `.cmd` on Windows needs `cmd /c`) and the child's
   pid attached, so a child that outlives a killed runner still reads as alive.
-- **A refused acquire never runs the command.** With `--wait <min>` it waits in the queue (it is queued like any refused
-  `acquire`) and retries every ~30 s; when the wait runs out it gives up.
+- **A refused acquire never runs the command.** With `--wait <min>` it retries every ~30 s; when the wait runs out it gives
+  up, its repo still queued. A stop signal while waiting, or its launcher gone (parent or up to two further ancestors: a
+  train script killed behind `cmd.exe` counts), ends the wait: it leaves the queue, the command does NOT run. The queue
+  reaps a waiting run whose pid is dead or that has not polled for 10 min.
+- `--priority high` is for the train: while it waits and could go, a fresh grant to a normal run of the SAME repo is
+  refused (`priority`, retried). Repos are never reordered.
 - It releases on **every catchable exit**: the command finishing, failing, timing out (`--timeout`), or the runner receiving
   SIGINT/SIGTERM/SIGHUP/SIGBREAK. A stop kills the command's whole **process tree** (POSIX process group; Windows `taskkill /T /F`, forced in one call because descendants cannot be found once the root has exited),
   then the slot is released. SIGKILL and power loss cannot be caught: the lease expires and the recorded pid decides takeover.
@@ -50,16 +54,16 @@ REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper
   No waiter takes a live holder's slot; forcing is a person's call.
 - `--end-turn` yields the repo's turn on release (use it when nothing further is ready); with another job of the same repo waiting it keeps the turn and logs why.
 - The command owns stdout, so `--json` is refused; the lease speaks on stderr, prefixed `fleet lease run:`.
-- The argv is spawned verbatim with `shell: false`. On Windows `npm`/`npx` are `.cmd` shims that cannot be spawned that way, so a bare `npm`/`npx` is run as `node <node dir>/node_modules/npm/bin/npm-cli.js` (or `npx-cli.js`); other shims (`pnpm`, `yarn`) need `node <entry-point>.js` spelled out. A start failure prints the resolved argv and cwd (never the environment).
+- On Windows a bare `npm`/`npx` (a `.cmd` shim) runs as `node <node dir>/node_modules/npm/bin/npm-cli.js`; other shims need `node <entry>.js` spelled out. A start failure prints the resolved argv and cwd.
 
 | Exit | Meaning |
 |---|---|
 | the command's code | it ran and exited (a signal that stopped it is 128 + the signal number) |
-| **75** | the slot was not granted (held, a window, not your turn) - **the command did NOT run**; stderr says so |
+| **75** | not granted (held, a window, not your turn, a train first), or the launcher died while waiting - **the command did NOT run** |
 | **70** | the lease file could not be used (unreadable, newer version, lock contention) - the command did NOT run |
 | 124 | `--timeout` stopped it |
 | 127 | the command could not be started |
-| 130 / 143 | the runner itself was interrupted / terminated |
+| 130 / 143 | the runner was interrupted / terminated (while waiting: the command did NOT run) |
 | 2 | argument error, before anything was acquired |
 
 A caller that must distinguish these from the command's own codes (75 and 70 are rare for a command) uses the library,
@@ -80,10 +84,9 @@ succeed. An expired slot whose job may still run (pid alive, or no pid recorded)
 
 A window refuses every other repo, including one its owner meant to let in. `lease grant --window <id> --until +30m
 --to o/b` records a gap inside that window: the named repo (no `--to` = anyone) may take the slot during the gap, and
-the window no longer refuses it. Only the window's owner grants, the gap must lie inside the window, and a window
-carries at most 5. A request that runs past the gap's end is still refused, and says when the gap ends. `--to` names a
-repo the lease has already seen (it held the slot, announced, or waited); a label two checkouts share is ambiguous and
-refused, never guessed. A gap is not a turn: an open gap lets everyone past the window, and the queue still orders them.
+the window no longer refuses it. Only the window's owner grants, inside the window, at most 5 per window. A request
+running past the gap's end is still refused. `--to` names a
+repo the lease has already seen; a label two checkouts share is ambiguous and refused. A gap is not a turn: an open gap lets everyone past the window, and the queue still orders them.
 
 ## Turns
 
@@ -93,10 +96,10 @@ its time. A FREE slot is not a turn.
 
 - **Waiting.** A refused `acquire` puts the REPO on the waiter list (one entry per repo, 20 at most, 12 hours): `since`,
   the minutes it wants, a refusal count. Further refusals only bump the count. It ends when the repo is granted the slot
-  or announces a window starting now (`served`), on `wait --cancel`, after 12 hours, or when it lapses (below).
+  or announces a window starting now (`served`), on `wait --cancel`, after 12 hours, when its runs are reaped
+  (`abandoned`), or when it lapses (below).
 - **A turn** starts when a repo is granted the slot and lasts until its length runs out. A job running past the end is
-  never cut; its next release hands over. After a release the repo keeps the turn for **10 minutes** so it can start its
-  next batched job; **pass `--end-turn` when nothing further is ready**, or the next repo waits out the gap. It works on a FREE slot too (`lease release --end-turn` between jobs yields the turn). If another job
+  never cut; its next release hands over. After a release the repo keeps the turn **10 minutes** for its next job; **pass `--end-turn` when nothing further is ready**, or the next repo waits out the gap. It works on a FREE slot too (`lease release --end-turn` between jobs yields the turn). If another job
   of your own repo is already waiting, `--end-turn` is downgraded to a plain release (the turn stays with your repo and the
   output says so); `lease wait --cancel` first if you really mean to hand it over.
 - **The rule for a fresh grant.** A gap named for the repo; else its own active turn (`in-turn`); else, if another repo's
@@ -107,9 +110,8 @@ its time. A FREE slot is not a turn.
   turn's first grant - but it is judged by the same rule as if the slot were free: **once your turn is over and another repo
   waits, a renewal is refused** (`turn`, "this lease is not extended"; the job is not cut, finish and `release`). It also
   leaves your repo's own waiter entry alone. The journal's `acquired` entry records the `basis`.
-- **Announcing a window** that starts within the turn length answers to the same queue; `--over-turn` records a window
-  that is already running, naming the repo it overrode; it starts no turn for the overrider and ends nobody's. A window
-  further ahead is a commitment, not checked.
+- **Announcing a window** starting within the turn length answers to the same queue; `--over-turn` records one already
+  running (naming the repo it overrode; it starts and ends no turn). A window further ahead is not checked.
 - **A waiter cannot block the machine.** The head is offered the slot when it could take it. After 15 minutes of
   continuously being able to and not coming, it goes to the back with a new episode (`lapsed`). An offer is withdrawn the
   moment a window or a job makes the head unable to go.
@@ -125,8 +127,6 @@ into slot-wait time for doctor's fit check; an empty journal is `measured: false
 
 ## Older checkouts share this file
 
-Everything above lives in NEW optional keys (`journal`, `waiters`, `turn`, `slotFreedAt`, `turnMin`, a window's `gaps` and
-`overHeld`); the exceptional `events[]` ring keeps its original kinds, because an older checkout rejects an unknown event
-kind as a corrupt file. An older checkout therefore reads and rewrites the file normally, but it ignores the new rules:
-it can still announce over a held slot or acquire out of turn, and journals nothing. The rules take effect per repo once
-it runs this version.
+Everything above lives in NEW optional keys (`journal`, `waiters` and their `runners`, `turn`, `slotFreedAt`, `turnMin`,
+`gaps`, `overHeld`); `events[]` and `kind` keep their original values, which an older checkout's enums require. An older
+checkout reads and rewrites the file but ignores the new rules; they take effect per repo once it runs this version.

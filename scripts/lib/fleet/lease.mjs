@@ -25,13 +25,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  KINDS, LIMITS, MIN, WINDOW_KINDS, admissionCheck, appendEvent, appendJournal, badIdentity, byOf, checkNote, classifyHeavy, clip, defaultProbe, emptyLease, endWait, episodeOf, hex, hhmm, hhmmOf, iso, jentry, journalRefusal, leasePaths, ms, name, note, openWait, parseWhen, pruneWindows, refuse, resolveRepoLabel, sameIdentity, usesNamedGap,
+  KINDS, LIMITS, MIN, PRIORITIES, WINDOW_KINDS, admissionCheck, appendEvent, appendJournal, badIdentity, byOf, checkNote, classifyHeavy, clip, defaultProbe, emptyLease, endWait, episodeOf, hex, hhmm, hhmmOf, iso, jentry, isRunnerRequest, journalRefusal, leasePaths, ms, name, note, openWait, parseWhen, pruneWindows, rankOf, refuse, resolveRepoLabel, sameIdentity, usesNamedGap, withdrawRunner,
 } from './lease-model.mjs';
 import { endTurn, settleQueue, startTurn, turnActive, turnMinOf, turnRule } from './lease-turns.mjs';
 
 // The public surface is unchanged by the split: everything `lease.mjs` exported before still comes from here.
 export {
-  LEASE_SCHEMA_VERSION, LEASE_FILE, LEASE_LOCK, KINDS, WINDOW_KINDS, EVENT_KINDS, LIMITS, LeaseConfigError, machineDir, repoKeyOf, repoLabel, currentScope, LeaseSchema, emptyLease, leasePaths, readLease, writeLease, transactLease, parseWhen, classifyHeavy, defaultProbe, appendEvent, appendJournal, pruneWindows, conflictingWindows, admissionCheck, usesNamedGap,
+  LEASE_SCHEMA_VERSION, LEASE_FILE, LEASE_LOCK, KINDS, PRIORITIES, WINDOW_KINDS, EVENT_KINDS, LIMITS, LeaseConfigError, machineDir, repoKeyOf, repoLabel, currentScope, LeaseSchema, emptyLease, leasePaths, readLease, writeLease, transactLease, parseWhen, classifyHeavy, defaultProbe, appendEvent, appendJournal, pruneWindows, conflictingWindows, admissionCheck, usesNamedGap,
 } from './lease-model.mjs';
 export { settleQueue } from './lease-turns.mjs';
 
@@ -50,13 +50,14 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   if (!Number.isInteger(forMin) || forMin < 1 || forMin > LIMITS.maxForMin) return refuse('bad-request', `--for must be a whole number of minutes from 1 to ${LIMITS.maxForMin}`);
   if (req.pid !== undefined && (!Number.isInteger(req.pid) || req.pid <= 0)) return refuse('bad-request', '--pid must be a positive whole number');
   if (!checkNote(req.note)) return refuse('bad-request', `--note must be at most ${LIMITS.noteMax} characters with no control characters`);
+  if (req.priority !== undefined && !PRIORITIES.includes(req.priority)) return refuse('bad-request', `--priority must be one of ${PRIORITIES.join(', ')}`);
   const end = new Date(now.getTime() + forMin * MIN);
   // Validated; now settle time-driven state, then evaluate against the settled lease (plan D3b, three stages).
   const base = settleQueue(lease, now, probe);
   const keep = (r) => (base === lease ? r : { ...r, lease: base });
   /** A refusal that means "someone else has the slot": this repo is now waiting, unless the list is full. */
   const waitRefusal = (code, reason) => {
-    const o = openWait(base, req, { forMin, opener: 'refusal', refusal: { op: 'acquire', code }, now });
+    const o = openWait(base, req, { forMin, opener: 'refusal', refusal: { op: 'acquire', code }, now, scope: probe.scope });
     if (!o.queued) return { ...refuse(code, reason), queued: false, queueFull: true, lease: journalRefusal(base, req, 'acquire', code, now, { job: { kind, forMin } }) };
     return { ...refuse(code, reason), queued: true, lease: o.lease };
   };
@@ -98,6 +99,11 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
     if (!tr.ok) return waitRefusal('turn', tr.reason);
     basis = tr.basis;
     turnBasis = tr.basis;
+    // Stage 2b (plan fleet-lease-orphan-waiters-and-priority D4): INSIDE the repo, a waiting run of higher priority goes first -
+    // the train ahead of its sessions' targeted runs. Only a live (settled, so not reaped) runner of another holder that could
+    // take the slot now counts; cross-repo order is the turn rule's alone.
+    const ahead = higherWaiting(base, req, now, probe);
+    if (ahead) return waitRefusal('priority', `a ${ahead.priority}-priority run of this repo (${ahead.holder}, waiting since ${hhmmOf(new Date(ahead.since))}) goes first`);
   } else {
     // D11 (finding 20ec): a renewal or rotation is the same running job, so it never starts a turn (the budget counts from the
     // turn's FIRST grant) - but it must not outlive the repo's turn while another repo waits. It is judged by the same rule as a fresh
@@ -154,6 +160,27 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
   }));
   next = settleQueue(next, now, probe);
   return { ok: true, lease: next, heavy, renewed, rotated, basis, ...(capped ? { capped } : {}), ...(event ? { event } : {}) };
+}
+
+/** The highest-priority runner waiting in `req`'s repo that outranks `req` and could take the slot now, else null. */
+function higherWaiting(lease, req, now, probe) {
+  const mine = rankOf(isRunnerRequest(req) ? req.priority : 'normal');
+  const w = (lease.waiters ?? []).find((x) => x.repoKey === req.identity.repoKey);
+  const ahead = (w?.runners ?? []).filter((r) => r.holder !== req.identity.holder && rankOf(r.priority) > mine
+    && admissionCheck(lease, { repoKey: req.identity.repoKey, holder: r.holder }, r.forMin, now, probe).ok);
+  return ahead.sort((a, b) => rankOf(b.priority) - rankOf(a.priority))[0] ?? null;
+}
+
+/**
+ * A waiting `lease run` stops waiting (a stop signal, its launcher gone): its runner leaves the repo's entry, and the episode
+ * ends (`cancelled`) when no other runner and no pid-less request is left in it. Settled like every mutation; never refused.
+ */
+export function decideWithdrawRunner(lease, req, now, probe = defaultProbe(), { keepPlace = false } = {}) {
+  const bad = badIdentity(req);
+  if (bad) return bad;
+  const base = settleQueue(lease, now, probe);
+  const next = withdrawRunner(base, req, now, { keepPlace });
+  return { ok: true, lease: next === base ? base : settleQueue(next, now, probe), withdrawn: next !== base };
 }
 
 /** `attach --pid`: the holder records the long-lived job's pid after launching it. */
@@ -374,7 +401,7 @@ export function decideWait(lease, req, now, probe = defaultProbe()) {
     if (!cur) return { ok: true, lease: base, cancelled: false };
     return { ok: true, lease: settleQueue(endWait(base, req.identity.repoKey, 'cancelled', now, byOf(req)), now, probe), cancelled: true, waiter: cur };
   }
-  const o = openWait(base, req, { forMin, opener: 'wait', now });
+  const o = openWait(base, req, { forMin, opener: 'wait', now, scope: probe.scope });
   if (!o.queued) {
     return { ...refuse('limit', `${LIMITS.maxWaiters} repos are already waiting; this one was not queued`), lease: journalRefusal(base, req, 'wait', 'limit', now) };
   }
@@ -718,6 +745,14 @@ export function renderLog(journal, { limit = 50 } = {}) {
 }
 
 /** The lines of `fleet lease status`. */
+/** The `lease run` processes waiting in an entry, and which of them go first (the train). */
+const runnersText = (w) => {
+  const rs = w.runners ?? [];
+  if (!rs.length) return '';
+  const high = rs.filter((r) => r.priority === 'high').map((r) => r.holder);
+  return ` [${rs.length} waiting run${rs.length === 1 ? '' : 's'}${high.length ? `; first: ${high.join(', ')} (high priority)` : ''}]`;
+};
+
 export function renderStatus(s, { dir, now, repoKey, cmd = 'fleet', tree = null }) {
   const head = `machine lease (${dir}):`;
   if (!s.measured) return [head, `  UNMEASURED: ${s.reason}`];
@@ -729,7 +764,7 @@ export function renderStatus(s, { dir, now, repoKey, cmd = 'fleet', tree = null 
   } else lines.push('  windows: none announced');
   if (s.turn) lines.push(`  turn: ${s.turn.repo} until ${hhmmOf(new Date(s.turn.endsAt))}${s.turn.lastReleasedAt ? ` (between jobs since ${hhmmOf(new Date(s.turn.lastReleasedAt))})` : ''}`);
   if (s.turnMin) lines.push(`  turn length: ${s.turnMin}m (set for this machine)`);
-  for (const w of s.waiters) lines.push(`  waiting: ${w.repo} since ${hhmmOf(new Date(w.since))} (${w.refusals} refusal${w.refusals === 1 ? '' : 's'}, wants ${w.forMin}m)`);
+  for (const w of s.waiters) lines.push(`  waiting: ${w.repo} since ${hhmmOf(new Date(w.since))} (${w.refusals} refusal${w.refusals === 1 ? '' : 's'}, wants ${w.forMin}m)${runnersText(w)}`);
   if (s.peakHours.length) {
     const r = formatPeakRange;
     lines.push(`  peak hours (machine-local): ${s.peakHours.map(r).join(', ')} — ${s.peak.now ? `PEAK NOW (${r(s.peak.range)})` : s.peak.next ? `next ${r(s.peak.next)}` : 'none upcoming'}`);
