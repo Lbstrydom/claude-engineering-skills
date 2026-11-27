@@ -159,8 +159,8 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
 /**
  * A stable reorder so a source that is a git ANCESTOR of another lands before it (consumer report 2026-11-27: a branch and
  * its ancestor in one train stopped at "produced no commit"; `proposeLandingOrder` sees no ancestry). `isAncestor(a, b)` is
- * true when a is an ancestor of b; anything else (false, null = unanswered) adds no edge. Equal commits form a cycle and keep
- * their given order. Pure.
+ * true when a is a STRICT ancestor of b (the caller answers equal commits with no edge, so the graph is acyclic); anything else
+ * (false, null = unanswered) adds no edge. Pure.
  * @param {string[]} ids
  * @param {(a: string, b: string) => boolean|null} isAncestor
  * @returns {string[]}
@@ -177,6 +177,7 @@ export function ancestorsFirst(ids, isAncestor) {
 
 /** Most sources a train orders by ancestry (pairwise `merge-base --is-ancestor`); over it the order is left as proposed, and said. */
 export const MAX_ANCESTRY_SOURCES = 30;
+const ANCESTRY_TIMEOUT_MS = 15_000;
 
 /**
  * Put a source that is an ancestor of another first (`ancestorsFirst`), asking git. An unanswered question adds no edge.
@@ -186,14 +187,19 @@ export function orderAncestorsFirst(ids, facts, git, cwd) {
   if (ids.length < 2) return { ids, note: null };
   if (ids.length > MAX_ANCESTRY_SOURCES) return { ids, note: `landing order: ${ids.length} sources is over ${MAX_ANCESTRY_SOURCES}, so ancestry was not checked` };
   const oid = new Map(ids.map((id) => [id, facts.registry.sessions.find((x) => x.id === id)?.ready?.oid ?? null]));
+  // Equal commits are no edge (strict ancestry is acyclic). One timed-out question stops the asking: the rest stays unanswered
+  // rather than spending a timeout per pair.
+  let gaveUp = null;
   const isAncestor = (a, b) => {
-    if (!oid.get(a) || !oid.get(b)) return null;
-    const r = git(['merge-base', '--is-ancestor', oid.get(a), oid.get(b)], cwd);
+    if (gaveUp || !oid.get(a) || !oid.get(b) || oid.get(a) === oid.get(b)) return null;
+    const r = git(['merge-base', '--is-ancestor', oid.get(a), oid.get(b)], cwd, { timeoutMs: ANCESTRY_TIMEOUT_MS });
+    if (r.timedOut) gaveUp = r.reason;
     return r.ok ? true : r.status === 1 ? false : null;
   };
   const next = ancestorsFirst(ids, isAncestor);
   const moved = next.some((id, i) => id !== ids[i]);
-  return { ids: next, note: moved ? `landing order: ancestors first — ${next.join(', ')} (was ${ids.join(', ')})` : null };
+  const notes = [moved ? `landing order: ancestors first — ${next.join(', ')} (was ${ids.join(', ')})` : null, gaveUp ? `landing order: ancestry only partly checked (${gaveUp})` : null].filter(Boolean);
+  return { ids: next, note: notes.length ? notes.join('; ') : null };
 }
 
 /** `--select a,b`: present-but-empty (or with an empty element) is an argv error, never "no selection". */

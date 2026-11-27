@@ -81,7 +81,7 @@ import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeA
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { recordSuiteRun } from './lib/suite-run-record.mjs';
-import { FAILED_FILES_MARKER } from './lib/failed-files-marker.mjs'; import { outcomeFromRun, outcomeLine } from './lib/test-outcome-marker.mjs';
+import { FAILED_FILES_MARKER } from './lib/failed-files-marker.mjs'; import { TEST_OUTCOME_FILE_ENV, outcomeFromRun, outcomeLine, writeOutcomeFile } from './lib/test-outcome-marker.mjs';
 import { performance } from 'node:perf_hooks';
 
 /**
@@ -141,7 +141,7 @@ export function scrubRoutingEnv(env) {
  * The hang guard's overrides and its named-file manifest are the same kind of instruction: a nested runner started from a test
  * uses its own profile and manifest, never the outer run's (the runner sets the manifest itself, after this scrub, when it has one).
  */
-export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP', IDLE_WATCHDOG_ENV, STALL_TIMEOUT_ENV, PROGRESS_EXTRA_FILES_ENV]);
+export const SCRUBBED_RUNNER_ENV = Object.freeze(['NODE_TEST_CONTEXT', 'TEST_TIMING_KEEP', IDLE_WATCHDOG_ENV, STALL_TIMEOUT_ENV, PROGRESS_EXTRA_FILES_ENV, TEST_OUTCOME_FILE_ENV]);
 
 /** Pure: the full child env — routing selectors AND runner state removed. */
 export function scrubChildEnv(env) {
@@ -477,7 +477,7 @@ export function finishRun({ status, reportText, timingText = null, preflight = n
   // On any failing run, ONE machine line naming the failing test files, read by the CI flake classifier
   // (`test-tier.mjs ci-verdict --rerun-unrelated-flake`), and ONE saying why it is red, read by `fleet land`. Neither moves the exit code.
   const selectionFailed = out.exitCode !== 0 && adjudicateRun({ status, reportText, watchdog, hang }).exitCode === 0;
-  if (out.exitCode !== 0) out.lines.push(failedFilesLine(reportText, root), outcomeLine(outcomeFromRun({ reportText, guardReportVersion: GUARD_REPORT_VERSION, watchdog, hang, selectionFailed })));
+  if (out.exitCode !== 0) out.lines.push(failedFilesLine(reportText, root), outcomeLine(outcomeFromRun({ status, reportText, guardReportVersion: GUARD_REPORT_VERSION, watchdog, hang, selectionFailed })));
   return out;
 }
 
@@ -985,7 +985,7 @@ async function main() {
   // An interrupt is the operator's decision: report it as one, with the conventional 128+signal code, never as a pass.
   const finalCode = res.interrupted ? res.interrupted.code : exitCode;
   if (res.interrupted) lines.push(`run-tests: interrupted by ${res.interrupted.signal}; the test process tree was stopped.`);
-  if (lines.length) process.stderr.write(`\n${lines.join('\n')}\n`);
+  if (lines.length) process.stderr.write(`\n${lines.join('\n')}\n`); writeOutcomeFile(finalCode === 0 ? [] : lines);
   await finishAndExit(finalCode);
 }
 

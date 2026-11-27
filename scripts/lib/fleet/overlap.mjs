@@ -476,7 +476,11 @@ export function approvable(manifest, { acceptRerun = false, acceptGuard = null }
   } else if (preLand.length > 1) {
     return no('multiple pre-land tiers but no tier results recorded');
   }
-  // With an accepted guard the manifest's own worst result is that red: the per-tier verdicts above are what decide.
+  // With an accepted guard the manifest's own worst result is that red — but only if EVERY red recorded is one of those accepted.
+  if (acceptedGuards.length) {
+    const other = (tierResults ?? []).find((r) => r.result !== 'green' && r.result !== 'green-after-rerun' && !acceptedGuards.includes(r.name));
+    if (other) return no(`tier "${other.name}" result is ${other.result} and the accept-guard decision does not cover it`);
+  }
   const considered = acceptedGuards.length ? [...tierConsidered, manifest.result === 'red' ? 'green' : manifest.result] : [manifest.result, ...tierConsidered];
   const overall = worstResult(considered);
   const guardNote = acceptedGuards.length ? `guard-only red accepted by a recorded human decision for tier(s) ${acceptedGuards.join(', ')} (every test passed)` : null;

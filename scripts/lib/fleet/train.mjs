@@ -44,7 +44,7 @@ import { assertManaged, fleetDir, mintTrainId, probesDir, readTrain, writeTrain 
 import { rollupMessage } from './rollup.mjs';
 import { readTail } from './tier-failure.mjs';
 import { DEFAULT_GIT_TIMEOUT_MS, RERUN_FILES_TOKEN } from './contracts.mjs';
-import { classifyAttemptLog } from '../test-outcome-marker.mjs';
+import { TEST_OUTCOME_FILE_ENV, classifyAttemptLog } from '../test-outcome-marker.mjs';
 import { FAILED_FILES_MARKER, parseFailedFilesPayload } from '../failed-files-marker.mjs';
 
 const DEP_FILES = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock']);
@@ -108,12 +108,12 @@ export function ghRun(args, cwd) {
  * other tier is an argv with `shell:false` (see `resolveTierSpawn` for Windows shims).
  * @returns {{exitCode: number|null, timedOut: boolean, error: string|null, signal: string|null, refused?: string}}
  */
-export function spawnTier({ tier, cwd, logPath, timeoutMs, platform = process.platform }) {
+export function spawnTier({ tier, cwd, logPath, timeoutMs, outcomePath = null, platform = process.platform }) {
   const plan = resolveTierSpawn({ tier, platform });
   if (plan.refuse) return { exitCode: null, timedOut: false, error: null, signal: null, refused: plan.refuse };
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   // A timeout must end the tier's whole process tree, not just the process spawned (see tier-supervisor.mjs).
-  return superviseTier({ file: plan.file, args: plan.args, shell: plan.shell, cwd, logPath, timeoutMs });
+  return superviseTier({ file: plan.file, args: plan.args, shell: plan.shell, cwd, logPath, timeoutMs, ...(outcomePath ? { env: { [TEST_OUTCOME_FILE_ENV]: outcomePath } } : {}) });
 }
 
 /** The main checkout (node_modules owner): the parent of `.git` when the common dir is one, else the toplevel. */
@@ -413,7 +413,11 @@ export function addIntegrationWorktree({ deps, cwd, wt, baseOid, hooksDir, attem
   for (let i = 1; ; i += 1) {
     const r = deps.git(['-c', `core.hooksPath=${hooksDir}`, 'worktree', 'add', '--detach', wt, baseOid], cwd);
     if (r.ok) return { ok: true, attempts: i, notes };
-    if (!transientGitFailure(r) || i >= attempts) return { ok: false, attempts: i, notes, reason: `${r.reason}${i > 1 ? ` (after ${i} attempts)` : ''}`, timedOut: r.timedOut === true };
+    if (!transientGitFailure(r) || i >= attempts) {
+      // Leave nothing half-made behind: a final failure is undone too (best-effort; what could not be undone is said).
+      const left = exists(wt) ? undoPartialWorktree({ deps, cwd, wt, exists }) : null;
+      return { ok: false, attempts: i, notes, reason: `${r.reason}${i > 1 ? ` (after ${i} attempts)` : ''}${left ? `; the partial worktree could not be undone: ${left}` : ''}`, timedOut: r.timedOut === true };
+    }
     const undo = undoPartialWorktree({ deps, cwd, wt, exists });
     if (undo) return { ok: false, attempts: i, notes, reason: `${r.reason}; the partial worktree could not be undone before a retry: ${undo}`, timedOut: r.timedOut === true };
     notes.push(`worktree add attempt ${i} of ${attempts} failed (${r.reason}); undone and retried`);
@@ -608,16 +612,13 @@ const RERUN_KINDS = new Set(['test-failure', 'instrument', 'unclassified']);
 export const MAX_RERUN_FILES = 50;
 const SAFE_FILE = /^[A-Za-z0-9_@+=:,./-]+$/;
 
-/** The log text of ONE attempt: everything after its own header (the log is appended across attempts). */
-export function attemptSegment(text, tierName, n) {
-  const t = String(text ?? '');
-  const at = t.lastIndexOf(`--- fleet: tier ${tierName} attempt ${n} `);
-  return at === -1 ? '' : t.slice(at);
-}
+/** The file the runner writes one attempt's machine lines to (`FLEET_TEST_OUTCOME_FILE`), beside the tier log. */
+export const outcomePathOf = (logPath, n) => `${logPath}.attempt-${n}.outcome`;
+const OUTCOME_BYTES = 64 * 1024;
 
 /**
- * The argv of a targeted rerun: the tier's `rerunFailedCommand` with `{files}` replaced by the failing files the attempt's
- * `run-tests/v1 failed-files:` line named. Every file is a repo-relative plain token (it came from a log), at most
+ * The argv of a targeted rerun: the tier's `rerunFailedCommand` with `{files}` replaced by the failing files the runner's
+ * outcome file named in its `run-tests/v1 failed-files:` line. Every file is a repo-relative plain token (it came from a log), at most
  * MAX_RERUN_FILES. @returns {{ok: true, argv: string[], files: string[]} | {ok: false, why: string}}
  */
 export function targetedRerunArgv(tier, segment) {
@@ -650,7 +651,10 @@ function runOneTier({ tier, train, dir, deps }) {
   const attempt = (n, run = tier, label = '') => {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     fs.appendFileSync(logPath, `\n--- fleet: tier ${tier.name} attempt ${n} ${label}at ${iso(deps)} ---\n`);
-    const r = deps.runTier({ tier: run, cwd: wt, logPath, timeoutMs: tier.timeoutMs });
+    // A fresh file per attempt: a stale one from an earlier build can never classify this run.
+    const outcomePath = outcomePathOf(logPath, n);
+    fs.rmSync(outcomePath, { force: true });
+    const r = deps.runTier({ tier: run, cwd: wt, logPath, timeoutMs: tier.timeoutMs, outcomePath });
     if (r?.cleanup && r.cleanup.ok === false) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${r.cleanup.reason}` : r.cleanup.reason;
     return r;
   };
@@ -660,8 +664,12 @@ function runOneTier({ tier, train, dir, deps }) {
     if (r.timedOut) return { result: 'red', reason: 'timeout', reasonCode: 'tier-timeout' };
     if (r.error) return { result: 'red', reason: `could not start: ${r.error}`, reasonCode: 'spawn-failed' };
     if (r.exitCode === 0) return { result: 'green' };
-    const segment = attemptSegment(readTail(logPath), tier.name, n);
-    const c = classifyAttemptLog(segment);
+    // Killed by a signal: the run did not end, so nothing it wrote describes it.
+    if (r.exitCode === null || r.exitCode === undefined) {
+      return { result: 'red', reason: `killed (${r.signal ?? 'no exit code'})`, reasonCode: 'unclassified-failure', failureKind: 'unclassified', classifyWhy: 'the tier did not exit normally' };
+    }
+    const segment = readTail(outcomePathOf(logPath, n), OUTCOME_BYTES);
+    const c = segment === null ? { kind: 'unclassified', outcome: null, why: `the runner wrote no outcome file (${TEST_OUTCOME_FILE_ENV})` } : classifyAttemptLog(segment);
     return {
       result: 'red', reason: `exit ${r.exitCode ?? r.signal ?? 'unknown'}${c.kind === 'unclassified' ? '' : ` (${c.kind})`}`, reasonCode: KIND_CODE[c.kind],
       failureKind: c.kind, ...(c.outcome ? { testsFailed: c.outcome.testsFailed, guards: c.outcome.guards } : { classifyWhy: c.why }), segment,
@@ -675,6 +683,9 @@ function runOneTier({ tier, train, dir, deps }) {
   let n = 1;
   let v = verdict(attempt(n), n);
   let rerun = null; let rerunFallback = null;
+  // A failed reap means a process of this attempt may still be running: never start another attempt beside it (audit R1 H5).
+  const live = () => (cleanupWarning ? { rerunFallback: 'not rerun: cleanup after the attempt failed, a process it started may still be running' } : null);
+  if (v.result === 'red' && RERUN_KINDS.has(v.failureKind) && live()) return done('red', { ...fields(v), ...live() });
   if (v.result === 'red' && RERUN_KINDS.has(v.failureKind)) {
     // Restore, re-assert the clean precondition, rerun (a leftover cannot make the rerun pass).
     const restoreOrDirty = () => restore(deps, wt, cand) ?? checkIntegrity(deps, wt, cand);
@@ -686,8 +697,10 @@ function runOneTier({ tier, train, dir, deps }) {
         n += 1;
         const tv = verdict(attempt(n, { ...tier, command: t.argv, shell: undefined }, `(targeted: ${t.files.length} failing file${t.files.length === 1 ? '' : 's'}) `), n);
         if (tv.result !== 'green') {
-          return done('red', { ...fields(tv), reason: `targeted rerun of ${t.files.length} failing file(s) still red: ${tv.reason}`, reran: true, rerun: 'targeted' });
+          // The tier's verdict stays the FIRST attempt's (a test failure): a targeted run's own kind never replaces it.
+          return done('red', { ...fields(v), reason: `targeted rerun of ${t.files.length} failing file(s) still red: ${tv.reason}`, reran: true, rerun: 'targeted', targeted: { reasonCode: tv.reasonCode, reason: tv.reason } });
         }
+        if (live()) return done('red', { ...fields(v), reran: true, rerun: 'targeted', ...live() });
         bad = restoreOrDirty();
         if (bad) return done('dirty', { reason: `after the targeted rerun, could not restore a clean candidate: ${bad}`, reasonCode: 'restore-failed', reran: true, rerun: 'targeted' });
         rerun = 'targeted-then-full';
@@ -698,7 +711,14 @@ function runOneTier({ tier, train, dir, deps }) {
     v = verdict(attempt(n), n);
   }
   const reran = rerun ? { reran: true, rerun, ...(rerunFallback ? { rerunFallback } : {}) } : {};
-  if (v.result !== 'green') return done('red', { ...fields(v), ...reran });
+  if (v.result !== 'green') {
+    // A guard-only red may later be accepted and the chain goes on past it: the candidate must still be intact.
+    if (v.failureKind === 'guard') {
+      const after = checkIntegrity(deps, wt, cand);
+      if (after) return done('dirty', { reason: `after ${tier.name}: ${after}`, reasonCode: 'dirty-after', ...reran });
+    }
+    return done('red', { ...fields(v), ...reran });
+  }
   const post = checkIntegrity(deps, wt, cand);
   if (post) return done('dirty', { reason: `after ${tier.name}: ${post}`, reasonCode: 'dirty-after', ...reran });
   return rerun ? done('green-after-rerun', { reasonCode: 'green-after-rerun', ...reran }) : done('green', { reasonCode: 'green' });
@@ -723,7 +743,8 @@ export function runTiers({ dir, trainId, deps }) {
     train = patchTrain(dir, trainId, { tierResults, result: worstResult(tierResults.map((r) => r.result)) }, deps);
     deps.log?.(`tier ${tier.name}: ${entry.result}${entry.reason ? ` (${entry.reason})` : ''}`);
     deps.hooks?.afterTier?.(tier.name);
-    if (entry.result !== 'green' && entry.result !== 'green-after-rerun' && !guardOnlyRed(entry)) break;
+    // A tier whose cleanup failed may have left a process running: the next tier never starts beside it.
+    if ((entry.result !== 'green' && entry.result !== 'green-after-rerun' && !guardOnlyRed(entry)) || entry.cleanupWarning) break;
   }
   return patchTrain(dir, trainId, { phase: 'tested', result: worstResult((train.tierResults ?? []).map((r) => r.result)) }, deps);
 }

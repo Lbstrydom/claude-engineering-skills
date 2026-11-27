@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TEST_OUTCOME_MARKER, classifyAttemptLog, classifyOutcome, outcomeFromRun, outcomeLine, parseOutcomePayload,
+  TEST_OUTCOME_FILE_ENV, TEST_OUTCOME_MARKER, classifyAttemptLog, classifyOutcome, outcomeFromRun, outcomeLine, parseOutcomePayload, writeOutcomeFile,
 } from '../scripts/lib/test-outcome-marker.mjs';
-import { adjudicateRun, finishRun } from '../scripts/run-tests.mjs';
+import { SCRUBBED_RUNNER_ENV, adjudicateRun, finishRun, scrubChildEnv } from '../scripts/run-tests.mjs';
 import { GUARD_REPORT_VERSION } from '../scripts/lib/test-guard-reporter.mjs';
 
 const report = (failures) => JSON.stringify({ version: GUARD_REPORT_VERSION, failures });
@@ -33,6 +33,8 @@ describe('classifyOutcome — the one reader', () => {
     [{ testsFailed: 0, guards: [policy, { id: 'hang-guard', kind: 'instrument' }] }, 'instrument'],
     [{ testsFailed: 0, guards: [policy] }, 'guard'],
     [{ testsFailed: 0, guards: [] }, 'unclassified'],
+    [{ testsFailed: null, guards: [{ id: 'idle-watchdog', kind: 'timeout' }, { id: 'guard-report', kind: 'instrument' }] }, 'timeout'],
+    [{ testsFailed: 3, guards: [{ id: 'per-test-limit', kind: 'timeout' }] }, 'timeout'],
   ];
   for (const [o, kind] of rows) it(`${JSON.stringify(o)} → ${kind}`, () => assert.equal(classifyOutcome(o), kind));
 });
@@ -53,6 +55,26 @@ describe('classifyAttemptLog', () => {
     const r = classifyAttemptLog(`${forged}\n${real}\n`);
     assert.equal(r.kind, 'unclassified');
     assert.match(r.why, /2 test-outcome/);
+  });
+});
+
+describe('provenance: only the runner writes the outcome file', () => {
+  it('the tests run-tests starts never see FLEET_TEST_OUTCOME_FILE', () => {
+    assert.ok(SCRUBBED_RUNNER_ENV.includes(TEST_OUTCOME_FILE_ENV));
+    assert.equal(scrubChildEnv({ [TEST_OUTCOME_FILE_ENV]: '/x', PATH: 'p' })[TEST_OUTCOME_FILE_ENV], undefined);
+  });
+  it('writeOutcomeFile writes only machine lines, only when named, and never throws', () => {
+    const writes = [];
+    const write = (f, t) => writes.push([f, t]);
+    writeOutcomeFile(['prose', outcomeLine({ testsFailed: 1, guards: [] }), 'run-tests/v1 failed-files: ["a"]'], { env: { [TEST_OUTCOME_FILE_ENV]: '/o' }, write });
+    assert.deepEqual(writes, [['/o', `${outcomeLine({ testsFailed: 1, guards: [] })}\nrun-tests/v1 failed-files: ["a"]\n`]]);
+    writeOutcomeFile([outcomeLine({ testsFailed: 1, guards: [] })], { env: {}, write });
+    assert.equal(writes.length, 1, 'no variable, no file');
+    assert.doesNotThrow(() => writeOutcomeFile([outcomeLine({ testsFailed: 1, guards: [] })], { env: { [TEST_OUTCOME_FILE_ENV]: '/o' }, write: () => { throw new Error('EACCES'); } }));
+  });
+  it('a signal-killed runner child is an instrument failure, never a clean count', () => {
+    const o = outcomeFromRun({ status: null, reportText: JSON.stringify({ version: GUARD_REPORT_VERSION, failures: [] }), guardReportVersion: GUARD_REPORT_VERSION });
+    assert.deepEqual(o.guards, [{ id: 'runner-killed', kind: 'instrument' }]);
   });
 });
 

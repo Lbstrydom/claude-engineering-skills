@@ -83,5 +83,5 @@ export const TierSchema = z.strictObject({
   shell: z.boolean().optional(),
   note: NoteSchema.optional(),
   // A targeted rerun: an argv with exactly one `{files}` element (docs/plans/fleet-train-landing-friction.md section 2.2).
-  rerunFailedCommand: argvSchema({ min: 2 }).refine((a) => a.filter((x) => x === RERUN_FILES_TOKEN).length === 1, `must contain exactly one ${RERUN_FILES_TOKEN} element`).optional(),
+  rerunFailedCommand: argvSchema({ min: 2 }).refine((a) => a.filter((x) => x === RERUN_FILES_TOKEN).length === 1 && a[0] !== RERUN_FILES_TOKEN, `must contain exactly one ${RERUN_FILES_TOKEN} element, never as the executable`).optional(),
 });

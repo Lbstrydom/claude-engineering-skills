@@ -77,13 +77,15 @@ if (child) {
 
 /**
  * Run a resolved tier spawn plan and wait for it. Never throws.
- * @param {{file: string, args: string[], shell: boolean|string, cwd: string, logPath: string, timeoutMs?: number}} p
+ * @param {{file: string, args: string[], shell: boolean|string, cwd: string, logPath: string, timeoutMs?: number, env?: Record<string, string>}} p
+ *   `env`: extra variables for the tier (fleet's per-attempt `FLEET_TEST_OUTCOME_FILE`), on top of this process's environment.
  * @returns {{exitCode: number|null, timedOut: boolean, error: string|null, signal: string|null, cleanup: {ok: false, reason: string}|null}}
  */
-export function superviseTier({ file, args, shell, cwd, logPath, timeoutMs }) {
+export function superviseTier({ file, args, shell, cwd, logPath, timeoutMs, env: extraEnv }) {
   const cfg = { file, args, shell, cwd, logPath, timeoutMs: timeoutMs ?? 0, killTimeoutMs: KILL_TIMEOUT_MS };
   const res = spawnSync(process.execPath, ['-e', SUPERVISOR, JSON.stringify(cfg)], {
     encoding: 'utf-8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], killSignal: 'SIGKILL',
+    ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
     // The supervisor enforces `timeoutMs` itself; this only bounds a supervisor that has itself hung.
     ...(timeoutMs ? { timeout: timeoutMs + 2 * KILL_TIMEOUT_MS } : {}),
   });

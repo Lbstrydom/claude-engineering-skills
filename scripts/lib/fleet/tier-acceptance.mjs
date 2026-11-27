@@ -1,14 +1,17 @@
 /**
  * @fileoverview When a guard-only red tier may be accepted (docs/plans/fleet-train-landing-friction.md section 2.3): the ONE
  * predicate for "every test passed, only a policy guard failed", the fingerprint an `accept-guard` decision is keyed to, and
- * why a binding does not admit a given red. Pure; `overlap.mjs`'s `approvable` and `decisions-cmd.mjs` share it.
+ * why a binding does not admit a given red. Pure; `approvable` and the decision verb share it.
  *
  * @module scripts/lib/fleet/tier-acceptance
  */
 import crypto from 'node:crypto';
 
-/** A red tier whose runner said every test passed and only a policy guard failed. The ONE predicate (train continues past it; approval may accept it). */
-export const guardOnlyRed = (r) => r?.result === 'red' && r.failureKind === 'guard' && r.testsFailed === 0;
+/**
+ * A red tier whose runner said every test passed and only a policy guard failed, on its FIRST attempt (a red that was rerun had
+ * a test fail first), with no process left behind. The ONE predicate (the train continues past it; approval may accept it).
+ */
+export const guardOnlyRed = (r) => r?.result === 'red' && r.failureKind === 'guard' && r.testsFailed === 0 && !r.reran && !r.cleanupWarning;
 
 /** What an `accept-guard` binding is keyed to: this train, this candidate, this recorded tier result. */
 export function tierFingerprint(trainId, candidateOid, r) {

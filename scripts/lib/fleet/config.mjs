@@ -341,7 +341,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
 
 /**
  * The train's git timeout: `FLEET_GIT_TIMEOUT_MS` (per machine: the load is the machine's) > `.fleet.json` `gitTimeoutMs` >
- * `DEFAULT_GIT_TIMEOUT_MS`. A set-but-invalid env value is a ConfigError, never silently the default. `configValue` is a
+ * `DEFAULT_GIT_TIMEOUT_MS`. A non-blank invalid env value is a ConfigError, never silently the default; a blank one reads as unset. `configValue` is a
  * thunk so a manifest-driven verb that must not load `.fleet.json` can pass `() => null`.
  * @returns {{ms: number, source: 'env'|'config'|'default'}}
  * @throws {ConfigError}

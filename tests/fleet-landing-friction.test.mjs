@@ -27,8 +27,9 @@ const GUARD_LINE = outcomeLine({ testsFailed: 0, guards: [{ id: 'slow-test-budge
 const FAIL_LINE = outcomeLine({ testsFailed: 1, guards: [] });
 const counter = (dir, name) => `require('fs').appendFileSync('${fwd(path.join(dir, `${name}.ran`))}','x')`;
 const ran = (dir, name) => (fs.existsSync(path.join(dir, `${name}.ran`)) ? fs.readFileSync(path.join(dir, `${name}.ran`), 'utf8').length : 0);
-/** A tier that prints `lines` and exits 1. */
-const redTier = (dir, name, lines, extra = {}) => ({ name, command: ['node', '-e', `${counter(dir, name)};${lines.map((l) => `console.log(${JSON.stringify(l)})`).join(';')};process.exit(1)`], ...extra });
+/** A tier whose RUNNER writes `lines` to fleet's outcome file (as run-tests.mjs does) and exits 1. */
+const writeOutcome = (lines) => `const o=process.env.FLEET_TEST_OUTCOME_FILE;if(o)require('fs').writeFileSync(o,${JSON.stringify(lines.join('\n') + '\n')})`;
+const redTier = (dir, name, lines, extra = {}) => ({ name, command: ['node', '-e', `${counter(dir, name)};${writeOutcome(lines)};process.exit(1)`], ...extra });
 const okTier = (dir, name) => ({ name, command: ['node', '-e', `${counter(dir, name)}`] });
 const withTiers = (tiers) => {
   const s = setup({ fleetConfig: { mergeMethod: 'direct-squash', testCommand: { tiers } } });
@@ -55,6 +56,14 @@ describe('a classified red: guard-only is not rerun and the next tier still runs
     assert.equal(ap.status, 3);
     assert.equal(ap.json.needsAcceptGuard, true);
     assert.match(ap.json.reason, /guard-only/);
+  });
+
+  it('provenance: a guard marker PRINTED to the output (as a test could) is never read — unclassified, rerun', () => {
+    const dir = tmpRoot();
+    const t = land(withTiers([{ name: 'full', command: ['node', '-e', `${counter(dir, 'full')};console.log(${JSON.stringify(GUARD_LINE)});process.exit(1)`] }])).json.train;
+    assert.equal(t.tierResults[0].reasonCode, 'unclassified-failure');
+    assert.match(t.tierResults[0].classifyWhy, /no outcome file/);
+    assert.equal(ran(dir, 'full'), 2);
   });
 
   it('a tier with NO marker stays today\'s behaviour: reran once, unclassified-failure, and the chain stops', () => {
@@ -88,7 +97,7 @@ describe('a test failure reruns its failing files first', () => {
     const argvLog = fwd(path.join(dir, 'targeted.argv'));
     const full = {
       name: 'full',
-      command: ['node', '-e', `${counter(dir, 'full')};const f=require('fs');if(!f.existsSync('${state}')){f.writeFileSync('${state}','1');console.log(${JSON.stringify(failedFiles)});console.log(${JSON.stringify(FAIL_LINE)});process.exit(1)}`],
+      command: ['node', '-e', `${counter(dir, 'full')};const f=require('fs');if(!f.existsSync('${state}')){f.writeFileSync('${state}','1');${writeOutcome([failedFiles, FAIL_LINE])};process.exit(1)}`],
       rerunFailedCommand: ['node', '-e', `require('fs').writeFileSync('${argvLog}',JSON.stringify(process.argv.slice(1)))`, '{files}'],
     };
     const s = withTiers([full]);
@@ -105,8 +114,18 @@ describe('a test failure reruns its failing files first', () => {
     const t = land(withTiers([full])).json.train;
     assert.equal(t.tierResults[0].result, 'red');
     assert.equal(t.tierResults[0].rerun, 'targeted');
-    assert.equal(t.tierResults[0].reasonCode, 'unclassified-failure', 'the targeted attempt printed no marker of its own');
+    assert.equal(t.tierResults[0].reasonCode, 'test-failure', 'the first attempt\'s kind stands');
+    assert.equal(t.tierResults[0].testsFailed, 1);
+    assert.equal(t.tierResults[0].targeted.reasonCode, 'unclassified-failure');
     assert.equal(ran(dir, 'full'), 1);
+  });
+
+  it('a targeted rerun that comes back guard-only never turns the test failure into an acceptable red', () => {
+    const dir = tmpRoot();
+    const full = redTier(dir, 'full', [failedFiles, FAIL_LINE], { rerunFailedCommand: ['node', '-e', `${writeOutcome([GUARD_LINE])};process.exit(1)`, '{files}'] });
+    const t = land(withTiers([full])).json.train;
+    assert.equal(t.tierResults[0].failureKind, 'test-failure');
+    assert.equal(t.tierResults[0].targeted.reasonCode, 'guard-failure');
   });
 
   it('targetedRerunArgv refuses anything that is not a plain repo-relative file list', () => {
@@ -125,6 +144,7 @@ describe('a test failure reruns its failing files first', () => {
     assert.equal(cfg(['npm', 'test', '--', '{files}']).ok, true);
     assert.equal(cfg(['npm', 'test']).ok, false);
     assert.equal(cfg(['npm', '{files}', '{files}']).ok, false);
+    assert.equal(cfg(['{files}', '--verbose']).ok, false, 'a test file is never the executable');
   });
 });
 
@@ -190,11 +210,15 @@ describe('approvable with an accept-guard binding (pure)', () => {
     assert.match(approvable(train({ ...guardRed, endedAt: '2026-11-27T11:00:00.000Z' }), { acceptGuard: binds() }).reason, /different result/);
   });
   it('NEVER a test failure, a timeout or an unclassified red, even with a binding naming the tier', () => {
-    for (const r of [{ ...guardRed, failureKind: 'test-failure', testsFailed: 2 }, { ...guardRed, failureKind: 'timeout' }, { ...guardRed, failureKind: 'unclassified', testsFailed: undefined }]) {
+    for (const r of [{ ...guardRed, reran: true }, { ...guardRed, cleanupWarning: 'a process may still run' },{ ...guardRed, failureKind: 'test-failure', testsFailed: 2 }, { ...guardRed, failureKind: 'timeout' }, { ...guardRed, failureKind: 'unclassified', testsFailed: undefined }]) {
       const a = approvable(train(r), { acceptGuard: binds({}, r) });
       assert.equal(a.ok, false);
       assert.match(a.reason, /never a test failure/);
     }
+  });
+  it('every red in tierResults must be accepted, not only the pre-land ones the loop visits', () => {
+    const t = { ...train(), tierResults: [guardRed, { name: 'extra', result: 'red', failureKind: 'test-failure', testsFailed: 1 }] };
+    assert.match(approvable(t, { acceptGuard: binds() }).reason, /tier "extra".*does not cover/);
   });
   it('a block-level check still refuses', () => {
     const t = { ...train(), checkResults: [{ name: 'c', severity: 'block', status: 'ok', findings: [{ level: 'block', message: 'm' }] }] };
@@ -299,7 +323,19 @@ describe('a source already contained in the candidate', () => {
     assert.deepEqual(ancestorsFirst(['x', 'y'], () => null), ['x', 'y'], 'an unanswered question adds no edge');
     assert.deepEqual(ancestorsFirst(['x', 'y'], () => true), ['x', 'y'], 'equal commits keep their order');
   });
-  it('end to end: a branch and its ancestor in one direct-merge train land, the ancestor ordered first', () => {
+  it('equal commits are no edge: a descendant still follows both of its (equal) ancestors', () => {
+    const oid = { d: '2', a: '1', b: '1' };
+    const isAnc = (x, y) => (oid[x] === oid[y] ? null : oid[x] === '1' && oid[y] === '2');
+    assert.deepEqual(ancestorsFirst(['d', 'a', 'b'], isAnc), ['a', 'b', 'd']);
+  });
+  it('orderAncestorsFirst stops asking after one timed-out question, and says so', () => {
+    let calls = 0;
+    const facts = { registry: { sessions: ['x', 'y', 'z'].map((id, i) => ({ id, ready: { oid: String(i + 1).repeat(40) } })) } };
+    const o = orderAncestorsFirst(['x', 'y', 'z'], facts, () => { calls += 1; return { ok: false, status: null, timedOut: true, reason: 'git merge-base timed out after 15000ms' }; }, '.');
+    assert.equal(calls, 1);
+    assert.match(o.note, /only partly checked/);
+  });
+  it('orderAncestorsFirst asks the real git of a repo: main is ordered before a branch that descends from it', () => {
     const s = setup({ fleetConfig: { mergeMethod: 'direct-merge', testCommand: { tiers: [{ name: 'default', command: ['node', '-e', ''] }] } } });
     readyBranch(s, 'base-a', { 'a.txt': 'A\n' });
     // A descendant of base-a, registered as its own session.
@@ -307,5 +343,31 @@ describe('a source already contained in the candidate', () => {
     const o = orderAncestorsFirst(['x', 'y'], facts, (args) => runGit(args, s.fx.repo), s.fx.repo);
     assert.deepEqual(o.ids, ['y', 'x'], 'main is an ancestor of base-a');
     assert.match(o.note, /ancestors first/);
+  });
+});
+
+describe('a failed reap: no second attempt, no next tier', () => {
+  it('a red whose cleanup failed is not rerun, and the chain stops even after a green with a failed cleanup', async () => {
+    const { writeTrain, readTrain } = await import('../scripts/lib/fleet/registry.mjs');
+    const { runTiers } = await import('../scripts/lib/fleet/train.mjs');
+    const dir = tmpRoot();
+    const cand = { oid: 'a'.repeat(40), tree: 'b'.repeat(40) };
+    const tiers = [{ name: 'one', command: ['x'], stage: 'pre-land' }, { name: 'two', command: ['x'], stage: 'pre-land' }];
+    const base = { schemaVersion: 1, createdAt: '2026-11-27T00:00:00.000Z', phase: 'applying', baseOid: 'c'.repeat(40), sources: [], mergeMethod: 'direct-squash',
+      destination: { remote: 'origin', fetchUrl: 'u', pushUrl: 'u', ref: 'refs/heads/main', expectedOid: null }, testCommand: tiers, candidate: cand, depsChanged: false, result: null, worktree: dir, notes: [] };
+    const git = (args) => (args[0] === 'status' ? { ok: true, status: 0, stdout: '' } : args[0] === 'rev-parse' ? { ok: true, status: 0, stdout: `${cand.oid}\n${cand.tree}\n` } : { ok: true, status: 0, stdout: '' });
+    const run = (trainId, results) => {
+      writeTrain(dir, { ...base, trainId });
+      const calls = [];
+      const runTier = ({ tier }) => { calls.push(tier.name); return { ...results.shift(), cleanup: { ok: false, reason: '1 descendant(s) could not be stopped' } }; };
+      runTiers({ dir, trainId, deps: { git, runTier, now: () => new Date('2026-11-27T00:00:00Z'), log: () => {}, hooks: {} } });
+      return { calls, t: readTrain(dir, trainId).train };
+    };
+    const red = run('t-20261127000000-0001', [{ exitCode: 1, timedOut: false, error: null, signal: null }]);
+    assert.deepEqual(red.calls, ['one'], 'no rerun beside a possibly live process');
+    assert.match(red.t.tierResults[0].rerunFallback, /may still be running/);
+    const green = run('t-20261127000000-0002', [{ exitCode: 0, timedOut: false, error: null, signal: null }]);
+    assert.deepEqual(green.calls, ['one'], 'the next tier never starts');
+    assert.equal(green.t.tierResults[0].warnings[0].code, 'cleanup-warning');
   });
 });

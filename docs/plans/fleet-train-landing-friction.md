@@ -11,6 +11,14 @@
 > guard failed*; it needs a recorded human decision (`fleet decision record --scope accept-guard`) bound to that
 > train id, that candidate sha and a fingerprint of that tier result; and it can never cover a test failure, a
 > timeout, an instrument failure or an unclassified red. Nothing else about approval changes.
+> It also narrows one standing invariant (`tests/fleet-suite-decision-cpu.test.mjs`, "no module that merges or pushes reads
+> decisions"): `train-approve.mjs` now reads ONE decision view — `activeDecision(…, 'accept-guard', …)` — and the census pins
+> exactly that import and that scope, so any other read still fails the test. A decision still grants no merge or push: the
+> approve itself remains the user's go-ahead.
+>
+> **Not changed (left for Louis)**: a GREEN tier whose process reap failed (`cleanupWarning`) stays approvable, as at
+> 888b11e5. This change only stops a rerun or the next tier from starting beside a possibly live process, and keeps such a
+> red out of accept-guard. Whether a reap failure should block a green approval is a separate, stricter gate decision.
 
 ## 1. Context Summary
 
@@ -101,10 +109,15 @@ test-outcome/v1 {"testsFailed": <int ≥ 0 | null>, "guards": [{"id": "<slug>", 
 | `0`, guards non-empty, all `policy` | `guard` |
 | `0`, no guards (red with nothing named) | `unclassified` |
 
-`train.mjs` reads only the log text after the LAST `--- fleet: tier <name> attempt <n>` header (the log is appended
-across attempts), bounded by `readTail`. A green exit is never parsed: classification only describes a red.
+**Provenance (audit R1).** The marker is never read from the tier's output, where any test can print anything. Fleet names a
+fresh file per attempt in `FLEET_TEST_OUTCOME_FILE` (`<log>.attempt-<n>.outcome`, removed before the attempt); the runner
+writes its machine lines there (`writeOutcomeFile`) and removes the variable from the environment of the tests it runs
+(`SCRUBBED_RUNNER_ENV`). No file → `unclassified`. A signal-killed tier is `unclassified` without reading anything. A
+timeout guard outranks every other field (a run stopped for time is a timeout whatever else it counted). A green exit is
+never read: classification only describes a red.
 
-**`run-tests.mjs` mapping** (the "refuses a green it did not earn" rule is untouched — the marker is computed from the
+**`run-tests.mjs` mapping** (the "refuses a green it did not earn" rule is untouched; a signal-killed runner child adds
+`runner-killed/instrument` — the marker is computed from the
 same inputs AFTER the exit code and can never move it): watchdog → `idle-watchdog/timeout`; per-test limit →
 `per-test-limit/timeout`; hang-guard gap/errors → `hang-guard/instrument`; guard report missing, unparseable, wrong
 version or shape → `testsFailed: null` + `guard-report/instrument`; preflight/branch-tier selection failure on an
@@ -117,7 +130,7 @@ does not cross the size ratchet's 1000-line line.
 
 | kind | rerun |
 |---|---|
-| `guard` | **none** — deterministic. The tier is `red` with `failureKind: 'guard'`, and **the next tier still runs**, so the train has every tier's verdict (an approver needs that; today a red stops the chain) |
+| `guard` (first attempt, no leftover process) | **none** — deterministic. The tier is `red` with `failureKind: 'guard'`, and **the next tier still runs**, so the train has every tier's verdict (an approver needs that; today a red stops the chain) |
 | `timeout` (marker) | none — same rule as the existing tier-timeout (a stalled run under load stalls again, at the full cost) |
 | `test-failure` | targeted first when possible, else full |
 | `instrument`, `unclassified` | full rerun, as today |
@@ -126,7 +139,7 @@ does not cross the size ratchet's 1000-line line.
 **Targeted first**: a tier may declare `rerunFailedCommand` in `.fleet.json` — an argv with exactly one `{files}`
 element, replaced by the failing files from the attempt's `run-tests/v1 failed-files:` marker (`parseFailedFilesPayload`,
 reused). Restore + integrity check, run it; red → tier red (`rerun: 'targeted'`, full rerun skipped — the saving);
-green → restore, run the **full** tier (`rerun: 'targeted-then-full'`); its verdict decides (`green-after-rerun` / `red`). Each file must be a
+a targeted red keeps the FIRST attempt's kind (`test-failure`), its own result recorded under `targeted`; green → restore, run the **full** tier (`rerun: 'targeted-then-full'`); its verdict decides (`green-after-rerun` / `red`). Each file must be a
 repo-relative safe token (no `..`, no leading `-`, `SAFE_SHELL_TOKEN`), at most 50; anything else, `unknown`, or no
 `rerunFailedCommand` → the full rerun, with the reason recorded (`rerunFallback`). Only an argv tier may declare it
 (a string `testCommand` is the `default` tier with no key).
@@ -243,8 +256,9 @@ worktree-add retry, contained skip. Files: `scripts/lib/fleet/train.mjs` (modify
 
 ## 8. Risk & Trade-off Register
 
-- **A forged marker** in test output could claim guard-only. Mitigations: exactly-one rule per attempt; a human
-  decision is still required and quotes the tier; tests counted failed by the runner can never be accepted.
+- **A forged marker**: output is never read for it (provenance above). A runner that does not scrub the variable from
+  its tests could be written to by a test; then exactly-one still applies, a human decision is still required, and a
+  test counted failed can never be accepted.
 - **Continuing past a guard-only red** spends the later tiers' time; accepted, because an approver needs every
   verdict, and a guard-only red is the case where the tests did pass.
 - **Marker timeouts are not rerun** — a genuinely flaky stall now needs a rebuild. Same rule the tier timeout already
