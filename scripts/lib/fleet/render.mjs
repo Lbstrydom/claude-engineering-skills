@@ -11,6 +11,7 @@
 
 import { prWarnings } from './gh-facts.mjs';
 import { isBlockingConflict } from './overlap.mjs';
+import { isMatch } from '../glob.mjs';
 import { renderCommand } from './shell-quote.mjs';
 
 const BANNER = (inv) => `registry incomplete: ${inv.length} record${inv.length === 1 ? '' : 's'} unreadable — claims may be missing`;
@@ -84,7 +85,7 @@ function itemBlock(it, nowMs = null, hosts = {}, untrackedIds = null) {
     if (quiet.includes(o) || declared(o)) continue;
     lines.push(overlapLine(o));
   }
-  if (it.inherited?.length) lines.push(`    inherited (${it.inherited.length} file${it.inherited.length === 1 ? '' : 's'}) from declared stack base ${it.stackBase} — commits it shares with that base, not counted as overlaps (declared by claim --base, not verified: a commit the base absorbed from this branch reads as inherited)`);
+  if (it.inherited?.length) lines.push(`    inherited (${it.inherited.length} file${it.inherited.length === 1 ? '' : 's'}) from stack base ${it.stackBase} — commits it shares with that base, not counted as overlaps (fork point recorded at claim, by --base or inferred from ancestry, not re-verified: a commit the base absorbed from this branch reads as inherited)`);
   if (quiet.length) lines.push(`    overlaps ${quiet.length} other untracked branch${quiet.length === 1 ? '' : 'es'} (--all)`);
   if (it.overlapsWithHidden?.length) {
     lines.push(`    + overlaps ${it.overlapsWithHidden.length} hidden item${it.overlapsWithHidden.length === 1 ? '' : 's'} — use --all`);
@@ -210,6 +211,7 @@ export function renderClaimVerdict(v, ctx = {}) {
   }
   for (const u of v.uninspected ?? []) lines.push(`  note: uncommitted work not inspected for ${u.with} (${u.reason})`);
   for (const u of v.changedUnknown ?? []) lines.push(`  warn: overlap by files unknown for ${u.with} (${u.reason})`);
+  for (const a of v.stackedOn ?? []) lines.push(`  note: stacked on ${a.with} (its unlanded branch is history of this one), so its claim does not block this one`);
   for (const f of v.finished ?? []) lines.push(`  note: ${f.with} not counted as an overlap — ${f.note}, worktree clean; retire its record: \`${ctx.cmd ?? 'fleet'} ${renderCommand(['release', '--id', f.with])}\``);
   if (intentOnly) lines.push(`  if this is different work, re-claim once with an --intent that names what is yours; if it is the same work, stop and report: ${intentIds} already holds it (--override is for a human only)`);
   const hint = sharedFilesHint(v, ctx.sharedConfig);
@@ -226,7 +228,22 @@ export function renderClaimVerdict(v, ctx = {}) {
  * @param {{hotFiles?: string[], appendOnlyGlobs?: string[]}|undefined} cfg - absent ⇒ no hint (the caller did not say)
  */
 export function sharedFilesHint(v, cfg) {
-  if (!cfg || v.verdict !== 'blocked' || (cfg.hotFiles?.length ?? 0) > 0 || (cfg.appendOnlyGlobs?.length ?? 0) > 0) return null;
+  if (!cfg || v.verdict !== 'blocked') return null;
+  // `appendOnlyGlobs` is read only when fleet lands, restacks or rolls up — never by a claim (work-consumer report
+  // 2026-11-27: a repo set it expecting claims on its append-only file to stop blocking). Name the blocking files it covers
+  // and the key that does apply at claim time. It is not made advisory itself: a pr-mode train or a GitHub merge still
+  // conflicts on those files, so "no overlap at claim" would be a promise landing cannot keep.
+  const appendOnly = cfg.appendOnlyGlobs ?? [];
+  if (appendOnly.length) {
+    const named = new Set();
+    for (const c of v.conflicts.filter(isBlockingConflict)) {
+      for (const f of [...(c.files ?? []), ...(c.paths ?? []).flat().filter((p) => !/[*?]/.test(p))]) {
+        if (isMatch(f, appendOnly, { dot: true })) named.add(f);
+      }
+    }
+    if (named.size) return `  hint (for the user/coordinator): ${[...named].slice(0, 5).join(', ')} match${named.size === 1 ? 'es' : ''} .fleet.json appendOnlyGlobs, which applies only when fleet lands, restacks or rolls up — never to a claim. To make a claim overlap on such a file disclosed, not blocking, list it in hotFiles too (references/config.md). Until then, stop and report; never --override.`;
+  }
+  if ((cfg.hotFiles?.length ?? 0) > 0 || appendOnly.length) return null;
   if (!v.conflicts.some((c) => isBlockingConflict(c) && (c.paths?.length || c.files?.length))) return null;
   return '  hint (for the user/coordinator): this repo\'s .fleet.json sets no hotFiles or appendOnlyGlobs. If the overlap is a shared file every branch only ADDS to (a ledger, a changelog, an index), listing it in hotFiles makes such an overlap disclosed, not blocking, and appendOnlyGlobs keeps both sides at landing (references/config.md). Until then, stop and report; never --override.';
 }

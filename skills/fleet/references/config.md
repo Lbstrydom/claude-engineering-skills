@@ -28,7 +28,10 @@ A monorepo with a long chain:
 
 `hotFiles` (claim-grammar patterns, e.g. `["**/tech-debt.json"]`) are files nearly
 every branch touches: an overlap made ONLY of them is listed apart (`[hot]`) and
-never blocks; mixed evidence still blocks. A tier or check may carry a one-line
+never blocks; mixed evidence still blocks. **`hotFiles` is the ONLY key a claim
+reads**: `appendOnlyGlobs` applies only when fleet lands, restacks or rolls up,
+so a file listed there alone still blocks a claim. To make claims on an
+append-only file advisory, list it in `hotFiles` too. A tier or check may carry a one-line
 `"note"` (≤300 chars), printed and recorded in the manifest. Landing keys —
 `requiredChecks`, `appendOnlyGlobs`, `restackIgnore`, `serialTimeoutMs` — are in
 `references/landing.md`; `ghAccount` (a gh login name; the PR reads of `status`, `prune`, `next`'s caches and the handover use that account's credential via `gh auth token --user`, never a token. NOT `land`, `ship-batch` or the train, whose gh mutations run as the signed-in account, so they read PRs as it too; `ci-merge` takes its own `--gh-account`), `archiveIgnore` (default `node_modules/**`, `scripts/.claude-skills/**`, `.claude/settings.local.json`: gitignored paths that `archive-check` and `prune` treat as disposable) is used by the verbs in `references/ending-a-session.md`.

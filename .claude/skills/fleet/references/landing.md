@@ -124,6 +124,11 @@ worktree. Used by direct-mode trains (fleet pushes that tree) and restack. A
 pr-mode train still stops at the conflict, because GitHub would too; restack
 the second branch after the first lands.
 
+Claims never read `appendOnlyGlobs`. A claim overlap on a matching file still
+blocks, because a pr-mode train or a GitHub merge still conflicts on it. To make
+claim overlaps on such a file advisory, list it in `hotFiles` as well
+(`references/config.md`). A blocked claim's hint names the matching files.
+
 ## Checks run in the combined tree
 
 `.fleet.json` checks with `runIn: ["land"]` run inside the train worktree,

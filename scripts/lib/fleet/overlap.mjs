@@ -322,9 +322,12 @@ export function claimMode(existing) {
  * @param {string[]|null} [args.trackedFiles] - the repo's tracked files; a wildcard×wildcard pattern
  *   pair no tracked file satisfies is ABSTRACT (`abstractPaths`, `abstractOnly:true`): disclosed as a
  *   WARN, never a block. `null` (unknown) treats every intersecting pair as concrete.
+ * @param {string[]} [args.ancestors] - ids of the sessions this claim's branch is STACKED on (stack-ancestry.mjs: their
+ *   unlanded tips are history of this branch). Its own ancestors never conflict with it — the work builds on theirs, it does
+ *   not race it — and are disclosed as `stackedOn`. Every other session is judged as before; empty (unknown) exempts none.
  * @returns {{ok: boolean, verdict: 'ok'|'warn'|'blocked'|'refused', conflicts: object[], reason?: string}}
  */
-export function decideClaim({ claim, mode, others, complete, hotFiles = [], trackedFiles = null }) {
+export function decideClaim({ claim, mode, others, complete, hotFiles = [], trackedFiles = null, ancestors = [] }) {
   if (mode !== 'new' && mode !== 'adopt') throw new Error(`decideClaim: unknown mode ${JSON.stringify(mode)}`);
   if (!complete) return { ok: false, verdict: 'refused', conflicts: [], reason: 'registry incomplete' };
   const myIntent = normIntent(claim.intent);
@@ -333,6 +336,8 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
   const uninspected = [];
   const changedUnknown = [];
   const finished = [];
+  const stackedOn = [];
+  const ancestorIds = new Set(ancestors);
   for (const o of others) {
     const s = o.session;
     if (!o.live || isTerminalState(s.state) || s.id === claim.id) {
@@ -340,6 +345,7 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
       if (o.finished && !isTerminalState(s.state) && s.id !== claim.id) finished.push({ with: s.id, note: o.finished });
       continue;
     }
+    if (ancestorIds.has(s.id)) { stackedOn.push({ with: s.id }); continue; }
     if (o.uncommittedUnknown) uninspected.push({ with: s.id, reason: o.uncommittedUnknown });
     if (o.changedUnknown) changedUnknown.push({ with: s.id, reason: o.changedUnknown });
     const via = [];
@@ -377,7 +383,7 @@ export function decideClaim({ claim, mode, others, complete, hotFiles = [], trac
     conflicts.push(hit);
   }
   const blocking = conflicts.filter(isBlockingConflict);
-  const extra = { ...(uninspected.length ? { uninspected } : {}), ...(changedUnknown.length ? { changedUnknown } : {}), ...(finished.length ? { finished } : {}) };
+  const extra = { ...(uninspected.length ? { uninspected } : {}), ...(changedUnknown.length ? { changedUnknown } : {}), ...(finished.length ? { finished } : {}), ...(stackedOn.length ? { stackedOn } : {}) };
   if (mode === 'new' && blocking.length) return { ok: false, verdict: 'blocked', conflicts, ...extra };
   if (mode === 'adopt' && blocking.length) return { ok: true, verdict: 'warn', conflicts, ...extra };
   // Advisory-only evidence (uncommitted edits) reads as a WARN, never a block and never a silent OK.
