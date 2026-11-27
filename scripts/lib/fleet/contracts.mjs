@@ -66,6 +66,15 @@ export const NoteSchema = z.string()
  */
 export const MAX_TIMER_MS = 2_147_483_647;
 
+/**
+ * The train's own git calls (worktree add, merge, commit, reset, clean): `FLEET_GIT_TIMEOUT_MS` > `.fleet.json` `gitTimeoutMs` > this
+ * (consumer report 2026-11-27: under load these took 12-31 s, and git-facts' 15 s read timeout lost the slot).
+ */
+export const DEFAULT_GIT_TIMEOUT_MS = 60_000;
+export const GIT_TIMEOUT_BOUNDS = Object.freeze({ min: 1000, max: 600_000 });
+/** The one placeholder a tier's `rerunFailedCommand` carries: replaced by the failing test files. */
+export const RERUN_FILES_TOKEN = '{files}';
+
 export const TierSchema = z.strictObject({
   name: z.string().regex(TIER_NAME_RE, 'must match [a-z0-9][a-z0-9_-]*'),
   command: argvSchema({ min: 1 }),
@@ -73,4 +82,6 @@ export const TierSchema = z.strictObject({
   timeoutMs: z.number().int().positive().optional(),
   shell: z.boolean().optional(),
   note: NoteSchema.optional(),
+  // A targeted rerun: an argv with exactly one `{files}` element (docs/plans/fleet-train-landing-friction.md section 2.2).
+  rerunFailedCommand: argvSchema({ min: 2 }).refine((a) => a.filter((x) => x === RERUN_FILES_TOKEN).length === 1, `must contain exactly one ${RERUN_FILES_TOKEN} element`).optional(),
 });

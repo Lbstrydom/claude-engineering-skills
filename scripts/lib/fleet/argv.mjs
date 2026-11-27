@@ -33,7 +33,7 @@ export const VERBS = Object.freeze({
     bool: ['--json', '--list', '--all'],
     value: ['--to', '--kind', '--reason', '--ref', '--note', '--expires-hours', '--ack', '--outcome', '--id'], repeat: [], positionals: [0, 0],
   },
-  decision: { bool: ['--json'], value: ['--scope', '--words-file', '--expires', '--id', '--host-session', '--to'], repeat: [], positionals: [1, 2] },
+  decision: { bool: ['--json'], value: ['--scope', '--words-file', '--expires', '--id', '--host-session', '--to', '--train'], repeat: [], positionals: [1, 2] },
   propose: { bool: ['--json'], value: ['--what', '--where', '--why', '--evidence', '--theme', '--blocked-by', '--id'], repeat: [], positionals: [0, 0] },
   proposal: { bool: ['--json'], value: ['--folded', '--queued', '--declined', '--done', '--id'], repeat: [], positionals: [1, 1] },
   proposals: { bool: ['--json', '--all'], value: [], repeat: [], positionals: [0, 0] },
@@ -43,7 +43,7 @@ export const VERBS = Object.freeze({
   },
   land: {
     bool: ['--json', '--dry-run', '--accept-rerun', '--serial', '--include-stale', '--ship-batch', '--rollup'],
-    value: ['--select', '--tier', '--approve', '--confirm', '--reconcile', '--resume', '--abandon', '--hold'], repeat: [], positionals: [0, 0],
+    value: ['--select', '--tier', '--approve', '--confirm', '--reconcile', '--resume', '--abandon', '--hold', '--accept-guard'], repeat: [], positionals: [0, 0],
   },
 });
 

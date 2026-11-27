@@ -32,6 +32,7 @@ This is the list to read when asking "what is in flight?".
 | [fleet feedback cluster 4 — a ready mark on a test subset, then a red train (#5)](./fleet-feedback-cluster4-shared-surface.md) | `In Progress` | plan audited (2 GPT rounds + Gemini), implemented on claude/fleet-cluster4-shared-surface |
 | [fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe](./fleet-hygiene.md) | `In Progress` |  |
 | [fleet train id collision within one second (CI flake, run 44940239208)](./fleet-train-id-collision.md) | `In Progress` | implemented on branch claude/fleet-trainid-collision-9f2c, awaiting audit |
+| [fleet train landing friction — classified tier failures, kind-aware rerun, guard-only approval, git timeouts, contained branches, reason codes](./fleet-train-landing-friction.md) | `In Progress` |  |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |
 | [pre-push gate cost, slice 2 — a cheaper branch-push test tier](./gate-cost-slice-2.md) | `In Progress` | stages 0 and 1 built; stage 2 approved and built for CES ONLY by ci-full-suite-actions.md, 2026-10-14; for… |

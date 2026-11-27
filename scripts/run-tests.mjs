@@ -81,7 +81,7 @@ import { TEST_TIER_VERSION, parseHeavyList, parseTierEnvelope, validateEnvelopeA
 import { TIMING_REPORT_ENV, ranFiles, ranFilesUnavailableReason, summariseTiming } from './lib/test-timing-report.mjs';
 import { isInvokedAsScript } from './lib/cli-entry.mjs';
 import { recordSuiteRun } from './lib/suite-run-record.mjs';
-import { FAILED_FILES_MARKER } from './lib/failed-files-marker.mjs';
+import { FAILED_FILES_MARKER } from './lib/failed-files-marker.mjs'; import { outcomeFromRun, outcomeLine } from './lib/test-outcome-marker.mjs';
 import { performance } from 'node:perf_hooks';
 
 /**
@@ -475,8 +475,9 @@ export function finishRun({ status, reportText, timingText = null, preflight = n
   // Naming only: never moves the exit code.
   if (out.exitCode !== 0 && !watchdog && hangLines.length) out.lines.push('run-tests: what was still running when the run ended:', ...hangLines);
   // On any failing run, ONE machine line naming the failing test files, read by the CI flake classifier
-  // (`test-tier.mjs ci-verdict --rerun-unrelated-flake`). It never moves the exit code.
-  if (out.exitCode !== 0) out.lines.push(failedFilesLine(reportText, root));
+  // (`test-tier.mjs ci-verdict --rerun-unrelated-flake`), and ONE saying why it is red, read by `fleet land`. Neither moves the exit code.
+  const selectionFailed = out.exitCode !== 0 && adjudicateRun({ status, reportText, watchdog, hang }).exitCode === 0;
+  if (out.exitCode !== 0) out.lines.push(failedFilesLine(reportText, root), outcomeLine(outcomeFromRun({ reportText, guardReportVersion: GUARD_REPORT_VERSION, watchdog, hang, selectionFailed })));
   return out;
 }
 

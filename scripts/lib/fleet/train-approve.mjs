@@ -26,6 +26,7 @@ import {
 } from './git-facts.mjs';
 import { PR_VIEW_FIELDS, materializePrRef, repoFromPrUrl } from './gh-facts.mjs';
 import { approvable, deriveDone } from './overlap.mjs';
+import { activeDecision } from './decisions.mjs';
 import { askCiOracle, decideCiAdmission, describeEvidence } from './required-checks.mjs';
 import { fleetDir, listTrains, readSessions, readTrain, transact } from './registry.mjs';
 import { buildStatusFrom, gatherFacts } from './facts.mjs';
@@ -202,6 +203,24 @@ export function writeDoneCache({ cwd, baseBranch, deps }) {
   }
 }
 
+/**
+ * `--accept-guard <dec-id>`: the binds of an ACTIVE `accept-guard` decision (fail closed: revoked, expired, another scope, an
+ * unusable registry each refuse). No id → no binding.
+ * @returns {{ok: true, binds: object|null} | {ok: false, reason: string}}
+ */
+export function resolveAcceptGuard(dir, id, deps) {
+  if (id === null || id === undefined) return { ok: true, binds: null };
+  const d = activeDecision(dir, id, 'accept-guard', deps.now());
+  return d.ok ? { ok: true, binds: d.decision.binds } : { ok: false, reason: `--accept-guard: ${d.reason}` };
+}
+
+/** The approval over a guard-only red is written into the train itself, naming the decision. */
+export function recordAcceptedGuard(dir, trainId, elig, id, deps) {
+  if (!elig.acceptedGuards?.length) return;
+  const cur = readTrain(dir, trainId).train;
+  patchTrain(dir, trainId, { notes: [...(cur.notes ?? []), `approved over guard-only red tier(s) ${elig.acceptedGuards.join(', ')} under decision ${id}`] }, deps);
+}
+
 const planFor = (train) => train.sources.map((s) => ({
   id: s.id, prNumber: s.prNumber,
   command: ['gh', 'pr', 'merge', String(s.prNumber), '-R', s.repo, '--squash', '--match-head-commit', s.oid],
@@ -214,17 +233,20 @@ const planFor = (train) => train.sources.map((s) => ({
  *
  * @param {{cwd: string, trainId: string, acceptRerun?: boolean, doneCache?: boolean, deps?: ReturnType<typeof defaultDeps>}} args
  */
-export function approveTrain({ cwd, trainId, acceptRerun = false, doneCache = true, cmd = 'fleet', deps = defaultDeps(), requiredChecks, requiredChecksError = null }) {
+export function approveTrain({ cwd, trainId, acceptRerun = false, acceptGuard = null, doneCache = true, cmd = 'fleet', deps = defaultDeps(), requiredChecks, requiredChecksError = null }) {
   const dir = fleetDir(cwd);
   return withTrainLock(dir, () => {
     const r = readTrain(dir, trainId);
     if (!r.ok) return refuse(`train ${trainId}: ${r.reason}`);
     const t = r.train;
     if (t.landing === 'rollup') return refuse(`train ${trainId} is a rollup: land it with land --approve ${trainId} --rollup (a plain approve would push the candidate straight to the base)`);
-    const elig = approvable(t, { acceptRerun });
-    if (!elig.ok) return refuse(elig.reason, { needsAcceptRerun: elig.needsAcceptRerun === true });
+    const guard = resolveAcceptGuard(dir, acceptGuard, deps);
+    if (!guard.ok) return refuse(guard.reason);
+    const elig = approvable(t, { acceptRerun, acceptGuard: guard.binds });
+    if (!elig.ok) return refuse(elig.reason, { needsAcceptRerun: elig.needsAcceptRerun === true, needsAcceptGuard: elig.needsAcceptGuard === true });
     const ver = verifyFacts({ cwd, train: t, dir, deps });
     if (!ver.ok) return refuse(ver.reason, { unreachable: ver.unreachable === true });
+    recordAcceptedGuard(dir, trainId, elig, acceptGuard, deps);
 
     const deferred = t.deferredTiers ?? [];
     const common = { trainId, deferredTiers: deferred, ...(elig.note ? { note: elig.note } : {}) };

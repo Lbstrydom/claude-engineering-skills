@@ -40,7 +40,7 @@ import { z } from 'zod';
 import { runGit, gitCommonDir, repoToplevel } from './git-facts.mjs';
 import { DEFAULT_SHARED_GLOBS } from './shared-surface.mjs';
 import { DEFAULT_IDLE_DAYS, DEFAULT_STALE_WORKTREE_DAYS, validateClaimPattern } from './overlap.mjs';
-import { MAX_TIMER_MS, MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
+import { DEFAULT_GIT_TIMEOUT_MS, GIT_TIMEOUT_BOUNDS, MAX_TIMER_MS, MERGE_METHODS, NoteSchema, TIER_NAME_RE, TierSchema as PersistedTierSchema, argvSchema, isInside } from './contracts.mjs';
 
 export { MERGE_METHODS };
 const SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,./\\-]+$/;
@@ -126,6 +126,8 @@ const FleetFileSchema = z.strictObject({
     worktrees: z.number().int('must be a whole number').min(1).max(100000).optional(),
   })], { error: 'must be false or an object {removable?, worktrees?}' }).optional(),
   serialTimeoutMs: timeout().optional(),
+  // The train's own git calls; FLEET_GIT_TIMEOUT_MS (per machine) wins over it (`resolveGitTimeoutMs`).
+  gitTimeoutMs: z.number().int('must be a whole number of ms').min(GIT_TIMEOUT_BOUNDS.min).max(GIT_TIMEOUT_BOUNDS.max).optional(),
   // `train`: sessions run targeted + affected tests and the required gates, never the full suite; `fleet land` is the ONE
   // full-suite run (consumer report 2026-11-15, item 1). `session` (default): each session runs it, as before.
   fullSuite: z.enum(FULL_SUITE_MODES).optional(),
@@ -232,7 +234,7 @@ export function parseFleetConfig(raw, { hasPackageTest = false } = {}) {
       staleWorktreeDays: cfg.staleWorktreeDays ?? DEFAULT_STALE_WORKTREE_DAYS,
       ...(cfg.requiredChecks ? { requiredChecks: cfg.requiredChecks } : {}),
       appendOnlyGlobs: cfg.appendOnlyGlobs ?? [], restackIgnore: cfg.restackIgnore ?? [],
-      archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS,
+      archiveIgnore: cfg.archiveIgnore ?? [...DEFAULT_ARCHIVE_IGNORE], serialTimeoutMs: cfg.serialTimeoutMs ?? DEFAULT_SERIAL_TIMEOUT_MS, ...(cfg.gitTimeoutMs ? { gitTimeoutMs: cfg.gitTimeoutMs } : {}),
       ghAccount: cfg.ghAccount ?? null,
       pruneAlert: cfg.pruneAlert === false ? null : { ...DEFAULT_PRUNE_ALERT, ...(cfg.pruneAlert ?? {}) }, fullSuite: cfg.fullSuite ?? 'session', landing: cfg.landing ?? 'pr',
       sharedSurfaces: { globs: cfg.sharedSurfaces?.globs ?? [...DEFAULT_SHARED_GLOBS], run: cfg.sharedSurfaces?.run ?? null },
@@ -327,7 +329,7 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
     baseBranch: base.baseBranch, testCommand: v.testCommand, mergeMethod: v.mergeMethod, checks: v.checks, worktreeRoot,
     hotFiles: v.hotFiles, hideIdleAfterDays: v.hideIdleAfterDays, staleWorktreeDays: v.staleWorktreeDays,
     ...(v.requiredChecks ? { requiredChecks: v.requiredChecks } : {}),
-    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ghAccount: v.ghAccount, pruneAlert: v.pruneAlert, fullSuite: v.fullSuite, landing: v.landing, sharedSurfaces: v.sharedSurfaces,
+    appendOnlyGlobs: v.appendOnlyGlobs, restackIgnore: v.restackIgnore, archiveIgnore: v.archiveIgnore, serialTimeoutMs: v.serialTimeoutMs, ...(v.gitTimeoutMs ? { gitTimeoutMs: v.gitTimeoutMs } : {}), ghAccount: v.ghAccount, pruneAlert: v.pruneAlert, fullSuite: v.fullSuite, landing: v.landing, sharedSurfaces: v.sharedSurfaces,
     sources: {
       baseBranch: base.source, testCommand: v.testCommandSource, mergeMethod: v.mergeMethodSource,
       checks: file.value?.checks ? 'config' : 'default', worktreeRoot: fromEnv ? 'env' : 'default',
@@ -335,4 +337,24 @@ export function resolveConfig(cwd, { env = process.env } = {}) {
       staleWorktreeDays: file.value?.staleWorktreeDays ? 'config' : 'default', fullSuite: file.value?.fullSuite ? 'config' : 'default',
     },
   };
+}
+
+/**
+ * The train's git timeout: `FLEET_GIT_TIMEOUT_MS` (per machine: the load is the machine's) > `.fleet.json` `gitTimeoutMs` >
+ * `DEFAULT_GIT_TIMEOUT_MS`. A set-but-invalid env value is a ConfigError, never silently the default. `configValue` is a
+ * thunk so a manifest-driven verb that must not load `.fleet.json` can pass `() => null`.
+ * @returns {{ms: number, source: 'env'|'config'|'default'}}
+ * @throws {ConfigError}
+ */
+export function resolveGitTimeoutMs({ env = process.env, configValue = () => null } = {}) {
+  const raw = env.FLEET_GIT_TIMEOUT_MS;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = Number(raw.trim());
+    if (!/^\d+$/.test(raw.trim()) || n < GIT_TIMEOUT_BOUNDS.min || n > GIT_TIMEOUT_BOUNDS.max) {
+      throw new ConfigError([`FLEET_GIT_TIMEOUT_MS: must be a whole number of ms from ${GIT_TIMEOUT_BOUNDS.min} to ${GIT_TIMEOUT_BOUNDS.max} (got ${JSON.stringify(raw)})`]);
+    }
+    return { ms: n, source: 'env' };
+  }
+  const c = configValue();
+  return c ? { ms: c, source: 'config' } : { ms: DEFAULT_GIT_TIMEOUT_MS, source: 'default' };
 }

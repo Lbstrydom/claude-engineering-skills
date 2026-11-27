@@ -39,8 +39,13 @@ import { runChecks, buildCheckPayload } from './checks.mjs';
 import { resolveAppendOnly } from './union-merge.mjs';
 import { superviseTier } from './tier-supervisor.mjs';
 import { approvable, tiersOf, worstResult } from './overlap.mjs';
+import { guardOnlyRed } from './tier-acceptance.mjs';
 import { assertManaged, fleetDir, mintTrainId, probesDir, readTrain, writeTrain } from './registry.mjs';
 import { rollupMessage } from './rollup.mjs';
+import { readTail } from './tier-failure.mjs';
+import { DEFAULT_GIT_TIMEOUT_MS, RERUN_FILES_TOKEN } from './contracts.mjs';
+import { classifyAttemptLog } from '../test-outcome-marker.mjs';
+import { FAILED_FILES_MARKER, parseFailedFilesPayload } from '../failed-files-marker.mjs';
 
 const DEP_FILES = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock']);
 const WIN_SHIMS = /^(?:npm|npx|pnpm|yarn)$/i;
@@ -135,8 +140,11 @@ export function provisionDeps(worktree, mainRoot) {
  * (`afterCandidate`, `afterTier(name)`, `afterPushPending`) that a test makes throw.
  */
 export function defaultDeps(over = {}) {
-  return {
-    git: (args, cwd, opts) => runGit(args, cwd, opts),
+  const d = {
+    // The train's own git calls (worktree add, merge, commit, reset, clean) take `gitTimeoutMs` (land sets it from
+    // FLEET_GIT_TIMEOUT_MS / .fleet.json gitTimeoutMs); an explicit per-call timeout still wins.
+    gitTimeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+    git: (args, cwd, opts) => runGit(args, cwd, { timeoutMs: d.gitTimeoutMs, ...opts }),
     gh: ghRun,
     runTier: spawnTier,
     provision: provisionDeps,
@@ -146,6 +154,7 @@ export function defaultDeps(over = {}) {
     hooks: {},
     ...over,
   };
+  return d;
 }
 
 // ── Shared plumbing ─────────────────────────────────────────────────────────
@@ -333,9 +342,9 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
     ...(rollup ? { landing: 'rollup' } : {}),
   });
 
-  const abandon = (why) => {
-    const t = patchTrain(dir, trainId, { phase: 'abandoned', result: 'none', notes: [why] }, deps);
-    return { ok: false, code: 'error', reason: why, trainId, train: t };
+  const abandon = (why, reasonCode, notes = []) => {
+    const t = patchTrain(dir, trainId, { phase: 'abandoned', result: 'none', reasonCode, notes: [...notes, why] }, deps);
+    return { ok: false, code: 'error', reason: why, reasonCode, trainId, train: t };
   };
 
   const wtRoot = config.worktreeRoot;
@@ -343,22 +352,26 @@ export function buildTrain({ cwd, config, sources, checkPayload = { sessions: []
   const hooks = noHooksDir();
   try {
     fs.mkdirSync(wtRoot, { recursive: true });
-    const add = deps.git(['-c', `core.hooksPath=${hooks.dir}`, 'worktree', 'add', '--detach', wt, base.oid], cwd);
-    if (!add.ok) return abandon(`could not create the integration worktree: ${add.reason}`);
-    patchTrain(dir, trainId, { phase: 'applying', worktree: wt }, deps);
+    const add = addIntegrationWorktree({ deps, cwd, wt, baseOid: base.oid, hooksDir: hooks.dir });
+    if (!add.ok) return abandon(`could not create the integration worktree: ${add.reason}`, add.timedOut ? 'git-timeout' : 'worktree-add-failed', add.notes);
+    patchTrain(dir, trainId, { phase: 'applying', worktree: wt, ...(add.notes.length ? { notes: add.notes } : {}) }, deps);
 
     const ident = deps.git(['var', 'GIT_COMMITTER_IDENT'], wt).ok ? [] : ['-c', 'user.name=fleet', '-c', 'user.email=fleet@localhost'];
     const wgit = (args) => deps.git([...ident, '-c', `core.hooksPath=${hooks.dir}`, ...args], wt);
-    const applied = applySources({ wgit, dir: wt, sources, mergeMethod: config.mergeMethod, trainId, appendOnlyGlobs: config.appendOnlyGlobs ?? [], rollup });
+    const applied = applySources({ wgit, dir: wt, sources, mergeMethod: config.mergeMethod, trainId, appendOnlyGlobs: config.appendOnlyGlobs ?? [], rollup, sleep: deps.sleep ?? sleepSync });
     const conflict = applied.conflict;
-    if (applied.unioned.length) patchTrain(dir, trainId, { notes: applied.unioned.map((u) => `${u.sourceId}: ${u.files.join(', ')} merged keeping both sides (appendOnlyGlobs)`) }, deps);
+    const applyNotes = [...applied.unioned.map((u) => `${u.sourceId}: ${u.files.join(', ')} merged keeping both sides (appendOnlyGlobs)`),
+      ...applied.skipped.map((k) => `${k.sourceId}: skipped — ${k.reason}`)];
+    const cur = readTrain(dir, trainId).train;
+    if (applyNotes.length || applied.skipped.length) patchTrain(dir, trainId, { notes: [...(cur.notes ?? []), ...applyNotes], ...(applied.skipped.length ? { skipped: applied.skipped } : {}) }, deps);
     if (conflict) {
-      const t = patchTrain(dir, trainId, { phase: 'conflict', result: 'none', conflict, notes: [`stopped at ${conflict.sourceId}: ${conflict.reason}`] }, deps);
+      const prior = readTrain(dir, trainId).train.notes ?? [];
+      const t = patchTrain(dir, trainId, { phase: 'conflict', result: 'none', conflict, notes: [...prior, `stopped at ${conflict.sourceId}: ${conflict.reason}`] }, deps);
       const out = { ok: true, train: t, approvability: approvable(t) };
       return probe ? closeProbe({ cwd, dir, done: out, deps }) : out;
     }
     const head = wgit(['rev-parse', 'HEAD', 'HEAD^{tree}']);
-    if (!head.ok) return abandon(`cannot read the candidate: ${head.reason}`);
+    if (!head.ok) return abandon(`cannot read the candidate: ${head.reason}`, 'candidate-unreadable');
     const [oid, tree] = head.stdout.split('\n').map((s) => s.trim());
     patchTrain(dir, trainId, { candidate: { oid, tree } }, deps);
     deps.hooks?.afterCandidate?.();
@@ -382,6 +395,45 @@ function closeProbe({ cwd, dir, done, deps }) {
 
 const STDERR_SLICE = 500;
 const RETRY_DELAY_MS = 750;
+export const WORKTREE_ADD_ATTEMPTS = 3;
+
+/** A git failure that may clear on its own: git never started, it timed out, or it met a lock. The `retryTransient` rule. */
+const transientGitFailure = (r) => r.status === null || /index\.lock|EBUSY|EPERM/.test(`${r.stderr ?? ''} ${r.reason ?? ''}`);
+
+/**
+ * `git worktree add --detach` for the integration worktree, with a bounded retry inside the slot hold (consumer report
+ * 2026-11-27: under load `worktree add` took 12-31 s and a 15 s timeout lost the slot). Only a transient failure retries,
+ * and only after the partial add is undone: a listed worktree is force-removed; an unlisted directory is removed only
+ * because it is the fresh train-named path that did not exist before the first attempt (refused up front otherwise).
+ * @returns {{ok: boolean, attempts: number, notes: string[], reason?: string, timedOut?: boolean}}
+ */
+export function addIntegrationWorktree({ deps, cwd, wt, baseOid, hooksDir, attempts = WORKTREE_ADD_ATTEMPTS, sleep = deps.sleep ?? sleepSync, exists = fs.existsSync }) {
+  const notes = [];
+  if (exists(wt)) return { ok: false, attempts: 0, notes, reason: `${wt} already exists — refusing to reuse a directory this train did not create` };
+  for (let i = 1; ; i += 1) {
+    const r = deps.git(['-c', `core.hooksPath=${hooksDir}`, 'worktree', 'add', '--detach', wt, baseOid], cwd);
+    if (r.ok) return { ok: true, attempts: i, notes };
+    if (!transientGitFailure(r) || i >= attempts) return { ok: false, attempts: i, notes, reason: `${r.reason}${i > 1 ? ` (after ${i} attempts)` : ''}`, timedOut: r.timedOut === true };
+    const undo = undoPartialWorktree({ deps, cwd, wt, exists });
+    if (undo) return { ok: false, attempts: i, notes, reason: `${r.reason}; the partial worktree could not be undone before a retry: ${undo}`, timedOut: r.timedOut === true };
+    notes.push(`worktree add attempt ${i} of ${attempts} failed (${r.reason}); undone and retried`);
+    sleep(RETRY_DELAY_MS * i);
+  }
+}
+
+/** Undo a partial `worktree add`. @returns {string|null} why it could not be undone, or null */
+function undoPartialWorktree({ deps, cwd, wt, exists }) {
+  const l = deps.git(['worktree', 'list', '--porcelain', '-z'], cwd);
+  if (!l.ok) return `git worktree list failed: ${l.reason}`;
+  if (parseWorktreePorcelain(l.stdout).some((w) => pathsEqual(w.path, wt))) {
+    const rm = deps.git(['worktree', 'remove', '--force', '--force', wt], cwd);
+    if (!rm.ok) return `git worktree remove failed: ${rm.reason}`;
+  } else if (exists(wt)) {
+    try { fs.rmSync(wt, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (e) { return `could not remove ${wt}: ${e.message}`; }
+  }
+  const pr = deps.git(['worktree', 'prune'], cwd);
+  return pr.ok ? null : `git worktree prune failed: ${pr.reason}`;
+}
 
 /**
  * One bounded retry of a git step that may not have run to completion (field report 4: a transient Windows
@@ -395,7 +447,7 @@ function retryTransient({ run, wgit, before, sleep, requireClean = false }) {
   // Only an error CODE that means the process never started proves it: ENOBUFS/EPIPE arrive under the same
   // "failed to run" wording after git DID run, so the wording alone is not evidence.
   const spawnFailed = r.status === null && /failed to run: .*\b(?:ENOENT|EACCES|EAGAIN|EMFILE|ENFILE|ENOMEM)\b/.test(r.reason ?? '');
-  const transient = spawnFailed || r.status === null || /index\.lock|EBUSY|EPERM/.test(`${r.stderr ?? ''} ${r.reason ?? ''}`);
+  const transient = spawnFailed || transientGitFailure(r);
   if (!transient) return r;
   if (!spawnFailed) {
     const head = wgit(['rev-parse', 'HEAD']);
@@ -414,10 +466,14 @@ function retryTransient({ run, wgit, before, sleep, requireClean = false }) {
  * keeping both sides in the DIRECT modes (fleet pushes this very tree); in `pr`
  * mode it stays a conflict, because GitHub would report it too — the remedy is to
  * restack the later branch once the earlier one lands.
- * @returns {{conflict: object|null, unioned: Array<{sourceId: string, files: string[]}>}}
+ *
+ * A source that adds no commit because it is ALREADY CONTAINED in the candidate (a branch and its ancestor in one train: the
+ * descendant brought it in) is skipped with a recorded reason, never a stop: landing the candidate lands it too.
+ * @returns {{conflict: object|null, unioned: Array<{sourceId: string, files: string[]}>, skipped: Array<{sourceId: string, oid: string, reasonCode: string, reason: string}>}}
  */
 export function applySources({ wgit, dir, sources, mergeMethod, trainId, appendOnlyGlobs = [], rollup = false, sleep = sleepSync }) {
   const unioned = [];
+  const skipped = [];
   // A rollup member is squashed with a message that names it and carries NO AI-* trailer: `-C` would copy the member's AI-Gate onto a
   // commit whose combined tree no audit read (docs/plans/ship-batch-member-outcomes.md section 2.9.3).
   const squashCommit = (s) => {
@@ -444,24 +500,32 @@ export function applySources({ wgit, dir, sources, mergeMethod, trainId, appendO
       const why = files.length ? 'merge conflict'
         : !list.ok ? `conflict list unavailable: ${list.reason} (merge: ${r.reason})`
           : `merge failed (not a conflict): ${r.reason}`;
-      const conflict = { sourceId: s.id, oid: s.oid, reason: why, files, ...(files.length ? {} : { status: r.status ?? null, stderr: String(r.stderr ?? '').trim().slice(0, STDERR_SLICE) }) };
-      if (!appendOnlyGlobs.length || !files.length) return { conflict, unioned };
+      const reasonCode = files.length ? 'merge-conflict' : !list.ok ? 'conflict-list-unavailable' : r.timedOut ? 'git-timeout' : 'merge-failed';
+      const conflict = { sourceId: s.id, oid: s.oid, reason: why, reasonCode, files, ...(files.length ? {} : { status: r.status ?? null, stderr: String(r.stderr ?? '').trim().slice(0, STDERR_SLICE) }) };
+      if (!appendOnlyGlobs.length || !files.length) return { conflict, unioned, skipped };
       if (mergeMethod === 'pr') {
         const allAppendOnly = files.every((f) => isMatch(f, appendOnlyGlobs, { dot: true }));
-        return { conflict: allAppendOnly ? { ...conflict, reason: `append-only conflict — GitHub would refuse it too; land the earlier branch, then fleet restack ${s.id}` } : conflict, unioned };
+        return { conflict: allAppendOnly ? { ...conflict, reasonCode: 'append-only-conflict', reason: `append-only conflict — GitHub would refuse it too; land the earlier branch, then fleet restack ${s.id}` } : conflict, unioned, skipped };
       }
       const u = resolveAppendOnly({ dir, git: wgit, globs: appendOnlyGlobs });
-      if (!u.ok) return { conflict: { ...conflict, ...(u.ineligible ? { reason: `merge conflict (${u.reason})` } : {}) }, unioned };
+      if (!u.ok) return { conflict: { ...conflict, ...(u.ineligible ? { reason: `merge conflict (${u.reason})` } : {}) }, unioned, skipped };
       const done = mergeMethod === 'direct-merge'
         ? wgit(['commit', '--no-verify', '--no-edit'])
         : squashCommit(s);
-      if (!done.ok) return { conflict: { ...conflict, reason: `resolved append-only files but could not commit: ${done.reason}` }, unioned };
+      if (!done.ok) return { conflict: { ...conflict, reasonCode: 'merge-failed', reason: `resolved append-only files but could not commit: ${done.reason}` }, unioned, skipped };
       unioned.push({ sourceId: s.id, files: u.resolved });
     }
     const after = wgit(['rev-parse', 'HEAD']).stdout.trim();
-    if (after === before) return { conflict: { sourceId: s.id, oid: s.oid, reason: 'produced no commit (already contained in the candidate)', files: [] }, unioned };
+    if (after === before) {
+      // Contained: git says so (exit 0 of --is-ancestor). Anything else that made no commit is still a stop, with its own code.
+      if (wgit(['merge-base', '--is-ancestor', s.oid, 'HEAD']).ok) {
+        skipped.push({ sourceId: s.id, oid: s.oid, reasonCode: 'already-contained', reason: `${s.oid.slice(0, 12)} is already contained in the candidate (an earlier source brought it in)` });
+        continue;
+      }
+      return { conflict: { sourceId: s.id, oid: s.oid, reason: 'produced no commit (and is not contained in the candidate)', reasonCode: 'no-commit', files: [] }, unioned, skipped };
+    }
   }
-  return { conflict: null, unioned };
+  return { conflict: null, unioned, skipped };
 }
 
 /**
@@ -482,7 +546,7 @@ export function finishTrain({ cwd, dir, trainId, getChecks, checkPayload, deps }
     // Provision AFTER the sources are applied: a combined tree never runs against a stale install.
     const prov = deps.provision(t.worktree, mainRootOf(cwd), { depsChanged: changed });
     if (!prov.ok) {
-      t = patchTrain(dir, trainId, { phase: 'tested', result: 'none', notes: [...(t.notes ?? []), prov.reason] }, deps);
+      t = patchTrain(dir, trainId, { phase: 'tested', result: 'none', reasonCode: 'provision-failed', notes: [...(t.notes ?? []), prov.reason] }, deps);
       return { ok: true, train: t, approvability: approvable(t) };
     }
   }
@@ -524,42 +588,122 @@ function restore(deps, wt, cand) {
   return c.ok ? null : `clean failed: ${c.reason}`;
 }
 
-/** Run one tier with integrity assertions around it; the rerun-once rule. */
+/**
+ * Every code a tier result may carry in `reasonCode` (`land --json`): a script tells "why red" apart without the prose
+ * `reason`. A cleanup failure is never a reason — it is a `warnings[]` entry (`cleanup-warning`) beside the result.
+ */
+export const TIER_REASON_CODES = Object.freeze([
+  'green', 'green-after-rerun', 'test-failure', 'guard-failure', 'test-timeout', 'tier-timeout', 'instrument-failure',
+  'unclassified-failure', 'spawn-refused', 'spawn-failed', 'dirty-before', 'dirty-after', 'restore-failed',
+]);
+/** The tier reason code for each failure kind the runner's `test-outcome/v1` line can name. */
+const KIND_CODE = Object.freeze({
+  'test-failure': 'test-failure', guard: 'guard-failure', timeout: 'test-timeout', instrument: 'instrument-failure', unclassified: 'unclassified-failure',
+});
+/**
+ * Kinds a rerun can change. A policy guard over a finished run (`guard`) is deterministic; a run stopped for time
+ * (`timeout`) is rerun under the same load at the full cost — the rule the tier timeout always had.
+ */
+const RERUN_KINDS = new Set(['test-failure', 'instrument', 'unclassified']);
+export const MAX_RERUN_FILES = 50;
+const SAFE_FILE = /^[A-Za-z0-9_@+=:,./-]+$/;
+
+/** The log text of ONE attempt: everything after its own header (the log is appended across attempts). */
+export function attemptSegment(text, tierName, n) {
+  const t = String(text ?? '');
+  const at = t.lastIndexOf(`--- fleet: tier ${tierName} attempt ${n} `);
+  return at === -1 ? '' : t.slice(at);
+}
+
+/**
+ * The argv of a targeted rerun: the tier's `rerunFailedCommand` with `{files}` replaced by the failing files the attempt's
+ * `run-tests/v1 failed-files:` line named. Every file is a repo-relative plain token (it came from a log), at most
+ * MAX_RERUN_FILES. @returns {{ok: true, argv: string[], files: string[]} | {ok: false, why: string}}
+ */
+export function targetedRerunArgv(tier, segment) {
+  if (!Array.isArray(tier.rerunFailedCommand)) return { ok: false, why: 'the tier declares no rerunFailedCommand' };
+  const payloads = String(segment ?? '').split(/\r?\n/).map((l) => { const at = l.indexOf(FAILED_FILES_MARKER); return at === -1 ? null : l.slice(at + FAILED_FILES_MARKER.length); }).filter((x) => x !== null);
+  if (payloads.length !== 1) return { ok: false, why: `the attempt printed ${payloads.length} failed-files lines (exactly one is trusted)` };
+  const p = parseFailedFilesPayload(payloads[0]);
+  if (p.kind !== 'files' || !p.files.length) return { ok: false, why: `the failing files are ${p.kind === 'files' ? 'an empty list' : p.kind}` };
+  if (p.files.length > MAX_RERUN_FILES) return { ok: false, why: `${p.files.length} failing files (over ${MAX_RERUN_FILES})` };
+  const bad = p.files.find((f) => !SAFE_FILE.test(f) || f.startsWith('-') || f.startsWith('/') || f.split('/').includes('..'));
+  if (bad !== undefined) return { ok: false, why: `failing file ${JSON.stringify(bad)} is not a plain repo-relative path` };
+  return { ok: true, files: p.files, argv: tier.rerunFailedCommand.flatMap((a) => (a === RERUN_FILES_TOKEN ? p.files : [a])) };
+}
+
+/**
+ * Run one tier with integrity assertions around it, and the rerun policy (docs/plans/fleet-train-landing-friction.md
+ * section 2.2): a red attempt is classified from the runner's own `test-outcome/v1` line; only a kind a rerun can change
+ * is rerun; a test failure whose files are named reruns those files first and the whole tier only if they pass.
+ */
 function runOneTier({ tier, train, dir, deps }) {
   const wt = train.worktree; const cand = train.candidate;
   const logPath = trainLogPath(dir, train.trainId, tier.name);
   const startedAt = iso(deps);
   // A failed reap after ANY attempt is recorded on the result: a leftover process is not a clean run.
   let cleanupWarning = null;
-  const done = (result, extra = {}) => ({ name: tier.name, stage: 'pre-land', ...(tier.note ? { note: tier.note } : {}), result, startedAt, endedAt: iso(deps), logPath, ...(cleanupWarning ? { cleanupWarning } : {}), ...extra });
-  const attempt = (n) => {
+  const done = (result, extra = {}) => ({
+    name: tier.name, stage: 'pre-land', ...(tier.note ? { note: tier.note } : {}), result, startedAt, endedAt: iso(deps), logPath,
+    ...(cleanupWarning ? { cleanupWarning, warnings: [{ code: 'cleanup-warning', reason: cleanupWarning }] } : {}), ...extra,
+  });
+  const attempt = (n, run = tier, label = '') => {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    fs.appendFileSync(logPath, `\n--- fleet: tier ${tier.name} attempt ${n} at ${iso(deps)} ---\n`);
-    const r = deps.runTier({ tier, cwd: wt, logPath, timeoutMs: tier.timeoutMs });
+    fs.appendFileSync(logPath, `\n--- fleet: tier ${tier.name} attempt ${n} ${label}at ${iso(deps)} ---\n`);
+    const r = deps.runTier({ tier: run, cwd: wt, logPath, timeoutMs: tier.timeoutMs });
     if (r?.cleanup && r.cleanup.ok === false) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${r.cleanup.reason}` : r.cleanup.reason;
     return r;
   };
-  const verdict = (r) => (r.refused ? { result: 'red', reason: r.refused } : r.timedOut ? { result: 'red', reason: 'timeout' }
-    : r.error ? { result: 'red', reason: `could not start: ${r.error}` }
-      : r.exitCode === 0 ? { result: 'green' } : { result: 'red', reason: `exit ${r.exitCode ?? r.signal ?? 'unknown'}` });
+  // A red verdict carries its classification. Only a red that ran to an exit code is read for the runner's line.
+  const verdict = (r, n) => {
+    if (r.refused) return { result: 'red', reason: r.refused, reasonCode: 'spawn-refused' };
+    if (r.timedOut) return { result: 'red', reason: 'timeout', reasonCode: 'tier-timeout' };
+    if (r.error) return { result: 'red', reason: `could not start: ${r.error}`, reasonCode: 'spawn-failed' };
+    if (r.exitCode === 0) return { result: 'green' };
+    const segment = attemptSegment(readTail(logPath), tier.name, n);
+    const c = classifyAttemptLog(segment);
+    return {
+      result: 'red', reason: `exit ${r.exitCode ?? r.signal ?? 'unknown'}${c.kind === 'unclassified' ? '' : ` (${c.kind})`}`, reasonCode: KIND_CODE[c.kind],
+      failureKind: c.kind, ...(c.outcome ? { testsFailed: c.outcome.testsFailed, guards: c.outcome.guards } : { classifyWhy: c.why }), segment,
+    };
+  };
+  const fields = ({ segment: _s, result: _r, ...v }) => v;
 
   const pre = checkIntegrity(deps, wt, cand);
-  if (pre) return done('dirty', { reason: `before ${tier.name}: ${pre}` });
+  if (pre) return done('dirty', { reason: `before ${tier.name}: ${pre}`, reasonCode: 'dirty-before' });
 
-  let v = verdict(attempt(1));
-  let rerun = false;
-  if (v.result === 'red' && v.reason !== 'timeout' && v.reason !== UNSAFE_WIN_SHELL_ARGV && !v.reason.startsWith('could not start')) {
-    // Restore, re-assert the clean precondition, rerun ONCE (a leftover cannot make the rerun pass).
-    const bad = restore(deps, wt, cand) ?? checkIntegrity(deps, wt, cand);
-    if (bad) return done('dirty', { reason: `after the failed first run, could not restore a clean candidate: ${bad}` });
-    rerun = true;
-    v = verdict(attempt(2));
+  let n = 1;
+  let v = verdict(attempt(n), n);
+  let rerun = null; let rerunFallback = null;
+  if (v.result === 'red' && RERUN_KINDS.has(v.failureKind)) {
+    // Restore, re-assert the clean precondition, rerun (a leftover cannot make the rerun pass).
+    const restoreOrDirty = () => restore(deps, wt, cand) ?? checkIntegrity(deps, wt, cand);
+    let bad = restoreOrDirty();
+    if (bad) return done('dirty', { reason: `after the failed first run, could not restore a clean candidate: ${bad}`, reasonCode: 'restore-failed' });
+    if (v.failureKind === 'test-failure') {
+      const t = targetedRerunArgv(tier, v.segment);
+      if (t.ok) {
+        n += 1;
+        const tv = verdict(attempt(n, { ...tier, command: t.argv, shell: undefined }, `(targeted: ${t.files.length} failing file${t.files.length === 1 ? '' : 's'}) `), n);
+        if (tv.result !== 'green') {
+          return done('red', { ...fields(tv), reason: `targeted rerun of ${t.files.length} failing file(s) still red: ${tv.reason}`, reran: true, rerun: 'targeted' });
+        }
+        bad = restoreOrDirty();
+        if (bad) return done('dirty', { reason: `after the targeted rerun, could not restore a clean candidate: ${bad}`, reasonCode: 'restore-failed', reran: true, rerun: 'targeted' });
+        rerun = 'targeted-then-full';
+      } else rerunFallback = t.why;
+    }
+    rerun ??= 'full';
+    n += 1;
+    v = verdict(attempt(n), n);
   }
-  if (v.result !== 'green') return done('red', { reason: v.reason, ...(rerun ? { reran: true } : {}) });
+  const reran = rerun ? { reran: true, rerun, ...(rerunFallback ? { rerunFallback } : {}) } : {};
+  if (v.result !== 'green') return done('red', { ...fields(v), ...reran });
   const post = checkIntegrity(deps, wt, cand);
-  if (post) return done('dirty', { reason: `after ${tier.name}: ${post}`, ...(rerun ? { reran: true } : {}) });
-  return done(rerun ? 'green-after-rerun' : 'green', rerun ? { reran: true } : {});
+  if (post) return done('dirty', { reason: `after ${tier.name}: ${post}`, reasonCode: 'dirty-after', ...reran });
+  return rerun ? done('green-after-rerun', { reasonCode: 'green-after-rerun', ...reran }) : done('green', { reasonCode: 'green' });
 }
+
 
 /**
  * Run the `pre-land` tiers that have no recorded result, in order, stopping at
@@ -579,7 +723,7 @@ export function runTiers({ dir, trainId, deps }) {
     train = patchTrain(dir, trainId, { tierResults, result: worstResult(tierResults.map((r) => r.result)) }, deps);
     deps.log?.(`tier ${tier.name}: ${entry.result}${entry.reason ? ` (${entry.reason})` : ''}`);
     deps.hooks?.afterTier?.(tier.name);
-    if (entry.result !== 'green' && entry.result !== 'green-after-rerun') break;
+    if (entry.result !== 'green' && entry.result !== 'green-after-rerun' && !guardOnlyRed(entry)) break;
   }
   return patchTrain(dir, trainId, { phase: 'tested', result: worstResult((train.tierResults ?? []).map((r) => r.result)) }, deps);
 }

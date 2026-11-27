@@ -2,7 +2,7 @@
  * @fileoverview `fleet decision record | revoke | list` — the verb over decisions.mjs
  * (docs/plans/ship-record-catchup.md §2.6).
  *
- *   decision record --scope <record-catchup|note|test-plan|answer> --words-file - [--to <session|all>] [--expires <ISO>] [--id <session>] [--host-session <id>]
+ *   decision record --scope <record-catchup|note|test-plan|answer|accept-guard> --words-file - [--to <session|all>] [--train <id>] [--expires <ISO>] [--id <session>] [--host-session <id>]
  *   decision revoke <dec-id> --words-file - [--id <session>]
  *   decision list [--scope <s>]
  *
@@ -13,7 +13,8 @@
  */
 import fs from 'node:fs';
 import { ArgvError } from '../cli-io.mjs';
-import { transact } from './registry.mjs';
+import { assertTrainId, readTrain, transact } from './registry.mjs';
+import { guardOnlyRed, tierFingerprint } from './tier-acceptance.mjs';
 import { currentBranch, lockFailed, nowIso, ok, refused } from './commands.mjs';
 import {
   DECISION_SCOPES, SESSION_SCOPES, DECISION_ID_RE, DECISIONS_CAP, GRANTS_NOTE, WORDS_MAX, registryUnusable, newDecisionId, newRevocationId, readDecisions, writeRecord,
@@ -44,6 +45,25 @@ export function readWords(spec, { readStdin = () => fs.readFileSync(0, 'utf8') }
   if (/\r(?!\n)/.test(text)) throw new ArgvError('fleet decision: a carriage return is allowed only as part of a CRLF line end');
   if (text.length > WORDS_MAX) throw new ArgvError(`fleet decision: the words are over ${WORDS_MAX} characters`);
   return text;
+}
+
+/**
+ * The binding of an `accept-guard` decision, computed from the train (never typed): its id, its candidate, and every red pre-land
+ * tier — each of which must be guard-only. A test failure, a timeout, an instrument failure or an unclassified red refuses.
+ * @returns {{ok: true, binds: object} | {ok: false, reason: string}}
+ */
+export function acceptGuardBinding(dir, trainId) {
+  try { assertTrainId(trainId); } catch (e) { return { ok: false, reason: e.message }; }
+  const r = readTrain(dir, trainId);
+  if (!r.ok) return { ok: false, reason: `train ${trainId}: ${r.reason}` };
+  const t = r.train;
+  if (t.phase !== 'tested') return { ok: false, reason: `train ${trainId} is ${t.phase} — only a tested train can carry an accept-guard decision` };
+  if (!t.candidate?.oid) return { ok: false, reason: `train ${trainId} has no candidate` };
+  const reds = (t.tierResults ?? []).filter((x) => x.result !== 'green' && x.result !== 'green-after-rerun');
+  if (!reds.length) return { ok: false, reason: `train ${trainId} has no red tier — approve it without accept-guard` };
+  const bad = reds.find((x) => !guardOnlyRed(x));
+  if (bad) return { ok: false, reason: `tier "${bad.name}" is ${bad.result} (${bad.failureKind ?? 'unclassified'}) — accept-guard never covers a test failure, a timeout, an instrument failure or an unclassified red` };
+  return { ok: true, binds: { trainId, candidateOid: t.candidate.oid, tiers: reds.map((x) => ({ name: x.name, fingerprint: tierFingerprint(trainId, t.candidate.oid, x), guards: (x.guards ?? []).map((g) => g.id) })) } };
 }
 
 const byOf = (ctx, flags) => ({ session: flags['--id'] ?? currentBranch(ctx.cwd) ?? 'coordinator', hostSession: flags['--host-session'] ?? null });
@@ -85,16 +105,24 @@ export function cmdDecision(ctx, flags, positionals, deps = {}) {
     const forSession = SESSION_SCOPES.includes(scope);
     if (!forSession && flags['--to'] !== undefined) throw new ArgvError(`fleet decision record: --to applies only to --scope ${SESSION_SCOPES.join('/')}`);
     const to = forSession ? flags['--to'] ?? 'all' : undefined;
+    if ((scope === 'accept-guard') !== (flags['--train'] !== undefined)) throw new ArgvError('fleet decision record: --train <id> is required for --scope accept-guard, and applies to no other scope');
+    let binds;
+    if (scope === 'accept-guard') {
+      const b = acceptGuardBinding(ctx.dir, flags['--train']);
+      if (!b.ok) return refused(`accept-guard: ${b.reason}`);
+      binds = b.binds;
+    }
     const expires = flags['--expires'] ?? null;
     if (expires !== null && (!isStrictIso(expires) || Date.parse(expires) <= ctx.now.getTime())) throw new ArgvError('fleet decision record: --expires must be a future ISO-8601 timestamp with a real calendar date (e.g. 2026-12-31T00:00:00Z)');
     const tx = transact(ctx.dir, () => writeRecord(ctx.dir, {
       schemaVersion: 1, kind: 'decision', id: newDecisionId(ctx.now), at, scope, words, recordedBy: byOf(ctx, flags),
-      expiresAt: expires === null ? null : new Date(Date.parse(expires)).toISOString(), ...(forSession ? { to } : {}),
+      expiresAt: expires === null ? null : new Date(Date.parse(expires)).toISOString(), ...(forSession ? { to } : {}), ...(binds ? { binds } : {}),
     }));
     if (!tx.ok) return lockFailed();
     const d = tx.value;
     return ok({ decision: d, text: [`decision ${d.id} recorded (${d.scope})`, render(d, null, null, ctx.now.getTime()), `(${GRANTS_NOTE})`,
-      ...(d.scope === 'record-catchup' ? [`use it: ship-commit.mjs --record --decision ${d.id}`] : [])].join('\n') });
+      ...(d.scope === 'record-catchup' ? [`use it: ship-commit.mjs --record --decision ${d.id}`] : []),
+      ...(d.scope === 'accept-guard' ? [`bound to train ${d.binds.trainId} @ ${d.binds.candidateOid.slice(0, 12)}, guard-only tier(s): ${d.binds.tiers.map((x) => `${x.name} [${x.guards.join(', ')}]`).join('; ')}`, `use it: fleet land --approve ${d.binds.trainId} --accept-guard ${d.id}`] : [])].join('\n') });
   }
   const target = positionals[1];
   if (!DECISION_ID_RE.test(String(target ?? ''))) throw new ArgvError('fleet decision revoke <dec-id>: name the decision to revoke');

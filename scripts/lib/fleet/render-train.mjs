@@ -6,6 +6,7 @@
  * @module scripts/lib/fleet/render-train
  */
 import { checkBlocksApproval } from './overlap.mjs';
+import { guardOnlyRed } from './tier-acceptance.mjs';
 import { renderCommand } from './shell-quote.mjs';
 import { printable } from './eol-flips.mjs';
 
@@ -25,7 +26,12 @@ export function trainNextStep(train, cmd) {
   switch (train.phase) {
     case 'snapshot': case 'applying': return `interrupted — \`${cmd} land --resume ${id}\` if the worktree is still clean, else \`${cmd} land --abandon ${id}\` and rebuild`;
     case 'conflict': return `stopped at ${train.conflict?.sourceId ?? '?'} — inspect the worktree, then \`${cmd} land --abandon ${id}\` and rebuild`;
-    case 'tested': return train.result === 'green' || train.result === 'green-after-rerun' ? `\`${cmd} land --approve ${id}\`${train.result === 'green-after-rerun' ? ' --accept-rerun' : ''} (only with the user's go-ahead)` : `${train.result ?? 'unrecorded'} — \`${cmd} land --abandon ${id}\` and rebuild`;
+    case 'tested':
+      // Every red is guard-only (all tests passed): the one red a recorded human decision may accept.
+      if (train.result === 'red' && (train.tierResults ?? []).filter((t) => t.result !== 'green' && t.result !== 'green-after-rerun').every(guardOnlyRed)) {
+        return `red, guard-only (every test passed) — only with the user's decision: \`${cmd} decision record --scope accept-guard --train ${id}\`, then \`${cmd} land --approve ${id} --accept-guard <dec-id>\`; else abandon and rebuild`;
+      }
+      return train.result === 'green' || train.result === 'green-after-rerun' ? `\`${cmd} land --approve ${id}\`${train.result === 'green-after-rerun' ? ' --accept-rerun' : ''} (only with the user's go-ahead)` : `${train.result ?? 'unrecorded'} — \`${cmd} land --abandon ${id}\` and rebuild`;
     case 'approved': return `\`${cmd} land --approve ${id}\` again (reconciled; nothing was pushed)`;
     case 'awaiting-merge': return `merge the PRs, then \`${cmd} land --confirm ${id}\``;
     case 'push-pending': return `\`${cmd} land --reconcile ${id}\` — a push may have happened`;
@@ -69,7 +75,7 @@ export function renderBuilt({ train, approvability, cmd }) {
   if (train.conflict) L.push(`  ${conflictVerdict(train.conflict)}: ${train.conflict.reason}${train.conflict.files?.length ? ` — ${train.conflict.files.join(', ')}` : ''} (worktree left for inspection: ${train.worktree})`);
   if (train.conflict?.stderr) L.push(`    git exited ${train.conflict.status ?? 'without a status'}: ${train.conflict.stderr.split('\n')[0]}`);
   if (train.depsChanged !== null && train.depsChanged !== undefined) L.push(`  dependencies changed vs base: ${train.depsChanged}`);
-  for (const t of train.tierResults ?? []) L.push(`  tier ${t.name}: ${t.result}${t.reason ? ` (${t.reason})` : ''}${t.reran ? ' [after rerun]' : ''}  log ${t.logPath ?? '-'}${t.note ? `\n    note: ${t.note}` : ''}${t.cleanupWarning ? `\n    warn: cleanup after the tier exited failed (${t.cleanupWarning}) — a process it started may still be running` : ''}`);
+  for (const t of train.tierResults ?? []) L.push(`  tier ${t.name}: ${t.result}${t.reason ? ` (${t.reason})` : ''}${t.reasonCode && t.result !== 'green' ? ` [${t.reasonCode}]` : ''}${t.reran ? ` [after ${t.rerun ?? 'a'} rerun]` : ''}${t.guards?.length ? ` guards: ${t.guards.map((g) => `${g.id}/${g.kind}`).join(', ')}` : ''}${t.rerunFallback ? ` (whole-tier rerun: ${t.rerunFallback})` : ''}  log ${t.logPath ?? '-'}${t.note ? `\n    note: ${t.note}` : ''}${t.cleanupWarning ? `\n    warn: cleanup after the tier exited failed (${t.cleanupWarning}) — a process it started may still be running` : ''}`);
   for (const c of train.checkResults ?? []) {
     L.push(`  check ${c.name} [${c.severity}]: ${c.status}${c.reason ? ` (${c.reason})` : ''}${c.note ? `\n    note: ${c.note}` : ''}${(c.findings ?? []).map((f) => `\n    ${f.level}: ${f.message}`).join('')}${c.cleanupWarning ? `\n    warn: cleanup after the hook exited failed (${c.cleanupWarning}) — a process it started may still be running` : ''}`);
   }
@@ -82,6 +88,7 @@ export function renderBuilt({ train, approvability, cmd }) {
   } else {
     L.push(`  NOT approvable: ${approvability.reason}`);
   }
+  if (approvability.needsAcceptGuard) L.push(`  to accept a guard-only red (only with the user's explicit decision): ${cmd} decision record --scope accept-guard --train ${train.trainId} --words-file -   then   ${cmd} land --approve ${train.trainId} --accept-guard <dec-id>`);
   if (approvability.ok || approvability.needsAcceptRerun) {
     L.push('  A green train does not prove each branch green alone.');
     L.push(...deferredLines(train.deferredTiers, train.mergeMethod, branchName(train.destination.ref)));

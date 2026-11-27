@@ -123,6 +123,10 @@ export const TrainSchema = z.strictObject({
   reconciledFrom: z.string().nullable().optional(),
   outcome: z.looseObject({}).nullable().optional(),
   notes: z.array(z.string()).optional(),
+  // Why a train stopped before its tiers (`git-timeout`, `worktree-add-failed`, `candidate-unreadable`), for `land --json` readers.
+  reasonCode: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
+  // Sources that added nothing because the candidate already contained them (docs/plans/fleet-train-landing-friction.md 2.5).
+  skipped: z.array(z.strictObject({ sourceId: z.string(), oid: OidSchema, reasonCode: z.literal('already-contained'), reason: z.string().max(300) })).optional(),
   // A rollup train (docs/plans/ship-batch-member-outcomes.md section 2.9): `landing` marks it, `rollup` is the operation record of its push and PR.
   landing: z.literal('rollup').optional(),
   rollup: z.strictObject({

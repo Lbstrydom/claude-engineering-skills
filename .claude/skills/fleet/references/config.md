@@ -38,6 +38,15 @@ required gates and never take the heavy slot for a full suite; `next` and `ready
 (`full suite deferred to the train (fullSuite: train)`), and `fleet land` is the one full-suite run. Under `"train"`
 `land` is the only place a combination is tested in full, so run the fast-tier probe (`references/landing.md`) early.
 
+`gitTimeoutMs` (1000-600000; default `60000`), overridden per machine by `FLEET_GIT_TIMEOUT_MS`: the timeout of the train's own git calls (worktree add, merge, commit, reset, clean). An invalid env value is an error, never the default. A transient `worktree add` failure (timeout, lock) is undone and retried, at most 3 attempts.
+
+**Why a tier is red** comes from ONE line the tier's runner prints on a failing run (`run-tests.mjs` prints it; any runner may):
+`test-outcome/v1 {"testsFailed": <n|null>, "guards": [{"id": "<slug>", "kind": "policy|timeout|instrument"}]}`. `testsFailed > 0` is a
+test failure (rerun); zero with only `policy` guards is **guard-only** (deterministic: no rerun, the next tier still runs, and a human may
+accept it, `references/landing.md`); any `timeout` guard is not rerun; `instrument` reruns. No line, a malformed one or two in one attempt
+is `unclassified`: rerun once, never acceptable. A tier may declare `"rerunFailedCommand": ["npm", "test", "--", "{files}"]` (exactly one
+`{files}`): a test failure whose `run-tests/v1 failed-files:` line names ≤50 files reruns those first, and the whole tier only if they pass.
+
 `FLEET_GIT_STATUS_TIMEOUT_MS` (environment, not `.fleet.json`; default `5000`) is the per-call timeout of the worktree `git status` probes. One `git status` costs ~130 ms on a warm 4k-file checkout, so a timeout says the machine's disk is slow, not that the call is wrong. A probe past it reads unmeasured, never clean: the session item notes `uncommitted files not measured`, and an idle worktree stays visible as `cleanliness unchecked`. Both probe sweeps share one 15 s budget, which grows to admit at least one probe; fleet's git calls never take an optional lock (`GIT_OPTIONAL_LOCKS=0`), so a probe cannot rewrite the index under an editor's own git.
 
 `pruneAlert` (`false`, or `{removable?, worktrees?}`; default `{removable: 25, worktrees: 30}`, a missing number keeps its default): once the cached prune count reaches either number, `fleet next` prints an `ASK` line for the coordinator's next pass. `removable` counts branch candidates, removable detached worktrees and stale registrations (listed only, never judged); `worktrees` counts registered worktrees. It names only the action that can address what crossed, and removal stays the user's decision. `false` turns it off.

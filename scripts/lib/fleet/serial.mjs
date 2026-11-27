@@ -45,6 +45,7 @@ import { withFileLockSync } from '../file-lock.mjs';
 import { OID_RE } from './contracts.mjs';
 import { TRAIN_ID_RE, assertManaged, fleetDir, readTrain } from './registry.mjs';
 import { approvable } from './overlap.mjs';
+import { recordAcceptedGuard, resolveAcceptGuard } from './train-approve.mjs';
 import { branchOfRef, defaultDeps, patchTrain, withTrainLock } from './train.mjs';
 import { verifyFacts } from './train-approve.mjs';
 import { askCiOracle, decideCiAdmission, describeEvidence } from './required-checks.mjs';
@@ -685,7 +686,7 @@ function loop({ cwd, dir, trainId, deps, requiredChecks, requiredChecksError, sl
  * the serial record is created, and the loop runs. Re-entering a stopped run is
  * `land --resume <trainId>`.
  */
-export function approveSerial({ cwd, trainId, acceptRerun = false, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor, policy }) {
+export function approveSerial({ cwd, trainId, acceptRerun = false, acceptGuard = null, requiredChecks, requiredChecksError = null, deps = defaultDeps(), sleep, timings, timeoutMs, messageFor, policy }) {
   if (policy && typeof messageFor === 'function') throw new Error('approveSerial takes messageFor (ship-train) or policy (ship-batch), never both');
   const dir = fleetDir(cwd);
   const start = withTrainLock(dir, () => {
@@ -694,8 +695,10 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     const t = r.train;
     if (t.landing === 'rollup') return { ok: false, code: 'refused', reason: `train ${trainId} is a rollup: approve it with land --approve ${trainId} --rollup` };
     if (t.mergeMethod !== 'pr') return { ok: false, code: 'refused', reason: `--serial lands PRs one at a time; train ${trainId} is ${t.mergeMethod}` };
-    const elig = approvable(t, { acceptRerun });
-    if (!elig.ok) return { ok: false, code: 'refused', reason: elig.reason, needsAcceptRerun: elig.needsAcceptRerun === true };
+    const guard = resolveAcceptGuard(dir, acceptGuard, deps);
+    if (!guard.ok) return { ok: false, code: 'refused', reason: guard.reason };
+    const elig = approvable(t, { acceptRerun, acceptGuard: guard.binds });
+    if (!elig.ok) return { ok: false, code: 'refused', reason: elig.reason, needsAcceptRerun: elig.needsAcceptRerun === true, needsAcceptGuard: elig.needsAcceptGuard === true };
     const shallow = deps.git(['rev-parse', '--is-shallow-repository'], cwd);
     if (!shallow.ok || shallow.stdout.trim() !== 'false') return { ok: false, code: 'refused', reason: 'serial landing needs full history to verify updated heads; this clone is shallow (or git could not say) — git fetch --unshallow' };
     if (readSerial(dir, trainId).ok) return { ok: false, code: 'refused', reason: `a serial run already exists for ${trainId} — use land --resume ${trainId}` };
@@ -703,6 +706,7 @@ export function approveSerial({ cwd, trainId, acceptRerun = false, requiredCheck
     if (policy) { const ex = readSerial(dir, trainId); if (!ex.absent) return { ok: false, code: 'refused', reason: `the serial record of ${trainId} exists but cannot be read (${ex.reason}): recover or quarantine it before a run is started` }; }
     const ver = verifyFacts({ cwd, train: t, dir, deps });
     if (!ver.ok) return { ok: false, code: 'refused', reason: ver.reason };
+    recordAcceptedGuard(dir, trainId, elig, acceptGuard, deps);
     const stamp = deps.now().toISOString();
     writeSerial(dir, {
       schemaVersion: 1, trainId, startedAt: stamp, updatedAt: stamp, timeoutMs: timeoutMs ?? 60 * 60 * 1000,

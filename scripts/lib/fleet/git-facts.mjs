@@ -77,7 +77,7 @@ export function runGit(args, cwd, { timeoutMs = LOCAL_TIMEOUT_MS, input, env: ex
   });
   if (res.error) {
     const timedOut = res.error.code === 'ETIMEDOUT';
-    return { ok: false, status: null, stdout: '', stderr: '',
+    return { ok: false, status: null, stdout: '', stderr: '', ...(timedOut ? { timedOut: true } : {}),
       reason: timedOut ? `git ${sub} timed out after ${timeoutMs}ms` : `git ${sub} failed to run: ${res.error.message}` };
   }
   const stdout = String(res.stdout ?? '');
