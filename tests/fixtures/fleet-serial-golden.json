@@ -1,8 +1,8 @@
 {
-  "_source": "9bc2ccd9a3c2",
-  "_baseline": "d53272aa1484",
+  "_source": "d45e7def1ba1",
   "_command": "UPDATE_GOLDEN=1 GOLDEN_SOURCE=<sha> node --test tests/fleet-serial-golden.test.mjs",
-  "_note": "Pinned from origin/main d53272aa (the member-outcome refactor, #395). Regenerated ONCE for ci-evidence-oracle PR 2: only the argv entries of the OLD CI reads (pr checks, api rules/branches, pr view headRefOid) leave the lists, and two CI stop reasons change (a failed required check; a never-registered required check). Every other scenario, every merge argv included, is byte-identical to d53272aa (verified by a scripted diff, recorded in docs/plans/ci-evidence-oracle.md Implementation Log). Regenerate again only with the same discipline.",
+  "_baseline": "d53272aa1484",
+  "_note": "Pinned from origin/main d53272aa (the member-outcome refactor, #395). Regenerated ONCE for ci-evidence-oracle PR 2: only the argv entries of the OLD CI reads (pr checks, api rules/branches, pr view headRefOid) leave the lists, and two CI stop reasons change (a failed required check; a never-registered required check). Every other scenario, every merge argv included, is byte-identical to d53272aa (verified by a scripted diff, recorded in docs/plans/ci-evidence-oracle.md Implementation Log). Regenerated once more for fleet-train-landing-friction (PR 532): each tier result gains reasonCode only (every scenario here is green, so reasonCode green); no argv, stop reason or record field changed. Regenerate again only with the same discipline.",
   "scenarios": {
     "clean: waits for the check, merges exactly the tested head": {
       "argv": [
@@ -148,7 +148,8 @@
               "stage": "pre-land",
               "startedAt": "<time>",
               "endedAt": "<time>",
-              "logPath": "<path>"
+              "logPath": "<path>",
+              "reasonCode": "green"
             }
           ],
           "deferredTiers": [],
@@ -325,7 +326,8 @@
               "stage": "pre-land",
               "startedAt": "<time>",
               "endedAt": "<time>",
-              "logPath": "<path>"
+              "logPath": "<path>",
+              "reasonCode": "green"
             }
           ],
           "deferredTiers": [],
@@ -680,7 +682,8 @@
                 "stage": "pre-land",
                 "startedAt": "<time>",
                 "endedAt": "<time>",
-                "logPath": "<path>"
+                "logPath": "<path>",
+                "reasonCode": "green"
               }
             ],
             "deferredTiers": [],
@@ -1502,7 +1505,8 @@
               "stage": "pre-land",
               "startedAt": "<time>",
               "endedAt": "<time>",
-              "logPath": "<path>"
+              "logPath": "<path>",
+              "reasonCode": "green"
             }
           ],
           "deferredTiers": [],
@@ -1908,7 +1912,8 @@
                 "stage": "pre-land",
                 "startedAt": "<time>",
                 "endedAt": "<time>",
-                "logPath": "<path>"
+                "logPath": "<path>",
+                "reasonCode": "green"
               }
             ],
             "deferredTiers": [],
@@ -2167,7 +2172,8 @@
                 "stage": "pre-land",
                 "startedAt": "<time>",
                 "endedAt": "<time>",
-                "logPath": "<path>"
+                "logPath": "<path>",
+                "reasonCode": "green"
               }
             ],
             "deferredTiers": [],
@@ -3194,7 +3200,8 @@
                 "stage": "pre-land",
                 "startedAt": "<time>",
                 "endedAt": "<time>",
-                "logPath": "<path>"
+                "logPath": "<path>",
+                "reasonCode": "green"
               }
             ],
             "deferredTiers": [],
@@ -3364,7 +3371,8 @@
                 "stage": "pre-land",
                 "startedAt": "<time>",
                 "endedAt": "<time>",
-                "logPath": "<path>"
+                "logPath": "<path>",
+                "reasonCode": "green"
               }
             ],
             "deferredTiers": [],
@@ -3522,7 +3530,8 @@
                 "stage": "pre-land",
                 "startedAt": "<time>",
                 "endedAt": "<time>",
-                "logPath": "<path>"
+                "logPath": "<path>",
+                "reasonCode": "green"
               }
             ],
             "deferredTiers": [],
