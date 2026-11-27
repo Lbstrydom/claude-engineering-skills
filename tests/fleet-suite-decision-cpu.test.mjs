@@ -133,11 +133,18 @@ describe('user decisions: test-plan and answer', () => {
     // EVERY fleet module (the directory is listed, so a new file is covered) except the two that only read or render a
     // decision: none may name decisions.mjs in any form (static or dynamic import), so no merge, push, claim-override or
     // deletion path can consult one (audit R1 M11). The CLI only dispatches the verb.
-    const readers = new Set(['decisions.mjs', 'decisions-cmd.mjs', 'coordination.mjs']);
+    // ONE pinned exception (docs/plans/fleet-train-landing-friction.md section 2.3, a gate change): train-approve.mjs reads an
+    // accept-guard decision, and nothing else - it is checked below, never excused.
+    const readers = new Set(['decisions.mjs', 'decisions-cmd.mjs', 'coordination.mjs', 'train-approve.mjs']);
     const fleetDir = path.join(ROOT, 'scripts/lib/fleet');
     const files = fs.readdirSync(fleetDir).filter((f) => f.endsWith('.mjs') && !readers.has(f));
     assert.ok(files.length > 50, `vacuous-pass guard: the census must see the fleet modules (saw ${files.length})`);
     for (const f of files) assert.doesNotMatch(fs.readFileSync(path.join(fleetDir, f), 'utf8'), /decisions(-cmd)?\.mjs/, `${f} must not read decisions`);
+    const approve = fs.readFileSync(path.join(fleetDir, 'train-approve.mjs'), 'utf8');
+    assert.deepEqual(approve.match(/^import .*decisions\.mjs.*$/gm), ["import { activeDecision } from './decisions.mjs';"], 'approve imports only activeDecision');
+    const calls = approve.match(/activeDecision\([^)]*\)/g) ?? [];
+    assert.ok(calls.length >= 1 && calls.every((c) => c.includes("'accept-guard'")), `every activeDecision call in approve names the accept-guard scope (saw ${calls.join(' | ')})`);
+    assert.doesNotMatch(approve, /decisions-cmd\.mjs|readDecisions|decisionsForSession/, 'approve reads no other decision view');
     const coord = fs.readFileSync(path.join(fleetDir, 'coordination.mjs'), 'utf8');
     assert.match(coord, /import \{ decisionsForSession, renderSessionDecision \} from '\.\/decisions\.mjs';/, 'next reads only the session view');
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'scripts/fleet.mjs'), 'utf8'), /from '\.\/lib\/fleet\/decisions\.mjs'/, 'the CLI imports only the verb module');

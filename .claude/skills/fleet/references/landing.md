@@ -50,6 +50,9 @@ derived on every read, never written. `land` leaves it out and names it; `--incl
 A train whose tiers RAN and went red exits **4**, never 3 (3 means nothing ran or it was not allowed), and `land` prints
 each red tier's failure summary: pytest's `short test summary info` block, else the last FAILED / ERROR / `not ok` lines,
 else the log's last lines. The full log stays at the path the tier line names. `--approve` of a red train is still refused (3).
+Each tier result carries `reasonCode` (`land --json`). A **guard-only** red (every test passed; `references/config.md`) can land only by a
+recorded human decision: `decision record --scope accept-guard --train <id>` binds the train, its candidate and that tier result, then
+`land --approve <id> --accept-guard <dec-id>`. It never covers a test failure, timeout or unclassified red.
 
 ## A failed CI run the diff cannot have caused (rule 8)
 

@@ -17,6 +17,7 @@
  * @module scripts/lib/fleet/overlap
  */
 import { isMatch } from '../glob.mjs';
+import { guardAcceptanceRefusal, guardOnlyRed } from './tier-acceptance.mjs';
 
 export const TERMINAL_STATES = Object.freeze(['done', 'abandoned']);
 export const DEFAULT_LEASE_MS = 4 * 60 * 60 * 1000;
@@ -432,10 +433,14 @@ export function checkBlocksApproval(checkResults) {
  * (`manifest.reconciledFrom === 'push-pending'`).
  *
  * @param {object} manifest
- * @param {{acceptRerun?: boolean}} [opts]
- * @returns {{ok: boolean, reason: string, needsAcceptRerun?: boolean, note?: string}}
+ * `acceptGuard` is the `binds` of an active `accept-guard` decision (docs/plans/fleet-train-landing-friction.md section 2.3):
+ * it admits a RED tier only when that tier is guard-only (every test passed, a policy guard failed) and the binding names
+ * this train, this candidate and that tier result's fingerprint. It never admits any other red.
+ *
+ * @param {{acceptRerun?: boolean, acceptGuard?: {trainId: string, candidateOid: string, tiers: Array<{name: string, fingerprint: string}>}|null}} [opts]
+ * @returns {{ok: boolean, reason: string, needsAcceptRerun?: boolean, needsAcceptGuard?: boolean, note?: string, acceptedGuards?: string[]}}
  */
-export function approvable(manifest, { acceptRerun = false } = {}) {
+export function approvable(manifest, { acceptRerun = false, acceptGuard = null } = {}) {
   const no = (reason, extra = {}) => ({ ok: false, reason, ...extra });
   if (!manifest || typeof manifest !== 'object') return no('no train manifest');
   const phase = manifest.phase;
@@ -448,30 +453,50 @@ export function approvable(manifest, { acceptRerun = false } = {}) {
 
   const preLand = tiersOf(manifest.testCommand).filter((t) => (t.stage ?? 'pre-land') === 'pre-land');
   const tierResults = Array.isArray(manifest.tierResults) ? manifest.tierResults : null;
-  const considered = [manifest.result];
+  const tierConsidered = [];
+  const acceptedGuards = [];
   if (tierResults) {
     for (const t of preLand) {
       const r = tierResults.find((x) => x.name === t.name);
       if (!r) return no(`pre-land tier "${t.name}" has no recorded result`);
-      considered.push(r.result);
-      if (r.result !== 'green' && r.result !== 'green-after-rerun') return no(`tier "${t.name}" result is ${r.result}`);
+      if (r.result === 'red' && acceptGuard) {
+        const why = guardAcceptanceRefusal(manifest, r, acceptGuard);
+        if (why) return no(why);
+        acceptedGuards.push(r.name);
+        tierConsidered.push('green');
+        continue;
+      }
+      tierConsidered.push(r.result);
+      if (r.result !== 'green' && r.result !== 'green-after-rerun') {
+        return guardOnlyRed(r)
+          ? no(`tier "${t.name}" result is red, guard-only (every test passed; ${(r.guards ?? []).map((g) => g.id).join(', ')} failed) — a human may accept it: record \`fleet decision record --scope accept-guard --train ${manifest.trainId}\` and approve with --accept-guard <dec-id>`, { needsAcceptGuard: true })
+          : no(`tier "${t.name}" result is ${r.result}${r.failureKind ? ` (${r.failureKind})` : ''}`);
+      }
     }
   } else if (preLand.length > 1) {
     return no('multiple pre-land tiers but no tier results recorded');
   }
+  // With an accepted guard the manifest's own worst result is that red — but only if EVERY red recorded is one of those accepted.
+  if (acceptedGuards.length) {
+    const other = (tierResults ?? []).find((r) => r.result !== 'green' && r.result !== 'green-after-rerun' && !acceptedGuards.includes(r.name));
+    if (other) return no(`tier "${other.name}" result is ${other.result} and the accept-guard decision does not cover it`);
+  }
+  const considered = acceptedGuards.length ? [...tierConsidered, manifest.result === 'red' ? 'green' : manifest.result] : [manifest.result, ...tierConsidered];
   const overall = worstResult(considered);
+  const guardNote = acceptedGuards.length ? `guard-only red accepted by a recorded human decision for tier(s) ${acceptedGuards.join(', ')} (every test passed)` : null;
+  const withGuard = (x) => (guardNote ? { ...x, acceptedGuards, note: [x.note, guardNote].filter(Boolean).join('; ') } : x);
   if (overall === 'green-after-rerun') {
     const note = 'first run failed; passed on rerun — possible flake';
     if (!acceptRerun) return no(`result is green-after-rerun — ${note}; pass --accept-rerun to approve`, { needsAcceptRerun: true });
     const blocked = checkBlocksApproval(manifest.checkResults);
-    return blocked ? no(blocked) : { ok: true, reason: 'green after rerun, accepted', note };
+    return blocked ? no(blocked) : withGuard({ ok: true, reason: 'green after rerun, accepted', note });
   }
   if (overall !== 'green') {
     return no(`result is ${manifest.result ?? 'unrecorded'}${overall !== manifest.result ? ` (worst: ${overall})` : ''}`);
   }
   const blocked = checkBlocksApproval(manifest.checkResults);
   if (blocked) return no(blocked);
-  return { ok: true, reason: 'tested green' };
+  return withGuard({ ok: true, reason: acceptedGuards.length ? 'tested green except an accepted guard-only red' : 'tested green' });
 }
 
 // ── Landing order ───────────────────────────────────────────────────────────

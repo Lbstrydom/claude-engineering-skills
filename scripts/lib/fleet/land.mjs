@@ -17,6 +17,7 @@ import { approveSerial, readSerial, resumeSerial } from './serial.mjs';
 import { approveShipBatch, buildShipBatch, readShipBatch, resumeShipBatch } from './ship-batch.mjs';
 import { approveRollup, buildRollup, resumeRollup } from './rollup-land.mjs';
 import { redTierLines } from './tier-failure.mjs';
+import { resolveGitTimeoutMs } from './config.mjs';
 import { LAND_RECORD_NUDGE, invalidateRecordCache, recordCommandFor } from './record-count.mjs';
 import { unregisteredCacheDir } from './unregistered.mjs';
 import {
@@ -73,6 +74,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   if (modes.length && (flags['--select'] !== undefined || flags['--dry-run'] || flags['--tier'] !== undefined || flags['--include-stale'])) throw new ArgvError('fleet land: --select/--dry-run/--tier/--include-stale apply only when building a train');
   if (flags['--tier'] !== undefined && !flags['--dry-run']) throw new ArgvError('fleet land: --tier applies only with --dry-run (a probe that runs one tier and is never approvable); a train you can approve runs every pre-land tier');
   if (flags['--accept-rerun'] && modes[0] !== '--approve') throw new ArgvError('fleet land: --accept-rerun applies only to --approve');
+  if (flags['--accept-guard'] !== undefined && (modes[0] !== '--approve' || flags['--ship-batch'] || flags['--rollup'])) throw new ArgvError('fleet land: --accept-guard <dec-id> applies only to --approve (with or without --serial), never --ship-batch or --rollup');
   if (flags['--serial'] && modes[0] !== '--approve') throw new ArgvError('fleet land: --serial applies only to --approve (a stopped serial run continues with --resume)');
   if (flags['--ship-batch']) {
     if (modes.length && modes[0] !== '--approve' && modes[0] !== '--resume') throw new ArgvError('fleet land: --ship-batch applies to a build, --approve or --resume (a recovery verb never needs the grant)');
@@ -84,6 +86,9 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
     if (flags['--hold'] !== undefined && modes.length) throw new ArgvError('fleet land: --hold applies only when building a rollup (a held member needs a rebuild)');
   } else if (flags['--hold'] !== undefined) throw new ArgvError('fleet land: --hold applies only with --rollup');
   const { cwd, cmd } = ctx; // NOTE: ctx.config is lazy — manifest-driven verbs below never touch it
+  // The machine's FLEET_GIT_TIMEOUT_MS applies to every verb; .fleet.json gitTimeoutMs only where the config is read anyway (build, resume).
+  deps.gitTimeoutMs = resolveGitTimeoutMs({ env: ctx.env ?? process.env }).ms;
+  const withConfigTimeout = () => { deps.gitTimeoutMs = resolveGitTimeoutMs({ env: ctx.env ?? process.env, configValue: () => ctx.config.gitTimeoutMs }).ms; };
 
   if (flags['--rollup'] && modes[0] === '--approve') {
     const r = approveRollup({ cwd, dir: ctx.dir, trainId: validId(flags['--approve']), deps, serialOpts: { ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) } });
@@ -112,11 +117,11 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   }
   if (flags['--ship-batch']) return buildShipBatch(ctx, flags, deps, build, { parseSelect });
   if (modes[0] === '--approve' && flags['--serial']) {
-    const r = approveSerial({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), deps, ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) });
+    const r = approveSerial({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), acceptGuard: flags['--accept-guard'] ?? null, deps, ...configuredRequiredChecks(ctx), timeoutMs: serialTimeout(ctx) });
     return withRecordNudge(withText(r, renderSerial(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--approve') {
-    const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), cmd, deps, ...configuredRequiredChecks(ctx) });
+    const r = approveTrain({ cwd, trainId: validId(flags['--approve']), acceptRerun: Boolean(flags['--accept-rerun']), acceptGuard: flags['--accept-guard'] ?? null, cmd, deps, ...configuredRequiredChecks(ctx) });
     return withRecordNudge(withText(r, renderApprove(r, cmd)), cmd, ctx);
   }
   if (modes[0] === '--confirm') {
@@ -138,6 +143,7 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
   if (modes[0] === '--resume') {
     const trainId = validId(flags['--resume']);
     const t = readTrain(ctx.dir, trainId);
+    withConfigTimeout();
     // Resume works from the manifest; the live config / status are read only if the hook has not run yet.
     const r = resumeTrain({
       cwd, trainId, deps,
@@ -146,7 +152,54 @@ export function cmdLand(ctx, flags, deps = defaultDeps({ now: () => ctx.now })) 
     });
     return r.train ? finishBuilt(r, cmd) : withText(r, `REFUSED: ${r.reason}`);
   }
+  withConfigTimeout();
   return build(ctx, flags, deps);
+}
+
+/**
+ * A stable reorder so a source that is a git ANCESTOR of another lands before it (consumer report 2026-11-27: a branch and
+ * its ancestor in one train stopped at "produced no commit"; `proposeLandingOrder` sees no ancestry). `isAncestor(a, b)` is
+ * true when a is a STRICT ancestor of b (the caller answers equal commits with no edge, so the graph is acyclic); anything else
+ * (false, null = unanswered) adds no edge. Pure.
+ * @param {string[]} ids
+ * @param {(a: string, b: string) => boolean|null} isAncestor
+ * @returns {string[]}
+ */
+export function ancestorsFirst(ids, isAncestor) {
+  const before = new Map(ids.map((b) => [b, ids.filter((a) => a !== b && isAncestor(a, b) === true)]));
+  const placed = new Set(); const out = [];
+  while (out.length < ids.length) {
+    const next = ids.find((id) => !placed.has(id) && before.get(id).every((a) => placed.has(a))) ?? ids.find((id) => !placed.has(id));
+    placed.add(next); out.push(next);
+  }
+  return out;
+}
+
+/** Most sources a train orders by ancestry (pairwise `merge-base --is-ancestor`); over it the order is left as proposed, and said. */
+export const MAX_ANCESTRY_SOURCES = 30;
+const ANCESTRY_TIMEOUT_MS = 15_000;
+
+/**
+ * Put a source that is an ancestor of another first (`ancestorsFirst`), asking git. An unanswered question adds no edge.
+ * @returns {{ids: string[], note: string|null}}
+ */
+export function orderAncestorsFirst(ids, facts, git, cwd) {
+  if (ids.length < 2) return { ids, note: null };
+  if (ids.length > MAX_ANCESTRY_SOURCES) return { ids, note: `landing order: ${ids.length} sources is over ${MAX_ANCESTRY_SOURCES}, so ancestry was not checked` };
+  const oid = new Map(ids.map((id) => [id, facts.registry.sessions.find((x) => x.id === id)?.ready?.oid ?? null]));
+  // Equal commits are no edge (strict ancestry is acyclic). One timed-out question stops the asking: the rest stays unanswered
+  // rather than spending a timeout per pair.
+  let gaveUp = null;
+  const isAncestor = (a, b) => {
+    if (gaveUp || !oid.get(a) || !oid.get(b) || oid.get(a) === oid.get(b)) return null;
+    const r = git(['merge-base', '--is-ancestor', oid.get(a), oid.get(b)], cwd, { timeoutMs: ANCESTRY_TIMEOUT_MS });
+    if (r.timedOut) gaveUp = r.reason;
+    return r.ok ? true : r.status === 1 ? false : null;
+  };
+  const next = ancestorsFirst(ids, isAncestor);
+  const moved = next.some((id, i) => id !== ids[i]);
+  const notes = [moved ? `landing order: ancestors first — ${next.join(', ')} (was ${ids.join(', ')})` : null, gaveUp ? `landing order: ancestry only partly checked (${gaveUp})` : null].filter(Boolean);
+  return { ids: next, note: notes.length ? notes.join('; ') : null };
 }
 
 /** `--select a,b`: present-but-empty (or with an empty element) is an argv error, never "no selection". */
@@ -208,6 +261,8 @@ function build(ctx, flags, deps) {
   }
   if (!wanted.length) return { ok: false, code: 'refused', reason: 'nothing is ready to land', staleReady, text: `REFUSED: nothing is ready to land (a session must be \`ready\`, its head not moved since, and ahead of the base)${staleNote ? `\n${staleNote}` : ''}` };
 
+  const ordered = orderAncestorsFirst(wanted, facts, deps.git, cwd);
+  wanted = ordered.ids;
   const sources = wanted.map((id) => {
     const s = facts.registry.sessions.find((x) => x.id === id);
     const item = status.items.find((i) => i.id === id);
@@ -228,7 +283,7 @@ function build(ctx, flags, deps) {
     // Said of the repo's policy, never of each source (audit R2 M1): a branch may have been made ready under "session" or by
     // an older bundle, and nothing records which.
     ? `full suite: .fleet.json fullSuite: "train" defers it to the train; this train's pre-land tiers ran: ${ranTiers.join(', ')}${r.train.result === 'green' || r.train.result === 'green-after-rerun' ? '' : ' — NOT green, so the deferred suite has not passed'}` : null;
-  const notes = [staleNote, suiteNote].filter(Boolean);
+  const notes = [staleNote, ordered.note, suiteNote].filter(Boolean);
   const withStale = (x) => (notes.length ? { ...x, ...(staleNote ? { staleReady } : {}), text: `${x.text}\n${notes.join('\n')}` } : x);
   if (!r.ok) {
     // A rollup repo's chips open no PR: say what lands them (only under `landing: "rollup"`; the text is unchanged otherwise).

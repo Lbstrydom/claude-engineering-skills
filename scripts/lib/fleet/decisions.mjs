@@ -9,7 +9,8 @@
  * run fleet can write a record. So nothing treats a decision as the safety boundary: `ship-commit.mjs --record` checks
  * the change itself against HEAD regardless, and the decision's id rides in the commit (`AI-Decision`) so whoever
  * approves the merge reads the words first. **Closed scope**: `record-catchup`, `note`, and the two a session reads at its
- * checkpoint, `test-plan` and `answer` (consumer report 2026-11-15, item 4: `fleet next` quotes them as the user's words).
+ * checkpoint, `test-plan` and `answer` (consumer report 2026-11-15, item 4: `fleet next` quotes them as the user's words), and
+ * `accept-guard`, bound to one train candidate, which `land --approve --accept-guard` reads to admit its guard-only red tiers.
  * No merge, push, override or deletion value exists, so none can be granted.
  *
  * Storage: `fleet/decisions/<id>.json` in the shared registry — a NEW directory, so an older bundle's reader never sees
@@ -26,7 +27,7 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { assertManaged } from './registry.mjs';
 import { DECISION_ID_RE } from '../commit-trailers.mjs';
 
-export const DECISION_SCOPES = Object.freeze(['record-catchup', 'note', 'test-plan', 'answer']);
+export const DECISION_SCOPES = Object.freeze(['record-catchup', 'note', 'test-plan', 'answer', 'accept-guard']);
 /** Scopes a session reads at its checkpoint (`fleet next`), addressed with `to` (a session id, or `all`). */
 export const SESSION_SCOPES = Object.freeze(['test-plan', 'answer']);
 export { DECISION_ID_RE };
@@ -34,7 +35,7 @@ export const REVOCATION_ID_RE = /^rev-[0-9]{14}-[0-9a-f]{4}$/;
 export const WORDS_MAX = 4000;
 /** At most this many records are read; over it the read is `complete:false`, never "none". */
 export const DECISIONS_CAP = 5000;
-export const GRANTS_NOTE = 'a decision records the user\'s words; it grants only its scope, and never a merge, a push, --override or a deletion';
+export const GRANTS_NOTE = 'a decision records the user\'s words; it grants only its scope, and never a merge, a push, --override or a deletion (accept-guard admits only the guard-only red tiers of the one train candidate it is bound to)';
 
 const NO_CONTROL_EXCEPT_NEWLINE = /^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+$/; // LF and CR (CRLF) allowed (B-R2-M2)
 const IsoSchema = z.string().refine((s) => Number.isFinite(Date.parse(s)), 'must be an ISO timestamp');
@@ -42,13 +43,24 @@ const Words = z.string().min(1).max(WORDS_MAX).regex(NO_CONTROL_EXCEPT_NEWLINE, 
   .refine((s) => !/\r(?!\n)/.test(s), 'a carriage return is allowed only as part of CRLF (B-R3-M2)');
 const By = z.strictObject({ session: z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/), hostSession: z.string().max(200).nullable() });
 
+/**
+ * What an `accept-guard` decision is bound to (docs/plans/fleet-train-landing-friction.md section 2.3): one train, its candidate
+ * commit, and each guard-only red tier result by fingerprint. Computed by `fleet decision record --train`, never typed.
+ */
+const BindsSchema = z.strictObject({
+  trainId: z.string().min(1).max(100), candidateOid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+  tiers: z.array(z.strictObject({ name: z.string().min(1).max(64), fingerprint: z.string().regex(/^[0-9a-f]{16}$/), guards: z.array(z.string().min(1).max(64)).max(32) })).min(1).max(64),
+});
+
 export const DecisionSchema = z.strictObject({
   schemaVersion: z.literal(1), kind: z.literal('decision'), id: z.string().regex(DECISION_ID_RE),
   at: IsoSchema, scope: z.enum(DECISION_SCOPES), words: Words, recordedBy: By, expiresAt: IsoSchema.nullable(),
   // Who a session-scope decision is FOR (a session id, or `all`). Only `test-plan`/`answer` carry it — an older reader
   // already lists those scopes as unsupported, so the new field never reaches a reader that does not know it.
   to: z.string().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/).optional(),
-}).refine((d) => (d.to === undefined) === !SESSION_SCOPES.includes(d.scope), { message: 'to is required for test-plan/answer and absent otherwise', path: ['to'] });
+  // Only `accept-guard` carries it (an older reader lists that scope as unsupported, so it never reaches one that does not know it).
+  binds: BindsSchema.optional(),
+}).refine((d) => (d.binds === undefined) === (d.scope !== 'accept-guard'), { message: 'binds is required for accept-guard and absent otherwise', path: ['binds'] }).refine((d) => (d.to === undefined) === !SESSION_SCOPES.includes(d.scope), { message: 'to is required for test-plan/answer and absent otherwise', path: ['to'] });
 export const RevocationSchema = z.strictObject({
   schemaVersion: z.literal(1), kind: z.literal('revocation'), id: z.string().regex(REVOCATION_ID_RE),
   at: IsoSchema, revokes: z.string().regex(DECISION_ID_RE), words: Words, recordedBy: By,
