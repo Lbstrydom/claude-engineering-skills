@@ -189,9 +189,9 @@ async function callSummaryModel(route, prompt, maxTokens) {
     : await createAnthropicClient();
   const res = await azureThrottle(() => client.messages.create({
     model: route.kind === 'azure-claude' ? route.model : MODEL,
-    // At the configured default batch of 50 this is 4096, so production is
-    // byte-identical; it only bites on the small batches where the old
-    // constant never bound. See `summaryMaxTokens` for the measurement.
+    // `summaryMaxTokens(batch.length)`, exactly as before this route split
+    // (the caller passes it in): 256 per symbol, capped at 16384 — 12800 at
+    // the default batch of 50. See `summaryMaxTokens` for the measurement.
     max_tokens: maxTokens,
     messages: [{ role: 'user', content: prompt }],
   }));
