@@ -413,6 +413,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
 | [Audit Summary — fleet hooks-path removal guard](./fleet-hooks-path-removal-guard-audit-summary.md) |  |
 | [Audit summary: fleet prune surfacing (upstream 56773c7c)](./fleet-prune-surfacing-audit-summary.md) |  |
+| [Audit summary: fleet train landing friction](./fleet-train-landing-friction-audit-summary.md) |  |
 | [Audit summary — fleet-work-consumer-feedback-nov-2](./fleet-work-consumer-feedback-nov-2-audit-summary.md) |  |
 | [Audit Summary — gemini-gate-scope-fix](./gemini-gate-scope-fix-audit-summary.md) |  |
 | [Audit Summary — git-env-leak-sustainability](./git-env-leak-sustainability-audit-summary.md) |  |
