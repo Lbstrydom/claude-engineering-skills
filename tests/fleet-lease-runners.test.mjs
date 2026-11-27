@@ -240,6 +240,16 @@ describe('decideWithdrawRunner', () => {
   });
 });
 
+describe('decideWithdrawRunner and older checkouts', () => {
+  it('a runner leaving after an older checkout refused keeps the entry (pidless), never ends it (audit R4 H1/M1)', () => {
+    const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700)).lease;
+    const old = { ...l0, waiters: l0.waiters.map((x) => ({ ...x, refusals: x.refusals + 1, lastRefusal: T('08:03').toISOString() })) };
+    const l = ok(decideWithdrawRunner(old, q(TRAIN, { pid: 700 }), T('08:04'), probeOf(900, 700)));
+    assert.equal(waiterOf(l).pidless, true);
+    assert.deepEqual(waiterOf(l).runners, []);
+  });
+});
+
 describe('launcherChain', () => {
   const row = (pid, ppid, startedAt) => ({ pid, ppid, cpuMs: 0, startedAt, name: 'x' });
   it('walks parent first, at most depth, stopping at system roots', () => {
@@ -308,6 +318,27 @@ describe('launcherWatch', () => {
     t = 300_000;
     assert.equal(await w.gone(), null);
     assert.equal(reads, 2, 'it did re-read (the vacuous-pass guard)');
+  });
+  const rechecking = (platform, second) => {
+    let t = 0; let reads = 0;
+    const first = [{ pid: 50, ppid: 40, startedAt: '2026-11-27T08:01:00Z' }, { pid: 40, ppid: 4, startedAt: '2026-11-27T08:00:00Z' }];
+    const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform, isAlive: () => true, clock: () => t, recheckMs: 1, readTable: async () => (reads++ === 0 ? first : second) });
+    return { w, tick: () => { t += 10; }, reads: () => reads };
+  };
+  it('on Windows the creation time must match exactly: a pid reused two seconds later is caught (audit R4 H3)', async () => {
+    const c = rechecking('win32', [{ pid: 40, ppid: 4, startedAt: '2026-11-27T08:00:02Z' }]);
+    assert.equal(await c.w.gone(), null);
+    c.tick();
+    assert.match(await c.w.gone(), /now belongs to another process/);
+  });
+  it('a re-read that lacks the row or its start time is unknown, not a reused pid (audit R4 H4/M2)', async () => {
+    for (const second of [[], [{ pid: 40, ppid: 4, startedAt: null }], [{ pid: 40, ppid: 4, startedAt: 'garbage' }]]) {
+      const c = rechecking('win32', second);
+      assert.equal(await c.w.gone(), null);
+      c.tick();
+      assert.equal(await c.w.gone(), null, JSON.stringify(second));
+      assert.equal(c.reads(), 2, 'it did re-read');
+    }
   });
   it('a probe that throws keeps the wait (the safe direction) and is said once', async () => {
     const lines = [];

@@ -66,11 +66,13 @@ const RETRYABLE = new Set(['held', 'window', 'turn', 'expired-pid-alive', 'prior
  * A pid alone cannot tell a dead launcher from a new process that reused its pid (Windows recycles them quickly), so every
  * `recheckMs` the table is read again and a link whose start time moved by more than `startToleranceMs`, or that is missing, is
  * gone (audit R2 H4). A tolerance, not equality: `ps` gives elapsed time, so a POSIX start is the read clock minus it and
- * wobbles by a second between reads (audit R3 H2); a reused pid starts minutes or hours later, never within it.
+ * wobbles by a second between reads (audit R3 H2); Windows reports the creation time itself, so there it must match exactly
+ * (audit R4 H3). A row or start time the re-read does not have is UNKNOWN, not reused: only a different valid time proves
+ * another process (audit R4 H4).
  * Between re-reads the cheap `isAlive` probe answers. One table read per 5 minutes of waiting, not one per poll.
  * @returns {{gone: () => Promise<string|null>}} why it is gone, or null while it lives or cannot be told
  */
-export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {}, clock = Date.now, recheckMs = 5 * 60_000, startToleranceMs = 3_000 } = {}) {
+export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {}, clock = Date.now, recheckMs = 5 * 60_000, startToleranceMs = platform === 'win32' ? 0 : 3_000 } = {}) {
   const ppid0 = ppid();
   let chain = null;
   let starts = new Map(); // pid -> startedAt at the first read (null when the table did not say)
@@ -99,7 +101,7 @@ export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, re
           const rows = await readTable();
           if (rows) {
             const byPid = new Map(rows.map((r) => [r.pid, r]));
-            const moved = (a, b) => !b || !Number.isFinite(Date.parse(b)) || Math.abs(Date.parse(a) - Date.parse(b)) > startToleranceMs;
+            const moved = (a, b) => Number.isFinite(Date.parse(b)) && Math.abs(Date.parse(a) - Date.parse(b)) > startToleranceMs;
             const reused = chain.find((p) => starts.get(p) !== null && moved(starts.get(p), byPid.get(p)?.startedAt));
             if (reused !== undefined) return `the process that launched it (pid ${reused}) is gone; that pid now belongs to another process`;
           }
