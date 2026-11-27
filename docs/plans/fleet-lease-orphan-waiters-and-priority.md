@@ -1,6 +1,6 @@
 # Plan: fleet lease — orphaned `lease run` waiters, and a train ahead of a targeted run
 - **Date**: 2026-11-27
-- **Status**: In Progress
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (stack `js-ts`)
 - **Target domain(s)**: `fleet`
@@ -113,7 +113,12 @@ and the runner returns anyway: the reaper removes its entry within one settle on
 
 - Assumes a waiting runner polls at most every ~30 s (`runnerStaleMs` is 20 polls). A caller with a far longer poll
   would be reaped; the poll is a test seam only today.
-- Windows pid reuse can make a dead launcher look alive (safe direction: the old 12 h expiry still bounds it).
+- Windows pid reuse: the launcher chain's start times are re-read every 5 minutes (exact on Windows, 3 s tolerance on POSIX,
+  whose start is the read clock minus `ps` elapsed time); a missing row or start time is unknown, never reuse.
+- Hardened in audit (see the audit summary): a runner is (holder, pid, scope); capacity eviction is rank-aware and any
+  runner that cannot stay recorded turns the entry `pidless`; an older checkout's refusal newer than every runner poll is
+  kept as `pidless` on join, reap and withdraw; the launcher is checked before EVERY re-acquire and raced against a stop;
+  the default sleep is cancellable; a lease error after registration withdraws the runner.
 - A detached `lease run --wait` whose launcher exits on purpose (`nohup … &`) now stops waiting. Documented; nothing
   in the repo or the skill launches one that way.
 
