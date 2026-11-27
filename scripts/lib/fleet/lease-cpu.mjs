@@ -71,6 +71,33 @@ export function treeOf(rows, root) {
   return out;
 }
 
+/**
+ * The ancestors of `pid` (parent first), at most `depth`, from one table read: what launched a `lease run` (plan
+ * fleet-lease-orphan-waiters-and-priority D3). The chain, not the parent alone, because a Windows launcher usually spawns through
+ * `cmd.exe` or `npm.cmd`, which outlive their killed parent. It stops at the system roots (pid <= 4), at a cycle, and at a
+ * "parent" that STARTED AFTER its child: Windows keeps a dead parent's pid as `ParentProcessId`, and a process that later
+ * reused that pid is not the launcher (it would die for unrelated reasons and read as one gone).
+ *
+ * `broken` names a link of the chain whose parent was ALREADY gone at the read (its parent pid absent from the table, or
+ * reused by a younger process): the launcher died before it could be watched - a train script killed while its `cmd.exe`
+ * lived on (audit R1 H5). A parent at a system root (pid <= 4) ends the chain and is not a break.
+ * @returns {{chain: number[], broken: number|null}}
+ */
+export function launcherChain(rows, pid, depth = 3) {
+  const byPid = new Map(rows.map((r) => [r.pid, r]));
+  const chain = [];
+  let cur = byPid.get(pid);
+  while (cur && chain.length < depth) {
+    if (cur.ppid <= 4) break;
+    const p = byPid.get(cur.ppid);
+    if (p === cur || p?.pid === pid || (p && chain.includes(p.pid))) break;
+    if (!p || (p.startedAt && cur.startedAt && p.startedAt > cur.startedAt)) return { chain, broken: cur.pid };
+    chain.push(p.pid);
+    cur = p;
+  }
+  return { chain, broken: null };
+}
+
 /** Total CPU of a tree (from `treeOf`), or null. */
 export const treeCpuMs = (rows, root) => { const t = treeOf(rows, root); return t ? t.reduce((a, r) => a + r.cpuMs, 0) : null; };
 

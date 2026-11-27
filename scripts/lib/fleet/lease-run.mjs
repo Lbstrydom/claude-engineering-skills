@@ -6,7 +6,10 @@
  *
  *  1. acquire EXCLUSIVELY (a second run under the same identity is refused, never rotated), recording the runner's own pid -
  *     valid here, unlike the one-shot CLI whose pid #243 refuses to record, because the runner lives until the job ends;
- *  2. refused -> wait in the queue, bounded (`waitMin`), polling with jitter; the job NEVER runs after a refusal;
+ *  2. refused -> wait in the queue, bounded (`waitMin`), polling with jitter; the job NEVER runs after a refusal. The wait is a
+ *     RUNNER on the repo's waiter entry (its pid, its priority): a stop signal during it, or its launcher dying (a killed train
+ *     script), withdraws it and ends the run without the job - a waiter nobody is waiting on must not start a job for nobody
+ *     (consumer report 2026-11-27; plan docs/plans/fleet-lease-orphan-waiters-and-priority.md D3);
  *  3. granted -> `await job({token, attach, signal})`;
  *  4. release on every CATCHABLE exit (returns, throws, SIGINT/SIGTERM/SIGHUP/SIGBREAK) with the token, as a plain release, a
  *     release that yields the turn (`endTurn`), or the atomic release-to-CI-window when the job may have reached a remote.
@@ -22,9 +25,10 @@
  * @module scripts/lib/fleet/lease-run
  */
 import {
-  LIMITS, decideAcquire, decideAttach, decideHeartbeat, decideRelease, decideReleaseToCiWindow, defaultProbe, transactLease, turnKeptText,
+  LIMITS, decideAcquire, decideAttach, decideHeartbeat, decideRelease, decideReleaseToCiWindow, decideWithdrawRunner, defaultProbe, transactLease, turnKeptText,
 } from './lease.mjs';
-import { processTreeActivity } from './lease-cpu.mjs';
+import { launcherChain, processTreeActivity, readProcessTableAsync } from './lease-cpu.mjs';
+import { isPidAlive } from '../file-lock.mjs';
 
 /** Interval timers for the heartbeat, unref'd so a beat can never keep the process alive after its job. */
 export const realTimers = {
@@ -50,7 +54,74 @@ export const processSignals = {
 };
 
 /** Retrying can help for these refusals; `unverifiable` needs a person, so waiting would only hide it. */
-const RETRYABLE = new Set(['held', 'window', 'turn', 'expired-pid-alive']);
+const RETRYABLE = new Set(['held', 'window', 'turn', 'expired-pid-alive', 'priority']);
+
+/**
+ * Has the process that launched this runner gone? The chain (parent and up to two further ancestors, `launcherChain`) is read
+ * ONCE, lazily, at the first check - a run granted at once never reads the process table - and a link whose parent was already
+ * gone at that read is a launcher gone. A failed read degrades to the parent alone, said once through `log`. On POSIX a
+ * changed `process.ppid` (reparented) also means the parent is gone. A check that cannot be made keeps the run waiting (the
+ * safe direction: the queue's own expiry still bounds it) and is said, never silent (audit R1 H9). Never throws.
+ *
+ * A pid alone cannot tell a dead launcher from a new process that reused its pid (Windows recycles them quickly), so every
+ * `recheckMs` the table is read again and a link whose start time moved by more than `startToleranceMs`, or that is missing, is
+ * gone (audit R2 H4). A tolerance, not equality: `ps` gives elapsed time, so a POSIX start is the read clock minus it and
+ * wobbles by a second between reads (audit R3 H2); Windows reports the creation time itself, so there it must match exactly
+ * (audit R4 H3). A row or start time the re-read does not have is UNKNOWN, not reused: only a different valid time proves
+ * another process (audit R4 H4).
+ * Between re-reads the cheap `isAlive` probe answers. One table read per 5 minutes of waiting, not one per poll.
+ * @returns {{gone: () => Promise<string|null>}} why it is gone, or null while it lives or cannot be told
+ */
+export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {}, clock = Date.now, recheckMs = 5 * 60_000, startToleranceMs = platform === 'win32' ? 0 : 3_000 } = {}) {
+  const ppid0 = ppid();
+  let chain = null;
+  let starts = new Map(); // pid -> startedAt at the first read (null when the table did not say)
+  let brokenAtRead = null;
+  let readAt = 0;
+  let said = false;
+  const sayOnce = (m) => { if (!said) { said = true; log(m); } };
+  return {
+    async gone() {
+      try {
+        if (chain === null) {
+          const rows = await readTable();
+          readAt = clock();
+          const c = rows ? launcherChain(rows, pid) : { chain: [], broken: null };
+          if (!rows) sayOnce(`the process table could not be read; only the parent (pid ${ppid0}) is watched for this wait`);
+          brokenAtRead = c.broken;
+          chain = c.chain.length ? c.chain : (ppid0 > 0 ? [ppid0] : []);
+          starts = new Map(chain.map((p) => [p, rows?.find((r) => r.pid === p)?.startedAt ?? null]));
+        }
+        if (brokenAtRead !== null) return `the process that launched pid ${brokenAtRead} was already gone`;
+        if (platform !== 'win32' && ppid() !== ppid0) return `its parent (pid ${ppid0}) exited`;
+        const dead = chain.find((p) => !isAlive(p));
+        if (dead !== undefined) return `the process that launched it (pid ${dead}) is gone`;
+        if (clock() - readAt >= recheckMs && [...starts.values()].some((s) => s !== null)) {
+          readAt = clock();
+          const rows = await readTable();
+          if (rows) {
+            const byPid = new Map(rows.map((r) => [r.pid, r]));
+            const moved = (a, b) => Number.isFinite(Date.parse(b)) && Math.abs(Date.parse(a) - Date.parse(b)) > startToleranceMs;
+            const reused = chain.find((p) => starts.get(p) !== null && moved(starts.get(p), byPid.get(p)?.startedAt));
+            if (reused !== undefined) return `the process that launched it (pid ${reused}) is gone; that pid now belongs to another process`;
+          }
+        }
+        return null;
+      } catch (e) {
+        sayOnce(`could not check whether the launcher is alive (${e?.message ?? e}); waiting on regardless`);
+        return null;
+      }
+    },
+  };
+}
+
+/** The default sleep: a timer that an abort clears, so a stopped wait leaves nothing holding the process open (audit R1 H6). */
+export const cancellableSleep = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return; }
+  const done = () => { clearTimeout(t); signal?.removeEventListener('abort', done); resolve(); };
+  const t = setTimeout(done, ms);
+  signal?.addEventListener('abort', done, { once: true });
+});
 
 /**
  * One read-decide-write on the lease. A refusal that carries a changed lease (a journal entry, a waiter, a settled expiry) is
@@ -96,6 +167,8 @@ export function runDecision(transact, dir, decide) {
  * @param {object} [opts.probe]
  * @param {{install: (h: (sig: string) => void) => () => void}} [opts.signals]
  * @param {(code: number) => void} [opts.forceExit] - a SECOND signal while stopping
+ * @param {'normal'|'high'} [opts.priority] - order among this repo's OWN waiting runs (a train is `high`); default normal
+ * @param {{gone: () => Promise<string|null>}|null} [opts.launcher] - asked each poll; gone ends the wait (`code: 'orphaned'`)
  * @param {typeof transactLease} [opts.transact]
  * @param {(line: string) => void} [opts.log]
  * @param {(ctx: {token: string, attach: (pid: number) => Promise<boolean>, signal: AbortSignal}) => Promise<any>} job
@@ -107,33 +180,16 @@ export async function runUnderLease(opts, job) {
     dir, identity, repo, kind = 'gate', forMin = 30, note, pid = process.pid, waitMin = 0, pollMs = 30_000, jitter = 0.2,
     endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
-    sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
+    sleep = cancellableSleep, forceExit = (code) => process.exit(code),
     heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers, onGranted = null,
+    priority, launcher = null,
   } = opts;
   const startedAt = now().getTime();
   const deadline = startedAt + Math.max(0, waitMin) * 60_000;
-  const req = { identity, repo, kind, forMin, pid, exclusive: true, ...(note !== undefined ? { note } : {}) };
+  const req = { identity, repo, kind, forMin, pid, exclusive: true, ...(note !== undefined ? { note } : {}), ...(priority !== undefined ? { priority } : {}) };
 
-  // 1-2. Acquire, waiting in the queue when allowed. The job does not run unless this loop ends in a grant.
-  let grant;
-  for (;;) {
-    const out = runDecision(transact, dir, (lease) => decideAcquire(lease, req, now(), probe));
-    if (out.status === 'error') return { ran: false, outcome: 'lease-error', reason: out.reason, waitedMs: now().getTime() - startedAt };
-    const d = out.decision;
-    if (d.ok) { grant = d; break; }
-    if (d.code === 'bad-request') return { ran: false, outcome: 'bad-request', reason: d.reason };
-    const left = deadline - now().getTime();
-    if (!RETRYABLE.has(d.code) || left <= 0) {
-      return { ran: false, outcome: 'not-granted', code: d.code, reason: d.reason, queued: d.queued === true, waitedMs: now().getTime() - startedAt };
-    }
-    const wait = Math.min(left, Math.max(1, Math.round(pollMs * (1 + (random() * 2 - 1) * jitter))));
-    log(`waiting in the queue (${d.code}); next try in ${Math.round(wait / 1000)}s`);
-    await sleep(wait);
-  }
-  const token = grant.heavy.token;
-  if (grant.capped) log(`CAPPED: granted ${grant.capped.grantedMin} of the requested ${grant.capped.requestedMin} minutes - the turn ends at ${grant.capped.turnEndsAt.slice(11, 16)}Z and ${grant.capped.waiting} is waiting; the slot is released for them then unless this job is still running`);
-
-  // 3. Run. Signals abort the job's AbortSignal; the job stops itself, and we release afterwards.
+  // Stop signals are handled from the FIRST moment (D3): while waiting, a stop ends the wait and the job never starts; once
+  // granted, it aborts the job. A second one forces the exit in either phase. Installed before the wait, removed after the release.
   const abort = new AbortController();
   let signalled = null;
   const removeSignals = signals.install((sig) => {
@@ -141,6 +197,48 @@ export async function runUnderLease(opts, job) {
     signalled = sig;
     abort.abort();
   });
+  const stopped = new Promise((r) => { abort.signal.addEventListener('abort', r, { once: true }); });
+  /** The wait ends without the job: this runner leaves the queue (`keepPlace`: the repo stays queued, as a refused acquire does). */
+  const giveUp = (res, keepPlace) => {
+    const w = runDecision(transact, dir, (lease) => decideWithdrawRunner(lease, { identity, repo, pid }, now(), probe, { keepPlace }));
+    if (w.status !== 'decided') log(`could not leave the queue (${w.reason}); the entry is reaped once this process has exited`);
+    removeSignals();
+    return { ...res, waitedMs: now().getTime() - startedAt };
+  };
+
+  // 1-2. Acquire, waiting in the queue when allowed. The job does not run unless this loop ends in a grant.
+  let grant;
+  for (let attempt = 0; ; attempt += 1) {
+    // Checked before EVERY re-acquire, not only after a refusal: a launcher that died during the sleep must not be granted the
+    // slot that freed meanwhile (audit R1 H4/H7/H8).
+    // Raced against a stop: a slow process-table read never delays the withdrawal a stop signal asks for (audit R2 H6).
+    const gone = attempt > 0 && launcher ? await Promise.race([launcher.gone(), stopped.then(() => null)]) : null;
+    if (gone) return giveUp({ ran: false, outcome: 'not-granted', code: 'orphaned', reason: `stopped waiting: ${gone}, so nothing is waiting for this job`, orphaned: gone, queued: false }, false);
+    if (signalled) return giveUp({ ran: false, outcome: 'not-granted', code: 'stopped', reason: `stopped by ${signalled} while waiting for the slot`, signalled, queued: false }, false);
+    const out = runDecision(transact, dir, (lease) => decideAcquire(lease, req, now(), probe));
+    // After a refusal registered this runner, an error still withdraws it (keeping the repo's place): a library caller such as
+    // sync:pr lives on, so its pid would read alive and hold a stale runner for runnerStaleMs (audit R3 M2).
+    if (out.status === 'error') {
+      const res = { ran: false, outcome: 'lease-error', reason: out.reason };
+      if (attempt > 0) return giveUp(res, true);
+      removeSignals();
+      return { ...res, waitedMs: now().getTime() - startedAt };
+    }
+    const d = out.decision;
+    if (d.ok) { grant = d; break; }
+    if (d.code === 'bad-request') { removeSignals(); return { ran: false, outcome: 'bad-request', reason: d.reason }; }
+    const left = deadline - now().getTime();
+    if (!RETRYABLE.has(d.code) || left <= 0) {
+      return giveUp({ ran: false, outcome: 'not-granted', code: d.code, reason: d.reason, queued: d.queued === true }, true);
+    }
+    const wait = Math.min(left, Math.max(1, Math.round(pollMs * (1 + (random() * 2 - 1) * jitter))));
+    log(`waiting in the queue (${d.code}); next try in ${Math.round(wait / 1000)}s`);
+    await Promise.race([sleep(wait, abort.signal), stopped]);
+  }
+  const token = grant.heavy.token;
+  if (grant.capped) log(`CAPPED: granted ${grant.capped.grantedMin} of the requested ${grant.capped.requestedMin} minutes - the turn ends at ${grant.capped.turnEndsAt.slice(11, 16)}Z and ${grant.capped.waiting} is waiting; the slot is released for them then unless this job is still running`);
+
+  // 3. Run. Signals abort the job's AbortSignal; the job stops itself, and we release afterwards.
   let childPid = null;
   const attach = async (pid0) => {
     const out = runDecision(transact, dir, (lease) => decideAttach(lease, { identity, pid: pid0, token }, now(), probe));

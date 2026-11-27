@@ -13,7 +13,7 @@
  * @module scripts/lib/fleet/lease-turns
  */
 import {
-  LIMITS, admissionCheck, appendJournal, classifyHeavy, conflictingWindows, defaultProbe, hhmmOf, ms, uniqueEpisode, waitEndedEntry,
+  LIMITS, admissionCheck, appendJournal, classifyHeavy, conflictingWindows, defaultProbe, hhmmOf, ms, reapRunners, uniqueEpisode, waitEndedEntry,
 } from './lease-model.mjs';
 
 export const turnMinOf = (lease) => lease.turnMin ?? LIMITS.defaultTurnMin;
@@ -156,13 +156,13 @@ function settleOffers(lease, now, probe, depth = 0) {
 /**
  * The time-driven transitions, applied FIRST in every mutating decision (after the request validates, before it is
  * evaluated) and persisted even when the operation is then refused, because they are facts about time:
- * a waiter older than `maxWaitMs` expires; the turn ends on expiry or after `batchGapMs` between jobs; the first
+ * a waiting `lease run` whose pid is dead or that stopped polling is reaped (`reapRunners`); a waiter older than `maxWaitMs` expires; the turn ends on expiry or after `batchGapMs` between jobs; the first
  * waiter able to go is offered the slot or, after `claimMs` of continuous ability and not coming, lapses to the back.
  * Touches `waiters`, `turn` and `journal` only - never the slot or the windows - and returns the SAME object when
  * nothing changed.
  */
 export function settleQueue(lease, now, probe = defaultProbe()) {
-  let next = lease;
+  let next = reapRunners(lease, now, probe);
   const stale = (next.waiters ?? []).filter((w) => now.getTime() - ms(w.since) > LIMITS.maxWaitMs);
   if (stale.length) {
     next = { ...next, waiters: next.waiters.filter((w) => !stale.includes(w)) };

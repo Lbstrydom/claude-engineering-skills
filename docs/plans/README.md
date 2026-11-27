@@ -212,6 +212,7 @@ source comments that no docs linter sees — stays valid.
 | [fleet handover — structured wind-down, coordinator context, and three probe fixes](./fleet-handover-winddown.md) | `Complete` | shipped in #281, #282, #283 (status reconciled against merged PRs 2026-10-25) |
 | [fleet handover — move coordination to another Claude Code account on this machine](./fleet-handover.md) | `Complete` |  |
 | [An in-turn lease grant ends with the turn while another repo waits](./fleet-lease-in-turn-cap.md) | `Complete` | shipped in #290 (status reconciled against merged PRs 2026-10-25) |
+| [fleet lease — orphaned `lease run` waiters, and a train ahead of a targeted run](./fleet-lease-orphan-waiters-and-priority.md) | `Complete` |  |
 | [fleet lease — announce race, transition journal, turns, gaps, sync:pr on the lease](./fleet-lease-turns-and-journal.md) | `Complete` | shipped in #252, #253, #257, #265 (status reconciled against merged PRs 2026-10-25) |
 | [fleet machine-wide lease (`fleet lease`)](./fleet-machine-lease.md) | `Complete` |  |
 | [/fleet — coordinating several concurrent AI coding sessions](./fleet-multi-session-coordination.md) | `Complete` |  |
@@ -411,6 +412,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit convergence summary — debt readers ask the store](./debt-readers-ask-store-audit-summary.md) |  |
 | [Audit Summary — discovery-portfolio-secret-redaction](./discovery-portfolio-secret-redaction-audit-summary.md) |  |
 | [Audit Summary — fleet hooks-path removal guard](./fleet-hooks-path-removal-guard-audit-summary.md) |  |
+| [Audit summary: fleet lease orphaned waiters and priority](./fleet-lease-orphan-waiters-and-priority-audit-summary.md) |  |
 | [Audit summary: fleet prune surfacing (upstream 56773c7c)](./fleet-prune-surfacing-audit-summary.md) |  |
 | [Audit summary — fleet-work-consumer-feedback-nov-2](./fleet-work-consumer-feedback-nov-2-audit-summary.md) |  |
 | [Audit Summary — gemini-gate-scope-fix](./gemini-gate-scope-fix-audit-summary.md) |  |

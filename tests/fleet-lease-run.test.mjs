@@ -18,6 +18,8 @@ const { LeaseSchema, decideAcquire, decideRelease, emptyLease, readLease, transa
 const SCOPE = 'win32:box';
 const probe = { scope: SCOPE, isPidAlive: () => false };
 const aliveProbe = { scope: SCOPE, isPidAlive: () => true };
+/** A waiting runner's own process is alive (pid 4242, `base`'s pid): only every OTHER pid reads dead. */
+const runProbe = { scope: SCOPE, isPidAlive: (pid) => pid === 4242 };
 const A = { repoKey: 'aaaaaaaaaaaa', holder: 'sync-pr' };
 const B = { repoKey: 'bbbbbbbbbbbb', holder: 'main' };
 const repoOf = (id) => (id.repoKey.startsWith('a') ? 'o/a' : 'o/b');
@@ -47,7 +49,7 @@ function fakeSignals() {
   s.fire = (sig) => s.handler?.(sig);
   return s;
 }
-const base = (w, id, extra = {}) => ({ dir, identity: id, repo: repoOf(id), kind: 'gate', forMin: 30, pid: 4242, now: w.now, sleep: w.sleep, probe, signals: fakeSignals(), log: () => {}, ...extra });
+const base = (w, id, extra = {}) => ({ dir, identity: id, repo: repoOf(id), kind: 'gate', forMin: 30, pid: 4242, now: w.now, sleep: w.sleep, probe: runProbe, signals: fakeSignals(), log: () => {}, ...extra });
 const journalKinds = (l) => (l.journal ?? []).map((e) => e.kind);
 
 describe('exclusive acquire (D7, audit R1 H3)', () => {
@@ -186,7 +188,7 @@ describe('runUnderLease', () => {
   it('waits in the queue: refused, refused, then granted when the holder releases between polls; the wait is served', async () => {
     const w = world();
     seed(ok(acq(emptyLease(), B, { forMin: 60 }, '08:00')));
-    w.hook = (n) => { if (n === 3) transactLease(dir, (r) => ({ value: 1, write: ok(decideRelease(r.lease, q(B, { endTurn: true }), w.t, probe)) })); };
+    w.hook = (n) => { if (n === 3) transactLease(dir, (r) => ({ value: 1, write: ok(decideRelease(r.lease, q(B, { endTurn: true }), w.t, runProbe)) })); };
     let ran = false;
     const res = await R.runUnderLease(base(w, A, { waitMin: 10, pollMs: 30_000, jitter: 0 }), async () => { ran = true; });
     assert.equal(ran, true);

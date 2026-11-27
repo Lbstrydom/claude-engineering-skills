@@ -48,7 +48,15 @@ export const LIMITS = Object.freeze({
   heartbeatMs: MIN, heartbeatRenewMs: 10 * MIN, heartbeatMaxMs: 12 * HOUR, treeIdleMs: 30 * MIN,
   /** Past this many refusals of one waiter on an expired slot, `fleet next` and the checkpoint footer name the holder. */
   stuckRefusals: 20,
+  /** `lease run` processes waiting in one repo's entry: at most this many; one that has not polled for `runnerStaleMs` is gone
+   *  (20 polls at the default 30 s - it also covers a pid in another process scope, which nothing here can probe). */
+  maxRunners: 10, runnerStaleMs: 10 * MIN,
 });
+
+/** A `lease run`'s priority INSIDE its own repo's queue entry (never across repos): `high` is for the train. */
+export const PRIORITIES = Object.freeze(['normal', 'high']);
+export const PRIORITY_RANK = Object.freeze({ normal: 0, high: 1 });
+export const rankOf = (p) => PRIORITY_RANK[p ?? 'normal'] ?? 0;
 
 export class LeaseConfigError extends Error {
   constructor(message) { super(message); this.name = 'LeaseConfigError'; }
@@ -146,10 +154,16 @@ const JournalSchema = z.object({ at: iso, kind: z.string().min(1).max(40), by: n
   const r = payload.safeParse(e);
   if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: 'custom', path: i.path, message: `journal ${e.kind} entry: ${i.message}` });
 });
+const RunnerSchema = z.object({
+  holder: label, pid: z.number().int().positive(), scope: name, priority: z.enum(PRIORITIES), forMin: z.number().int().min(1).max(LIMITS.maxForMin), since: iso, at: iso,
+}).passthrough();
 const WaiterSchema = z.object({
   repoKey: hex(12), repo: label, by: name, since: iso, forMin: z.number().int().min(1).max(LIMITS.maxForMin),
   refusals: z.number().int().min(0), lastRefusal: iso.optional(), offeredAt: iso.optional(), note: note.optional(),
   episode: z.string().max(80).optional(),
+  /** The `lease run` processes waiting in this entry (plan fleet-lease-orphan-waiters-and-priority D1); `pidless`: a request
+   *  with no long-lived pid (a one-shot `acquire`, `lease wait`) also waits here, so the entry is never reaped for want of runners. */
+  runners: z.array(RunnerSchema).max(LIMITS.maxRunners).optional(), pidless: z.boolean().optional(),
 }).passthrough();
 const TurnSchema = z.object({ repoKey: hex(12), repo: label, startedAt: iso, endsAt: iso, lastReleasedAt: iso.optional() }).passthrough();
 const EventSchema = z.object({ at: iso, kind: z.enum(EVENT_KINDS), by: name, reason: note }).passthrough();
@@ -327,26 +341,114 @@ export function uniqueEpisode(lease, repoKey, stamp0) {
  * Open (or join) this repo's wait episode. One entry per REPO, because turns are per repo; a refusal by any of its
  * sessions bumps the count and never grows the journal. When the list is full nothing is evicted: `queued:false`.
  */
-export function openWait(lease, req, { forMin, opener, refusal, now }) {
+export function openWait(lease, req, { forMin, opener, refusal, now, scope }) {
   const waiters = lease.waiters ?? [];
   const cur = waiters.find((w) => w.repoKey === req.identity.repoKey);
   const stamp0 = now.toISOString();
   if (cur) {
-    if (opener !== 'refusal') return { lease, queued: true, opened: false, waiter: cur };
-    const w = { ...cur, refusals: cur.refusals + 1, lastRefusal: stamp0 };
+    const touched = withRunner(cur, req, { forMin, now, scope, joined: true });
+    if (opener !== 'refusal') {
+      if (touched === cur) return { lease, queued: true, opened: false, waiter: cur };
+      return { lease: { ...lease, waiters: waiters.map((x) => (x === cur ? touched : x)) }, queued: true, opened: false, waiter: touched };
+    }
+    const w = { ...touched, refusals: cur.refusals + 1, lastRefusal: stamp0 };
     return { lease: { ...lease, waiters: waiters.map((x) => (x === cur ? w : x)) }, queued: true, opened: false, waiter: w };
   }
   if (waiters.length >= LIMITS.maxWaiters) return { lease, queued: false, full: true };
   // Unique per episode: a clock that has not advanced (a pinned test clock, two calls in one millisecond) must not give a new
   // episode the id of one the journal already closed - found by the interleaving test, seed 11.
   const episode = uniqueEpisode(lease, req.identity.repoKey, stamp0);
-  const w = {
+  const w = withRunner({
     repoKey: req.identity.repoKey, repo: req.repo, by: byOf(req), since: stamp0, forMin, episode,
     refusals: opener === 'refusal' ? 1 : 0, ...(opener === 'refusal' ? { lastRefusal: stamp0 } : {}),
     ...(req.note !== undefined ? { note: req.note } : {}),
-  };
+  }, req, { forMin, now, scope });
   const entry = jentry(now, 'waiting', req, { episode: episodeOf(w), opener, ...(refusal ? { refusal } : {}), job: { forMin } });
   return { lease: appendJournal({ ...lease, waiters: [...waiters, w] }, entry), queued: true, opened: true, waiter: w };
+}
+
+// ── Waiting runners (plan fleet-lease-orphan-waiters-and-priority D1, D2) ──
+
+/** Is `req` a `lease run` process (exclusive, with its own long-lived pid) - the only request whose waiting can be proved over? */
+export const isRunnerRequest = (req) => req.exclusive === true && Number.isInteger(req.pid) && req.pid > 0;
+
+/** One runner is one PROCESS: two runs may share a holder (the same `--id`), never a pid within one process scope (audit R3 H1). */
+export const sameRunner = (r, holder, pid, scope) => r.holder === holder && r.pid === pid && (scope === undefined || r.scope === scope);
+
+/**
+ * Did a request that is NOT a runner of this version refuse after every recorded runner last polled? An older checkout bumps
+ * `lastRefusal` but neither `runners` nor `pidless`, so this is the only trace that it still waits (audit R1 M1, R2 H1, R4 H1).
+ */
+const foreignRefusal = (w) => (w.runners?.length ?? 0) > 0 && w.lastRefusal !== undefined && ms(w.lastRefusal) > Math.max(...w.runners.map((x) => ms(x.at)));
+
+/**
+ * Record who waits in `w`: a runner request upserts its runner by (holder, pid), refreshing `at`; any other request marks the
+ * entry `pidless`, because nothing can ever show that one gone. Returns the SAME waiter when nothing changed.
+ * Conservative wherever it cannot tell (audit R1 H2/H3): joining an existing entry that carries no `runners` at all (opened by
+ * a pid-less request, or by an older checkout) marks it `pidless`; at capacity the stalest runner of rank at most the new
+ * one's makes room (a train is never evicted for a targeted run), and when every runner outranks it the new run is not
+ * recorded; either way the entry turns `pidless` - never reaped for want of a runner it could not keep recorded.
+ */
+export function withRunner(w, req, { forMin, now, scope, joined = false }) {
+  // An older checkout's refusal newer than every recorded poll would be overwritten by this one: keep it as `pidless` (audit R2 H1).
+  const foreign = joined && foreignRefusal(w);
+  const legacy = (joined && w.runners === undefined && !w.pidless) || foreign;
+  if (!isRunnerRequest(req)) return w.pidless ? w : { ...w, pidless: true };
+  const stamp = now.toISOString();
+  const list = w.runners ?? [];
+  const prev = list.find((x) => sameRunner(x, req.identity.holder, req.pid, scope));
+  const r = { holder: req.identity.holder, pid: req.pid, scope: scope ?? 'unknown', priority: req.priority ?? 'normal', forMin, since: prev?.since ?? stamp, at: stamp };
+  let others = list.filter((x) => x !== prev);
+  if (others.length >= LIMITS.maxRunners) {
+    const evictable = others.filter((x) => rankOf(x.priority) <= rankOf(r.priority)).sort((a, b) => ms(a.at) - ms(b.at))[0];
+    if (!evictable) return { ...w, runners: others, pidless: true };
+    // The evicted run still waits, unrecorded: the entry must not be reaped for want of it (audit R2 H2).
+    return { ...w, runners: [...others.filter((x) => x !== evictable), r], pidless: true };
+  }
+  return { ...w, runners: [...others, r], ...(legacy ? { pidless: true } : {}) };
+}
+
+/**
+ * Drop the runners that are gone - a pid in THIS scope that is dead (the `classifyHeavy` evidence rule), or no poll for
+ * `runnerStaleMs` - and end the episode of an entry whose runners all went and that no pid-less request shares
+ * (`wait-ended`, `abandoned`): a killed `lease run` no longer holds its repo's place in the queue for 12 hours.
+ * Returns the SAME lease when nothing changed.
+ */
+export function reapRunners(lease, now, probe) {
+  const waiters = lease.waiters ?? [];
+  if (!waiters.some((w) => w.runners?.length)) return lease;
+  const gone = (r) => now.getTime() - ms(r.at) > LIMITS.runnerStaleMs || (r.scope === probe.scope && !probe.isPidAlive(r.pid));
+  let next = lease;
+  for (const w of waiters) {
+    if (!w.runners?.length) continue;
+    const live = w.runners.filter((r) => !gone(r));
+    if (live.length === w.runners.length) continue;
+    // A refusal newer than every runner's last poll came from a request that is not a runner of this version (an older
+    // checkout bumps `lastRefusal` but neither `runners` nor `pidless`): it still waits, so the entry is kept (audit R1 M1).
+    const foreign = foreignRefusal(w);
+    if (live.length === 0 && !w.pidless && !foreign) {
+      next = appendJournal({ ...next, waiters: next.waiters.filter((x) => x.repoKey !== w.repoKey) }, waitEndedEntry(w, 'abandoned', now, 'settle'));
+    } else {
+      // The foreign evidence is persisted: once the runners are gone nothing else would remember it (audit R3 H3).
+      next = { ...next, waiters: next.waiters.map((x) => (x.repoKey === w.repoKey ? { ...w, runners: live, ...(foreign ? { pidless: true } : {}) } : x)) };
+    }
+  }
+  return next;
+}
+
+/**
+ * A runner stops waiting. Its runner leaves the entry either way. `keepPlace` (it gave up at its `--wait` deadline, or on a
+ * refusal waiting cannot fix): the repo keeps its place exactly as a refused one-shot `acquire` does - the entry turns
+ * `pidless`, and the caller is told it is queued. Otherwise (a stop signal, its launcher gone) the episode ends (`cancelled`)
+ * when no other runner and no pid-less request is left in it. A no-op when it is not waiting. Never touches the slot.
+ */
+export function withdrawRunner(lease, req, now, { keepPlace = false, scope } = {}) {
+  const w = (lease.waiters ?? []).find((x) => x.repoKey === req.identity.repoKey);
+  if (!w || !(w.runners ?? []).some((r) => sameRunner(r, req.identity.holder, req.pid, scope))) return lease;
+  const live = w.runners.filter((r) => !sameRunner(r, req.identity.holder, req.pid, scope));
+  const keep = keepPlace || foreignRefusal(w);
+  if (live.length === 0 && !w.pidless && !keep) return endWait(lease, w.repoKey, 'cancelled', now, byOf(req));
+  return { ...lease, waiters: lease.waiters.map((x) => (x === w ? { ...w, runners: live, ...(keep ? { pidless: true } : {}) } : x)) };
 }
 
 /**
