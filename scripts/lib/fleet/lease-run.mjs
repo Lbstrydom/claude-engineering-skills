@@ -58,28 +58,47 @@ const RETRYABLE = new Set(['held', 'window', 'turn', 'expired-pid-alive', 'prior
 
 /**
  * Has the process that launched this runner gone? The chain (parent and up to two further ancestors, `launcherChain`) is read
- * ONCE, lazily, at the first check - a run granted at once never reads the process table. A failed read degrades to the
- * parent alone. On POSIX a changed `process.ppid` (reparented) also means the parent is gone. Never throws.
- * @returns {{gone: () => Promise<string|null>}} why it is gone, or null while it lives
+ * ONCE, lazily, at the first check - a run granted at once never reads the process table - and a link whose parent was already
+ * gone at that read is a launcher gone. A failed read degrades to the parent alone, said once through `log`. On POSIX a
+ * changed `process.ppid` (reparented) also means the parent is gone. A check that cannot be made keeps the run waiting (the
+ * safe direction: the queue's own expiry still bounds it) and is said, never silent (audit R1 H9). Never throws.
+ * @returns {{gone: () => Promise<string|null>}} why it is gone, or null while it lives or cannot be told
  */
-export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform } = {}) {
+export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {} } = {}) {
   const ppid0 = ppid();
   let chain = null;
+  let brokenAtRead = null;
+  let said = false;
+  const sayOnce = (m) => { if (!said) { said = true; log(m); } };
   return {
     async gone() {
       try {
         if (chain === null) {
           const rows = await readTable();
-          const c = rows ? launcherChain(rows, pid) : [];
-          chain = c.length ? c : (ppid0 > 0 ? [ppid0] : []);
+          const c = rows ? launcherChain(rows, pid) : { chain: [], broken: null };
+          if (!rows) sayOnce(`the process table could not be read; only the parent (pid ${ppid0}) is watched for this wait`);
+          brokenAtRead = c.broken;
+          chain = c.chain.length ? c.chain : (ppid0 > 0 ? [ppid0] : []);
         }
+        if (brokenAtRead !== null) return `the process that launched pid ${brokenAtRead} was already gone`;
         if (platform !== 'win32' && ppid() !== ppid0) return `its parent (pid ${ppid0}) exited`;
         const dead = chain.find((p) => !isAlive(p));
         return dead === undefined ? null : `the process that launched it (pid ${dead}) is gone`;
-      } catch { return null; }
+      } catch (e) {
+        sayOnce(`could not check whether the launcher is alive (${e?.message ?? e}); waiting on regardless`);
+        return null;
+      }
     },
   };
 }
+
+/** The default sleep: a timer that an abort clears, so a stopped wait leaves nothing holding the process open (audit R1 H6). */
+export const cancellableSleep = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return; }
+  const done = () => { clearTimeout(t); signal?.removeEventListener('abort', done); resolve(); };
+  const t = setTimeout(done, ms);
+  signal?.addEventListener('abort', done, { once: true });
+});
 
 /**
  * One read-decide-write on the lease. A refusal that carries a changed lease (a journal entry, a waiter, a settled expiry) is
@@ -138,7 +157,7 @@ export async function runUnderLease(opts, job) {
     dir, identity, repo, kind = 'gate', forMin = 30, note, pid = process.pid, waitMin = 0, pollMs = 30_000, jitter = 0.2,
     endTurn = false, releaseToCiWindow = 0, windowRepo, cmdName = 'fleet', now = () => new Date(), random = Math.random,
     probe = defaultProbe(), signals = processSignals, transact = transactLease, log = () => {},
-    sleep = (ms) => new Promise((r) => setTimeout(r, ms)), forceExit = (code) => process.exit(code),
+    sleep = cancellableSleep, forceExit = (code) => process.exit(code),
     heartbeatMs = LIMITS.heartbeatMs, ceilingMin, cpuOf = (p) => processTreeActivity(p), timers = realTimers, onGranted = null,
     priority, launcher = null,
   } = opts;
@@ -159,7 +178,7 @@ export async function runUnderLease(opts, job) {
   const stopped = new Promise((r) => { abort.signal.addEventListener('abort', r, { once: true }); });
   /** The wait ends without the job: this runner leaves the queue (`keepPlace`: the repo stays queued, as a refused acquire does). */
   const giveUp = (res, keepPlace) => {
-    const w = runDecision(transact, dir, (lease) => decideWithdrawRunner(lease, { identity, repo }, now(), probe, { keepPlace }));
+    const w = runDecision(transact, dir, (lease) => decideWithdrawRunner(lease, { identity, repo, pid }, now(), probe, { keepPlace }));
     if (w.status !== 'decided') log(`could not leave the queue (${w.reason}); the entry is reaped once this process has exited`);
     removeSignals();
     return { ...res, waitedMs: now().getTime() - startedAt };
@@ -167,7 +186,11 @@ export async function runUnderLease(opts, job) {
 
   // 1-2. Acquire, waiting in the queue when allowed. The job does not run unless this loop ends in a grant.
   let grant;
-  for (;;) {
+  for (let attempt = 0; ; attempt += 1) {
+    // Checked before EVERY re-acquire, not only after a refusal: a launcher that died during the sleep must not be granted the
+    // slot that freed meanwhile (audit R1 H4/H7/H8).
+    const gone = attempt > 0 && launcher ? await launcher.gone() : null;
+    if (gone) return giveUp({ ran: false, outcome: 'not-granted', code: 'orphaned', reason: `stopped waiting: ${gone}, so nothing is waiting for this job`, orphaned: gone, queued: false }, false);
     if (signalled) return giveUp({ ran: false, outcome: 'not-granted', code: 'stopped', reason: `stopped by ${signalled} while waiting for the slot`, signalled, queued: false }, false);
     const out = runDecision(transact, dir, (lease) => decideAcquire(lease, req, now(), probe));
     if (out.status === 'error') { removeSignals(); return { ran: false, outcome: 'lease-error', reason: out.reason, waitedMs: now().getTime() - startedAt }; }
@@ -178,11 +201,9 @@ export async function runUnderLease(opts, job) {
     if (!RETRYABLE.has(d.code) || left <= 0) {
       return giveUp({ ran: false, outcome: 'not-granted', code: d.code, reason: d.reason, queued: d.queued === true }, true);
     }
-    const gone = launcher ? await launcher.gone() : null;
-    if (gone) return giveUp({ ran: false, outcome: 'not-granted', code: 'orphaned', reason: `stopped waiting: ${gone}, so nothing is waiting for this job`, orphaned: gone, queued: false }, false);
     const wait = Math.min(left, Math.max(1, Math.round(pollMs * (1 + (random() * 2 - 1) * jitter))));
     log(`waiting in the queue (${d.code}); next try in ${Math.round(wait / 1000)}s`);
-    await Promise.race([sleep(wait), stopped]);
+    await Promise.race([sleep(wait, abort.signal), stopped]);
   }
   granted = true;
   const token = grant.heavy.token;

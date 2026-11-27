@@ -111,7 +111,7 @@ async function cmdRun(ctx, flags, positionals, { dir, repo }) {
     dir, identity: { repoKey: repo.repoKey, holder: String(selfId(ctx, flags)) }, repo: repo.repo, kind: text(flags['--kind']), forMin,
     note: text(flags['--note']), waitMin, ceilingMin: timeoutMin, priority: text(flags['--priority']),
     // A waiting runner stops when what launched it is gone (a killed train script): it would otherwise start the job for nobody.
-    launcher: waitMin > 0 ? launcherWatch() : null, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
+    launcher: waitMin > 0 ? launcherWatch({ log: say }) : null, endTurn: flags['--end-turn'] === true, cmdName: ctx.cmd, log: say,
     pollMs: Number(ctx.env.FLEET_LEASE_POLL_MS) > 0 ? Number(ctx.env.FLEET_LEASE_POLL_MS) : undefined, // a test seam for the wait loop's interval only
     now: () => new Date(t0 + (Date.now() - r0)),
     // Sampled after the grant and before the job starts, so the reading is the load that was ALREADY running.

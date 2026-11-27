@@ -31,6 +31,7 @@ This is the list to read when asking "what is in flight?".
 | [fleet feedback cluster 3 — remote-only `add`, flaky remote reads, abandon cleanup, EOL flips, ignored `--dry-run`](./fleet-feedback-cluster3-land-add-eol.md) | `In Progress` | plan audited (2 GPT rounds + Gemini), implemented on claude/fleet-cluster3-land-add-eol |
 | [fleet feedback cluster 4 — a ready mark on a test subset, then a red train (#5)](./fleet-feedback-cluster4-shared-surface.md) | `In Progress` | plan audited (2 GPT rounds + Gemini), implemented on claude/fleet-cluster4-shared-surface |
 | [fleet hygiene — detached worktrees in prune, a prune ASK threshold, ghAccount in the PR probe](./fleet-hygiene.md) | `In Progress` |  |
+| [fleet lease — orphaned `lease run` waiters, and a train ahead of a targeted run](./fleet-lease-orphan-waiters-and-priority.md) | `In Progress` |  |
 | [fleet train id collision within one second (CI flake, run 44940239208)](./fleet-train-id-collision.md) | `In Progress` | implemented on branch claude/fleet-trainid-collision-9f2c, awaiting audit |
 | [fleet — the rest of a work consumer's November run report](./fleet-work-consumer-feedback-nov-2.md) | `In Progress` | implemented on branch `claude/fleet-feedback-batch2`, PR pending |
 | [fleet — defects from two work consumers' November feedback](./fleet-work-consumer-feedback-nov.md) | `In Progress` | implemented on branch `claude/nostalgic-nobel-101150`, PR pending |

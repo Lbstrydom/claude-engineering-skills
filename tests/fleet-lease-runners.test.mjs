@@ -62,12 +62,47 @@ describe('D1: a waiter records its runners', () => {
     const w = ok(decideWait(l0, q(A), T('08:01'), probeOf(900)));
     assert.equal(waiterOf(valid(w)).pidless, true);
   });
-  it('the runner list is bounded: the stalest runner makes room, never the newest', () => {
-    let w = { repoKey: A.repoKey, repo: 'o/a', by: 'x@o/a', since: T('08:00').toISOString(), forMin: 30, refusals: 0 };
-    for (let i = 0; i < LIMITS.maxRunners + 2; i += 1) w = withRunner(w, run({ ...A, holder: `h${i}` }, 100 + i), { forMin: 30, now: new Date(T('08:00').getTime() + i * 1000), scope: SCOPE });
+  const blank = () => ({ repoKey: A.repoKey, repo: 'o/a', by: 'x@o/a', since: T('08:00').toISOString(), forMin: 30, refusals: 0 });
+  const at = (i) => ({ forMin: 30, now: new Date(T('08:00').getTime() + i * 1000), scope: SCOPE });
+  it('the runner list is bounded: the stalest runner of no higher rank makes room for a new one', () => {
+    let w = blank();
+    for (let i = 0; i < LIMITS.maxRunners + 2; i += 1) w = withRunner(w, run({ ...A, holder: `h${i}` }, 100 + i), at(i));
     assert.equal(w.runners.length, LIMITS.maxRunners);
     assert.ok(w.runners.some((r) => r.holder === `h${LIMITS.maxRunners + 1}`));
     assert.ok(!w.runners.some((r) => r.holder === 'h0'));
+  });
+  it('at capacity a train is never evicted for a targeted run; when every runner outranks the new one, the entry turns pidless (audit R1 H2/H10)', () => {
+    let w = withRunner(blank(), run(TRAIN, 700, { priority: 'high' }), at(0)); // the stalest runner, and high
+    for (let i = 1; i < LIMITS.maxRunners; i += 1) w = withRunner(w, run({ ...A, holder: `h${i}` }, 100 + i), at(i));
+    const full = withRunner(w, run(CHIP, 501), at(50));
+    assert.ok(full.runners.some((r) => r.holder === 'train'), 'the train stays');
+    assert.ok(!full.runners.some((r) => r.holder === 'h1'), 'the stalest NORMAL runner made room');
+    let highs = blank();
+    for (let i = 0; i < LIMITS.maxRunners; i += 1) highs = withRunner(highs, run({ ...A, holder: `t${i}` }, 100 + i, { priority: 'high' }), at(i));
+    const refusedRoom = withRunner(highs, run(CHIP, 501), at(60));
+    assert.equal(refusedRoom.runners.length, LIMITS.maxRunners);
+    assert.ok(!refusedRoom.runners.some((r) => r.holder === 'chip-1'));
+    assert.equal(refusedRoom.pidless, true, 'never reaped for want of the runner it could not record');
+  });
+  it('two runs sharing a holder are two runners; withdrawing one leaves the other (audit R1 H1/M3)', () => {
+    const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700, 701)).lease;
+    const l1 = decideAcquire(l0, run(TRAIN, 701), T('08:01'), probeOf(900, 700, 701)).lease;
+    assert.deepEqual(waiterOf(l1).runners.map((r) => r.pid), [700, 701]);
+    const l2 = ok(decideWithdrawRunner(l1, q(TRAIN, { pid: 700 }), T('08:02'), probeOf(900, 700, 701)));
+    assert.deepEqual(waiterOf(l2).runners.map((r) => r.pid), [701]);
+  });
+  it('a runner joining an entry an older checkout (or a pid-less request) opened marks it pidless (audit R1 H3)', () => {
+    const legacy = { ...emptyLease(), waiters: [{ repoKey: A.repoKey, repo: 'o/a', by: 'old@o/a', since: T('08:00').toISOString(), forMin: 30, refusals: 3, lastRefusal: T('08:00').toISOString() }] };
+    const d = decideAcquire({ ...heldByB(), waiters: legacy.waiters }, run(TRAIN, 700), T('08:01'), probeOf(900, 700));
+    assert.equal(waiterOf(d.lease).pidless, true);
+    assert.ok(waiterOf(settleQueue(d.lease, T('08:02'), probeOf(900))), 'its runner dying does not end the older request\'s wait');
+  });
+  it('an older checkout refusing after the runners last polled keeps the entry when they are reaped (audit R1 M1)', () => {
+    const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700)).lease;
+    // what an older checkout's openWait does: bump the count and lastRefusal, nothing else
+    const old = { ...l0, waiters: l0.waiters.map((w) => ({ ...w, refusals: w.refusals + 1, lastRefusal: T('08:03').toISOString() })) };
+    assert.ok(waiterOf(settleQueue(old, T('08:04'), probeOf(900))), 'kept');
+    assert.equal(waiterOf(settleQueue(l0, T('08:04'), probeOf(900))), undefined, 'control: without the foreign refusal it is reaped');
   });
 });
 
@@ -158,18 +193,18 @@ describe('D4: priority inside one repo', () => {
 describe('decideWithdrawRunner', () => {
   const l0 = () => decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700)).lease;
   it('a stopped runner leaves; the episode ends `cancelled` when nothing else waits in it', () => {
-    const l = ok(decideWithdrawRunner(l0(), q(TRAIN), T('08:02'), probeOf(900, 700)));
+    const l = ok(decideWithdrawRunner(l0(), q(TRAIN, { pid: 700 }), T('08:02'), probeOf(900, 700)));
     assert.equal(waiterOf(l), undefined);
     assert.equal(l.journal.at(-1).reason, 'cancelled');
   });
   it('keepPlace (gave up at the deadline): the runner leaves and the repo stays queued, as a refused acquire does', () => {
-    const l = ok(decideWithdrawRunner(l0(), q(TRAIN), T('08:02'), probeOf(900, 700), { keepPlace: true }));
+    const l = ok(decideWithdrawRunner(l0(), q(TRAIN, { pid: 700 }), T('08:02'), probeOf(900, 700), { keepPlace: true }));
     assert.equal(waiterOf(valid(l)).pidless, true);
     assert.deepEqual(waiterOf(l).runners, []);
   });
   it('is a no-op for a session that is not waiting', () => {
     const base = l0();
-    const d = decideWithdrawRunner(base, q(CHIP), T('08:01'), probeOf(900, 700));
+    const d = decideWithdrawRunner(base, q(CHIP, { pid: 501 }), T('08:01'), probeOf(900, 700));
     assert.equal(d.withdrawn, false);
   });
 });
@@ -178,17 +213,21 @@ describe('launcherChain', () => {
   const row = (pid, ppid, startedAt) => ({ pid, ppid, cpuMs: 0, startedAt, name: 'x' });
   it('walks parent first, at most depth, stopping at system roots', () => {
     const rows = [row(50, 40, '2026-11-27T08:03:00Z'), row(40, 30, '2026-11-27T08:02:00Z'), row(30, 20, '2026-11-27T08:01:00Z'), row(20, 4, '2026-11-27T08:00:00Z'), row(4, 0, null)];
-    assert.deepEqual(launcherChain(rows, 50), [40, 30, 20]);
-    assert.deepEqual(launcherChain(rows, 50, 2), [40, 30]);
-    assert.deepEqual(launcherChain(rows, 20), []);
+    assert.deepEqual(launcherChain(rows, 50), { chain: [40, 30, 20], broken: null });
+    assert.deepEqual(launcherChain(rows, 50, 2), { chain: [40, 30], broken: null });
+    assert.deepEqual(launcherChain(rows, 20), { chain: [], broken: null }, 'a parent at a system root ends the chain');
   });
-  it('stops at a "parent" that started after its child (a reused pid of a dead launcher)', () => {
-    const rows = [row(50, 40, '2026-11-27T08:03:00Z'), row(40, 30, '2026-11-27T08:02:00Z'), row(30, 1, '2026-11-27T09:00:00Z')];
-    assert.deepEqual(launcherChain(rows, 50), [40]);
+  it('a "parent" that started after its child is a reused pid: the real launcher was already gone (broken)', () => {
+    const rows = [row(50, 40, '2026-11-27T08:03:00Z'), row(40, 30, '2026-11-27T08:02:00Z'), row(30, 20, '2026-11-27T09:00:00Z')];
+    assert.deepEqual(launcherChain(rows, 50), { chain: [40], broken: 40 });
+  });
+  it('a parent absent from the table is broken: the train died before the read, its cmd.exe lives on (audit R1 H5)', () => {
+    const rows = [row(50, 40, '2026-11-27T08:03:00Z'), row(40, 30, '2026-11-27T08:02:00Z')];
+    assert.deepEqual(launcherChain(rows, 50), { chain: [40], broken: 40 });
   });
   it('is cycle-safe and empty for an unknown pid', () => {
-    assert.deepEqual(launcherChain([row(10, 11, null), row(11, 10, null)], 10), [11]);
-    assert.deepEqual(launcherChain([], 10), []);
+    assert.deepEqual(launcherChain([row(10, 11, null), row(11, 10, null)], 10), { chain: [11], broken: null });
+    assert.deepEqual(launcherChain([], 10), { chain: [], broken: null });
   });
 });
 
@@ -201,12 +240,42 @@ describe('launcherWatch', () => {
     assert.match(await w.gone(), /pid 30\) is gone/);
     assert.equal(reads, 1);
   });
-  it('a failed table read falls back to the parent alone; on POSIX a reparented process is orphaned', async () => {
-    let parent = 40;
-    const w = R.launcherWatch({ pid: 50, ppid: () => parent, platform: 'linux', isAlive: () => true, readTable: async () => null });
+  it('a failed table read falls back to the parent alone, and says so; on POSIX a reparented process is orphaned', async () => {
+    let parent = 40; const lines = [];
+    const w = R.launcherWatch({ pid: 50, ppid: () => parent, platform: 'linux', isAlive: () => true, readTable: async () => null, log: (m) => lines.push(m) });
     assert.equal(await w.gone(), null);
+    assert.match(lines[0], /could not be read/);
     parent = 1;
     assert.match(await w.gone(), /parent \(pid 40\) exited/);
+  });
+  it('a launcher already gone at the first read is gone (the chain is broken)', async () => {
+    const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform: 'win32', isAlive: () => true, readTable: async () => [{ pid: 50, ppid: 40 }, { pid: 40, ppid: 30 }] });
+    assert.match(await w.gone(), /launched pid 40 was already gone/);
+  });
+  it('a probe that throws keeps the wait (the safe direction) and is said once', async () => {
+    const lines = [];
+    const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform: 'win32', isAlive: () => { throw new Error('boom'); }, readTable: async () => [{ pid: 50, ppid: 40 }, { pid: 40, ppid: 4 }], log: (m) => lines.push(m) });
+    assert.equal(await w.gone(), null);
+    assert.equal(await w.gone(), null);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /could not check/);
+  });
+});
+
+describe('cancellableSleep', () => {
+  it('an abort resolves it at once and clears its timer, so nothing holds the process open (audit R1 H6)', async () => {
+    const ac = new AbortController();
+    const t0 = Date.now();
+    const p = R.cancellableSleep(60_000, ac.signal);
+    ac.abort();
+    await p;
+    assert.ok(Date.now() - t0 < 1000);
+    assert.equal(process.getActiveResourcesInfo().filter((x) => x === 'Timeout').length, 0, 'no live timer left');
+  });
+  it('without an abort it sleeps its time', async () => {
+    const t0 = Date.now();
+    await R.cancellableSleep(30);
+    assert.ok(Date.now() - t0 >= 25);
   });
 });
 
@@ -268,6 +337,22 @@ describe('D3: runUnderLease stops waiting for nobody', () => {
     assert.match(res.orphaned, /pid 600/);
     assert.equal(waiterOf(fileLease()), undefined);
     assert.equal(fileLease().journal.at(-1).reason, 'cancelled');
+  });
+  it('a launcher that dies DURING the sleep while the slot frees is caught before the next acquire: never granted (audit R1 H4/H7/H8)', async () => {
+    seed(heldByB());
+    const w = world();
+    let dead = false;
+    w.hook = (n) => {
+      if (n !== 1) return;
+      dead = true; // the train script is killed mid-sleep ...
+      L.transactLease(dir, (r) => ({ value: 1, write: ok(decideRelease(r.lease, q(B, { token: 'bbbbbbbbbbbbbbbb' }), w.t, probeOf(700))) })); // ... and the slot frees
+    };
+    const launcher = { gone: async () => (dead ? 'the process that launched it (pid 600) is gone' : null) };
+    let ran = false;
+    const res = await R.runUnderLease(opts(w, { signals: fakeSignals(), launcher }), async () => { ran = true; });
+    assert.equal(ran, false);
+    assert.equal(res.code, 'orphaned');
+    assert.equal(fileLease().heavy, null, 'the freed slot was not taken');
   });
   it('giving up at the deadline keeps the repo queued (as before), without a runner pinned to an exited pid', async () => {
     seed(heldByB());

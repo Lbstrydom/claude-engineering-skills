@@ -346,7 +346,7 @@ export function openWait(lease, req, { forMin, opener, refusal, now, scope }) {
   const cur = waiters.find((w) => w.repoKey === req.identity.repoKey);
   const stamp0 = now.toISOString();
   if (cur) {
-    const touched = withRunner(cur, req, { forMin, now, scope });
+    const touched = withRunner(cur, req, { forMin, now, scope, joined: true });
     if (opener !== 'refusal') {
       if (touched === cur) return { lease, queued: true, opened: false, waiter: cur };
       return { lease: { ...lease, waiters: waiters.map((x) => (x === cur ? touched : x)) }, queued: true, opened: false, waiter: touched };
@@ -372,19 +372,31 @@ export function openWait(lease, req, { forMin, opener, refusal, now, scope }) {
 /** Is `req` a `lease run` process (exclusive, with its own long-lived pid) - the only request whose waiting can be proved over? */
 export const isRunnerRequest = (req) => req.exclusive === true && Number.isInteger(req.pid) && req.pid > 0;
 
+/** One runner is one PROCESS: two runs may share a holder (the same `--id`), never a pid. */
+const sameRunner = (r, holder, pid) => r.holder === holder && r.pid === pid;
+
 /**
- * Record who waits in `w`: a runner request upserts its runner by holder (refreshing `at`); any other request marks the entry
- * `pidless`, because nothing can ever show that one gone. Returns the SAME waiter when nothing changed. A full runner list
- * drops its stalest runner (it re-registers on its next poll), never the new one.
+ * Record who waits in `w`: a runner request upserts its runner by (holder, pid), refreshing `at`; any other request marks the
+ * entry `pidless`, because nothing can ever show that one gone. Returns the SAME waiter when nothing changed.
+ * Conservative wherever it cannot tell (audit R1 H2/H3): joining an existing entry that carries no `runners` at all (opened by
+ * a pid-less request, or by an older checkout) marks it `pidless`; at capacity the stalest runner of rank at most the new
+ * one's makes room (a train is never evicted for a targeted run), and when every runner outranks it the new run is not
+ * recorded and the entry turns `pidless` instead - never reaped for want of a runner it could not record.
  */
-export function withRunner(w, req, { forMin, now, scope }) {
+export function withRunner(w, req, { forMin, now, scope, joined = false }) {
+  const legacy = joined && w.runners === undefined && !w.pidless;
   if (!isRunnerRequest(req)) return w.pidless ? w : { ...w, pidless: true };
-  const prev = (w.runners ?? []).find((x) => x.holder === req.identity.holder && x.pid === req.pid);
   const stamp = now.toISOString();
+  const list = w.runners ?? [];
+  const prev = list.find((x) => sameRunner(x, req.identity.holder, req.pid));
   const r = { holder: req.identity.holder, pid: req.pid, scope: scope ?? 'unknown', priority: req.priority ?? 'normal', forMin, since: prev?.since ?? stamp, at: stamp };
-  const others = (w.runners ?? []).filter((x) => x.holder !== r.holder);
-  const kept = others.length >= LIMITS.maxRunners ? [...others].sort((a, b) => ms(b.at) - ms(a.at)).slice(0, LIMITS.maxRunners - 1) : others;
-  return { ...w, runners: [...kept, r] };
+  let others = list.filter((x) => x !== prev);
+  if (others.length >= LIMITS.maxRunners) {
+    const evictable = others.filter((x) => rankOf(x.priority) <= rankOf(r.priority)).sort((a, b) => ms(a.at) - ms(b.at))[0];
+    if (!evictable) return { ...w, runners: others, pidless: true };
+    others = others.filter((x) => x !== evictable);
+  }
+  return { ...w, runners: [...others, r], ...(legacy ? { pidless: true } : {}) };
 }
 
 /**
@@ -402,7 +414,10 @@ export function reapRunners(lease, now, probe) {
     if (!w.runners?.length) continue;
     const live = w.runners.filter((r) => !gone(r));
     if (live.length === w.runners.length) continue;
-    if (live.length === 0 && !w.pidless) {
+    // A refusal newer than every runner's last poll came from a request that is not a runner of this version (an older
+    // checkout bumps `lastRefusal` but neither `runners` nor `pidless`): it still waits, so the entry is kept (audit R1 M1).
+    const foreign = w.lastRefusal !== undefined && ms(w.lastRefusal) > Math.max(...w.runners.map((r) => ms(r.at)));
+    if (live.length === 0 && !w.pidless && !foreign) {
       next = appendJournal({ ...next, waiters: next.waiters.filter((x) => x.repoKey !== w.repoKey) }, waitEndedEntry(w, 'abandoned', now, 'settle'));
     } else {
       next = { ...next, waiters: next.waiters.map((x) => (x.repoKey === w.repoKey ? { ...w, runners: live } : x)) };
@@ -419,8 +434,8 @@ export function reapRunners(lease, now, probe) {
  */
 export function withdrawRunner(lease, req, now, { keepPlace = false } = {}) {
   const w = (lease.waiters ?? []).find((x) => x.repoKey === req.identity.repoKey);
-  if (!w || !(w.runners ?? []).some((r) => r.holder === req.identity.holder)) return lease;
-  const live = w.runners.filter((r) => r.holder !== req.identity.holder);
+  if (!w || !(w.runners ?? []).some((r) => sameRunner(r, req.identity.holder, req.pid))) return lease;
+  const live = w.runners.filter((r) => !sameRunner(r, req.identity.holder, req.pid));
   if (live.length === 0 && !w.pidless && !keepPlace) return endWait(lease, w.repoKey, 'cancelled', now, byOf(req));
   return { ...lease, waiters: lease.waiters.map((x) => (x === w ? { ...w, runners: live, ...(keepPlace ? { pidless: true } : {}) } : x)) };
 }
