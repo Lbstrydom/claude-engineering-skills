@@ -18,8 +18,9 @@ You are one of several concurrent sessions coordinated by /fleet.
    (add --host-session <your host session id> if you have one, so the coordinator can address you).
    Run it from INSIDE your worktree: a claim binds the branch and worktree it runs from. From elsewhere, add --worktree <path>.
    A warning that your id is not your bound branch means the claim went to the wrong place: fix it before working.
-   Stacked on another UNLANDED branch? Add --base <that-branch>, so your overlap is measured from your real fork point.
-   It is recorded only once you have a commit of your own beyond that branch: claimed earlier, re-run the claim with --base.
+   Stacked on another UNLANDED branch? The claim finds it: your base is the nearest registered branch yours descends from, and
+   that session's claim does not block yours (--base <branch> names another). Your fork point is recorded once you have a
+   commit of your own: claimed earlier, re-run the claim. Its later commits reach you only by a restack, its uncommitted edits not at all.
    If the result is BLOCKED (exit 3), STOP and report which session overlaps. Do not retry, rename your id, or use --override.
    The ONE exception: an intent-only BLOCK ("identical intent to live session <id> (declared paths do not overlap)"). An intent
    equal to a live claim's blocks on its own, as a second session for the same work. If your work differs, re-claim ONCE with

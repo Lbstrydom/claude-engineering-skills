@@ -41,7 +41,7 @@ describe('claim --base: overlap from the real fork point', () => {
       assert.deepEqual(it.inherited.sort(), ['base/x.txt', 'base/y.txt']);
     }
     const text = s.f(['status']).stdout;
-    assert.equal((text.match(/inherited \(2 files\) from declared stack base shared-base — commits it shares with that base, not counted as overlaps \(declared by claim --base, not verified/g) ?? []).length, 6);
+    assert.equal((text.match(/inherited \(2 files\) from stack base shared-base — commits it shares with that base, not counted as overlaps \(fork point recorded at claim, by --base or inferred from ancestry, not re-verified/g) ?? []).length, 6);
     assert.doesNotMatch(text, /overlaps child-/);
     assert.equal(sessionRec(s.fx, 'child-1').source.baseRef, 'shared-base', 'recorded in the existing baseRef field');
   });
