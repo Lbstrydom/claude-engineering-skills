@@ -60,7 +60,9 @@ describe('Gemini clients pin their API version', () => {
     const offenders = [];
     let seen = 0;
     for (const { rel, src } of scriptFiles()) {
-      if (!src.includes('GoogleGenAI')) continue;
+      // `@google/genai` too: a namespace or undestructured import never spells
+      // `GoogleGenAI`, and skipping on that name alone let both through.
+      if (!src.includes('GoogleGenAI') && !src.includes('@google/genai')) continue;
       const bad = [...unpinnedConstructions(src), ...evasiveImports(src)];
       seen += (src.match(/new\s+GoogleGenAI\s*\(/g) || []).length;
       for (const b of bad) offenders.push(`${rel}: ${b}`);
