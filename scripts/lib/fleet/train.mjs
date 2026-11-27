@@ -433,7 +433,7 @@ function undoPartialWorktree({ deps, cwd, wt, exists }) {
     const rm = deps.git(['worktree', 'remove', '--force', '--force', wt], cwd);
     if (!rm.ok) return `git worktree remove failed: ${rm.reason}`;
   } else if (exists(wt)) {
-    try { fs.rmSync(wt, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (e) { return `could not remove ${wt}: ${e.message}`; }
+    try { fs.rmSync(wt, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch (e) { return `could not remove ${wt}: ${e.message}`; }
   }
   const pr = deps.git(['worktree', 'prune'], cwd);
   return pr.ok ? null : `git worktree prune failed: ${pr.reason}`;
@@ -659,7 +659,7 @@ function runOneTier({ tier, train, dir, deps }) {
     fs.appendFileSync(logPath, `\n--- fleet: tier ${tier.name} attempt ${n} ${label}at ${iso(deps)} ---\n`);
     // A fresh file per attempt: a stale one from an earlier build can never classify this run.
     const outcomePath = outcomePathOf(logPath, n);
-    fs.rmSync(outcomePath, { force: true });
+    fs.rmSync(outcomePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     const r = deps.runTier({ tier: run, cwd: wt, logPath, timeoutMs: tier.timeoutMs, outcomePath });
     if (r?.cleanup && r.cleanup.ok === false) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${r.cleanup.reason}` : r.cleanup.reason;
     return r;
