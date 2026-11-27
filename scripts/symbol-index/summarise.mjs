@@ -21,7 +21,8 @@ import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';
 import { redactSecrets } from '../lib/sensitive-egress-gate.mjs';
 import { emit, finishAndExit } from '../lib/cli-io.mjs';
-import { createAnthropicClient, isClaudeAvailable } from '../lib/anthropic-client.mjs';
+import { createAnthropicClient } from '../lib/anthropic-client.mjs';
+import { resolveSummaryRoute, summariserAvailability, normaliseStopReason, callAzureGptSummary } from '../lib/summary-route.mjs';
 import { azureThrottle } from '../lib/azure-throttle.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
 
@@ -120,7 +121,9 @@ export function assessBatchCompleteness(summaries, stopReason) {
     const s = list[i];
     if (typeof s !== 'string' || !s.trim()) missing.push(i + 1);
   }
-  const truncated = stopReason === 'max_tokens';
+  // `length` is GPT's spelling of the same cut (normalised upstream too; kept
+  // here so a caller passing a raw GPT finish_reason cannot read as complete).
+  const truncated = stopReason === 'max_tokens' || stopReason === 'length';
   return {
     complete: missing.length === 0 && !truncated,
     missing,
@@ -148,6 +151,53 @@ export function assessBatchCompleteness(summaries, stopReason) {
  * @returns {Promise<{summaries: Array<string|null>,
  *   health: {complete: boolean, missing: number[], truncated: boolean}}>}
  */
+/**
+ * The summary prompt. Bodies are sliced to 1500 chars, so a long symbol ARRIVES
+ * cut off: the prompt must say to summarise from what is shown. The previous
+ * wording ("empty or unparseable" → `<no body>`) made GPT read every cut-off
+ * body as unparseable — 12 of 50 real symbols came back `<no body>`, all of
+ * them longer than the slice; with this wording 50/50 (measured 2026-11-27).
+ * @param {Array<object>} batch
+ * @returns {string}
+ */
+export function buildSummaryPrompt(batch) {
+  const lines = batch.map((s, i) =>
+    `${i + 1}. ${s.kind} \`${s.symbolName}\` in \`${s.filePath}\` (lines ${s.startLine}-${s.endLine}):\n` +
+    '```\n' + redactSecrets((s.bodyText || '').slice(0, BODY_SLICE_CHARS)) + '\n```'
+  );
+  return `Summarise each of these ${batch.length} symbols in EXACTLY ONE LINE describing its purpose. ` +
+    `Use plain English; no boilerplate. Output as a numbered list (one line each, matching input numbers). ` +
+    `Bodies longer than ${BODY_SLICE_CHARS} characters are cut off: summarise a cut-off body from the part shown. ` +
+    `Write "<no body>" only when a body is genuinely empty.\n\n` +
+    lines.join('\n\n');
+}
+
+const BODY_SLICE_CHARS = 1500;
+
+/**
+ * One call to whichever model the route names, normalised to `{text, stopReason}`
+ * with `stopReason` in Claude's vocabulary (GPT's `length` → `max_tokens`), so
+ * the completeness verdict has ONE input shape whatever the route.
+ * @param {{kind: string, model: string|null}} route
+ * @param {string} prompt
+ * @param {number} maxTokens
+ */
+async function callSummaryModel(route, prompt, maxTokens) {
+  if (route.kind === 'azure-gpt') return azureThrottle(() => callAzureGptSummary(route, prompt, maxTokens));
+  const client = route.kind === 'azure-claude'
+    ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
+    : await createAnthropicClient();
+  const res = await azureThrottle(() => client.messages.create({
+    model: route.kind === 'azure-claude' ? route.model : MODEL,
+    // At the configured default batch of 50 this is 4096, so production is
+    // byte-identical; it only bites on the small batches where the old
+    // constant never bound. See `summaryMaxTokens` for the measurement.
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content: prompt }],
+  }));
+  return { text: res.content?.map(c => c.text || '').join('') || '', stopReason: normaliseStopReason(res.stop_reason) };
+}
+
 async function summariseBatch(batch) {
   // Under the Azure work profile, summaries run on Sonnet via Foundry (native
   // Anthropic, Bearer). Otherwise the public Anthropic API (Haiku by default).
@@ -160,37 +210,23 @@ async function summariseBatch(batch) {
   // process, silently stripping every `purposeSummary` from the arch-memory
   // index. `isClaudeAvailable()` answers for sdk, cli, bedrock and an Azure
   // route alike.
-  if (!azureConfig.active && !isClaudeAvailable()) {
-    logProgress(`no Claude provider (set ANTHROPIC_API_KEY, CLAUDE_BACKEND=cli, or the Azure work profile) — emitting empty summaries`);
+  // ONE oracle decides the route and whether it can run (lib/summary-route.mjs):
+  // public → Claude; Azure → the profile's GPT deployment by default, or Claude
+  // on Foundry with AZURE_SUMMARY_BACKEND=claude.
+  const avail = summariserAvailability();
+  if (!avail.available) {
+    logProgress(`summariser unavailable: ${avail.reason} — emitting empty summaries`);
     const summaries = batch.map(() => null);
     // NOT complete: no provider ran, so every symbol is unsummarised. Reporting
     // this as complete is how the availability-gate defect stayed invisible.
-    return { summaries, health: assessBatchCompleteness(summaries, undefined), error: 'no Claude provider' };
+    return { summaries, health: assessBatchCompleteness(summaries, undefined), error: avail.reason };
   }
-  const model = azureConfig.active ? azureConfig.summaryDeployment : MODEL;
-  const lines = batch.map((s, i) =>
-    `${i + 1}. ${s.kind} \`${s.symbolName}\` in \`${s.filePath}\` (lines ${s.startLine}-${s.endLine}):\n` +
-    '```\n' + redactSecrets((s.bodyText || '').slice(0, 1500)) + '\n```'
-  );
-  const prompt = `Summarise each of these ${batch.length} symbols in EXACTLY ONE LINE describing its purpose. ` +
-    `Use plain English; no boilerplate. Output as a numbered list (one line each, matching input numbers). ` +
-    `If a symbol's body is empty or unparseable, write "<no body>".\n\n` +
-    lines.join('\n\n');
+  const prompt = buildSummaryPrompt(batch);
   try {
     // Inside the try: a client-construction failure is a provider failure with
     // a verdict, so the first attempt is counted like any other.
-    const client = azureConfig.active
-      ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
-      : await createAnthropicClient();
-    const res = await azureThrottle(() => client.messages.create({
-      model,
-      // At the configured default batch of 50 this is 4096, so production is
-      // byte-identical; it only bites on the small batches where the old
-      // constant never bound. See `summaryMaxTokens` for the measurement.
-      max_tokens: summaryMaxTokens(batch.length),
-      messages: [{ role: 'user', content: prompt }],
-    }));
-    const text = res.content?.map(c => c.text || '').join('') || '';
+    const { text, stopReason } = await callSummaryModel(resolveSummaryRoute(), prompt, summaryMaxTokens(batch.length));
+    const res = { stop_reason: stopReason };
     // Parse "N. summary" lines
     const out = batch.map(() => null);
     let lastParsed = -1;
@@ -316,6 +352,9 @@ export async function summariseWithSplit(batch, once, budget) {
 }
 
 async function main() {
+  // A bad AZURE_SUMMARY_BACKEND is the operator's typo: fail the run (fatal,
+  // exit 1) BEFORE reading anything, rather than summarise nothing quietly.
+  resolveSummaryRoute();
   const rl = readline.createInterface({ input: process.stdin });
   const records = [];
   for await (const line of rl) {

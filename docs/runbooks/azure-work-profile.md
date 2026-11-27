@@ -592,8 +592,13 @@ is unset — either way the value is your tenant's own deployment name (e.g.
 `gpt-6.1-sol`), not a fixed id; run `npm run azure:doctor -- --target gpt --fix`
 to discover and lock in the real one.
 
-**Arch-index summaries route to Sonnet** via Foundry (`summarise.mjs` /
-`summarise-domains.mjs` → `createAnthropicClient({baseURL})`, deployment
+**Arch-index summaries route to the profile's GPT deployment by default**
+(since 2026-11-27; `lib/summary-route.mjs` is the one oracle for `summarise.mjs`
+and `summarise-domains.mjs`). The GPT route needs nothing the profile does not
+already require, whereas Foundry Claude needs its own `AZURE_AI_API_KEY` and,
+without one, 401'd every batch on a consumer (0 of 4920 symbols). Measured that
+day: 50/50 real symbols in 16 s on `gpt-6.1-sol`. `AZURE_SUMMARY_BACKEND=claude`
+keeps **Sonnet via Foundry** (`createAnthropicClient({azureRoute})`), deployment
 `AZURE_FOUNDRY_SUMMARY_DEPLOYMENT`, default `claude-sonnet-5-5` since 2026-09-29 — measured that day on the work tenant at ~4.97M TPM / 4,968 RPM vs `claude-sonnet-4-6`'s 200K / 200; pin 4-6 if a tenant lacks the 5-5 deployment). `claude-haiku-4-5`
 exists on Foundry but summaries stay on Sonnet: Haiku here is 10K TPM / 10 RPM vs
 Sonnet's 200K / 200, and `arch:refresh` is a hundreds-of-calls batch where Azure

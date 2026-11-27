@@ -32,6 +32,7 @@ import { resolveModel } from '../lib/model-resolver.mjs';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { azureConfig } from '../lib/config.mjs';
 import { createAnthropicClient } from '../lib/anthropic-client.mjs';
+import { resolveSummaryRoute, summariserAvailability, callAzureGptSummary } from '../lib/summary-route.mjs';
 import { azureThrottle } from '../lib/azure-throttle.mjs';
 import { finishAndExit } from '../lib/cli-io.mjs';
 import { isInvokedAsScript } from '../lib/cli-entry.mjs';
@@ -68,28 +69,78 @@ export function cacheHit(prior, { compositionHash, symbolCount, promptTemplateVe
   return true;
 }
 
+/**
+ * A domain summary the provider cut at its ceiling is not a summary: it can
+ * still be 20-400 chars and pass `validateSummary`, then be cached as fresh.
+ * @param {string|undefined} stopReason - normalised (`max_tokens` = cut)
+ */
+/**
+ * The id of the model that ACTUALLY generates — the cache's `generatedModel`
+ * identity and the log line. It used to be the requested Haiku id on every
+ * route, so an Azure run (Foundry Sonnet, now GPT) was cached as Haiku and a
+ * backend switch reused the other backend's summaries.
+ * @param {{kind: string, model: string|null}} route
+ * @param {string} publicModel - resolved id for the public (Claude) route
+ */
+export function generationModelId(route, publicModel, azure = azureConfig) {
+  // A deployment name is scoped to ONE Azure resource: two endpoints can map the
+  // same name to different models, so the resource host is part of the identity.
+  const host = (url) => { try { return new URL(url).host; } catch { return String(url || 'unknown'); } };
+  if (route.kind === 'azure-gpt') return `azure-gpt:${host(azure.openaiEndpoint)}:${route.model}`;
+  if (route.kind === 'azure-claude') return `azure-claude:${host(azure.claudeRoute?.baseUrl || azure.aiEndpoint)}:${route.model}`;
+  return publicModel;
+}
+
+export function assertNotTruncated(stopReason) {
+  if (stopReason === 'max_tokens') {
+    const e = new Error('domain summary truncated at the output ceiling — not persisted');
+    e.code = 'TRUNCATED';
+    throw e;
+  }
+}
+
 async function callHaiku(prompt, modelId, timeoutMs = 60000) {
-  // Under the Azure work profile, domain summaries run on Sonnet via Foundry
-  // (native Anthropic, Bearer); otherwise the public Anthropic API.
-  if (!azureConfig.active && !process.env.ANTHROPIC_API_KEY) {
-    const e = new Error('No Claude provider (set ANTHROPIC_API_KEY or the Azure work profile)');
+  // Same route oracle as the symbol summariser (lib/summary-route.mjs): public →
+  // Claude; Azure → the profile's GPT deployment by default, or Foundry Claude
+  // with AZURE_SUMMARY_BACKEND=claude. Availability is the ROUTE's answer — the
+  // old `!ANTHROPIC_API_KEY` test refused a working keyless `cli` backend.
+  const avail = summariserAvailability();
+  if (!avail.available) {
+    const e = new Error(`No summary provider: ${avail.reason}`);
     e.code = 'MISSING_KEY';
     throw e;
   }
-  const client = azureConfig.active
-    ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
-    : await createAnthropicClient();
-  const model = azureConfig.active ? azureConfig.summaryDeployment : modelId;
+  const route = resolveSummaryRoute();
   const startMs = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  if (route.kind === 'azure-gpt') {
+    try {
+      // 1024, not 200: a reasoning deployment spends part of the budget on
+      // thinking, and the answer is validated to ≤400 chars downstream anyway.
+      // A content-filter stop throws inside callAzureGptSummary (FILTERED).
+      const { text, stopReason, usage } = await azureThrottle(() => callAzureGptSummary(route, prompt, 1024, undefined, { signal: ctrl.signal }));
+      // A cut answer can still be 20-400 chars and pass validation: refuse it.
+      assertNotTruncated(stopReason);
+      // `usage: null` when the provider reported none — not a measured zero.
+      return { result: { summary: text.trim() }, usage, latencyMs: Date.now() - startMs };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  const model = route.kind === 'azure-claude' ? route.model : modelId;
   try {
+    // Inside the try/finally: a rejected construction must still clear the timer.
+    const client = route.kind === 'azure-claude'
+      ? await createAnthropicClient({ azureRoute: azureConfig.claudeRoute })
+      : await createAnthropicClient();
     const resp = await azureThrottle(() => client.messages.create({
       model,
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
     }, { signal: ctrl.signal }));
     clearTimeout(timer);
+    assertNotTruncated(resp?.stop_reason);
     const text = resp?.content?.[0]?.text?.trim() || '';
     return {
       result: { summary: text },
@@ -114,10 +165,12 @@ function validateSummary(text) {
  * @returns {Promise<{summaries: Map<string,{summary:string,source:'cache'|'fresh'}>, errors: Array<{domain:string,code:string,message:string}>, stats: {total:number,cacheHits:number,fresh:number,failed:number}}>}
  */
 export async function summariseDomains({ repoId, refreshId, model, concurrency } = {}) {
+  // Throws on an invalid AZURE_SUMMARY_BACKEND — a config typo stops the run.
+  resolveSummaryRoute();
   const summaries = new Map();
   const errors = [];
   const stats = { total: 0, cacheHits: 0, fresh: 0, failed: 0 };
-  const concreteModel = resolveModel(model || 'latest-haiku');
+  const concreteModel = generationModelId(resolveSummaryRoute(), resolveModel(model || 'latest-haiku'));
   // Bounded concurrency for the fresh-summary LLM calls. Default 4; env-tunable.
   // Azure callers are additionally rate-limited inside callHaiku (azureThrottle).
   const limit = Number.isInteger(concurrency) && concurrency > 0
