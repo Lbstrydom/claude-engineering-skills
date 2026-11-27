@@ -83,6 +83,8 @@ export const UNMETERED_REQUEST_SITES = Object.freeze([
     'scripts/lib/remediation-verification.mjs', 'scripts/lib/solo-control/cluster-propose.mjs',
     'scripts/lib/solo-control/gate-reviews.mjs', 'scripts/lib/solo-control/judge.mjs', 'scripts/lib/visual/explain.mjs',
     'scripts/lib/work-unit-labels.mjs', 'scripts/symbol-index/summarise-domains.mjs', 'scripts/symbol-index/summarise.mjs',
+    // The summarisers' Azure-GPT call, moved out of summarise.mjs: same scope.
+    'scripts/lib/summary-route.mjs',
   ].map((file) => ({ file, reason: OUT_OF_SCOPE })),
 ]);
 
