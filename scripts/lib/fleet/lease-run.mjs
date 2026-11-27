@@ -64,11 +64,13 @@ const RETRYABLE = new Set(['held', 'window', 'turn', 'expired-pid-alive', 'prior
  * safe direction: the queue's own expiry still bounds it) and is said, never silent (audit R1 H9). Never throws.
  *
  * A pid alone cannot tell a dead launcher from a new process that reused its pid (Windows recycles them quickly), so every
- * `recheckMs` the table is read again and a link whose start time changed, or that is missing, is gone (audit R2 H4).
+ * `recheckMs` the table is read again and a link whose start time moved by more than `startToleranceMs`, or that is missing, is
+ * gone (audit R2 H4). A tolerance, not equality: `ps` gives elapsed time, so a POSIX start is the read clock minus it and
+ * wobbles by a second between reads (audit R3 H2); a reused pid starts minutes or hours later, never within it.
  * Between re-reads the cheap `isAlive` probe answers. One table read per 5 minutes of waiting, not one per poll.
  * @returns {{gone: () => Promise<string|null>}} why it is gone, or null while it lives or cannot be told
  */
-export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {}, clock = Date.now, recheckMs = 5 * 60_000 } = {}) {
+export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {}, clock = Date.now, recheckMs = 5 * 60_000, startToleranceMs = 3_000 } = {}) {
   const ppid0 = ppid();
   let chain = null;
   let starts = new Map(); // pid -> startedAt at the first read (null when the table did not say)
@@ -97,7 +99,8 @@ export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, re
           const rows = await readTable();
           if (rows) {
             const byPid = new Map(rows.map((r) => [r.pid, r]));
-            const reused = chain.find((p) => starts.get(p) !== null && byPid.get(p)?.startedAt !== starts.get(p));
+            const moved = (a, b) => !b || !Number.isFinite(Date.parse(b)) || Math.abs(Date.parse(a) - Date.parse(b)) > startToleranceMs;
+            const reused = chain.find((p) => starts.get(p) !== null && moved(starts.get(p), byPid.get(p)?.startedAt));
             if (reused !== undefined) return `the process that launched it (pid ${reused}) is gone; that pid now belongs to another process`;
           }
         }
@@ -211,7 +214,14 @@ export async function runUnderLease(opts, job) {
     if (gone) return giveUp({ ran: false, outcome: 'not-granted', code: 'orphaned', reason: `stopped waiting: ${gone}, so nothing is waiting for this job`, orphaned: gone, queued: false }, false);
     if (signalled) return giveUp({ ran: false, outcome: 'not-granted', code: 'stopped', reason: `stopped by ${signalled} while waiting for the slot`, signalled, queued: false }, false);
     const out = runDecision(transact, dir, (lease) => decideAcquire(lease, req, now(), probe));
-    if (out.status === 'error') { removeSignals(); return { ran: false, outcome: 'lease-error', reason: out.reason, waitedMs: now().getTime() - startedAt }; }
+    // After a refusal registered this runner, an error still withdraws it (keeping the repo's place): a library caller such as
+    // sync:pr lives on, so its pid would read alive and hold a stale runner for runnerStaleMs (audit R3 M2).
+    if (out.status === 'error') {
+      const res = { ran: false, outcome: 'lease-error', reason: out.reason };
+      if (attempt > 0) return giveUp(res, true);
+      removeSignals();
+      return { ...res, waitedMs: now().getTime() - startedAt };
+    }
     const d = out.decision;
     if (d.ok) { grant = d; break; }
     if (d.code === 'bad-request') { removeSignals(); return { ran: false, outcome: 'bad-request', reason: d.reason }; }

@@ -97,6 +97,19 @@ describe('D1: a waiter records its runners', () => {
     assert.equal(waiterOf(l1).pidless, true);
     assert.ok(waiterOf(settleQueue(l1, T('08:04'), probeOf(900))), 'the older request still waits after the runner dies');
   });
+  it('the same pid in another process scope is another runner (audit R3 H1)', () => {
+    let w = withRunner(blank(), run(TRAIN, 700), { ...at(0), scope: 'win32:box' });
+    w = withRunner(w, run(TRAIN, 700), { ...at(1), scope: 'linux:wsl', joined: true });
+    assert.deepEqual(w.runners.map((r) => r.scope), ['win32:box', 'linux:wsl']);
+  });
+  it('the foreign-refusal evidence is persisted when the runners are reaped, so a later runner cannot drop it (audit R3 H3)', () => {
+    const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700)).lease;
+    const old = { ...l0, waiters: l0.waiters.map((x) => ({ ...x, refusals: x.refusals + 1, lastRefusal: T('08:03').toISOString() })) };
+    const reaped = settleQueue(old, T('08:04'), probeOf(900));
+    assert.equal(waiterOf(reaped).pidless, true);
+    const rejoined = decideAcquire(reaped, run(CHIP, 501), T('08:05'), probeOf(900, 501)).lease;
+    assert.ok(waiterOf(settleQueue(rejoined, T('08:06'), probeOf(900))), 'the older request still waits after the new runner dies too');
+  });
   it('two runs sharing a holder are two runners; withdrawing one leaves the other (audit R1 H1/M3)', () => {
     const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700, 701)).lease;
     const l1 = decideAcquire(l0, run(TRAIN, 701), T('08:01'), probeOf(900, 700, 701)).lease;
@@ -284,6 +297,18 @@ describe('launcherWatch', () => {
     assert.match(await w.gone(), /pid 40\) is gone; that pid now belongs to another process/);
     assert.equal(reads, 2);
   });
+  it('a start time that wobbles by a second between reads (POSIX ps) is the same process (audit R3 H2)', async () => {
+    let t = 0; let reads = 0;
+    const tables = [
+      [{ pid: 50, ppid: 40, startedAt: '2026-11-27T08:01:00Z' }, { pid: 40, ppid: 4, startedAt: '2026-11-27T08:00:00Z' }],
+      [{ pid: 50, ppid: 40, startedAt: '2026-11-27T08:01:01Z' }, { pid: 40, ppid: 4, startedAt: '2026-11-27T08:00:01Z' }],
+    ];
+    const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform: 'linux', isAlive: () => true, clock: () => t, recheckMs: 300_000, readTable: async () => tables[Math.min(reads++, 1)] });
+    assert.equal(await w.gone(), null);
+    t = 300_000;
+    assert.equal(await w.gone(), null);
+    assert.equal(reads, 2, 'it did re-read (the vacuous-pass guard)');
+  });
   it('a probe that throws keeps the wait (the safe direction) and is said once', async () => {
     const lines = [];
     const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform: 'win32', isAlive: () => { throw new Error('boom'); }, readTable: async () => [{ pid: 50, ppid: 40 }, { pid: 40, ppid: 4 }], log: (m) => lines.push(m) });
@@ -400,6 +425,17 @@ describe('D3: runUnderLease stops waiting for nobody', () => {
     assert.equal(ran, false);
     assert.equal(res.code, 'orphaned');
     assert.equal(fileLease().heavy, null, 'the freed slot was not taken');
+  });
+  it('a lease error after the runner registered withdraws it, keeping the repo queued (audit R3 M2)', async () => {
+    seed(heldByB());
+    const w = world();
+    let calls = 0;
+    const transact = (d, fn, o) => { calls += 1; if (calls === 2) throw Object.assign(new Error('disk gone'), { code: 'EIO' }); return L.transactLease(d, fn, o); };
+    const res = await R.runUnderLease(opts(w, { signals: fakeSignals(), transact }), async () => {});
+    assert.equal(res.outcome, 'lease-error');
+    const wt = waiterOf(fileLease());
+    assert.deepEqual(wt.runners, [], 'no runner of a live library caller is left behind');
+    assert.equal(wt.pidless, true);
   });
   it('giving up at the deadline keeps the repo queued (as before), without a runner pinned to an exited pid', async () => {
     seed(heldByB());

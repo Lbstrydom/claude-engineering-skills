@@ -25,7 +25,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  KINDS, LIMITS, MIN, PRIORITIES, WINDOW_KINDS, admissionCheck, appendEvent, appendJournal, badIdentity, byOf, checkNote, classifyHeavy, clip, defaultProbe, emptyLease, endWait, episodeOf, hex, hhmm, hhmmOf, iso, jentry, isRunnerRequest, journalRefusal, leasePaths, ms, name, note, openWait, parseWhen, pruneWindows, rankOf, refuse, resolveRepoLabel, sameIdentity, usesNamedGap, withdrawRunner,
+  KINDS, LIMITS, MIN, PRIORITIES, WINDOW_KINDS, admissionCheck, appendEvent, appendJournal, badIdentity, byOf, checkNote, classifyHeavy, clip, defaultProbe, emptyLease, endWait, episodeOf, hex, hhmm, hhmmOf, iso, jentry, isRunnerRequest, journalRefusal, sameRunner, leasePaths, ms, name, note, openWait, parseWhen, pruneWindows, rankOf, refuse, resolveRepoLabel, sameIdentity, usesNamedGap, withdrawRunner,
 } from './lease-model.mjs';
 import { endTurn, settleQueue, startTurn, turnActive, turnMinOf, turnRule } from './lease-turns.mjs';
 
@@ -167,7 +167,7 @@ function higherWaiting(lease, req, now, probe) {
   const mine = rankOf(isRunnerRequest(req) ? req.priority : 'normal');
   const w = (lease.waiters ?? []).find((x) => x.repoKey === req.identity.repoKey);
   // The requester's OWN runner is (holder, pid): another process sharing its holder is another runner (audit R2 H3).
-  const ahead = (w?.runners ?? []).filter((r) => !(r.holder === req.identity.holder && r.pid === req.pid) && rankOf(r.priority) > mine
+  const ahead = (w?.runners ?? []).filter((r) => !sameRunner(r, req.identity.holder, req.pid, probe.scope) && rankOf(r.priority) > mine
     && admissionCheck(lease, { repoKey: req.identity.repoKey, holder: r.holder }, r.forMin, now, probe).ok);
   return ahead.sort((a, b) => rankOf(b.priority) - rankOf(a.priority))[0] ?? null;
 }
@@ -180,7 +180,7 @@ export function decideWithdrawRunner(lease, req, now, probe = defaultProbe(), { 
   const bad = badIdentity(req);
   if (bad) return bad;
   const base = settleQueue(lease, now, probe);
-  const next = withdrawRunner(base, req, now, { keepPlace });
+  const next = withdrawRunner(base, req, now, { keepPlace, scope: probe.scope });
   return { ok: true, lease: next === base ? base : settleQueue(next, now, probe), withdrawn: next !== base };
 }
 

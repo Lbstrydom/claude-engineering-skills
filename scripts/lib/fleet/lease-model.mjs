@@ -372,8 +372,8 @@ export function openWait(lease, req, { forMin, opener, refusal, now, scope }) {
 /** Is `req` a `lease run` process (exclusive, with its own long-lived pid) - the only request whose waiting can be proved over? */
 export const isRunnerRequest = (req) => req.exclusive === true && Number.isInteger(req.pid) && req.pid > 0;
 
-/** One runner is one PROCESS: two runs may share a holder (the same `--id`), never a pid. */
-const sameRunner = (r, holder, pid) => r.holder === holder && r.pid === pid;
+/** One runner is one PROCESS: two runs may share a holder (the same `--id`), never a pid within one process scope (audit R3 H1). */
+export const sameRunner = (r, holder, pid, scope) => r.holder === holder && r.pid === pid && (scope === undefined || r.scope === scope);
 
 /**
  * Record who waits in `w`: a runner request upserts its runner by (holder, pid), refreshing `at`; any other request marks the
@@ -390,7 +390,7 @@ export function withRunner(w, req, { forMin, now, scope, joined = false }) {
   if (!isRunnerRequest(req)) return w.pidless ? w : { ...w, pidless: true };
   const stamp = now.toISOString();
   const list = w.runners ?? [];
-  const prev = list.find((x) => sameRunner(x, req.identity.holder, req.pid));
+  const prev = list.find((x) => sameRunner(x, req.identity.holder, req.pid, scope));
   const r = { holder: req.identity.holder, pid: req.pid, scope: scope ?? 'unknown', priority: req.priority ?? 'normal', forMin, since: prev?.since ?? stamp, at: stamp };
   let others = list.filter((x) => x !== prev);
   if (others.length >= LIMITS.maxRunners) {
@@ -423,7 +423,8 @@ export function reapRunners(lease, now, probe) {
     if (live.length === 0 && !w.pidless && !foreign) {
       next = appendJournal({ ...next, waiters: next.waiters.filter((x) => x.repoKey !== w.repoKey) }, waitEndedEntry(w, 'abandoned', now, 'settle'));
     } else {
-      next = { ...next, waiters: next.waiters.map((x) => (x.repoKey === w.repoKey ? { ...w, runners: live } : x)) };
+      // The foreign evidence is persisted: once the runners are gone nothing else would remember it (audit R3 H3).
+      next = { ...next, waiters: next.waiters.map((x) => (x.repoKey === w.repoKey ? { ...w, runners: live, ...(foreign ? { pidless: true } : {}) } : x)) };
     }
   }
   return next;
@@ -435,10 +436,10 @@ export function reapRunners(lease, now, probe) {
  * `pidless`, and the caller is told it is queued. Otherwise (a stop signal, its launcher gone) the episode ends (`cancelled`)
  * when no other runner and no pid-less request is left in it. A no-op when it is not waiting. Never touches the slot.
  */
-export function withdrawRunner(lease, req, now, { keepPlace = false } = {}) {
+export function withdrawRunner(lease, req, now, { keepPlace = false, scope } = {}) {
   const w = (lease.waiters ?? []).find((x) => x.repoKey === req.identity.repoKey);
-  if (!w || !(w.runners ?? []).some((r) => sameRunner(r, req.identity.holder, req.pid))) return lease;
-  const live = w.runners.filter((r) => !sameRunner(r, req.identity.holder, req.pid));
+  if (!w || !(w.runners ?? []).some((r) => sameRunner(r, req.identity.holder, req.pid, scope))) return lease;
+  const live = w.runners.filter((r) => !sameRunner(r, req.identity.holder, req.pid, scope));
   if (live.length === 0 && !w.pidless && !keepPlace) return endWait(lease, w.repoKey, 'cancelled', now, byOf(req));
   return { ...lease, waiters: lease.waiters.map((x) => (x === w ? { ...w, runners: live, ...(keepPlace ? { pidless: true } : {}) } : x)) };
 }
