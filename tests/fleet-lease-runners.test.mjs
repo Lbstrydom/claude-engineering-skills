@@ -84,6 +84,19 @@ describe('D1: a waiter records its runners', () => {
     assert.ok(!refusedRoom.runners.some((r) => r.holder === 'chip-1'));
     assert.equal(refusedRoom.pidless, true, 'never reaped for want of the runner it could not record');
   });
+  it('an eviction marks the entry pidless: the evicted run still waits, unrecorded (audit R2 H2)', () => {
+    let w = blank();
+    for (let i = 0; i < LIMITS.maxRunners; i += 1) w = withRunner(w, run({ ...A, holder: `h${i}` }, 100 + i), at(i));
+    assert.equal(w.pidless, undefined, 'not full yet: still reapable');
+    assert.equal(withRunner(w, run(CHIP, 501), at(50)).pidless, true);
+  });
+  it('a runner joining after an older checkout refused keeps that refusal as pidless before overwriting lastRefusal (audit R2 H1)', () => {
+    const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700)).lease;
+    const old = { ...l0, waiters: l0.waiters.map((x) => ({ ...x, refusals: x.refusals + 1, lastRefusal: T('08:02').toISOString() })) };
+    const l1 = decideAcquire(old, run(TRAIN, 700), T('08:03'), probeOf(900, 700)).lease;
+    assert.equal(waiterOf(l1).pidless, true);
+    assert.ok(waiterOf(settleQueue(l1, T('08:04'), probeOf(900))), 'the older request still waits after the runner dies');
+  });
   it('two runs sharing a holder are two runners; withdrawing one leaves the other (audit R1 H1/M3)', () => {
     const l0 = decideAcquire(heldByB(), run(TRAIN, 700), T('08:01'), probeOf(900, 700, 701)).lease;
     const l1 = decideAcquire(l0, run(TRAIN, 701), T('08:01'), probeOf(900, 700, 701)).lease;
@@ -185,6 +198,11 @@ describe('D4: priority inside one repo', () => {
     const renew = decideAcquire(withTrain, q(CHIP, { token: 'cccccccccccccccc', pid: 501 }), T('08:05'), probeOf(501, 700));
     assert.equal(renew.ok, true, JSON.stringify(renew));
   });
+  it('a normal run sharing the train\'s holder (another process) is still refused for it (audit R2 H3)', () => {
+    const l = freed();
+    const sameHolder = decideAcquire(l, run(TRAIN, 702), T('08:10'), probeOf(700, 702));
+    assert.equal(sameHolder.code, 'priority');
+  });
   it('an unknown priority is a bad request', () => {
     assert.equal(decideAcquire(emptyLease(), run(TRAIN, 700, { priority: 'urgent' }), T('08:00'), probeOf(700)).code, 'bad-request');
   });
@@ -251,6 +269,20 @@ describe('launcherWatch', () => {
   it('a launcher already gone at the first read is gone (the chain is broken)', async () => {
     const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform: 'win32', isAlive: () => true, readTable: async () => [{ pid: 50, ppid: 40 }, { pid: 40, ppid: 30 }] });
     assert.match(await w.gone(), /launched pid 40 was already gone/);
+  });
+  it('a launcher pid reused by a new process is caught at the periodic re-read by its start time (audit R2 H4)', async () => {
+    let t = 0; let reads = 0;
+    const table = [[{ pid: 50, ppid: 40, startedAt: '2026-11-27T08:01:00Z' }, { pid: 40, ppid: 4, startedAt: '2026-11-27T08:00:00Z' }]];
+    const w = R.launcherWatch({ pid: 50, ppid: () => 40, platform: 'win32', isAlive: () => true, clock: () => t, recheckMs: 300_000,
+      readTable: async () => { reads += 1; return table[Math.min(reads - 1, table.length - 1)]; } });
+    assert.equal(await w.gone(), null);
+    t = 100_000;
+    assert.equal(await w.gone(), null);
+    assert.equal(reads, 1, 'no re-read before recheckMs');
+    table.push([{ pid: 50, ppid: 40, startedAt: '2026-11-27T08:01:00Z' }, { pid: 40, ppid: 7, startedAt: '2026-11-27T09:30:00Z' }]);
+    t = 300_000;
+    assert.match(await w.gone(), /pid 40\) is gone; that pid now belongs to another process/);
+    assert.equal(reads, 2);
   });
   it('a probe that throws keeps the wait (the safe direction) and is said once', async () => {
     const lines = [];
@@ -324,6 +356,21 @@ describe('D3: runUnderLease stops waiting for nobody', () => {
     const out = await res;
     release();
     assert.equal(out.code, 'stopped');
+  });
+  it('a stop during a slow launcher check is not held up by it (audit R2 H6)', async () => {
+    seed(heldByB());
+    const w = world(); const signals = fakeSignals();
+    const launcher = { gone: () => { setImmediate(() => signals.fire('SIGTERM')); return new Promise(() => {}); } }; // a table read that never returns
+    const res = await R.runUnderLease(opts(w, { signals, launcher }), async () => {});
+    assert.equal(res.code, 'stopped');
+    assert.equal(waiterOf(fileLease()), undefined);
+  });
+  it('a second stop signal while waiting forces the exit', async () => {
+    seed(heldByB());
+    const w = world(); const signals = fakeSignals(); const exits = [];
+    const launcher = { gone: () => { setImmediate(() => { signals.fire('SIGINT'); signals.fire('SIGINT'); }); return new Promise(() => {}); } };
+    await R.runUnderLease(opts(w, { signals, launcher, forceExit: (c) => exits.push(c) }), async () => {});
+    assert.deepEqual(exits, [130]);
   });
   it('the launcher dying mid-wait ends it `orphaned`: the job never runs, the repo leaves the queue', async () => {
     seed(heldByB());

@@ -381,10 +381,12 @@ const sameRunner = (r, holder, pid) => r.holder === holder && r.pid === pid;
  * Conservative wherever it cannot tell (audit R1 H2/H3): joining an existing entry that carries no `runners` at all (opened by
  * a pid-less request, or by an older checkout) marks it `pidless`; at capacity the stalest runner of rank at most the new
  * one's makes room (a train is never evicted for a targeted run), and when every runner outranks it the new run is not
- * recorded and the entry turns `pidless` instead - never reaped for want of a runner it could not record.
+ * recorded; either way the entry turns `pidless` - never reaped for want of a runner it could not keep recorded.
  */
 export function withRunner(w, req, { forMin, now, scope, joined = false }) {
-  const legacy = joined && w.runners === undefined && !w.pidless;
+  // An older checkout's refusal newer than every recorded poll would be overwritten by this one: keep it as `pidless` (audit R2 H1).
+  const foreign = joined && w.runners?.length > 0 && w.lastRefusal !== undefined && ms(w.lastRefusal) > Math.max(...w.runners.map((x) => ms(x.at)));
+  const legacy = (joined && w.runners === undefined && !w.pidless) || foreign;
   if (!isRunnerRequest(req)) return w.pidless ? w : { ...w, pidless: true };
   const stamp = now.toISOString();
   const list = w.runners ?? [];
@@ -394,7 +396,8 @@ export function withRunner(w, req, { forMin, now, scope, joined = false }) {
   if (others.length >= LIMITS.maxRunners) {
     const evictable = others.filter((x) => rankOf(x.priority) <= rankOf(r.priority)).sort((a, b) => ms(a.at) - ms(b.at))[0];
     if (!evictable) return { ...w, runners: others, pidless: true };
-    others = others.filter((x) => x !== evictable);
+    // The evicted run still waits, unrecorded: the entry must not be reaped for want of it (audit R2 H2).
+    return { ...w, runners: [...others.filter((x) => x !== evictable), r], pidless: true };
   }
   return { ...w, runners: [...others, r], ...(legacy ? { pidless: true } : {}) };
 }

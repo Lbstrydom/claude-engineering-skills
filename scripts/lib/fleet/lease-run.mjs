@@ -62,12 +62,18 @@ const RETRYABLE = new Set(['held', 'window', 'turn', 'expired-pid-alive', 'prior
  * gone at that read is a launcher gone. A failed read degrades to the parent alone, said once through `log`. On POSIX a
  * changed `process.ppid` (reparented) also means the parent is gone. A check that cannot be made keeps the run waiting (the
  * safe direction: the queue's own expiry still bounds it) and is said, never silent (audit R1 H9). Never throws.
+ *
+ * A pid alone cannot tell a dead launcher from a new process that reused its pid (Windows recycles them quickly), so every
+ * `recheckMs` the table is read again and a link whose start time changed, or that is missing, is gone (audit R2 H4).
+ * Between re-reads the cheap `isAlive` probe answers. One table read per 5 minutes of waiting, not one per poll.
  * @returns {{gone: () => Promise<string|null>}} why it is gone, or null while it lives or cannot be told
  */
-export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {} } = {}) {
+export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, readTable = readProcessTableAsync, isAlive = isPidAlive, platform = process.platform, log = () => {}, clock = Date.now, recheckMs = 5 * 60_000 } = {}) {
   const ppid0 = ppid();
   let chain = null;
+  let starts = new Map(); // pid -> startedAt at the first read (null when the table did not say)
   let brokenAtRead = null;
+  let readAt = 0;
   let said = false;
   const sayOnce = (m) => { if (!said) { said = true; log(m); } };
   return {
@@ -75,15 +81,27 @@ export function launcherWatch({ pid = process.pid, ppid = () => process.ppid, re
       try {
         if (chain === null) {
           const rows = await readTable();
+          readAt = clock();
           const c = rows ? launcherChain(rows, pid) : { chain: [], broken: null };
           if (!rows) sayOnce(`the process table could not be read; only the parent (pid ${ppid0}) is watched for this wait`);
           brokenAtRead = c.broken;
           chain = c.chain.length ? c.chain : (ppid0 > 0 ? [ppid0] : []);
+          starts = new Map(chain.map((p) => [p, rows?.find((r) => r.pid === p)?.startedAt ?? null]));
         }
         if (brokenAtRead !== null) return `the process that launched pid ${brokenAtRead} was already gone`;
         if (platform !== 'win32' && ppid() !== ppid0) return `its parent (pid ${ppid0}) exited`;
         const dead = chain.find((p) => !isAlive(p));
-        return dead === undefined ? null : `the process that launched it (pid ${dead}) is gone`;
+        if (dead !== undefined) return `the process that launched it (pid ${dead}) is gone`;
+        if (clock() - readAt >= recheckMs && [...starts.values()].some((s) => s !== null)) {
+          readAt = clock();
+          const rows = await readTable();
+          if (rows) {
+            const byPid = new Map(rows.map((r) => [r.pid, r]));
+            const reused = chain.find((p) => starts.get(p) !== null && byPid.get(p)?.startedAt !== starts.get(p));
+            if (reused !== undefined) return `the process that launched it (pid ${reused}) is gone; that pid now belongs to another process`;
+          }
+        }
+        return null;
       } catch (e) {
         sayOnce(`could not check whether the launcher is alive (${e?.message ?? e}); waiting on regardless`);
         return null;
@@ -166,12 +184,11 @@ export async function runUnderLease(opts, job) {
   const req = { identity, repo, kind, forMin, pid, exclusive: true, ...(note !== undefined ? { note } : {}), ...(priority !== undefined ? { priority } : {}) };
 
   // Stop signals are handled from the FIRST moment (D3): while waiting, a stop ends the wait and the job never starts; once
-  // granted, it aborts the job and a second one forces the exit. Installed before the wait, removed after the release.
+  // granted, it aborts the job. A second one forces the exit in either phase. Installed before the wait, removed after the release.
   const abort = new AbortController();
   let signalled = null;
-  let granted = false;
   const removeSignals = signals.install((sig) => {
-    if (signalled) { if (granted) forceExit(exitCodeForSignal(signalled)); return; }
+    if (signalled) { forceExit(exitCodeForSignal(signalled)); return; }
     signalled = sig;
     abort.abort();
   });
@@ -189,7 +206,8 @@ export async function runUnderLease(opts, job) {
   for (let attempt = 0; ; attempt += 1) {
     // Checked before EVERY re-acquire, not only after a refusal: a launcher that died during the sleep must not be granted the
     // slot that freed meanwhile (audit R1 H4/H7/H8).
-    const gone = attempt > 0 && launcher ? await launcher.gone() : null;
+    // Raced against a stop: a slow process-table read never delays the withdrawal a stop signal asks for (audit R2 H6).
+    const gone = attempt > 0 && launcher ? await Promise.race([launcher.gone(), stopped.then(() => null)]) : null;
     if (gone) return giveUp({ ran: false, outcome: 'not-granted', code: 'orphaned', reason: `stopped waiting: ${gone}, so nothing is waiting for this job`, orphaned: gone, queued: false }, false);
     if (signalled) return giveUp({ ran: false, outcome: 'not-granted', code: 'stopped', reason: `stopped by ${signalled} while waiting for the slot`, signalled, queued: false }, false);
     const out = runDecision(transact, dir, (lease) => decideAcquire(lease, req, now(), probe));
@@ -205,7 +223,6 @@ export async function runUnderLease(opts, job) {
     log(`waiting in the queue (${d.code}); next try in ${Math.round(wait / 1000)}s`);
     await Promise.race([sleep(wait, abort.signal), stopped]);
   }
-  granted = true;
   const token = grant.heavy.token;
   if (grant.capped) log(`CAPPED: granted ${grant.capped.grantedMin} of the requested ${grant.capped.requestedMin} minutes - the turn ends at ${grant.capped.turnEndsAt.slice(11, 16)}Z and ${grant.capped.waiting} is waiting; the slot is released for them then unless this job is still running`);
 

@@ -166,7 +166,8 @@ export function decideAcquire(lease, req, now, probe = defaultProbe()) {
 function higherWaiting(lease, req, now, probe) {
   const mine = rankOf(isRunnerRequest(req) ? req.priority : 'normal');
   const w = (lease.waiters ?? []).find((x) => x.repoKey === req.identity.repoKey);
-  const ahead = (w?.runners ?? []).filter((r) => r.holder !== req.identity.holder && rankOf(r.priority) > mine
+  // The requester's OWN runner is (holder, pid): another process sharing its holder is another runner (audit R2 H3).
+  const ahead = (w?.runners ?? []).filter((r) => !(r.holder === req.identity.holder && r.pid === req.pid) && rankOf(r.priority) > mine
     && admissionCheck(lease, { repoKey: req.identity.repoKey, holder: r.holder }, r.forMin, now, probe).ok);
   return ahead.sort((a, b) => rankOf(b.priority) - rankOf(a.priority))[0] ?? null;
 }
