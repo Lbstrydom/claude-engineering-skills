@@ -50,12 +50,12 @@ wrong, or a file another session removed outside the diff, is a real gap and mus
 direction that shows a gap instead of hiding one).
 
 - `scripts/lib/audit/final-review-hunks.mjs` (audit-orchestration, already owns git for the final review) gains
-  `resolveFinalReviewDeletions({ base, changedFiles, run })` → `{ isDeleted(p), source }`. It runs
+  `resolveFinalReviewDeletions({ base, changedFiles, run })` → `{ isDeleted(p), deleted }`. It runs
   `git diff --name-status -z --no-renames <base>` when a base is recorded (committed + staged + unstaged deletions since
   the audit's base; `--no-renames` so a rename's old path reads `D`) and ONLY that — a path added after the base and
   removed again was never deleted relative to it (plan audit R2-H3); `git diff ... HEAD` only when no base is recorded, parsed by the EXISTING `parseNameStatusZ`
   (`file-coverage.mjs`) — no second parser. A failed git call contributes nothing: unknown ⇒ not deleted ⇒ today's
-  unmeasured behaviour (fail toward showing the gap). Paths compare via `normalizePath`.
+  unmeasured behaviour (fail toward showing the gap). Paths compare EXACTLY as git reports them (code audit R1-H4/H7: a case-folding `normalizePath` key would let a deleted `Foo.mjs` confirm a missing `foo.mjs`).
 - `resolveFinalReviewHunks` returns it alongside `hunksFor`, so `gemini-review.mjs` changes by one argument
   (`isDeleted: hunks.isDeleted` — the same option name the callee reads) — that file sits at 995 lines under the 1000-line size ratchet.
 - `summariseCodeCoverage` gains `opts.isDeleted` (default `() => false`, so every existing caller is byte-identical).

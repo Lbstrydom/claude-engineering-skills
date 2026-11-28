@@ -89,6 +89,19 @@ describe('cycle-cluster-scope --plan builds the WHOLE audit argv', () => {
     } finally { cleanup(dir); }
   });
 
+  it('R2+ extras (--round, --ledger, --out, --passes) pass THROUGH to the audit, not refused by this CLI', () => {
+    // assertKnownFlags stops at `--`, so these reach openai-audit, whose own cwd refusal (exit 1) proves the spawn. A
+    // rejection by this CLI would be exit 2 naming the flag (final-gate G1 claimed that; this pins it does not happen).
+    const { dir, base } = makeRepo();
+    try {
+      const r = runScope(dir, [...scopeArgs(dir, base), '--plan', 'p.md', '--audit', '--',
+        '--round', '2', '--ledger', 'l.json', '--out', 'o.json', '--passes', 'structure']);
+      assert.equal(r.status, 1, r.stderr);
+      assert.doesNotMatch(r.stderr, /unknown flag/);
+      assert.match(r.stderr, /node scripts\/openai-audit\.mjs/);
+    } finally { cleanup(dir); }
+  });
+
   it('no-op modes cannot ride in as extras: --help and --selfcheck-relocation after -- exit 2, never a vacuous 0', () => {
     const { dir, base } = makeRepo();
     try {
