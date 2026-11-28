@@ -5,6 +5,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { embedLogLabel } from '../scripts/symbol-index/refresh-subprocess.mjs';
 import { resolveEmbedProfile } from '../scripts/lib/embed-text.mjs';
 
@@ -24,5 +26,21 @@ describe('embedLogLabel', () => {
 
   it('falls back to the concrete model when no profile is passed', () => {
     assert.equal(embedLogLabel(undefined, 'gemini-embedding-001'), 'model=gemini-embedding-001');
+  });
+});
+
+// The pipeline spawns extract/summarise/embed as subprocesses, so (as in refresh-cli-contract.test.mjs) the
+// wiring is pinned at the source: reverting either link restores the Azure mislabel while the unit tests stay green.
+describe('embed log wiring', () => {
+  const read = (rel) => fs.readFileSync(path.join(import.meta.dirname, '..', rel), 'utf8');
+  it('refresh.mjs hands its resolved embedProfile to runExtractSummariseEmbed', () => {
+    const call = /runExtractSummariseEmbed\(\{[\s\S]*?\}\)/.exec(read('scripts/symbol-index/refresh.mjs'));
+    assert.ok(call, 'the call site exists');
+    assert.match(call[0], /\bembedProfile\b/);
+  });
+  it('the embed progress line is built by embedLogLabel from that profile, never from concreteEmbedModel alone', () => {
+    const src = read('scripts/symbol-index/refresh-subprocess.mjs');
+    assert.match(src, /logOk\(`embedding \(\$\{embedLogLabel\(embedProfile, concreteEmbedModel\)\}\)\.\.\.`\)/);
+    assert.doesNotMatch(src, /embedding \(model=\$\{concreteEmbedModel\}\)/);
   });
 });
