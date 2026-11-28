@@ -1,6 +1,6 @@
 # Plan: Block holds: a consumer block inside a synced SKILL.md
 - **Date**: 2026-11-28
-- **Status**: In Progress
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (sync tooling, consumer-sync contract). Stack `js-ts`, ESM.
 - **Target domain(s)**: `install`, `scripts`, `shared-lib`

@@ -54,7 +54,6 @@ This is the list to read when asking "what is in flight?".
 | [structured line anchors on audit findings, so the T2 `reopenRate` signal becomes measurable](./structured-finding-lines.md) | `In Progress` | plan audited 2026-11-23 (3 GPT rounds, Gemini APPROVE); implementation autonomous, no push, no PR |
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
-| [Block holds: a consumer block inside a synced SKILL.md](./sync-skill-block-holds.md) | `In Progress` |  |
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
 | [Telemetry linkage as a structural contract](./telemetry-linkage-structural.md) | `In Progress` |  |
 | [make `npm test` hang-proof (a per-test stall limit and an idle watchdog)](./test-runner-hang-guard.md) | `In Progress` | implemented and audited on branch claude/wonderful-vaughan-7cdb0c; PR open, merge pending |
@@ -366,6 +365,7 @@ source comments that no docs linter sees — stays valid.
 | [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived ownership, §B untrack consumer manifest) implemented… |
 | [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `Complete` | shipped in #230, #238, #242 (status reconciled against merged PRs 2026-10-25) |
 | [Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning](./sync-receipt-structural-and-undeclared-deps.md) | `Complete` | shipped in #231 (status reconciled against merged PRs 2026-10-25) |
+| [Block holds: a consumer block inside a synced SKILL.md](./sync-skill-block-holds.md) | `Complete` |  |
 | [Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported](./sync-stale-base-and-stoptree.md) | `Complete` | shipped in #288 (status reconciled against merged PRs 2026-10-25) |
 | [sync-to-repos failure honesty (verified audit hypotheses from #231)](./sync-to-repos-failure-honesty.md) | `Complete` | shipped in #233, #236 (H6 receipt/manifest lock stays recorded debt)… |
 | [Tech Debt Wave 2 — Responsibility Splits & Safety Fixes](./tech-debt-wave-2.md) | `Complete` | shipped — `scripts/shared.mjs` god-module split into focused `scripts/lib/*.mjs` files: `code-analysis.mjs`,… |
