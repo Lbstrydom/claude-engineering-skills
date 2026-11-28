@@ -76,10 +76,21 @@ describe('normaliseFragment', () => {
     assert.equal(codeOf(() => normaliseFragment('---\n## A\n')), null);
   });
 
-  it('raw HTML in a fragment is the consumer\'s content: the splice is textual and does not parse it (decided, code audit R3)', () => {
-    assert.equal(normaliseFragment('a\n<pre>\ncode\n'), 'a\n<pre>\ncode\n');
-    const r = spliceBlocks(UPSTREAM, [block('<pre>\nunclosed\n')]);
-    assert.ok(r.content.includes('<pre>\nunclosed\n<!-- sync-slot:target-adapter:end -->'), 'the end marker line is still there, textually');
+  it('the supported subset: no block-level raw HTML in a fragment except a single-line comment (code audit R3)', () => {
+    for (const bad of ['<pre>\ncode', '<!-- open\nstill open -->', '<?php x', '<!DOCTYPE html>', '<![CDATA[\nx', '<div>', '</details>', '<custom-el attr="1">']) {
+      assert.equal(codeOf(() => normaliseFragment(`a\n${bad}\n`)), SLOT_ERROR.FRAGMENT_RAW_HTML, bad);
+    }
+    // In the subset: single-line delimiter comments, inline HTML mid-line, a tag followed by text, anything in a fence.
+    for (const ok of ['<!-- repo-electron-target:start -->', 'use <kbd>Ctrl</kbd> here', '<sessionId>` when the scan completes.', '```html\n<div>\n```']) {
+      assert.equal(codeOf(() => normaliseFragment(`a\n${ok}\n`)), null, ok);
+    }
+  });
+
+  it('a slotted upstream file outside the subset fails the splice and the lint (a marker inside <pre> is one)', () => {
+    const inPre = '# T\n\n<pre>\n<!-- sync-slot:s -->\n</pre>\n';
+    assert.equal(codeOf(() => spliceBlocks(inPre, [block('x\n', 's')])), SLOT_ERROR.SLOT_FILE_RAW_HTML);
+    assert.ok(lintSlotMarkers(inPre).some((p) => p.code === SLOT_ERROR.SLOT_FILE_RAW_HTML));
+    assert.deepEqual(lintSlotMarkers('# T\n<div>\n'), [], 'a file with NO slot is not held to the subset');
   });
 
   it('a backtick line whose info string holds a backtick is NOT a fence (CommonMark; audit R1 M5)', () => {

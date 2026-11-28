@@ -53,6 +53,28 @@ export const SLOT_TOKEN = 'sync-slot:';
 const MARKER_LINE_RE = /^<!-- sync-slot:([a-z][a-z0-9-]{0,39}) -->$/;
 const RENDERED_START_RE = /^<!-- sync-slot:([a-z][a-z0-9-]{0,39}):start\b/;
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/**
+ * CommonMark HTML-block start conditions 1-7 (spec §4.6), the ONE place the supported-markup subset is defined.
+ * A slotted file and a fragment may carry NO block-level raw HTML except a comment that closes on its own line
+ * (the delimiter comments consumers already use). Conservative on purpose: an HTML block can run past a slot boundary
+ * and change how the instructions after it read, and the subset rules that out without a markdown parser.
+ */
+const HTML_BLOCK_TAGS = 'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
+const HTML_BLOCK_STARTS = [
+  /^ {0,3}<(?:pre|script|style|textarea)(?:\s|>|$)/i,            // 1: raw-text elements
+  /^ {0,3}<\?/,                                                   // 3: processing instruction
+  /^ {0,3}<![A-Za-z]/,                                             // 4: declaration
+  /^ {0,3}<!\[CDATA\[/,                                          // 5: CDATA
+  new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?:\\s|/?>|$)`, 'i'), // 6: block-level tags
+  /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>\s*$/,       // 7: a complete tag alone on its line
+];
+
+/** Does this line start a block-level raw-HTML construct outside the supported subset? (A comment closed on its own line is in it.) */
+export function startsUnsupportedHtmlBlock(line) {
+  if (/^ {0,3}<!--/.test(line)) return !line.includes('-->'); // 2: a comment, allowed only when it closes on the same line
+  return HTML_BLOCK_STARTS.some((re) => re.test(line));
+}
 const HEADING_RE = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 
 /** Every reason a slot cannot be filled, or a fragment cannot be used. */
@@ -66,6 +88,8 @@ export const SLOT_ERROR = Object.freeze({
   FRAGMENT_EMPTY: 'fragment-empty',
   FRAGMENT_HAS_MARKER: 'fragment-has-marker',
   FRAGMENT_UNBALANCED_FENCE: 'fragment-unbalanced-fence',
+  FRAGMENT_RAW_HTML: 'fragment-raw-html',
+  SLOT_FILE_RAW_HTML: 'slot-file-raw-html',
 });
 
 /** A slot could not be filled. `code` is one of `SLOT_ERROR`. */
@@ -177,11 +201,12 @@ export function normaliseFragment(raw, { from = '(fragment)' } = {}) {
   if (walked[walked.length - 1].inFence) {
     throw new SlotError(SLOT_ERROR.FRAGMENT_UNBALANCED_FENCE, `${from}: the fragment opens a fenced code block it never closes`);
   }
-  // DELIBERATELY no raw-HTML / CommonMark-block validation (code audit R1-R3, pivoted): the splice is TEXTUAL. Its
-  // boundaries are the marker lines, the next sync parses UPSTREAM source (never this rendered file), and every reader of a
-  // SKILL.md (the sync, an agent) reads raw text, not rendered markdown. Validating markdown rendering would need a full
-  // CommonMark parser to protect a property no reader depends on; the fence check above stays as cheap hygiene because the
-  // upstream marker lint keys on fence context. A fragment's markdown is the consumer's own content.
+  // The supported-markup subset (code audit R3): no block-level raw HTML except a comment closed on its own line. A
+  // conservative subset, not a markdown parser: it is what keeps an HTML block from running past the end marker.
+  const html = walked.findIndex((c, i) => i > 0 && !c.inFence && startsUnsupportedHtmlBlock(c.text));
+  if (html > 0) {
+    throw new SlotError(SLOT_ERROR.FRAGMENT_RAW_HTML, `${from}: line ${html} starts block-level raw HTML ("${walked[html].text.trim().slice(0, 60)}"); fragments may carry only single-line comments — write it as markdown`);
+  }
   return `${s}\n`;
 }
 
@@ -222,6 +247,10 @@ export function spliceBlocks(text, blocks = []) {
     const m = c.inFence ? null : RENDERED_START_RE.exec(c.text);
     if (m) throw new SlotError(SLOT_ERROR.ALREADY_SPLICED, `line ${i + 1}: input already carries a rendered span for slot "${m[1]}" — splicing starts from upstream source, never from a rendered file`, { slot: m[1], line: i + 1 });
   });
+  const htmlAt = classified.findIndex((c) => !c.inFence && !c.inFrontmatter && startsUnsupportedHtmlBlock(c.text));
+  if (htmlAt >= 0) {
+    throw new SlotError(SLOT_ERROR.SLOT_FILE_RAW_HTML, `line ${htmlAt + 1}: a slotted file may carry no block-level raw HTML ("${classified[htmlAt].text.trim().slice(0, 60)}")`, { line: htmlAt + 1 });
+  }
   const markers = findSlotMarkers(text);
   const replacements = new Map(); // 0-based line index → replacement lines
   const applied = [];
@@ -266,6 +295,13 @@ export function lintSlotMarkers(text) {
   const classified = classifyLines(lines);
   const problems = [];
   const seen = new Map();
+  if (classified.some((c) => !c.inFence && MARKER_LINE_RE.test(c.text))) {
+    classified.forEach((c, i) => {
+      if (!c.inFence && !c.inFrontmatter && startsUnsupportedHtmlBlock(c.text)) {
+        problems.push({ line: i + 1, code: SLOT_ERROR.SLOT_FILE_RAW_HTML, message: `a slotted file may carry no block-level raw HTML ("${c.text.trim().slice(0, 60)}")` });
+      }
+    });
+  }
   classified.forEach((c, i) => {
     if (!c.text.includes(SLOT_TOKEN)) return;
     const line = i + 1;

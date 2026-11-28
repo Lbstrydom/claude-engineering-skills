@@ -197,7 +197,12 @@ one inserted adapter block each). A block hold keeps only the block:
 or a declaration for a path this repo is never sent (`block-dest-unknown`) FAILS
 the file or the target with a non-zero exit, leaves the consumer's file as it is,
 and is recorded in the receipt's `blockErrors`. A slot that MOVED under another
-heading still lands and is reported (`anchorMoved`, heading-level only). Edit the
+heading still lands and is reported (`anchorMoved`, heading-level only).
+**Supported markup:** a fragment, and any upstream file that carries a slot, may
+contain no block-level raw HTML except a comment that closes on its own line
+(delimiter comments such as `<!-- my-adapter:start -->` are fine; inline HTML
+mid-line is fine), because an open HTML block would run past the slot boundary.
+Edit the
 fragment, never the spliced span: a hand edit of the span is a divergence and is
 refused like any other. Migration from a whole-file hold:
 [consumer-adoption.md](../runbooks/consumer-adoption.md) §Migrating a whole-file
