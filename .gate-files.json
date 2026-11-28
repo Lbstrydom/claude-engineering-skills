@@ -247,6 +247,11 @@
       "note": "gate evaluator named as the implementation of a gate contract"
     },
     {
+      "path": "scripts/check-skill-slots.mjs",
+      "kind": "opaque",
+      "note": "gate evaluator named as the implementation of a gate contract"
+    },
+    {
       "path": "scripts/check-synced-doc-links.mjs",
       "kind": "opaque",
       "note": "gate evaluator named as the implementation of a gate contract"

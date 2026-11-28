@@ -75,6 +75,18 @@ describe('normaliseFragment', () => {
     assert.equal(codeOf(() => normaliseFragment('```bash\nnpm run x\n```\n')), null);
     assert.equal(codeOf(() => normaliseFragment('---\n## A\n')), null);
   });
+
+  it('raw HTML in a fragment is the consumer\'s content: the splice is textual and does not parse it (decided, code audit R3)', () => {
+    assert.equal(normaliseFragment('a\n<pre>\ncode\n'), 'a\n<pre>\ncode\n');
+    const r = spliceBlocks(UPSTREAM, [block('<pre>\nunclosed\n')]);
+    assert.ok(r.content.includes('<pre>\nunclosed\n<!-- sync-slot:target-adapter:end -->'), 'the end marker line is still there, textually');
+  });
+
+  it('a backtick line whose info string holds a backtick is NOT a fence (CommonMark; audit R1 M5)', () => {
+    assert.equal(codeOf(() => normaliseFragment('``` a `b`\ntext\n')), null, 'not a fence, so nothing is left open');
+    const text = '``` x `y`\n<!-- sync-slot:s -->\n';
+    assert.equal(findSlotMarkers(text)[0].inFence, false);
+  });
 });
 
 describe('spliceBlocks', () => {

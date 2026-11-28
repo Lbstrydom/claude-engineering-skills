@@ -28,9 +28,10 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
-import { seedInstalledDeps, runSyncCli, whySyncFailed, git } from './helpers/consumer-fixture.mjs';
+import { seedInstalledDeps, runSyncCli, whySyncFailed, git, syncExecOptions } from './helpers/consumer-fixture.mjs';
 
 const execFileAsync = promisify(execFile);
+const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const NAV = '.claude/skills/nav-audit/SKILL.md';
 const VA = '.claude/skills/visual-audit/SKILL.md';
 const PLAN = '.claude/skills/plan/SKILL.md';
@@ -95,6 +96,38 @@ describe('a declared block is spliced into its slot', () => {
     assert.equal(rec.slot, 'target-adapter');
     assert.equal(rec.from, FRAG);
     assert.equal(rec.anchorMoved, false);
+  });
+
+  it('the DEPLOYED verifier CLI passes gate 2B on the block-held file, and fails it when the file is tampered', async () => {
+    // The fixture seeds stub packages (helpers/consumer-fixture.mjs). For this one read-only run, link the real ones over
+    // the stubs, then put the stubs back: no sync or package manager runs while they are linked.
+    const nm = abs('node_modules');
+    const swapped = [];
+    for (const dep of fs.readdirSync(nm)) {
+      const scoped = dep.startsWith('@') ? fs.readdirSync(path.join(nm, dep)).map((d) => `${dep}/${d}`) : [dep];
+      for (const name of scoped) {
+        const real = path.join(REPO_ROOT, 'node_modules', name);
+        if (!fs.existsSync(real)) continue;
+        const stub = path.join(nm, name);
+        fs.renameSync(stub, `${stub}.stub`);
+        fs.symlinkSync(real, stub, 'junction');
+        swapped.push(stub);
+      }
+    }
+    const cli = abs('scripts/.claude-skills/lib/sync-isolation-verify.mjs');
+    const run = () => execFileAsync(process.execPath, [cli, '--consumer-root', consumer, '--gates', '2B'], { cwd: consumer, windowsHide: true })
+      .then((x) => ({ code: 0, out: x.stdout + x.stderr }), (e) => ({ code: e.code, out: `${e.stdout ?? ''}${e.stderr ?? ''}` }));
+    const good = fs.readFileSync(abs(NAV));
+    try {
+      const ok = await run();
+      assert.equal(ok.code, 0, ok.out);
+      fs.writeFileSync(abs(NAV), Buffer.concat([good, Buffer.from('tamper\n')]));
+      const bad = await run();
+      assert.notEqual(bad.code, 0, 'negative control: the deployed gate sees the block-held file');
+    } finally {
+      fs.writeFileSync(abs(NAV), good);
+      for (const stub of swapped) { fs.rmdirSync(stub); fs.renameSync(`${stub}.stub`, stub); } // rmdirSync unlinks the junction, never its target
+    }
   });
 
   it('the SHIPPED sync-overrides.mjs resolves its new imports in the consumer and validates the block', async () => {
@@ -183,7 +216,7 @@ describe('a block that cannot be placed fails loudly and is never dropped', () =
     assert.deepEqual(codes, [`.claude/skills/no-such-skill/SKILL.md:block-dest-unknown`, `${PLAN}:slot-missing`]);
     assert.ok(lastSync().blocksApplied.some((b) => b.path === NAV), 'the good block still landed');
     overrides({ blocks: [navBlock] });
-    fs.rmSync(abs('.sync-blocks/plan.md'));
+    fs.rmSync(abs('.sync-blocks/plan.md'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     commit('fix declarations');
   });
 
@@ -235,6 +268,16 @@ describe('migrating a whole-file hold to a block hold', () => {
     assert.ok(token, `the refusal prints the consent token:\n${r.text.slice(-2000)}`);
     assert.equal(read(VA), held, 'the held file is untouched');
 
+    // An UNTRACKED held file is refused too — never the generic untracked overwrite (audit R2 H2 of the plan; code R1 M10).
+    git(['rm', '-q', '--cached', VA], consumer);
+    commit('untrack the held file');
+    r = await sync();
+    assert.notEqual(r.code, 0, 'pending adoption refuses an untracked held file');
+    assert.doesNotMatch(r.text, /diverged-untracked|untracked here/, 'not the generic untracked rule');
+    assert.equal(read(VA), held);
+    git(['add', VA], consumer);
+    commit('track it again');
+
     // (d) uncommitted work is never migrated, even with the right consent.
     overrides({ blocks: [navBlock, { path: VA, slot: 'target-adapter', from: VA_FRAG, reason: 'adapter block', adoptHeldFile: token }] });
     commit('consent');
@@ -257,5 +300,121 @@ describe('migrating a whole-file hold to a block hold', () => {
     r = await sync();
     assert.equal(r.code, 0, whySyncFailed(r));
     assert.doesNotMatch(r.text, /block-hold-migration|adopted as a block hold/, 'a spent flag is inert');
+
+    // A NEW hold generation: hold again, edit, then restore the old block entry with its stale token -> refused.
+    overrides({ overrides: [{ path: VA, reason: 'held again' }], blocks: [navBlock] });
+    commit('hold again');
+    r = await sync();
+    assert.equal(r.code, 0, whySyncFailed(r));
+    write(VA, `${read(VA)}a newer held edit\n`);
+    commit('edit the new held generation');
+    await sync();
+    overrides({ blocks: [navBlock, { path: VA, slot: 'target-adapter', from: VA_FRAG, reason: 'adapter block', adoptHeldFile: token }] });
+    commit('restore the stale consent');
+    r = await sync();
+    assert.notEqual(r.code, 0, 'a token for an older generation never adopts a newer one');
+    assert.match(read(VA), /a newer held edit/, 'the newer held edit is intact');
+  });
+});
+
+describe('lifecycle against an ISOLATED source checkout: upstream changes, moves and removes the slot', () => {
+  let src;
+  let target;
+  const srcCli = () => path.join(src, 'scripts', 'sync-to-repos.mjs');
+  const srcGit = (...args) => git(['-c', 'user.email=test@example.invalid', '-c', 'user.name=Block Holds Test', ...args], src);
+  const editSource = (fn, msg) => {
+    for (const rel of ['skills/nav-audit/SKILL.md', NAV]) {
+      const p = path.join(src, rel);
+      fs.writeFileSync(p, fn(fs.readFileSync(p, 'utf-8').replace(/\r\n/g, '\n')));
+    }
+    srcGit('commit', '-q', '-am', msg, '--no-gpg-sign');
+  };
+  const syncFrom = async () => {
+    const r = await execFileAsync(process.execPath, [srcCli(), '--target-path', target, '--no-prompt'], syncExecOptions({ cwd: src }))
+      .then((x) => ({ code: 0, out: x.stdout + x.stderr }), (e) => ({ code: e.code, out: `${e.stdout ?? ''}${e.stderr ?? ''}` }));
+    return { ...r, text: stripAnsi(r.out) };
+  };
+  const tRead = (rel) => fs.readFileSync(path.join(target, rel), 'utf-8');
+  const tCommit = (msg) => { git(['add', '-A'], target); git(['commit', '-q', '-m', msg, '--no-gpg-sign', '--allow-empty'], target); };
+
+  before(async () => {
+    src = path.join(tmp, 'source');
+    git(['worktree', 'add', '-q', '--detach', src, 'HEAD'], REPO_ROOT);
+    // Overlay the working tree under test (modified + untracked files), so the fixture syncs the code being tested even
+    // before it is committed; then commit it there so the source is clean (a dirty source is its own sync condition).
+    // Everything that differs from HEAD (staged AND unstaged) plus untracked files; a path gone from the working tree is
+    // deleted in the fixture too, so it carries exactly the state under test.
+    const changed = [
+      ...git(['diff', '-z', '--name-only', 'HEAD'], REPO_ROOT).split('\0'),
+      ...git(['ls-files', '-z', '--others', '--exclude-standard'], REPO_ROOT).split('\0'),
+    ].filter(Boolean);
+    for (const rel of new Set(changed)) {
+      const from = path.join(REPO_ROOT, rel);
+      const to = path.join(src, rel);
+      if (!fs.existsSync(from)) { fs.rmSync(to, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); continue; }
+      if (!fs.statSync(from).isFile()) continue;
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(from, to);
+    }
+    srcGit('add', '-A');
+    srcGit('commit', '-q', '--allow-empty', '-m', 'working tree under test', '--no-gpg-sign');
+    fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), path.join(src, 'node_modules'), 'junction');
+    target = path.join(tmp, 'consumer-lifecycle');
+    fs.mkdirSync(target, { recursive: true });
+    git(['init', '-q', '--initial-branch=main'], target);
+    git(['config', 'user.email', 'test@example.invalid'], target);
+    git(['config', 'user.name', 'Block Holds Test'], target);
+    fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name: 'block-holds-lifecycle', type: 'module' }, null, 2));
+    seedInstalledDeps(target);
+    fs.writeFileSync(path.join(target, '.gitignore'), '');
+    tCommit('init');
+    let r = await syncFrom();
+    assert.equal(r.code, 0, r.text.slice(-3000));
+    tCommit('first sync');
+    fs.mkdirSync(path.join(target, '.sync-blocks'), { recursive: true });
+    fs.writeFileSync(path.join(target, FRAG), FRAGMENT);
+    fs.writeFileSync(path.join(target, '.sync-overrides.json'), JSON.stringify({ version: 1, blocks: [navBlock] }, null, 2));
+    tCommit('declare block');
+    r = await syncFrom();
+    assert.equal(r.code, 0, r.text.slice(-3000));
+    tCommit('spliced');
+  });
+
+  after(() => {
+    // Unlink the node_modules JUNCTION first (rmdirSync removes the link, never its target), so no later recursive delete
+    // of the temp tree can walk into this repo's real node_modules; then deregister the worktree (--force twice: it holds
+    // untracked files), then prune whatever a locked directory left registered.
+    try { fs.rmdirSync(path.join(src, 'node_modules')); } catch { /* junction already gone */ }
+    try { git(['worktree', 'remove', '--force', '--force', src], REPO_ROOT); } catch { /* fall through to prune */ }
+    try { git(['worktree', 'prune'], REPO_ROOT); } catch { /* best effort */ }
+  });
+
+  it('an upstream edit outside the slot reaches the block-held file, block intact', async () => {
+    editSource((t) => t.replace('## Three modes', '## Three modes of operation'), 'upstream rewords a heading');
+    const r = await syncFrom();
+    assert.equal(r.code, 0, r.text.slice(-3000));
+    const text = tRead(NAV);
+    assert.match(text, /^## Three modes of operation$/m, 'the upstream change landed');
+    assert.ok(text.includes('Run the repo adapter: node scripts/openai-audit.mjs --mine\n<!-- sync-slot:target-adapter:end -->'), 'the block is intact');
+    assert.doesNotMatch(r.text, /overwrote consumer content/);
+    tCommit('upstream edit');
+  });
+
+  it('upstream moving the slot under another heading lands the block there and reports it', async () => {
+    editSource((t) => t.replace('<!-- sync-slot:target-adapter -->\n\n', '').replace('## Three modes of operation\n', '## Three modes of operation\n\n<!-- sync-slot:target-adapter -->\n'), 'upstream moves the slot');
+    const r = await syncFrom();
+    assert.equal(r.code, 0, r.text.slice(-3000));
+    assert.match(r.text, /upstream moved slot target-adapter in \.claude\/skills\/nav-audit\/SKILL\.md from under "[^"]*" to under "## Three modes of operation"/);
+    assert.match(tRead(NAV), /## Three modes of operation\n\n<!-- sync-slot:target-adapter:start/);
+    tCommit('slot moved');
+  });
+
+  it('upstream removing the slot fails the file loudly and keeps the consumer block', async () => {
+    const before = tRead(NAV);
+    editSource((t) => t.replace('<!-- sync-slot:target-adapter -->\n', ''), 'upstream removes the slot');
+    const r = await syncFrom();
+    assert.notEqual(r.code, 0, 'the target fails');
+    assert.match(r.text, /slot-missing|has no <!-- sync-slot:target-adapter --> marker/);
+    assert.equal(tRead(NAV), before, 'the consumer file, block included, is untouched');
   });
 });

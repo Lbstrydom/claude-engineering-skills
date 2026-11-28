@@ -116,7 +116,8 @@ function classifyLines(lines) {
       if (m && m[1][0] === fence.char && m[1].length >= fence.len && text.trim() === m[1]) fence = null;
       continue;
     }
-    if (m) {
+    // CommonMark: a backtick fence's info string may not contain a backtick (else the line is inline code, not a fence).
+    if (m && !(m[1][0] === '`' && text.slice(text.indexOf(m[1]) + m[1].length).includes('`'))) {
       fence = { char: m[1][0], len: m[1].length };
       out.push({ text, inFrontmatter, inFence: true, heading });
       continue;
@@ -176,8 +177,14 @@ export function normaliseFragment(raw, { from = '(fragment)' } = {}) {
   if (walked[walked.length - 1].inFence) {
     throw new SlotError(SLOT_ERROR.FRAGMENT_UNBALANCED_FENCE, `${from}: the fragment opens a fenced code block it never closes`);
   }
+  // DELIBERATELY no raw-HTML / CommonMark-block validation (code audit R1-R3, pivoted): the splice is TEXTUAL. Its
+  // boundaries are the marker lines, the next sync parses UPSTREAM source (never this rendered file), and every reader of a
+  // SKILL.md (the sync, an agent) reads raw text, not rendered markdown. Validating markdown rendering would need a full
+  // CommonMark parser to protect a property no reader depends on; the fence check above stays as cheap hygiene because the
+  // upstream marker lint keys on fence context. A fragment's markdown is the consumer's own content.
   return `${s}\n`;
 }
+
 
 /**
  * The first line of a rendered span. `from` is validated upstream of this

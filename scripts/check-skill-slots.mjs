@@ -46,16 +46,23 @@ export function lintSkillSlots(root) {
   const problems = [];
   let files = 0;
   let markers = 0;
+  // A symbolic link is REPORTED, never followed and never skipped (audit R2 H2): the same policy skills:size:gate applies,
+  // since a linked skill can neither be measured honestly nor ignored.
+  for (const e of entries.filter((d) => d.isSymbolicLink())) {
+    problems.push({ file: path.relative(process.cwd(), path.join(root, e.name)).split(path.sep).join('/'), line: 0, code: 'skill-symlink', message: `${e.name} is a symbolic link — skills must be real directories` });
+  }
   for (const e of entries.filter((d) => d.isDirectory()).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const file = path.join(root, e.name, 'SKILL.md');
-    if (!fs.existsSync(file)) continue;
+    const rel = path.relative(process.cwd(), file).split(path.sep).join('/');
+    // Read directly, never existsSync-then-read: existsSync folds an access error into "absent", which skipped a skill
+    // silently (audit R1 H4). Every skill directory carries a SKILL.md, so a missing one is a problem, not a skip.
     let text;
     try { text = fs.readFileSync(file, 'utf-8'); } catch (err) {
+      if (err?.code === 'ENOENT') { problems.push({ file: rel, line: 0, code: 'skill-md-missing', message: `${e.name}/ has no SKILL.md` }); continue; }
       return { status: 'unreadable', files, markers, problems, error: `${file}: ${err.message}` };
     }
     files++;
     markers += findSlotMarkers(text.replace(/\r\n/g, '\n')).length;
-    const rel = path.relative(process.cwd(), file).split(path.sep).join('/');
     for (const p of lintSlotMarkers(text)) problems.push({ file: rel, ...p });
   }
   if (files === 0) return { status: 'no-skills', files, markers, problems };

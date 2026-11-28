@@ -67,6 +67,7 @@ describe('validateOverrides — blocks', () => {
   it('absent blocks is fine; a non-array is an error', () => {
     assert.deepEqual(validateOverrides({ version: 1 }).blocks, []);
     assert.match(validateOverrides({ version: 1, blocks: {} }).errors.join(), /"blocks" must be an array/);
+    assert.match(validateOverrides({ version: 1, blocks: null }).errors.join(), /"blocks" must be an array/, 'present-but-null is not absent (audit R1 H2)');
   });
 });
 
@@ -155,6 +156,11 @@ describe('adoption: a whole-file hold swapped for a block hold (plan Q4)', async
     assert.equal(adoptionState([], DEST, cur), 'none');
   });
 
+  it('a later ordinary write supersedes an older hold (audit R1 H5)', () => {
+    for (const key of ['created', 'updated']) assert.equal(adoptionState([{ syncedAt: 't', [key]: [DEST] }, held(DEST)], DEST, cur), 'none', key);
+    assert.equal(adoptionState([{ syncedAt: 't', divergedOverwritten: [{ path: DEST }] }, held(DEST)], DEST, cur), 'none');
+  });
+
   it('pending requires a CURRENT block declaration and no override (a dropped hold keeps the old table)', () => {
     assert.equal(adoptionState([held(DEST)], DEST, { hasBlocks: false, hasOverride: false }), 'none');
     assert.equal(adoptionState([held(DEST)], DEST, { hasBlocks: true, hasOverride: true }), 'none');
@@ -173,6 +179,11 @@ describe('adoption: a whole-file hold swapped for a block hold (plan Q4)', async
     const base = { diskBytes: disk, fragments: frags, matchesHead: true, adoptHeldFile: token };
     assert.deepEqual(assessBlockMigration(base), { eligible: true, failed: null, token });
     assert.equal(assessBlockMigration({ ...base, fragments: [{ content: 'NOT THERE\n' }] }).failed, 'c');
+    // Whole lines only (audit R1 H1): a fragment that is a PREFIX of a held line is not present.
+    assert.equal(assessBlockMigration({ ...base, fragments: [{ content: 'old\n' }] }).failed, 'c', '`old` inside `old upstream` is not a line');
+    assert.equal(assessBlockMigration({ ...base, fragments: [{ content: 'ADAPT\n' }] }).failed, 'c');
+    assert.equal(assessBlockMigration({ ...base, fragments: [{ content: '# Skill\r\n' }] }).failed, null, 'CRLF fragment folds (M4); the first line counts');
+    assert.equal(assessBlockMigration({ ...base, fragments: [{ content: 'old upstream' }] }).failed, null, 'the last line, even without its newline');
     assert.equal(assessBlockMigration({ ...base, matchesHead: false }).failed, 'd');
     assert.equal(assessBlockMigration({ ...base, matchesHead: null }).failed, 'd', 'git unanswerable is not committed');
     assert.equal(assessBlockMigration({ ...base, adoptHeldFile: null }).failed, 'e');
@@ -224,8 +235,14 @@ describe('prior-upstream rendering: a blob that predates the slot is incomparabl
       plainThrow.matches(SRC, 'f'.repeat(64), { render: () => { throw new Error('boom'); }, acceptRaw: false });
       assert.equal(plainThrow.stats.renderFailures, 1);
       assert.equal(plainThrow.stats.slotIncomparable, 0);
+
+      // Only slot-missing is the expected pre-marker case (audit R1 M8): another slot error is a render failure.
+      const otherSlot = createPriorUpstreamResolver({ sourceRoot: dir });
+      otherSlot.matches(SRC, 'f'.repeat(64), { render: () => { throw new SlotError('slot-duplicate', 'twice'); }, acceptRaw: false });
+      assert.equal(otherSlot.stats.renderFailures, 1);
+      assert.equal(otherSlot.stats.slotIncomparable, 0);
     } finally {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

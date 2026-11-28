@@ -37,7 +37,6 @@ Usage:
 Device presets: desktop (default) | desktop-large | tablet | mobile | mobile-small
 Examples:
   /click-test http://localhost:3000
-  /click-test https://myapp.railway.app --routes "/,/cellar,/admin"
   /click-test http://localhost:3000 --with-modals --scope a11y
   /click-test https://myapp.railway.app --device mobile                            — mobile only
   /click-test https://myapp.railway.app --devices "desktop,mobile" --with-modals   — cross-device coverage
@@ -139,8 +138,9 @@ scan, check:
 
 1. **Cross-origin redirect** (OAuth / SSO): if `new URL(location.href).origin !==
    new URL(targetUrl).origin`, classify as `coverageStatus: "auth-required"`
-   regardless of DOM content. Catches OAuth redirects (Google, Okta, Auth0):
-   never attribute a third-party page's findings to the audited app.
+   regardless of DOM content. Catches OAuth providers (Google, Okta, Auth0)
+   that redirect to a third-party domain — never scan accessibility of those
+   pages and attribute findings to the audited app.
 2. **Same-origin password form**: if URL is same-origin AND DOM contains
    `[type=password]`, classify as `coverageStatus: "auth-required"`. Catches
    first-party login walls.
@@ -148,8 +148,9 @@ scan, check:
 click-test does not log in itself. If primary surfaces need a login,
 pre-authenticate the shared driver connection via `--storage-state` before
 running — see [`references/auth-bootstrap.md`](references/auth-bootstrap.md).
-The OVERALL verdict is at most
-`Incomplete` (never `Clean`) when any route is `auth-required`.
+The OVERALL verdict
+becomes at most `Incomplete` (never `Clean`) when any route is
+`auth-required`.
 → `references/scan-rules-detail.md` §Auth-gated routes — read when a target is login-gated.
 
 ---

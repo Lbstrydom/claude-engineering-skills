@@ -10,10 +10,21 @@
  * `sync-slots.mjs`, declaration checks in `sync-overrides.mjs`, adoption in
  * `sync-divergence.mjs`. Source-side only: never shipped to a consumer.
  *
+ * DECIDED (audit R1 H6): the prior-upstream rule keeps accepting a RAW earlier
+ * upstream blob for a block-declared path. A raw upstream blob carries no
+ * consumer block by construction, so a disk equal to one is a stale snapshot
+ * the consumer typed nothing into, and replacing it with upstream + block
+ * loses nothing. Before its first block sync such a path legitimately held raw
+ * upstream bytes, which is what separates it from a rewritten path (that never
+ * did). A pending hold → block adoption pre-empts the rule entirely
+ * (`decideAction` 1b/1c sit above it), so a HELD file is never replaced this way.
+ *
  * Plan: docs/plans/sync-skill-block-holds.md
  *
  * @module scripts/lib/sync-block-run
  */
+
+import fs from 'node:fs';
 
 import { loadBlockFragments, checkFragmentSources, reconcileBlockDestinations, OVERRIDES_PATH } from './sync-overrides.mjs';
 import { adoptionState, assessBlockMigration, describeAdoptionFailure, BASE_STATE } from './sync-divergence.mjs';
@@ -77,12 +88,15 @@ export function createBlockRun({ repoRoot, overridesDoc, receiptEntries, read })
      * The `blockAdoption` input `decideAction` takes, or null when no adoption
      * question arises (no declaration, not diverged, or held).
      */
-    adoption({ dstRel, baseState, override, vcs, diskBytes }) {
+    adoption({ dstRel, baseState, override, vcs }) {
       const frags = byDest.get(dstRel);
       if (!frags?.length || override || baseState !== BASE_STATE.DIVERGED) return null;
       if (adoptionState(receiptEntries, dstRel, { hasBlocks: true, hasOverride: false }) !== 'pending') return null;
+      // Read only now, through the contained, link-refusing seam. A failed read is condition (d) — never eligible.
+      const disk = read(repoRoot, dstRel, { read: (p) => fs.readFileSync(p) });
+      if (disk.state !== 'present') return { pending: true, eligible: false, failed: 'd', token: null };
       const a = assessBlockMigration({
-        diskBytes, fragments: frags, matchesHead: vcs?.matchesHead ?? null,
+        diskBytes: disk.content, fragments: frags, matchesHead: vcs?.matchesHead ?? null,
         adoptHeldFile: frags.find((f) => f.adoptHeldFile)?.adoptHeldFile ?? null,
       });
       return { pending: true, ...a };

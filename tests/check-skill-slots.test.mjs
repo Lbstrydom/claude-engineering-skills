@@ -11,7 +11,7 @@ import path from 'node:path';
 import { lintSkillSlots } from '../scripts/check-skill-slots.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-slots-'));
-after(() => fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 }));
+after(() => fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 const skill = (root, name, body) => {
   fs.mkdirSync(path.join(root, name), { recursive: true });
   fs.writeFileSync(path.join(root, name, 'SKILL.md'), body);
@@ -22,6 +22,21 @@ describe('lintSkillSlots', () => {
     assert.equal(lintSkillSlots(path.join(tmp, 'absent')).status, 'unreadable');
     fs.mkdirSync(path.join(tmp, 'empty'));
     assert.equal(lintSkillSlots(path.join(tmp, 'empty')).status, 'no-skills');
+    // A skill directory with no SKILL.md is reported, never skipped (audit R1 H4): the other skill being clean is not a pass.
+    const mixed = path.join(tmp, 'mixed');
+    skill(mixed, 'ok', '# ok\n');
+    fs.mkdirSync(path.join(mixed, 'hollow'));
+    const r = lintSkillSlots(mixed);
+    assert.equal(r.status, 'problems');
+    assert.deepEqual(r.problems.map((p) => p.code), ['skill-md-missing']);
+    // A symbolic link (a junction on Windows) is reported, never followed and never skipped (audit R2 H2).
+    skill(path.join(tmp, 'bad'), 'x', '---\nname: x\n---\n\n```\n<!-- sync-slot:a -->\n```\n');
+    const linked = path.join(tmp, 'linked');
+    skill(linked, 'real', '# real\n');
+    fs.symlinkSync(path.join(tmp, 'bad', 'x'), path.join(linked, 'via-link'), 'junction');
+    const lr = lintSkillSlots(linked);
+    assert.equal(lr.status, 'problems');
+    assert.ok(lr.problems.some((p) => p.code === 'skill-symlink'), JSON.stringify(lr.problems));
   });
 
   // Gate contract skills-check-detects-slot-marker-in-fence (scripts/gate-contracts/skills-check.json) pills this case.

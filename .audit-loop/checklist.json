@@ -399,6 +399,30 @@
       "stated": "indented under `description: |` it is description TEXT, parsed,"
     },
     {
+      "id": "skill-slot-marker-misplaced",
+      "trigger": {
+        "paths": [
+          "scripts/check-skill-slots.mjs",
+          "scripts/lib/sync-slots.mjs"
+        ],
+        "patterns": [
+          "sync-slot:"
+        ],
+        "patternPaths": [
+          "skills/*/SKILL.md"
+        ]
+      },
+      "check": "A slot marker sits at column 0, outside frontmatter and fenced code, once per name. AGENTS.md: \"Upstream declares the slot (`<!-- sync-slot:<name> -->`, linted in `skills:check`), the consumer declares the fragment\".",
+      "incident": "A marker inside a fence is inert: a consumer that declared a block for it finds out only at its own sync, when the file stops updating (docs/plans/sync-skill-block-holds.md).",
+      "control": {
+        "path": "skills/nav-audit/SKILL.md",
+        "text": "  <!-- sync-slot:target-adapter -->",
+        "negativePath": "scripts/lib/vcs.mjs"
+      },
+      "gateContract": "scripts/gate-contracts/skills-check.json#skills-check-detects-slot-marker-in-fence",
+      "stated": "declares the slot (`<!-- sync-slot:<name> -->`, linted in `skills:check`)"
+    },
+    {
       "id": "synced-skill-content-reachable-refs",
       "trigger": {
         "paths": [

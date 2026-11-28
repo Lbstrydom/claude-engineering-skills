@@ -698,7 +698,8 @@ export function createPriorUpstreamResolver({
     } catch (err) {
       // A declared slot that an EARLIER upstream version predates is expected, not a renderer fault: that blob is incomparable
       // (never a match, so never overwrite permission), counted apart so a real renderer regression stays visible.
-      if (err?.name === 'SlotError') stats.slotIncomparable++; else stats.renderFailures++;
+      // Only `slot-missing` is the expected pre-marker case; any other slot error in history is a real render failure.
+      if (err?.name === 'SlotError' && err.code === 'slot-missing') stats.slotIncomparable++; else stats.renderFailures++;
       return null;
     }
   }
@@ -770,9 +771,12 @@ export function adoptionToken(bytes) {
  * @returns {'pending'|'adopted'|'none'}
  */
 export function adoptionState(entries, p, { hasBlocks, hasOverride }) {
+  const named = (list) => (list || []).some((x) => (typeof x === 'string' ? x : x?.path) === p);
   for (const e of entries || []) {
-    if ((e?.overridesHeld || []).some((h) => h?.path === p)) return hasBlocks && !hasOverride ? 'pending' : 'none';
-    if ((e?.blocksApplied || []).some((b) => b?.path === p)) return 'adopted';
+    if (named(e?.overridesHeld)) return hasBlocks && !hasOverride ? 'pending' : 'none';
+    if (named(e?.blocksApplied)) return 'adopted';
+    // A later ordinary write SUPERSEDES an older hold: the file is the sync's again, so there is nothing to adopt.
+    if (named(e?.created) || named(e?.updated) || named(e?.divergedOverwritten)) return 'none';
   }
   return 'none';
 }
@@ -797,8 +801,14 @@ export function adoptionState(entries, p, { hasBlocks, hasOverride }) {
  */
 export function assessBlockMigration({ diskBytes, fragments, matchesHead, adoptHeldFile }) {
   const token = adoptionToken(diskBytes);
-  const disk = canonicalizeEol(Buffer.from(diskBytes)).toString('utf-8');
-  const missing = (fragments || []).some((f) => !disk.includes(f.content.endsWith('\n') ? f.content.slice(0, -1) : f.content));
+  const fold = (x) => canonicalizeEol(Buffer.isBuffer(x) ? x : Buffer.from(String(x ?? ''), 'utf-8')).toString('utf-8');
+  // WHOLE lines: framed by newlines on both sides, so `packaged\n` never matches inside `packaged-other\n`.
+  let disk = `\n${fold(diskBytes)}`;
+  if (!disk.endsWith('\n')) disk += '\n';
+  const missing = (fragments || []).some((f) => {
+    const frag = fold(f.content);
+    return !frag.trim() || !disk.includes(`\n${frag.endsWith('\n') ? frag : `${frag}\n`}`);
+  });
   if (missing) return { eligible: false, failed: 'c', token };
   if (matchesHead !== true) return { eligible: false, failed: 'd', token };
   if (adoptHeldFile !== token) return { eligible: false, failed: 'e', token };

@@ -1305,7 +1305,7 @@ async function main() {
       // bytes, so each earlier blob is RENDERED through the same outbound pipeline (priorRenderer) and compared as rendered-to-rendered;
       // RAW blob hashes count only when this destination has no rewrites, so a raw blob committed at a rewritten path stays a divergence.
       if (vcs) vcs.priorUpstream = priorUpstream.matches(srcRel, dstHash, { render: priorRenderer(srcRel, dstRel), acceptRaw: !rewriteResult.hits });
-      const blockAdoption = blockRun.adoption({ dstRel, baseState, override, vcs, diskBytes: dstExists ? fs.readFileSync(dstPath) : Buffer.alloc(0) });
+      const blockAdoption = blockRun.adoption({ dstRel, baseState, override, vcs });
       const decision = decideAction({
         baseState,
         vcs,

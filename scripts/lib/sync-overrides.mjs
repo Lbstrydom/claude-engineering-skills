@@ -284,7 +284,8 @@ export function validateOverrides(raw) {
     });
   }
 
-  validateBlocks(raw.blocks ?? [], overrides, blocks, errors);
+  // Present-but-null is an ERROR, never "no blocks": a declaration nobody can read must not fail open (absent is fine).
+  validateBlocks(Object.hasOwn(raw, 'blocks') ? raw.blocks : [], overrides, blocks, errors);
 
   return { overrides, gitignoreExtra, syncOptIn, blocks, errors };
 }
