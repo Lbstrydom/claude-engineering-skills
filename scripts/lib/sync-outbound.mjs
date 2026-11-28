@@ -33,6 +33,7 @@ import { injectUpstreamBanner } from './sync-banner.mjs';
 import { canonicaliseOutboundEol } from './sync-eol-pins.mjs';
 import { classifyOwnership } from './sync-ownership.mjs';
 import { isCoOwnedJsonDest } from './sync-path-map.mjs';
+import { spliceBlocks } from './sync-slots.mjs';
 
 /**
  * Render the bytes the sync writes to `dstRel`. PURE. THROWS on a JSON that does not
@@ -44,9 +45,14 @@ import { isCoOwnedJsonDest } from './sync-path-map.mjs';
  * @param {string} a.srcContent      the source file's text
  * @param {string|null} [a.existingContent]  the consumer's current text; consulted ONLY for a shared (co-owned) JSON surface
  * @param {object} a.rewriteConfig
- * @returns {{content: string, rewrite: {changed: boolean, hits: number}, pinsHeld: Array<{key: string, server: string}>}}
+ * @param {Array<{slot: string, content: string, from: string}>} [a.blocks]  this consumer's declared blocks for `dstRel`
+ *   (`.sync-overrides.json` `blocks`, fragments already normalised). EVERY caller must pass them — the write loop, the
+ *   prior-upstream renderer and the ownership scan — or they compare different bytes. A slot that cannot be filled
+ *   THROWS a `SlotError` (lib/sync-slots.mjs): the consumer's block is never silently dropped.
+ * @returns {{content: string, rewrite: {changed: boolean, hits: number}, pinsHeld: Array<{key: string, server: string}>,
+ *   blocksApplied: Array<{slot: string, anchorHeading: string|null}>}}
  */
-export function renderOutbound({ srcRel, dstRel, srcContent, existingContent = null, rewriteConfig }) {
+export function renderOutbound({ srcRel, dstRel, srcContent, existingContent = null, rewriteConfig, blocks = [] }) {
   // Fold to LF before anything hashes, compares or writes (the bytes a consumer receives are a function of committed
   // source, not of which checkout ran the sync — see canonicaliseOutboundEol).
   let out = canonicaliseOutboundEol(dstRel, srcContent);
@@ -65,11 +71,15 @@ export function renderOutbound({ srcRel, dstRel, srcContent, existingContent = n
     out = JSON.stringify(guarded.value, null, 2) + '\n';
   }
   const rewritten = rewriteCommandSurface({ relPath: dstRel, content: out, config: rewriteConfig });
+  // Consumer blocks go in AFTER the rewriter, so a consumer's own command lines reach it verbatim (the rewriter owns
+  // upstream's command surface, never the consumer's), and before the banner and any hash.
+  const spliced = spliceBlocks(rewritten.rewritten, blocks);
   // The banner goes on last, BEFORE any hash, so the manifest matches what is written (idempotent: the source is banner-free).
   return {
-    content: injectUpstreamBanner(rewritten.rewritten, dstRel),
+    content: injectUpstreamBanner(spliced.content, dstRel),
     rewrite: { changed: rewritten.changed, hits: rewritten.hits },
     pinsHeld,
+    blocksApplied: spliced.applied,
   };
 }
 
@@ -88,12 +98,13 @@ export function renderOutbound({ srcRel, dstRel, srcContent, existingContent = n
  * @param {string|null} a.destContent   the destination's text, null if unreadable
  * @param {string|null} a.sourceText    the source file's text, null if unreadable (then only the banner can prove anything)
  * @param {object} a.rewriteConfig
+ * @param {Array<object>} [a.blocks]  this destination's declared blocks — the SAME ones the write loop renders with
  * @param {string} a.bannerMarker
  * @param {(o: {acceptRaw: boolean}) => boolean|null} [a.priorUpstreamMatches]  true / false / null (unknown); asked last. `acceptRaw` is
  *   false when a rewrite touched the file: only an earlier version RENDERED through the same pipeline may then count.
  * @returns {{disposition: 'owned'|'shared-merge'|'collision', evidence?: string, reason?: string}}
  */
-export function decideUnmanifested({ srcRel, dstRel, destContent, sourceText, rewriteConfig, bannerMarker, priorUpstreamMatches }) {
+export function decideUnmanifested({ srcRel, dstRel, destContent, sourceText, rewriteConfig, blocks = [], bannerMarker, priorUpstreamMatches }) {
   if (isCoOwnedJsonDest(srcRel)) {
     try {
       const json = JSON.parse(destContent ?? '');
@@ -105,7 +116,8 @@ export function decideUnmanifested({ srcRel, dstRel, destContent, sourceText, re
   let hits = 0;
   if (typeof sourceText === 'string') {
     try {
-      const r = renderOutbound({ srcRel, dstRel, srcContent: sourceText, existingContent: null, rewriteConfig });
+      // A throwing render (incl. a declared slot upstream lacks) leaves `expected` null: ownership then rests on the banner, never a guess.
+      const r = renderOutbound({ srcRel, dstRel, srcContent: sourceText, existingContent: null, rewriteConfig, blocks });
       expected = r.content;
       hits = r.rewrite.hits;
     } catch { expected = null; }

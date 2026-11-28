@@ -37,6 +37,8 @@ Usage:
   /nav-audit --bootstrap --from-url <url>   — draft nav-contract.json navLayers from the live app (refuses to clobber; --force to replace)
 ```
 
+<!-- sync-slot:target-adapter -->
+
 # /nav-audit — Contract-backed Navigation Verifier (with static assists)
 
 > **This skill's last line is an end marker naming the skill between em-dashes, after
@@ -47,11 +49,11 @@ Usage:
 The third UX-quality lens. **persona-test is journey-first, click-test is
 page-first, nav-audit is system-first.**
 
-## Three modes (know which one you're in)
+## Three modes
 
 1. **static-only** (`/nav-audit`, no URL) — route/destination **inventory** + the
    pre-deploy **CI drift-gate** on declared-intent edges. Runs on a PR with no
-   deployed URL. **Low confidence on data-driven nav** (the persona scorecard
+   URL. **Low confidence on data-driven nav** (the persona scorecard
    shows `?` and the audit says "run --verify"); honest by design.
 2. **live-verified** (`/nav-audit --verify <url>`) — drives the live app across
    viewports and **authoritatively attributes each destination to its nav layer**,

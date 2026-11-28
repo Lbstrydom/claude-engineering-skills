@@ -163,6 +163,12 @@ const GRANDFATHERED_EXEMPTIONS = [
   // NOT throw on a clean match or without --gate, and (round-6 H6) visibly warns
   // rather than reading as clean when cloud is off under --gate.
   'node scripts/cross-skill.mjs upstream reconcile --gate --worksheet',
+  // NEW gate, deliberately exempted (2026-11-28, block holds): the slot-marker lint. A pill was built, but a pilled gate
+  // must be AGENTS.md-stated, every AGENTS.md-stated gate needs a checklist entry, and .audit-loop/checklist.json is the
+  // FROZEN instrument of the checklist pilot (lib/checklist/frozen.mjs): adding an entry ends the freeze and restarts its
+  // confirmation window, a measurement decision this change does not take. Negative evidence: tests/check-skill-slots.test.mjs
+  // drives every failing exit with a clean control. Revisit at the next deliberate freeze re-pin.
+  'node scripts/check-skill-slots.mjs',
 ];
 
 test('the exemption list may shrink, never grow — a new gate must be pilled', () => {

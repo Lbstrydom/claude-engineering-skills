@@ -198,21 +198,23 @@ Otherwise treat `persona_input` as an ad-hoc persona description;
 If `repo_name` is not on the persona, detect from `PERSONA_TEST_REPO_NAME` env,
 or `git remote get-url origin`, or leave null.
 
-Now that `repo_name` is resolved (or confirmed null), compute
+With `repo_name` resolved (or null), compute
 `audit_link = memory_enabled && repo_name` — cross-referencing needs both
-cloud storage AND a resolved repo identity to look findings up against.
+cloud storage AND a resolved repo identity.
 
 ---
 
 ## Phase 0d — Audit-Loop Pre-Test Enrichment
 
-Skip if `audit_link = false`. When on, fetch recent HIGH + MEDIUM audit
+Skip if `audit_link = false`; else fetch recent HIGH + MEDIUM audit
 findings (with `id` + `run_id` for Phase 6b correlations) and add a
 **Known Code Fragilities** section to the persona mental model in Phase 2.
 
 Full rules + query shape: `references/audit-correlation.md`.
 
 ---
+
+<!-- sync-slot:target-adapter -->
 
 ## Phase 1 — Detect Browser Tool
 

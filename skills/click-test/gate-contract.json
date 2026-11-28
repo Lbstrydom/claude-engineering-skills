@@ -33,6 +33,10 @@
       "reason": "This is the same claim already covered by the 'verdict-precedence' document-only gate above — the surrounding paragraph was rewritten to add the auth-bootstrap cross-link, which shifted this sentence onto a new diff line without changing its meaning. 'verdict-precedence' already explains why no cli-exit/unit-seam oracle applies (no click-test CLI entry point)."
     },
     {
+      "line": "that redirect to a third-party domain — never scan accessibility of those",
+      "reason": "Pre-existing guidance, unchanged in meaning: it reached a diff only because a block-holds commit reworded and then restored this paragraph (docs/plans/sync-skill-block-holds.md). It is a rule the agent follows while classifying an auth-required route, the same agent-behavioural category as the verdict-precedence document-only gate: click-test has no CLI entry point, so there is no exit code an oracle could assert."
+    },
+    {
       "line": "declaredSeverity: enum(\"P0\",\"P1\",\"P2\",\"P3\"),  // the kind's intrinsic severity, pre-cap",
       "reason": "A field in the pseudo-Zod finding contract, not a gate claim. The cap it records IS mechanically enforced in push() and asserted per-kind by tests/click-test-perceivability.test.mjs against a real browser; this line only names the field that preserves the pre-cap value."
     },

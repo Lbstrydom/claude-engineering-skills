@@ -129,12 +129,14 @@ const NOTE = 'Written by the claude-engineering-skills sync. Committed on purpos
  *   (`sync-legacy-copilot-block.mjs`). Not `updated` (those are upstream bytes
  *   the manifest tracks) nor `gcDeleted` (manifest-owned files): the file is the
  *   consumer's, and only the span we can prove we wrote was removed.
+ * @param {Array<{path: string, slot: string, from: string, fragmentSha: string, anchorHeading: string|null, anchorMoved: boolean}>} [input.blocksApplied]
+ * @param {Array<{path: string, slot: string|null, code: string}>} [input.blockErrors]
  * @param {number} input.unchanged
  * @returns {object}
  */
 export function buildReceiptEntry({
   syncedAt, source, created = [], updated = [], gcDeleted = [],
-  overridesHeld = [], divergedOverwritten = [], divergenceRefused = [], legacyRetired = [], retiredHeld = [], unchanged = 0,
+  overridesHeld = [], divergedOverwritten = [], divergenceRefused = [], legacyRetired = [], retiredHeld = [], blocksApplied = [], blockErrors = [], unchanged = 0,
 }) {
   const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   return {
@@ -156,6 +158,8 @@ export function buildReceiptEntry({
       divergedOverwritten: divergedOverwritten.length,
       divergenceRefused: divergenceRefused.length,
       legacyRetired: legacyRetired.length,
+      blocksApplied: blocksApplied.length,
+      blockErrors: blockErrors.length,
     },
     created: [...created].sort(),
     updated: [...updated].sort(),
@@ -173,8 +177,16 @@ export function buildReceiptEntry({
     // Tooling files upstream RETIRED that the consumer had edited, so gc HELD them instead of deleting (`--overwrite-diverged`
     // deletes). Standing state, so a repeat of the same list is not a reason to write a new entry.
     retiredHeld: [...retiredHeld].sort(),
+    // Block holds (docs/plans/sync-skill-block-holds.md): a (path, slot) is recorded only when the bytes on disk AFTER the run carry
+    // that block (written, or unchanged and already carrying it), never for a refused, failed or held file. Standing state, like
+    // overridesHeld: the newest entry that records a path is what adoptionState and anchorMoved read.
+    blocksApplied: [...blocksApplied].sort(bySlot),
+    // Every slot or declaration error, so a consumer CI check can fail on the committed record alone.
+    blockErrors: [...blockErrors].sort(bySlot),
   };
 }
+
+const bySlot = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : String(a.slot ?? '') < String(b.slot ?? '') ? -1 : String(a.slot ?? '') > String(b.slot ?? '') ? 1 : 0);
 
 /** An entry is anything carrying the one field every reader keys on. */
 const looksLikeEntry = (e) => !!e && typeof e === 'object' && !Array.isArray(e)
@@ -399,6 +411,8 @@ export function receiptShouldWrite(prevEntry, nextEntry) {
     divergenceRefused: r.divergenceRefused,
     legacyRetired: r.legacyRetired ?? [],
     retiredHeld: r.retiredHeld ?? [],
+    blocksApplied: r.blocksApplied ?? [],
+    blockErrors: r.blockErrors ?? [],
   });
   return strip(prevEntry) !== strip(nextEntry);
 }

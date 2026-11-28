@@ -76,6 +76,16 @@ describe('the bundle the sync ships IS the bundle the library reports', () => {
     assert.deepEqual(REPOS[0].files, lib.files);
     assert.deepEqual(REPOS[0].unresolved, lib.unresolved);
   });
+
+  it('the consumer verifier\'s block-hold closure ships: sync-overrides.mjs and the sync-slots.mjs it imports', () => {
+    // sync-overrides.mjs is a SYNC_ISOLATION_ENTRY the consumer verifier imports; its block validation imports
+    // sync-slots.mjs, which reaches consumers only through the walked closure. Missing, the verifier dies on
+    // MODULE_NOT_FOUND in every consumer (docs/plans/sync-skill-block-holds.md, audit R1 H4).
+    const files = new Set(inventory.getSyncClosure().files);
+    for (const f of ['scripts/lib/sync-overrides.mjs', 'scripts/lib/sync-slots.mjs', 'scripts/lib/bundle-generated-stores.mjs']) {
+      assert.ok(files.has(f), `${f} is not in the shipped bundle`);
+    }
+  });
 });
 
 // Both the fail-closed migrations read and its quiet ENOENT case, on the one owner.

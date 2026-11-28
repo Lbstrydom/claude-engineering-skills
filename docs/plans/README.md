@@ -366,6 +366,7 @@ source comments that no docs linter sees — stays valid.
 | [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived ownership, §B untrack consumer manifest) implemented… |
 | [sync-pr supersedes an older open sync PR](./sync-pr-supersede-open-sync-pr.md) | `Complete` | shipped in #230, #238, #242 (status reconciled against merged PRs 2026-10-25) |
 | [Sync contract — structural receipt check (gate 2B) + undeclared required-dep warning](./sync-receipt-structural-and-undeclared-deps.md) | `Complete` | shipped in #231 (status reconciled against merged PRs 2026-10-25) |
+| [Block holds: a consumer block inside a synced SKILL.md](./sync-skill-block-holds.md) | `Complete` |  |
 | [Sync checks the consumer's lag BEFORE writing; a failed tree-kill is reported](./sync-stale-base-and-stoptree.md) | `Complete` | shipped in #288 (status reconciled against merged PRs 2026-10-25) |
 | [sync-to-repos failure honesty (verified audit hypotheses from #231)](./sync-to-repos-failure-honesty.md) | `Complete` | shipped in #233, #236 (H6 receipt/manifest lock stays recorded debt)… |
 | [Tech Debt Wave 2 — Responsibility Splits & Safety Fixes](./tech-debt-wave-2.md) | `Complete` | shipped — `scripts/shared.mjs` god-module split into focused `scripts/lib/*.mjs` files: `code-analysis.mjs`,… |
@@ -444,6 +445,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit convergence summary — runs-findings write-boundary hardening](./runs-findings-write-boundary-hardening-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
 | [/audit-code summary — sync-output-drift-classification](./sync-output-drift-classification-audit-summary.md) |  |
+| [Audit summary: Block holds (docs/plans/sync-skill-block-holds.md)](./sync-skill-block-holds-audit-summary.md) |  |
 | [Audit summary: sync-to-repos failure honesty](./sync-to-repos-failure-honesty-audit-summary.md) |  |
 | [Audit summary — test-runner-hang-guard](./test-runner-hang-guard-audit-summary.md) |  |
 | [Audit Summary: triage-independence-test-and-write-boundary-fixes](./triage-independence-test-and-write-boundary-fixes-audit-summary.md) |  |

@@ -37,7 +37,6 @@ Usage:
 Device presets: desktop (default) | desktop-large | tablet | mobile | mobile-small
 Examples:
   /click-test http://localhost:3000
-  /click-test https://myapp.railway.app --routes "/,/cellar,/admin"
   /click-test http://localhost:3000 --with-modals --scope a11y
   /click-test https://myapp.railway.app --device mobile                            — mobile only
   /click-test https://myapp.railway.app --devices "desktop,mobile" --with-modals   — cross-device coverage
@@ -155,6 +154,8 @@ becomes at most `Incomplete` (never `Clean`) when any route is
 → `references/scan-rules-detail.md` §Auth-gated routes — read when a target is login-gated.
 
 ---
+
+<!-- sync-slot:target-adapter -->
 
 ## Phase 1 — Detect Browser Tool
 
