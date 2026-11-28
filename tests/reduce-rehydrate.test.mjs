@@ -599,7 +599,7 @@ describe('applyReduceDecisions — all-or-nothing contract', () => {
 describe('REDUCE prompt names only fields the emitted decision schema can carry', async () => {
   const { z } = await import('zod');
   const { zodTextFormat } = await import('openai/helpers/zod');
-  const { ReduceDecisionSchema } = await import('../scripts/lib/audit/map-reduce-scheduler.mjs');
+  const { ReduceDecisionSchema } = await import('../scripts/lib/schemas.mjs');
   const { REDUCE_SYSTEM_PROMPT } = await import('../scripts/lib/code-analysis.mjs');
   const emitted = z.toJSONSchema(ReduceDecisionSchema);
   const itemOf = (key) => emitted.properties[key].items;

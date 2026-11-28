@@ -141,6 +141,7 @@ function findRefinements(schema, cursor = '(root)', seen = new Set()) {
 describe('every provider-facing schema is refinement-free (the PROPERTY)', () => {
   const cases = [
     ['ProducerEvidenceAnchorSchema', PROVIDER_FACING_SCHEMAS.ProducerEvidenceAnchorSchema],
+    ['ReduceDecisionSchema', PROVIDER_FACING_SCHEMAS.ReduceDecisionSchema],
     // The per-run V3 is dynamic — refinement-freeness is a property of the
     // factory, so instantiate it with a probe id.
     ['makeProducerFindingV3Schema(["f0001"])', makeProducerFindingV3Schema(['f0001'])],
