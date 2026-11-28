@@ -47,6 +47,7 @@ import {
 } from './lib/sync-receipt.mjs';
 import { readConsumerFile, readConsumerJson, writeConsumerFile, removeConsumerFile, acquireConsumerLock, hashConsumerFile } from './lib/sync-consumer-io.mjs';
 import { renderOutbound, decideUnmanifested } from './lib/sync-outbound.mjs';
+import { createBlockRun } from './lib/sync-block-run.mjs';
 import { createConfirmPrompt } from './lib/sync-prompt.mjs';
 import { describeSafeToCommit } from './lib/sync-status.mjs';
 import { describeUnmeasuredTargets, enforceBaseLagForTarget } from './lib/sync-base-lag.mjs';
@@ -909,7 +910,7 @@ async function main() {
     // 2221 for rewritten destinations: an earlier source blob rendered by the SAME outbound renderer with THIS consumer's config.
     // existingContent is null on purpose: a co-owned JSON surface must not fold today's disk into an "earlier version".
     const priorRenderer = (srcRel, dstRel) => (text) => {
-      const r = renderOutbound({ srcRel, dstRel, srcContent: text, existingContent: null, rewriteConfig });
+      const r = renderOutbound({ srcRel, dstRel, srcContent: text, existingContent: null, rewriteConfig, blocks: blockRun.for(dstRel) });
       return { content: r.content, hits: r.rewrite.hits };
     };
 
@@ -965,6 +966,9 @@ async function main() {
     for (const h of latestReceiptEntry(priorReceipt)?.overridesHeld || []) {
       if (h && typeof h.path === 'string') priorReceiptHeld.set(h.path, h);
     }
+    // Block holds (docs/plans/sync-skill-block-holds.md): fragments load here, and an unusable one ABORTS like a bad overrides file.
+    const blockRun = createBlockRun({ repoRoot: repo.path, overridesDoc, receiptEntries: priorReceipt.entries, read: readConsumerFile });
+    if (blockRun.errors.length) { console.log(`  ${R}ABORT${X}  ${OVERRIDES_PATH} blocks are unusable; refusing to sync this target:`); for (const e of blockRun.errors) console.log(`    ${R}${e}${X}`); totalErrors++; console.log(''); continue; }
 
     // Would this sync move the consumer BACKWARDS? A pre-push hook fires before
     // the remote accepts, so a rejected push from a stale tree used to rewrite
@@ -1089,6 +1093,8 @@ async function main() {
       const dstRel = sourceRelToDestRel(srcRel);
       intendedWrites.set(dstRel, srcRel);
     }
+    const badSources = blockRun.checkSources([...intendedWrites.keys(), ...Object.keys(priorFiles)]);
+    if (badSources.length) { console.log(`  ${R}ABORT${X}  ${OVERRIDES_PATH}:`); for (const e of badSources) console.log(`    ${R}${e}${X}`); totalErrors++; console.log(''); continue; }
     const journalRead = readConsumerJson(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL);
     if (journalRead.state === 'refused') { unusable(journalRead, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL); totalErrors++; console.log(''); continue; }
     // recovery state only: an unreadable/malformed journal reads as empty (unproven files then collide, which is the safe side)
@@ -1107,7 +1113,7 @@ async function main() {
       const dest = readConsumerFile(repo.path, dstRel);
       const verdict = decideUnmanifested({
         srcRel, dstRel, destContent: dest.state === 'present' ? dest.content : null, sourceText: mcpPlan.textFor(srcRel) ?? readSourceOrNull(srcRel),
-        rewriteConfig, bannerMarker: BANNER_MARKER,
+        rewriteConfig, blocks: blockRun.for(dstRel), bannerMarker: BANNER_MARKER,
         priorUpstreamMatches: ({ acceptRaw } = {}) => { const h = hashConsumerFile(repo.path, dstRel); return h.state === 'present' ? priorUpstream.matches(srcRel, h.hash.slice('sha256:'.length), { render: priorRenderer(srcRel, dstRel), acceptRaw: acceptRaw !== false }) : null; },
       });
       if (verdict.disposition === 'owned') contentOwned.push({ dstRel, evidence: verdict.evidence });
@@ -1218,9 +1224,11 @@ async function main() {
       try {
         const existing = coOwnedJson && dstExists ? readConsumerFile(repo.path, dstRel) : null; // contained: a link in the path is refused
         if (existing && existing.state !== 'present') throw new Error(`existing file is ${existing.state} (${existing.reason ?? existing.message ?? existing.code})`);
-        rendered = renderOutbound({ srcRel, dstRel, srcContent, existingContent: existing ? existing.content : null, rewriteConfig });
+        rendered = renderOutbound({ srcRel, dstRel, srcContent, existingContent: existing ? existing.content : null, rewriteConfig, blocks: blockRun.for(dstRel) });
+        blockRun.reached(dstRel);
       } catch (err) {
-        console.log(`  ${R}ERR${X}  ${dstRel}: ${dstRel.endsWith('.json') ? 'JSON merge' : 'render'} failed: ${err.message?.slice(0, 100)}`);
+        console.log(`  ${R}ERR${X}  ${dstRel}: ${dstRel.endsWith('.json') ? 'JSON merge' : 'render'} failed: ${err.name === 'SlotError' ? err.message : err.message?.slice(0, 100)}`);
+        if (err.name === 'SlotError') for (const l of blockRun.renderFailed(dstRel, err)) console.log(`${D}${l}${X}`);
         repoErrors++; totalErrors++; failedWrites.add(dstRel);
         continue;
       }
@@ -1237,48 +1245,15 @@ async function main() {
         : null;
 
       if (srcHash === dstHash) {
+        for (const w of blockRun.landed(dstRel, rendered.blocksApplied)) console.log(`  ${Y}note${X}  ${w}`);
         writtenHash.set(dstRel, `sha256:${srcHash}`); // the disk bytes ARE the outbound bytes
         repoUnchanged++; totalUnchanged++;
         continue;
       }
 
-      // Same content, different line endings ⇒ rewrite the line endings, and
-      // nothing else. (This branch used to skip; see the REPAIRED note below
-      // for why skipping made the churn permanent.)
-      //
-      // The sync copies WORKING-TREE bytes, and two checkouts of one commit do
-      // not agree on those: measured 2026-08-30, this repo's linked worktree
-      // held `.claude/hooks/bash-grep-nudge.mjs` with CRLF (2,222 bytes) while
-      // its main checkout held LF (2,155) — `.gitattributes` pins `eol=lf` and
-      // git calls BOTH clean. So whichever checkout last synced a consumer set
-      // that consumer's line endings, and the next sync from the other checkout
-      // read the difference as consumer content.
-      //
-      // With teeth: those files are TRACKED in the consumer, so the classifier
-      // fails closed to REFUSE, the whole target exits 1, and the refusal
-      // carries the stale base forward — self-perpetuating. Four files blocked
-      // a consumer's entire bundle over a difference no human made. AGENTS.md
-      // names the tell exactly: git says clean and the tool says changed, so
-      // the tool is comparing the wrong thing.
-      //
-      // Placed HERE rather than inside `classifyAgainstBase` deliberately: the
-      // manifest must keep hashing exact disk bytes, because there the hash is
-      // a transfer-integrity contract (`sync-isolation-verify` gate 2B). This
-      // folds EOL for one question only — is this difference the consumer's
-      // doing? — and a file that reaches this branch gets its manifest entry
-      // refreshed from the bytes on disk after the loop, which is what lets a
-      // consumer stuck in the refusal loop settle instead of diverging for ever.
-      //
-      // REPAIRED, not skipped. `outContent` is now folded to LF at the read
-      // site, so the two sides can only differ here when the DESTINATION holds
-      // CRLF — content a pre-fold sync wrote, contradicting the `eol=lf` pin
-      // that same run put in the consumer's `.gitattributes`. Skipping left
-      // that permanent: the bytes never changed again, so the file stayed a
-      // phantom-dirty ` M` with an empty diff, and it was twice mistaken for a
-      // partially-applied sync. Rewriting converges in ONE run and is safe to
-      // take before the divergence gate precisely because the content is
-      // identical modulo line endings — by definition not consumer content, so
-      // there is nothing a rewrite can destroy.
+      // Same content, different line endings => rewrite the line endings, and nothing else: by definition not consumer
+      // content, so safe before the divergence gate. Why here, why REPAIRED rather than skipped, and the 2026-08-30
+      // measurement: `eolInsensitiveEqual` (lib/sync-divergence.mjs) §"Where the sync asks it".
       // The override decision comes FIRST: a path the consumer declared held is not rewritten for any reason, line endings
       // included (it falls through to the gate, which HOLDs and records it).
       const bookkeeping = isSyncBookkeeping(dstRel);
@@ -1330,11 +1305,13 @@ async function main() {
       // bytes, so each earlier blob is RENDERED through the same outbound pipeline (priorRenderer) and compared as rendered-to-rendered;
       // RAW blob hashes count only when this destination has no rewrites, so a raw blob committed at a rewritten path stays a divergence.
       if (vcs) vcs.priorUpstream = priorUpstream.matches(srcRel, dstHash, { render: priorRenderer(srcRel, dstRel), acceptRaw: !rewriteResult.hits });
+      const blockAdoption = blockRun.adoption({ dstRel, baseState, override, vcs, diskBytes: dstExists ? fs.readFileSync(dstPath) : Buffer.alloc(0) });
       const decision = decideAction({
         baseState,
         vcs,
         overrideActive: Boolean(override),
         allowOverwriteDiverged: OVERWRITE_DIVERGED,
+        blockAdoption,
       });
 
       if (decision.action === ACTION.HOLD) {
@@ -1357,6 +1334,8 @@ async function main() {
 
       if (decision.action === ACTION.REFUSE) {
         divergenceRefusals.push({ path: dstRel, reason: decision.reason, staleSyncRef: vcs?.staleSyncRef ?? null });
+        const hint = blockRun.refusalHint(dstRel, decision.reason, blockAdoption);
+        if (hint) console.log(`  ${Y}refused${X} ${dstRel} ${D}— ${hint}${X}`);
         continue;
       }
 
@@ -1364,7 +1343,7 @@ async function main() {
       const remappedLabel = dstRel !== srcRel ? ` ${D}(was ${srcRel})${X}` : '';
       const rewriteLabel = rewriteResult.hits ? ` ${D}[${rewriteResult.hits} rewrites]${X}` : '';
       const label = isNew ? `${G}new${X}  ` : `${Y}upd${X}  `;
-      console.log(`  ${label} ${dstRel}${remappedLabel}${rewriteLabel}`);
+      console.log(`  ${label} ${dstRel}${remappedLabel}${rewriteLabel}${D}${blockRun.label(dstRel)}${X}`);
       if (decision.action === ACTION.WRITE_LOUD) {
         // Non-negotiable #1 of the fix: the sync must be LOUD about every
         // overwrite of content it did not itself write, even the ones it is
@@ -1401,6 +1380,8 @@ async function main() {
       }
 
       writtenHash.set(dstRel, `sha256:${srcHash}`); // the exact bytes just handed to the write (all rendering stages applied)
+      for (const w of blockRun.landed(dstRel, rendered.blocksApplied)) console.log(`    ${Y}${w}${X}`);
+      if (decision.reason === 'block-hold-migration') console.log(`    ${D}adoptHeldFile on ${dstRel} is now spent; remove it from ${OVERRIDES_PATH}${X}`);
       if (isNew) { repoNew++; totalNew++; if (!bookkeeping) receiptCreated.push(dstRel); }
       else { repoUpdated++; totalUpdated++; if (!bookkeeping) receiptUpdated.push(dstRel); }
       if (decision.action === ACTION.WRITE_LOUD) {
@@ -1419,7 +1400,7 @@ async function main() {
       probe: (rel) => hashConsumerFile(repo.path, rel), // a retired file the consumer EDITED is held, as the write path never overwrites one
       // Retired migrations and synced skills (e.g. ship -> ship-checked): unedited -> deleted, edited/declared -> held (lib/sync-gc.mjs).
       retirePrefixes: [LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX, LAYOUT_CONSTANTS.SKILLS_DEST_PREFIX],
-      isDeclaredDivergence: (rel) => matchOverride(rel, overridesDoc.overrides) != null,
+      isDeclaredDivergence: (rel) => matchOverride(rel, overridesDoc.overrides) != null || blockRun.isDeclared(rel),
     });
     const { orphanedTracked } = gcPlan;
     if (orphanedTracked.length) {
@@ -1447,6 +1428,7 @@ async function main() {
     // deleted), or changed between the probe and the unlink. Their prior manifest entries are carried forward, below.
     const retiredHeld = gcSkipped ? [] : [...(OVERWRITE_DIVERGED ? [] : gcPlan.divergedHeld), ...gcPlan.declaredHeld, ...gcPlan.unknownBaseHeld, ...gcResult.held];
     for (const line of renderGcReport({ gcPlan, gcResult, retiredHeld, overridesPath: OVERRIDES_PATH, colors: { R, Y, D, X } })) console.log(line);
+    for (const b of blockRun.reconcile({ retired: new Set(gcPlan.declaredHeld) })) { console.log(`  ${R}ERR${X}  ${OVERRIDES_PATH} ${b.message}`); repoErrors++; totalErrors++; }
     if (gcResult.failed.length || gcPlan.unsafeKeys.length || gcSkipped) { repoErrors++; totalErrors++; }
 
     // ── Commit point: write per-consumer manifest with layout: 'isolated' ──
@@ -1702,6 +1684,7 @@ async function main() {
           divergenceRefused: divergenceRefusals,
           legacyRetired: receiptLegacyRetired,
           retiredHeld: retiredForReceipt({ gcPlan, gcResult, retiredHeld, gcSkipped }),
+          ...blockRun.receipt(),
           unchanged: repoUnchanged,
         });
         // commitReceipt re-reads the record at commit time (an external git operation during the run is detected, not

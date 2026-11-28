@@ -791,6 +791,38 @@ change exists to end.
    you pick a side with `--prefer`. Until you reconcile, readers ignore the kept
    file (with one warning) and writers never touch it.
 
+### Migrating a whole-file hold to a block hold (2026-11)
+
+If `.sync-overrides.json` holds a whole SKILL.md only to keep one inserted block,
+swap it for a block hold so the rest of the file receives upstream again (contract:
+[consumer-repo-layout.md](../reference/consumer-repo-layout.md) §Block holds). The
+skill must carry an upstream slot (`<!-- sync-slot:target-adapter -->` in
+click-test, nav-audit, persona-test and visual-audit today).
+
+1. Copy the block's lines, delimiters included, **verbatim** into a fragment file,
+   e.g. `.sync-blocks/nav-audit.target-adapter.md`. Your own guard scripts that grep
+   for your delimiters keep working: the fragment lands in the file as-is.
+2. In `.sync-overrides.json`, delete the `overrides` entry for that path and add a
+   `blocks` entry (`path`, `slot`, `from`, `reason`). Commit both, together with
+   the held SKILL.md as it is now: the migration never replaces uncommitted bytes.
+3. Dry-run the sync from claude-engineering-skills. It refuses the file with
+   `block-hold-migration-blocked` and prints the consent token for exactly these
+   bytes, `"adoptHeldFile": "sha256:…"`. Read the diff it shows. Everything outside
+   your block becomes upstream's text again, so anything else you changed in the
+   held copy is replaced (recoverable from git, and visible in the sync PR).
+4. Add that `adoptHeldFile` value to the block entry, commit, and sync. The file is
+   rewritten as upstream plus your spliced block, recorded in the receipt as
+   `divergedOverwritten` with reason `block-hold-migration`.
+5. Remove `adoptHeldFile` when the sync says it is spent. It is inert after
+   adoption; a token for an older version of the held file never adopts a newer one.
+
+```powershell
+npm run sync -- --target $Target --dry-run
+```
+
+Do not use `--overwrite-diverged` for this: it overwrites every diverged file in
+the target, not just the one you are migrating.
+
 ---
 
 ## Fresh-clone workflow

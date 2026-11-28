@@ -416,6 +416,9 @@ const MANDATORY = {
     // Added 2026-09-03: a known frontmatter key indented under `description: |`
     // is description text — parsed, valid, inert. Pill is the real consumer file.
     'skills-check-detects-indented-frontmatter-key',
+    // Added 2026-11-28 with the gate itself (block holds): a slot marker inside a fence is no slot, and a consumer's
+    // declared block for it would fail only at that consumer's sync. Pill is the real nav-audit file, marker moved.
+    'skills-check-detects-slot-marker-in-fence',
   ],
   // Added 2026-09-07 with the gate itself (upstream ea23dfda). Post-2026-07-31,
   // so a pill is mandatory and an exemption was never available.

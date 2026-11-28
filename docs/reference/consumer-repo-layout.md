@@ -172,6 +172,37 @@ to an unpinned fetch.** `sync-pin-guard.mjs` is the guard, and it is paired with
 an independent post-condition rather than trusted alone — a guard that is also its
 own verifier cannot report its own absence.
 
+### Block holds — keep one block, not the whole file
+
+**Need one repo-specific block inside a synced SKILL.md? Declare a block, not a
+whole-file override.** A whole-file hold stops every upstream fix to that skill
+(measured 2026-11-28: four held SKILL.md files had drifted 51–692 lines to keep
+one inserted adapter block each). A block hold keeps only the block:
+
+- **Upstream** declares where a block may go with one line in its own source,
+  `<!-- sync-slot:<name> -->` (column 0, outside frontmatter and fenced code, once
+  per name; linted by `scripts/check-skill-slots.mjs` in `skills:check`). Today:
+  `target-adapter` in click-test, nav-audit, persona-test and visual-audit.
+- **The consumer** commits a fragment file (by convention `.sync-blocks/<skill>.<slot>.md`)
+  and declares it in `.sync-overrides.json`:
+  `"blocks": [{ "path": ".claude/skills/nav-audit/SKILL.md", "slot": "target-adapter", "from": ".sync-blocks/nav-audit.target-adapter.md", "reason": "…" }]`.
+- **The sync** splices the fragment's bytes in verbatim (after the command
+  rewriter, so a consumer's own command lines are never rewritten), as a
+  `sync-slot:<name>:start` … `:end` span, on every run. The rest of the file keeps
+  receiving upstream, the manifest records the spliced bytes as the base, and
+  `sync-isolation-verify` gate 2B checks the file like any other.
+
+**A block is never silently dropped.** A declared slot upstream no longer has
+(`slot-missing`), a duplicated or misplaced marker, a fragment that cannot be read,
+or a declaration for a path this repo is never sent (`block-dest-unknown`) FAILS
+the file or the target with a non-zero exit, leaves the consumer's file as it is,
+and is recorded in the receipt's `blockErrors`. A slot that MOVED under another
+heading still lands and is reported (`anchorMoved`, heading-level only). Edit the
+fragment, never the spliced span: a hand edit of the span is a divergence and is
+refused like any other. Migration from a whole-file hold:
+[consumer-adoption.md](../runbooks/consumer-adoption.md) §Migrating a whole-file
+hold to a block hold. Design: [plan](../plans/sync-skill-block-holds.md).
+
 ---
 
 ## "Is this file mine to fix?" must be answerable OFFLINE

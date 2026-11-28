@@ -29,6 +29,10 @@
  *   ],
  *   "syncOptIn": [
  *     { "feature": "root-mcp-json", "reason": "we pin @playwright/mcp and want the root .mcp.json wired to it" }
+ *   ],
+ *   "blocks": [
+ *     { "path": ".claude/skills/nav-audit/SKILL.md", "slot": "target-adapter",
+ *       "from": ".sync-blocks/nav-audit.target-adapter.md", "reason": "no HTTP surface: use the repo's own driver" }
  *   ]
  * }
  * ```
@@ -59,13 +63,29 @@
  * The refusal names `cross-skill.mjs upstream report` instead, which is the
  * sanctioned path.
  *
+ * ## Block holds (`blocks`)
+ *
+ * A whole-file override freezes every upstream fix to keep one inserted block.
+ * A block hold keeps ONLY the block: upstream declares a named slot in its own
+ * source (`lib/sync-slots.mjs`), the consumer names a committed fragment file,
+ * and the sync splices the fragment's bytes into the slot on every run, so the
+ * rest of the file keeps receiving upstream. Validation here is static; the
+ * checks that need the target's inventory (`from` naming a managed file, a
+ * declaration whose path the target never receives) are the pure helpers at the
+ * end of this module, called by the sync once that inventory is known.
+ * Plan: docs/plans/sync-skill-block-holds.md
+ *
  * @module scripts/lib/sync-overrides
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { createHash } from 'node:crypto';
+
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
+import { SYNC_RECEIPT_PATH } from './bundle-generated-stores.mjs';
+import { SLOT_NAME_RE, normaliseFragment, SlotError } from './sync-slots.mjs';
 
 /** Where the consumer declares its overrides, relative to the consumer root. */
 export const OVERRIDES_PATH = '.sync-overrides.json';
@@ -163,9 +183,10 @@ export function validateOverrides(raw) {
   const overrides = [];
   const gitignoreExtra = [];
   const syncOptIn = [];
+  const blocks = [];
 
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { overrides, gitignoreExtra, syncOptIn, errors: [`${OVERRIDES_PATH}: expected a JSON object at the top level`] };
+    return { overrides, gitignoreExtra, syncOptIn, blocks, errors: [`${OVERRIDES_PATH}: expected a JSON object at the top level`] };
   }
   if (raw.version !== 1) {
     errors.push(`${OVERRIDES_PATH}: "version" must be 1 (got ${JSON.stringify(raw.version)})`);
@@ -263,7 +284,72 @@ export function validateOverrides(raw) {
     });
   }
 
-  return { overrides, gitignoreExtra, syncOptIn, errors };
+  validateBlocks(raw.blocks ?? [], overrides, blocks, errors);
+
+  return { overrides, gitignoreExtra, syncOptIn, blocks, errors };
+}
+
+/** A declared block's destination: exactly a synced SKILL.md (v1 scope, and what the upstream slot lint covers). */
+const BLOCK_DEST_RE = new RegExp(`^${LAYOUT_CONSTANTS.SKILLS_DEST_PREFIX.replace(/[.]/g, '\\.')}[^/]+/SKILL\\.md$`);
+/** A fragment path a reader can verify by eye, and that cannot close the HTML comment it is printed in. */
+const SAFE_FROM_RE = /^[A-Za-z0-9._/-]+$/;
+/** Per-path, per-generation consent to adopt a previously HELD file (plan Q4, condition e). */
+export const ADOPTION_TOKEN_RE = /^sha256:[0-9a-f]{16}$/;
+
+/**
+ * Validate the `blocks` array into `out`, pushing every problem onto `errors`. PURE.
+ *
+ * @param {unknown} entries
+ * @param {Array<{test: RegExp, match: string}>} overrides — the already-validated whole-file overrides
+ * @param {Array<object>} out
+ * @param {string[]} errors
+ */
+function validateBlocks(entries, overrides, out, errors) {
+  if (!Array.isArray(entries)) { errors.push(`${OVERRIDES_PATH}: "blocks" must be an array`); return; }
+  const seen = new Map();
+  entries.forEach((entry, i) => {
+    const at = `${OVERRIDES_PATH}: blocks[${i}]`;
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) { errors.push(`${at}: expected an object`); return; }
+    const p = normaliseOverridePath(typeof entry.path === 'string' ? entry.path.trim() : '');
+    const slot = typeof entry.slot === 'string' ? entry.slot.trim() : '';
+    const from = normaliseOverridePath(typeof entry.from === 'string' ? entry.from.trim() : '');
+    const reason = typeof entry.reason === 'string' ? entry.reason.trim() : '';
+    const problems = [];
+    if (!BLOCK_DEST_RE.test(p)) problems.push(`"path" must be a synced ${LAYOUT_CONSTANTS.SKILLS_DEST_PREFIX}<skill>/SKILL.md (got ${JSON.stringify(entry.path)})`);
+    if (!SLOT_NAME_RE.test(slot)) problems.push(`"slot" must match ${SLOT_NAME_RE} (got ${JSON.stringify(entry.slot)})`);
+    const segments = from.split('/');
+    if (!from || !SAFE_FROM_RE.test(from) || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
+      problems.push(`"from" must be a plain repo-relative path of [A-Za-z0-9._/-] with no empty, "." or ".." segment (got ${JSON.stringify(entry.from)})`);
+    } else if (isUnoverridable(from) || from.startsWith(LAYOUT_CONSTANTS.SKILLS_DEST_PREFIX)
+      || from === OVERRIDES_PATH || from === SYNC_RECEIPT_PATH || from === LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK) {
+      problems.push(`"from" may not name a file the sync writes or keeps as bookkeeping (${from}); keep fragments in your own tree, e.g. .sync-blocks/`);
+    }
+    if (!reason) problems.push('"reason" is required — say why this block exists, so the next reader can tell a decision from an accident');
+    const token = entry.adoptHeldFile;
+    if (token !== undefined && !(typeof token === 'string' && ADOPTION_TOKEN_RE.test(token))) {
+      problems.push(`"adoptHeldFile" must be "sha256:" + 16 lowercase hex — the value the sync prints when it refuses to adopt a held file (got ${JSON.stringify(token)})`);
+    }
+    if (problems.length) { for (const msg of problems) errors.push(`${at}: ${msg}`); return; }
+    const key = `${p}\u0000${slot}`;
+    if (seen.has(key)) { errors.push(`${at}: slot "${slot}" on ${p} is already declared at blocks[${seen.get(key)}]`); return; }
+    seen.set(key, i);
+    const held = overrides.find((o) => o.test.test(p));
+    if (held) {
+      errors.push(`${at}: ${p} is also held whole-file by the override "${held.match}" — a hold would silently win; remove one of the two`);
+      return;
+    }
+    out.push({ path: p, slot, from, reason, adoptHeldFile: typeof token === 'string' ? token : null, index: i });
+  });
+  // Consent is per FILE: every entry on one path that carries the token must carry the same one.
+  const byPath = new Map();
+  for (const b of out) {
+    if (!b.adoptHeldFile) continue;
+    if (!byPath.has(b.path)) byPath.set(b.path, new Set());
+    byPath.get(b.path).add(b.adoptHeldFile);
+  }
+  for (const [p, tokens] of byPath) {
+    if (tokens.size > 1) errors.push(`${OVERRIDES_PATH}: blocks on ${p} carry ${tokens.size} different "adoptHeldFile" values; they must agree`);
+  }
 }
 
 /**
@@ -282,7 +368,7 @@ export function validateOverrides(raw) {
 export function loadOverrides(repoRoot) {
   const abs = path.join(repoRoot, OVERRIDES_PATH);
   if (!fs.existsSync(abs)) {
-    return { present: false, overrides: [], gitignoreExtra: [], syncOptIn: [], errors: [] };
+    return { present: false, overrides: [], gitignoreExtra: [], syncOptIn: [], blocks: [], errors: [] };
   }
   let raw;
   try {
@@ -293,6 +379,7 @@ export function loadOverrides(repoRoot) {
       overrides: [],
       gitignoreExtra: [],
       syncOptIn: [],
+      blocks: [],
       errors: [`${OVERRIDES_PATH}: unreadable or malformed JSON — ${err.message}`],
     };
   }
@@ -344,4 +431,81 @@ export function renderGitignoreExtras(extras) {
     lines.push(pattern);
   }
   return lines;
+}
+
+/**
+ * Load every declared block's fragment. Reads go through the injected `read`
+ * (the sync passes `readConsumerFile`: contained to the consumer root, a link
+ * refused), so this module stays free of the write seam the verifier never needs.
+ *
+ * Every problem is an ERROR, never a skip: a declared block whose bytes cannot
+ * be read must not render as "no block". The sync aborts the target on these,
+ * the same severity as a malformed overrides file.
+ *
+ * @param {string} repoRoot
+ * @param {Array<{path: string, slot: string, from: string, adoptHeldFile: string|null, index: number}>} blocks
+ * @param {(root: string, rel: string) => {state: string, content?: string, reason?: string, message?: string}} read
+ * @returns {{byDest: Map<string, Array<{slot: string, from: string, content: string, fragmentSha: string, adoptHeldFile: string|null}>>, errors: string[]}}
+ */
+export function loadBlockFragments(repoRoot, blocks, read) {
+  const byDest = new Map();
+  const errors = [];
+  for (const b of blocks) {
+    const r = read(repoRoot, b.from);
+    if (r.state !== 'present') {
+      const why = r.reason || r.message;
+      errors.push(`${OVERRIDES_PATH}: blocks[${b.index}] fragment ${b.from} is ${r.state}${why ? ` (${why})` : ''} — a declared block that cannot be read is never treated as no block`);
+      continue;
+    }
+    let content;
+    try { content = normaliseFragment(r.content, { from: b.from }); } catch (err) {
+      if (!(err instanceof SlotError)) throw err;
+      errors.push(`${OVERRIDES_PATH}: blocks[${b.index}] ${err.message}`);
+      continue;
+    }
+    const fragmentSha = `sha256:${createHash('sha256').update(content).digest('hex')}`;
+    if (!byDest.has(b.path)) byDest.set(b.path, []);
+    byDest.get(b.path).push({ slot: b.slot, from: b.from, content, fragmentSha, adoptHeldFile: b.adoptHeldFile });
+  }
+  for (const list of byDest.values()) list.sort((x, y) => (x.slot < y.slot ? -1 : x.slot > y.slot ? 1 : 0));
+  return { byDest, errors };
+}
+
+/**
+ * A fragment source may never be a file the sync manages, under any alias or
+ * case (plan Q1). Asked once the target's inventory is known, before any write. PURE.
+ *
+ * @param {Array<{from: string, index: number}>} blocks
+ * @param {Iterable<string>} managedDests — this run's intended writes plus the prior manifest's keys
+ * @returns {string[]} errors
+ */
+export function checkFragmentSources(blocks, managedDests) {
+  const managed = new Set([...managedDests].map((d) => normaliseOverridePath(d).toLowerCase()));
+  return blocks
+    .filter((b) => managed.has(b.from.toLowerCase()))
+    .map((b) => `${OVERRIDES_PATH}: blocks[${b.index}] "from" ${b.from} is a file the sync manages — a fragment must live in your own tree`);
+}
+
+/**
+ * Every declared block path must have reached the renderer this run (plan Q3).
+ * A path the target never receives is a typo, or a destination this consumer
+ * does not get; one GC found retired upstream is held, and still reported. PURE.
+ *
+ * @param {Array<{path: string, slot: string, index: number}>} blocks
+ * @param {{rendered: Set<string>, retired: Set<string>}} seen
+ * @returns {Array<{path: string, slot: string, code: 'block-dest-unknown'|'block-dest-retired', message: string}>}
+ */
+export function reconcileBlockDestinations(blocks, { rendered, retired }) {
+  const out = [];
+  for (const b of blocks) {
+    if (rendered.has(b.path)) continue;
+    if (retired.has(b.path)) {
+      out.push({ path: b.path, slot: b.slot, code: 'block-dest-retired',
+        message: `blocks[${b.index}]: ${b.path} was retired upstream; the file and its block were kept. Remove the declaration, or move the block to the skill that replaced it` });
+    } else {
+      out.push({ path: b.path, slot: b.slot, code: 'block-dest-unknown',
+        message: `blocks[${b.index}]: ${b.path} is not a file this sync delivers to this repo (a typo, or a skill it does not receive); nothing was spliced` });
+    }
+  }
+  return out;
 }

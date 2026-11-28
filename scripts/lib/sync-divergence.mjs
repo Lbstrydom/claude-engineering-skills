@@ -125,6 +125,27 @@ export function isSyncBookkeeping(destRel) {
  * change this content?* — where a line ending introduced by a different
  * checkout is not an answer of "yes".
  *
+ * ## Where the sync asks it (moved from sync-to-repos.mjs, which is size-ratcheted)
+ *
+ * The write loop asks it, rather than `classifyAgainstBase`, deliberately: the
+ * manifest must keep hashing exact disk bytes, because there the hash is
+ * a transfer-integrity contract (`sync-isolation-verify` gate 2B). This
+ * folds EOL for one question only — is this difference the consumer's
+ * doing? — and a file that reaches this branch gets its manifest entry
+ * refreshed from the bytes on disk after the loop, which is what lets a
+ * consumer stuck in the refusal loop settle instead of diverging for ever.
+ *
+ * REPAIRED, not skipped. `outContent` is now folded to LF at the read
+ * site, so the two sides can only differ here when the DESTINATION holds
+ * CRLF — content a pre-fold sync wrote, contradicting the `eol=lf` pin
+ * that same run put in the consumer's `.gitattributes`. Skipping left
+ * that permanent: the bytes never changed again, so the file stayed a
+ * phantom-dirty ` M` with an empty diff, and it was twice mistaken for a
+ * partially-applied sync. Rewriting converges in ONE run and is safe to
+ * take before the divergence gate precisely because the content is
+ * identical modulo line endings — by definition not consumer content, so
+ * there is nothing a rewrite can destroy.
+ *
  * ## Binary is excluded, and fails closed
  *
  * A NUL byte means the exact bytes are the contract, so binaries compare
@@ -300,9 +321,18 @@ export function classifyHeldStaleness({
  * @param {boolean} input.allowOverwriteDiverged
  * @returns {{action: 'write'|'write-loud'|'hold'|'refuse', reason: string}}
  */
-export function decideAction({ baseState, vcs, overrideActive, allowOverwriteDiverged }) {
+export function decideAction({ baseState, vcs, overrideActive, allowOverwriteDiverged, blockAdoption = null }) {
   if (overrideActive) return { action: ACTION.HOLD, reason: 'consumer-override' };
   if (baseState !== BASE_STATE.DIVERGED) return { action: ACTION.WRITE, reason: baseState };
+  // 1b/1c — a whole-file hold being swapped for a block hold (docs/plans/sync-skill-block-holds.md Q4). Placed ABOVE every
+  // other WRITE_LOUD rule: a previously held file is consumer content until it is adopted, whatever git or history says,
+  // so a pending adoption that is not eligible REFUSES before prior-upstream or untracked could overwrite it. The flag
+  // stays the one escape hatch ("an escape hatch that still refuses is not one"), loud as ever.
+  if (blockAdoption?.pending) {
+    if (blockAdoption.eligible) return { action: ACTION.WRITE_LOUD, reason: 'block-hold-migration' };
+    if (allowOverwriteDiverged) return { action: ACTION.WRITE_LOUD, reason: 'diverged-overwrite-flag' };
+    return { action: ACTION.REFUSE, reason: 'block-hold-migration-blocked' };
+  }
   // 2221: disk is byte-identical to an EARLIER upstream version of this file - a stale snapshot, not an edit. Nothing a consumer
   // typed can be lost by replacing it. The stale-checkout case keeps its own remedy (pull), so it is excluded here.
   if (vcs && vcs.priorUpstream === true && !vcs.staleSyncRef) {
@@ -364,6 +394,10 @@ export function describeReason(reason) {
       return 'equals an earlier upstream version (a stale snapshot, or a deliberate rollback) - replaced; declare it in .sync-overrides.json to keep it';
     case 'diverged-overwrite-flag':
       return 'changed since our last sync; overwritten because --overwrite-diverged was passed';
+    case 'block-hold-migration':
+      return 'a whole-file hold adopted as a block hold (adoptHeldFile): upstream content restored, the declared block kept';
+    case 'block-hold-migration-blocked':
+      return 'held whole-file until now, and not yet adoptable as a block hold — the file is kept as it is';
     default:
       return reason;
   }
@@ -573,7 +607,7 @@ export function createPriorUpstreamResolver({
   const run = git ?? ((args, { input } = {}) => spawnSync('git', ['-C', sourceRoot, ...args], {
     windowsHide: true, maxBuffer: 256 * 1024 * 1024, env: sanitizeGitEnv(sourceRoot), ...(input ? { input } : {}),
   }));
-  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false, retainedBytes: 0, renderFailures: 0 };
+  const stats = { logCalls: 0, batchCalls: 0, blobsRead: 0, exhausted: false, retainedBytes: 0, renderFailures: 0, slotIncomparable: 0 };
   /** @type {Map<string, {body: Buffer|null, binary: boolean}>} blob oid -> its OWN copy of the body (null: binary, over a cap, or never read) */
   const retained = new Map();
   /** @type {Map<string, string[]|null>} blob oid -> [sha256 of the LF bytes, sha256 of the CRLF form], null when unreadable */
@@ -661,7 +695,12 @@ export function createPriorUpstreamResolver({
       const out = typeof r === 'string' ? r : r?.content;
       if (typeof out !== 'string') { stats.renderFailures++; return null; }
       return { hashes: [sha(out), sha(out.replace(/\r?\n/g, '\r\n'))], hits: typeof r === 'string' ? undefined : r.hits };
-    } catch { stats.renderFailures++; return null; }
+    } catch (err) {
+      // A declared slot that an EARLIER upstream version predates is expected, not a renderer fault: that blob is incomparable
+      // (never a match, so never overwrite permission), counted apart so a real renderer regression stays visible.
+      if (err?.name === 'SlotError') stats.slotIncomparable++; else stats.renderFailures++;
+      return null;
+    }
   }
 
   return {
@@ -692,4 +731,86 @@ export function createPriorUpstreamResolver({
       return unanswered ? null : false;
     },
   };
+}
+
+// ── Block-hold adoption (docs/plans/sync-skill-block-holds.md Q4) ───────────
+//
+// A consumer swapping a whole-file hold for a block hold leaves a DIVERGED,
+// tracked file behind (it held its own version), which the table above
+// refuses — correctly, in general. These three pure functions decide the one
+// case where replacing it is safe and consented to.
+
+/**
+ * The consent token for adopting a held file: `sha256:` + the first 16 hex of
+ * the SHA-256 of its LF-canonical bytes. ONE function, so the value the refusal
+ * prints is the value the check compares, and a clean CRLF checkout of the same
+ * commit yields the same token.
+ *
+ * @param {Buffer|string} bytes
+ * @returns {string}
+ */
+export function adoptionToken(bytes) {
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(String(bytes ?? ''), 'utf-8');
+  return `sha256:${createHash('sha256').update(canonicalizeEol(buf)).digest('hex').slice(0, 16)}`;
+}
+
+/**
+ * Where is this path in the hold → block lifecycle, by the committed receipt?
+ *
+ * Reads entries newest-first and stops at the first that RECORDS the path as
+ * held (`overridesHeld`) or block-applied (`blocksApplied`). Entries that only
+ * refused or failed it record neither, so a failed attempt never erases the
+ * evidence a retry needs. `pending` additionally requires a CURRENT block
+ * declaration and no whole-file override: a consumer that drops a hold without
+ * adopting blocks keeps today's decision table unchanged.
+ *
+ * @param {object[]} entries — `readSyncReceipt(...).entries`, newest first
+ * @param {string} p
+ * @param {{hasBlocks: boolean, hasOverride: boolean}} current
+ * @returns {'pending'|'adopted'|'none'}
+ */
+export function adoptionState(entries, p, { hasBlocks, hasOverride }) {
+  for (const e of entries || []) {
+    if ((e?.overridesHeld || []).some((h) => h?.path === p)) return hasBlocks && !hasOverride ? 'pending' : 'none';
+    if ((e?.blocksApplied || []).some((b) => b?.path === p)) return 'adopted';
+  }
+  return 'none';
+}
+
+/**
+ * Is a pending adoption eligible? PURE. `failed` names the first unmet condition
+ * (the plan's letters), so the refusal says exactly what to fix.
+ *
+ *   (c) every fragment occurs verbatim (EOL-folded) in the held file — the
+ *       consumer MOVED its block into the fragment, rather than abandoning it;
+ *   (d) the held file is committed as-is (`matchesHead`) — every replaced byte
+ *       is recoverable from git, so uncommitted or untracked work never is;
+ *   (e) `adoptHeldFile` names exactly these bytes — consent bound to one held
+ *       generation, so a stale flag cannot adopt a later edit.
+ *
+ * @param {object} a
+ * @param {Buffer} a.diskBytes
+ * @param {Array<{content: string}>} a.fragments
+ * @param {boolean|null} a.matchesHead
+ * @param {string|null} a.adoptHeldFile — the declared token, if any
+ * @returns {{eligible: boolean, failed: 'c'|'d'|'e'|null, token: string}}
+ */
+export function assessBlockMigration({ diskBytes, fragments, matchesHead, adoptHeldFile }) {
+  const token = adoptionToken(diskBytes);
+  const disk = canonicalizeEol(Buffer.from(diskBytes)).toString('utf-8');
+  const missing = (fragments || []).some((f) => !disk.includes(f.content.endsWith('\n') ? f.content.slice(0, -1) : f.content));
+  if (missing) return { eligible: false, failed: 'c', token };
+  if (matchesHead !== true) return { eligible: false, failed: 'd', token };
+  if (adoptHeldFile !== token) return { eligible: false, failed: 'e', token };
+  return { eligible: true, failed: null, token };
+}
+
+/** One line of operator prose per unmet adoption condition. */
+export function describeAdoptionFailure(failed, token) {
+  switch (failed) {
+    case 'c': return 'the held file does not contain every declared fragment verbatim — move the block into its fragment file first';
+    case 'd': return 'the held file has uncommitted changes (or is untracked) — commit it first, so everything replaced stays recoverable from git';
+    case 'e': return `review the dry-run diff, then set "adoptHeldFile": "${token}" on its block entry to adopt exactly these bytes`;
+    default: return '';
+  }
 }

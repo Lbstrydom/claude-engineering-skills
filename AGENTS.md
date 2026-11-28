@@ -18,7 +18,7 @@
 > **The test for a line: would an agent that never opens the linked doc still
 > avoid the mistake?** A line that *describes* a subsystem moves; a **tripwire**,
 > one that stops a mistake an agent would make unprompted, stays resident whatever
-> its section's size — shortened, not relocated. **And 27 sentences here are
+> its section's size — shortened, not relocated. **And 29 sentences here are
 > quoted character-for-character by gate contracts** (`statedIn: AGENTS.md`), so
 > `npm run check` fails on any rewording: list them before editing —
 > [gate-honesty.md](docs/reference/gate-honesty.md) §`stated` is a VERBATIM quote.
@@ -284,6 +284,12 @@ instead of the named one (verified 2026-07-20).
 > for every other consumer. Banner, drift backstops and the `.githooks/pre-push.local`
 > recipe for repo-specific push gates (never the managed hook):
 > [consumer-adoption.md](docs/runbooks/consumer-adoption.md).
+>
+> **One repo-specific block in a synced SKILL.md is a block hold, never a whole-file
+> override** — a whole-file hold freezes every upstream fix to that skill. Upstream
+> declares the slot (`<!-- sync-slot:<name> -->`, linted in `skills:check`), the consumer
+> declares the fragment (`blocks` in `.sync-overrides.json`), and the sync splices it or
+> fails loudly. [§Block holds](docs/reference/consumer-repo-layout.md).
 >
 > **Consumers are not all on ONE store**, so **an unasked question must never
 > render as an empty result** — a single-store read is blind to a consumer. Fan out with

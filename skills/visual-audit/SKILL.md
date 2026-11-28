@@ -65,6 +65,8 @@ second flag `--allow-external-screenshot`.
    paint change) / `disabled_not_signified`. Pseudo-states read via CDP `forcePseudoState`
    (effective styles, no flaky mouse actuation), after freezing transitions/animations.
 
+<!-- sync-slot:target-adapter -->
+
 ## Flow
 
 - **Phase 0 — Bootstrap** (first run): `visual-audit --bootstrap` writes a review-queue

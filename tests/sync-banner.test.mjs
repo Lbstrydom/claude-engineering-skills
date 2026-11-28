@@ -126,8 +126,9 @@ describe('sync-banner — production integration in sync-to-repos.mjs', () => {
     const outbound = read('../scripts/lib/sync-outbound.mjs');
     assert.ok(/import\s*\{[^}]*injectUpstreamBanner[^}]*\}\s*from\s*['"]\.\/sync-banner\.mjs['"]/.test(outbound),
       'renderOutbound must import injectUpstreamBanner');
-    assert.ok(outbound.includes('injectUpstreamBanner(rewritten.rewritten, dstRel)'),
-      'renderOutbound must call injectUpstreamBanner on the rewritten content');
+    // The banner wraps the rewritten-then-spliced content (consumer blocks go in after the rewriter, before the banner).
+    assert.ok(outbound.includes('spliceBlocks(rewritten.rewritten, blocks)') && outbound.includes('injectUpstreamBanner(spliced.content, dstRel)'),
+      'renderOutbound must call injectUpstreamBanner on the rewritten (then block-spliced) content');
     assert.ok(/rendered = renderOutbound\(\{/.test(read('../scripts/sync-to-repos.mjs')),
       'sync-to-repos must render outbound content through renderOutbound');
   });

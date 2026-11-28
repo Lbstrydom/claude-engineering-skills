@@ -76,11 +76,14 @@ describe('buildReceiptEntry', () => {
       divergedOverwritten: [{ path: 'f', reason: 'diverged-overwrite-flag' }],
       divergenceRefused: [{ path: 'g', reason: 'diverged-committed' }],
       legacyRetired: [{ path: 'h', action: 'remove-block' }],
+      blocksApplied: [{ path: 'i', slot: 's', from: 'f.md', fragmentSha: 'sha256:x', anchorHeading: '## A', anchorMoved: false }],
+      blockErrors: [{ path: 'j', slot: 's', code: 'slot-missing' }, { path: 'k', slot: null, code: 'block-dest-unknown' }],
       unchanged: 700,
     });
     assert.deepEqual(r.counts, {
       created: 1, updated: 2, unchanged: 700, gcDeleted: 1,
       overridesHeld: 1, divergedOverwritten: 1, divergenceRefused: 1, legacyRetired: 1,
+      blocksApplied: 1, blockErrors: 2,
     });
   });
 

@@ -54,6 +54,7 @@ This is the list to read when asking "what is in flight?".
 | [structured line anchors on audit findings, so the T2 `reopenRate` signal becomes measurable](./structured-finding-lines.md) | `In Progress` | plan audited 2026-11-23 (3 GPT rounds, Gemini APPROVE); implementation autonomous, no push, no PR |
 | [prior-upstream recognition for REWRITTEN destinations](./sync-prior-upstream-rewritten.md) | `Approved` |  |
 | [the base-lag restore must not manufacture a divergence](./sync-refused-manifest-base.md) | `Approved` |  |
+| [Block holds: a consumer block inside a synced SKILL.md](./sync-skill-block-holds.md) | `In Progress` |  |
 | [sync-to-repos debt cluster (16 still-present defects)](./sync-to-repos-debt-cluster.md) | `Approved` |  |
 | [Telemetry linkage as a structural contract](./telemetry-linkage-structural.md) | `In Progress` |  |
 | [make `npm test` hang-proof (a per-test stall limit and an idle watchdog)](./test-runner-hang-guard.md) | `In Progress` | implemented and audited on branch claude/wonderful-vaughan-7cdb0c; PR open, merge pending |
