@@ -321,8 +321,8 @@ For each remaining cluster in declared order:
 node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster "$ID" --json > "$SCOPE_JSON"
 
 # 2. Same call + --audit: recomputes the scope and runs the WHOLE argv it built; never hand-build
-#    audit flags (a hand copy dropped --base). Audit's exit code. Rounds 2+: --round N --ledger … after --.
-node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster "$ID" --audit -- --out ".audit/$SID-r1-result.json"
+#    audit flags (a hand copy dropped --base). Audit's exit code. R=1; rounds 2+ also pass --round $R --ledger ….
+node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster "$ID" --audit -- --out ".audit/$SID-r$R-result.json"
 #   --files: THE scoping allowlist · --changed: R2+ reopen detection, does NOT scope
 #   --diff: hunk evidence, does NOT scope · --base: stamps _diffBase for the final reviewer
 ```

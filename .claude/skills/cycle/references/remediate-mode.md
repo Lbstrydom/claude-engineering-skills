@@ -113,7 +113,7 @@ another session may share.
 ```bash
 git merge-base --is-ancestor "$REMEDIATE_START" HEAD || { echo "base left history - halt"; exit 1; }
 node scripts/cycle-cluster-scope.mjs --base "$REMEDIATE_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster remediate --json > "$SCOPE_JSON"
-node scripts/cycle-cluster-scope.mjs --base "$REMEDIATE_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster remediate --audit -- --out ".audit/$SID-r1-result.json"
+node scripts/cycle-cluster-scope.mjs --base "$REMEDIATE_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster remediate --audit -- --out ".audit/$SID-r$R-result.json"
 ```
 
 `--audit` recomputes the scope and runs the argv it built — `--files`,
@@ -123,8 +123,8 @@ those flags by hand. It exits 1 on an `emptyAllowlist` scope (route to the final
 gate) and 2 on any scope flag passed again after `--`.
 
 Then follow `/audit-code`'s own loop (R2+ ledger, triage, fix, re-audit) with
-the **same base and scope file** on every round — the `--audit` call again, with
-`--round N --ledger … --out …` after `--` (a fix that strays outside the scope
+the **same base and scope file** on every round — the `--audit` call again (`R=1` first), with
+`--round $R --ledger …` added after `--` (a fix that strays outside the scope
 fails closed) — and its Gemini final gate. Caps are
 `/audit-code`'s, not new ones: **6 audit rounds, 2 final-review rounds**.
 Findings about code outside the fix list are triaged by impact exactly as in

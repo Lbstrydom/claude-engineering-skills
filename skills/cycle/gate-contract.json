@@ -404,7 +404,7 @@
       "reason": "Step 3C block comment (2026-11-28, upstream dd3e4276): tells the AGENT to run the audit through cycle-cluster-scope.mjs --audit, which builds the whole openai-audit argv (--files, --changed, --diff, --base) and exits with the audit's own code. The enforcing half is the script — buildClusterAuditArgv / auditExtrasProblem / spawnClusterAudit, pinned by tests/cycle-cluster-audit-argv.test.mjs (real CLI) and tests/cycle-audit-scope-contract.test.mjs (the block itself runs --audit and hand-assembles no audit command, with the pre-fix block as negative control); /cycle has no exit code of its own."
     },
     {
-      "line": "#    audit flags (a hand copy dropped --base). Audit's exit code. Rounds 2+: --round N --ledger … after --.",
+      "line": "#    audit flags (a hand copy dropped --base). Audit's exit code. R=1; rounds 2+ also pass --round $R --ledger ….",
       "reason": "Step 3C block comment (2026-11-28, upstream dd3e4276): tells the AGENT to run the audit through cycle-cluster-scope.mjs --audit, which builds the whole openai-audit argv (--files, --changed, --diff, --base) and exits with the audit's own code. The enforcing half is the script — buildClusterAuditArgv / auditExtrasProblem / spawnClusterAudit, pinned by tests/cycle-cluster-audit-argv.test.mjs (real CLI) and tests/cycle-audit-scope-contract.test.mjs (the block itself runs --audit and hand-assembles no audit command, with the pre-fix block as negative control); /cycle has no exit code of its own."
     }
   ]
