@@ -99,6 +99,12 @@
       "gateAddedAt": "2026-09-04",
       "gateAddedAtSource": "unknown",
       "policyOverride": "Post-2026-07-31 gate, so a pill is normally mandatory. Overridden because the pill harness's passing-control precondition contradicts this gate's fail-closed contract; see reason. docs/plans/backlog-and-drift-reduction.md Phase 12."
+    },
+    "node scripts/check-skill-slots.mjs": {
+      "reason": "skills:check member (block holds, docs/plans/sync-skill-block-holds.md). Lints <!-- sync-slot:<name> --> markers in skills/*/SKILL.md: exact form, column 0, outside frontmatter and fenced code, once per name, and the supported-markup subset in a slotted file. Its verdict is re-derived from committed source on every run; it certifies no stored artifact.",
+      "gateAddedAt": "2026-11-28",
+      "gateAddedAtSource": "unknown",
+      "policyOverride": "Introduced by this change on 2026-11-28. A poison pill was built (an overlay of the real nav-audit SKILL.md with its marker moved into a fence, exit 1), but a pilled gate must be AGENTS.md-stated, and every AGENTS.md-stated gate needs a checklist entry naming it back (tests/checklist-controls.test.mjs) - and .audit-loop/checklist.json is the FROZEN instrument of the checklist pilot (scripts/lib/checklist/frozen.mjs, docs/research/checklist-pilot-2026-11.md section Freeze). Adding an entry is a rule change that ends the freeze and restarts its confirmation window, a measurement decision this change does not take. Negative evidence instead: tests/check-skill-slots.test.mjs drives the CLI and the lint to every failing exit - a fenced marker (exit 1), a skill directory with no SKILL.md, a symlinked skill, a missing or empty root and a usage error (exit 2) - with a clean tree as the control; tests/sync-slots.test.mjs covers each marker problem. Revisit: pill it (and add the checklist entry) at the next deliberate freeze re-pin."
     }
   }
 }

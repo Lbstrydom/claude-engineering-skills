@@ -168,12 +168,6 @@ gated('skill-frontmatter-indented-key-inert', 'skills-check-detects-indented', {
   context: 'AGENTS.md: "every optional key sits at **column 0** — @@ valid and **inert**."',
   incident: 'An indented key parsed, validated and did nothing: description TEXT, inert (AGENTS.md, skill surfaces invariant 3).',
   control: { path: 'skills/ship/SKILL.md', text: '  argument-hint: <indented under description, so inert>' } });
-gated('skill-slot-marker-misplaced', 'skills-check-detects-slot-marker', {
-  trigger: { paths: ['scripts/check-skill-slots.mjs', 'scripts/lib/sync-slots.mjs'], patterns: ['sync-slot:'] },
-  lead: 'A slot marker sits at column 0, outside frontmatter and fenced code, once per name.',
-  context: 'AGENTS.md: "Upstream @@, the consumer declares the fragment".',
-  incident: 'A marker inside a fence is inert: a consumer that declared a block for it finds out only at its own sync, when the file stops updating (docs/plans/sync-skill-block-holds.md).',
-  control: { path: 'skills/nav-audit/SKILL.md', text: '  <!-- sync-slot:target-adapter -->' } });
 gated('synced-skill-content-reachable-refs', 'skills-consumer-refs-gate', {
   trigger: { paths: ['.skill-consumer-refs-baseline.json'], patterns: ['npm run [a-z][\\w:.-]*', 'docs/[\\w./-]+\\.md'] },
   lead: 'Synced skill content must name tooling BY PATH and may not name an `npm run` alias or an out-of-closure docs/ file a consumer cannot reach.',
@@ -304,7 +298,6 @@ const SCOPES = {
   'skill-reference-summary-byte-match': ['skills/*/references/*.md', 'skills/*/SKILL.md', 'docs/audit/shared-references/*.md'],
   'skill-frontmatter-description-budget': ['skills/*/SKILL.md'],
   'skill-frontmatter-indented-key-inert': ['skills/*/SKILL.md'],
-  'skill-slot-marker-misplaced': ['skills/*/SKILL.md'],
   'worktree-documented-command-reachable': ['skills/**/*.md'],
   'exit-after-stdout-must-drain': CODE,
   'windowed-view-declares-its-window': ['supabase/migrations/**'],

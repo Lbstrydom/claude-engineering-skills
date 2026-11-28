@@ -57,7 +57,7 @@ describe('lintSkillSlots', () => {
     assert.ok(lr.problems.some((p) => p.code === 'skill-symlink'), JSON.stringify(lr.problems));
   });
 
-  // Gate contract skills-check-detects-slot-marker-in-fence (scripts/gate-contracts/skills-check.json) pills this case.
+  // The negative evidence behind this command's gates:poison exemption (scripts/gate-contracts/_exemptions.json).
   it('a fenced marker is a problem (negative control); a clean tree reports what it counted', () => {
     const bad = path.join(tmp, 'bad');
     skill(bad, 'x', '---\nname: x\n---\n\n```\n<!-- sync-slot:a -->\n```\n');

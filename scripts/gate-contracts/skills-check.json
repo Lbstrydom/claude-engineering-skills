@@ -101,31 +101,6 @@
         "expectStderr": "indented under a block scalar",
         "why": "A `disable-model-invocation: true` indented two spaces inside `description: |` is description TEXT, not a key — parsed, valid, and inert, so the skill stays model-invocable while declaring it must not be. Measured live in a consumer 2026-09-03; the host listing showed the literal string as trailing prose, which was the only tell. The fixture is that consumer file's real frontmatter, not a hand-written probe: the broken and fixed forms differ only by leading whitespace, so a gate for a whitespace defect passes vacuously if the probe is wrong. Overlaid onto ship — the skill whose own header explains why self-invocation would be citing its own execution as consent."
       }
-    },
-    {
-      "id": "skills-check-detects-slot-marker-in-fence",
-      "kind": "executable",
-      "statedIn": "AGENTS.md",
-      "stated": "declares the slot (`<!-- sync-slot:<name> -->`, linted in `skills:check`)",
-      "implementation": "scripts/check-skill-slots.mjs",
-      "tests": [
-        "tests/gate-poison-pills.test.mjs",
-        "tests/check-skill-slots.test.mjs"
-      ],
-      "proof": "process",
-      "oracle": "poison-pill",
-      "poisonPill": {
-        "isolation": "tmpdir",
-        "argv": [
-          "scripts/check-skill-slots.mjs"
-        ],
-        "overlay": {
-          "skills/nav-audit/SKILL.md": "tests/fixtures/poison/skill-slot-in-fence.md"
-        },
-        "expectExit": 1,
-        "expectStderr": "sits inside fenced code",
-        "why": "A slot marker moved inside a fenced code block is inert to every markdown reader and is not a slot: a consumer that declared a block for it finds out only at its own sync, when the file stops updating and its target fails (docs/plans/sync-skill-block-holds.md Q3). The fixture is the real nav-audit SKILL.md with its target-adapter marker moved into the Usage fence, so the only difference from the shipped file is the placement under test."
-      }
     }
   ]
 }

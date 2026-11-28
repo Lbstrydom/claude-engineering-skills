@@ -18,7 +18,7 @@
 > **The test for a line: would an agent that never opens the linked doc still
 > avoid the mistake?** A line that *describes* a subsystem moves; a **tripwire**,
 > one that stops a mistake an agent would make unprompted, stays resident whatever
-> its section's size — shortened, not relocated. **And 29 sentences here are
+> its section's size — shortened, not relocated. **And 28 sentences here are
 > quoted character-for-character by gate contracts** (`statedIn: AGENTS.md`), so
 > `npm run check` fails on any rewording: list them before editing —
 > [gate-honesty.md](docs/reference/gate-honesty.md) §`stated` is a VERBATIM quote.
