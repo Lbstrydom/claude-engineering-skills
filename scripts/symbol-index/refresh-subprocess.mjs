@@ -197,12 +197,27 @@ export function writeFilesManifestIfRestricted(restrictFiles) {
 export { removeFilesManifest };
 
 /**
+ * What the embed step's log line names: the model the vectors are actually made
+ * with. Under Azure that is the profile's deployment, never the Gemini default
+ * `concreteEmbedModel` still carries (a consumer's log read
+ * `model=gemini-embedding-001` on a run that embedded with an Azure deployment).
+ *
+ * @param {{kind: string, requestModel: string}|undefined} embedProfile resolveEmbedProfile()
+ * @param {string} concreteEmbedModel
+ * @returns {string}
+ */
+export function embedLogLabel(embedProfile, concreteEmbedModel) {
+  if (!embedProfile) return `model=${concreteEmbedModel}`;
+  return `model=${embedProfile.requestModel}, ${embedProfile.kind}`;
+}
+
+/**
  * Run the extract → summarise → embed subprocess pipeline (steps 6-8 + 8b).
  *
- * @param {{repoRoot: string, repoId: string, mode: string, restrictFiles: string[]|null, includeDelegates: boolean, coverageConfig: object, concreteEmbedModel: string, logOk: (s: string) => void}} args
+ * @param {{repoRoot: string, repoId: string, mode: string, restrictFiles: string[]|null, includeDelegates: boolean, coverageConfig: object, concreteEmbedModel: string, embedProfile?: {kind: string, requestModel: string}, logOk: (s: string) => void}} args
  * @returns {Promise<{finalSymbols: Array<object>, violations: Array<object>, importEdges: Array<object>, coverageLine: object|null, extractionTimedOut: boolean, timeoutRecovery: object|null, recoveredTouchedSet: Set<string>|null}>}
  */
-export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restrictFiles, includeDelegates, coverageConfig, concreteEmbedModel, logOk }) {
+export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restrictFiles, includeDelegates, coverageConfig, concreteEmbedModel, embedProfile, logOk }) {
   // 6. Run extract → summarise → embed pipeline
   const extractArgs = [sibling('extract.mjs'), '--root', repoRoot, '--mode', mode];
   // Hand the touched-file list to extract via a temp manifest (--files-from)
@@ -273,7 +288,7 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
   const summarisedSymbols = summarised.filter(r => r.type === 'symbol');
 
   // 8. Embed
-  logOk(`embedding (model=${concreteEmbedModel})...`);
+  logOk(`embedding (${embedLogLabel(embedProfile, concreteEmbedModel)})...`);
   const embedded = await runJsonLinesAsyncStrict('node', [sibling('embed.mjs')], {
     input: summarisedSymbols.map(r => JSON.stringify(r)).join('\n') + '\n',
     env: { ARCH_INDEX_EMBED_CONCRETE: concreteEmbedModel },
