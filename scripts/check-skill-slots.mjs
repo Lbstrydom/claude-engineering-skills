@@ -81,12 +81,13 @@ async function main(argv) {
     root = path.resolve(v);
   } catch (err) {
     if (!(err instanceof ArgvError)) throw err;
+    if (argv.includes('--json')) process.stdout.write(`${JSON.stringify({ ok: false, status: 'usage', error: err.message })}\n`);
     process.stderr.write(`${err.message}\n${USAGE}`);
     return finishAndExit(2);
   }
   const r = lintSkillSlots(root);
   if (argv.includes('--json')) {
-    process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: r.status === 'ok', ...r }, null, 2)}\n`);
   } else if (r.status === 'unreadable') {
     process.stderr.write(`skill-slots: cannot read ${root}: ${r.error}\n`);
   } else if (r.status === 'no-skills') {

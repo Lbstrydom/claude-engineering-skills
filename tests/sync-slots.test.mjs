@@ -91,6 +91,8 @@ describe('normaliseFragment', () => {
     assert.equal(codeOf(() => spliceBlocks(inPre, [block('x\n', 's')])), SLOT_ERROR.SLOT_FILE_RAW_HTML);
     assert.ok(lintSlotMarkers(inPre).some((p) => p.code === SLOT_ERROR.SLOT_FILE_RAW_HTML));
     assert.deepEqual(lintSlotMarkers('# T\n<div>\n'), [], 'a file with NO slot is not held to the subset');
+    // Precedence (code audit R4 M4): an old version with no marker is slot-missing even if it carries raw HTML.
+    assert.equal(codeOf(() => spliceBlocks('# old\n<div>\n', [block('x\n', 's')])), SLOT_ERROR.MISSING);
   });
 
   it('a backtick line whose info string holds a backtick is NOT a fence (CommonMark; audit R1 M5)', () => {

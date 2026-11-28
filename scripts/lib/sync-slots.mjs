@@ -247,6 +247,13 @@ export function spliceBlocks(text, blocks = []) {
     const m = c.inFence ? null : RENDERED_START_RE.exec(c.text);
     if (m) throw new SlotError(SLOT_ERROR.ALREADY_SPLICED, `line ${i + 1}: input already carries a rendered span for slot "${m[1]}" — splicing starts from upstream source, never from a rendered file`, { slot: m[1], line: i + 1 });
   });
+  // Precedence: a declared slot with no marker is `slot-missing` before anything else, so a historical upstream version
+  // that predates the slot stays incomparable (code audit R4 M4), whatever else that old file contains.
+  const present = new Set(findSlotMarkers(text).map((m) => m.name));
+  const absent = blocks.find((b) => !present.has(b.slot));
+  if (absent) {
+    throw new SlotError(SLOT_ERROR.MISSING, `slot "${absent.slot}" is declared but upstream's file has no <!-- sync-slot:${absent.slot} --> marker (removed or renamed upstream)`, { slot: absent.slot });
+  }
   const htmlAt = classified.findIndex((c) => !c.inFence && !c.inFrontmatter && startsUnsupportedHtmlBlock(c.text));
   if (htmlAt >= 0) {
     throw new SlotError(SLOT_ERROR.SLOT_FILE_RAW_HTML, `line ${htmlAt + 1}: a slotted file may carry no block-level raw HTML ("${classified[htmlAt].text.trim().slice(0, 60)}")`, { line: htmlAt + 1 });

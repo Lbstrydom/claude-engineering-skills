@@ -17,6 +17,22 @@ const skill = (root, name, body) => {
   fs.writeFileSync(path.join(root, name, 'SKILL.md'), body);
 };
 
+describe('check-skill-slots CLI — one JSON envelope with ok on every exit (code audit R4 M2)', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const cli = path.resolve('scripts/check-skill-slots.mjs');
+  const run = (args) => { try { return { code: 0, out: execFileSync(process.execPath, [cli, ...args], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }) }; } catch (e) { return { code: e.status, out: e.stdout }; } };
+  it('clean, problems and usage error each emit {ok}', () => {
+    const clean = run(['--json']);
+    assert.equal(clean.code, 0); assert.equal(JSON.parse(clean.out).ok, true);
+    const bad = path.join(tmp, 'cli-bad');
+    skill(bad, 'x', '```\n<!-- sync-slot:a -->\n```\n');
+    const p = run(['--json', '--root', bad]);
+    assert.equal(p.code, 1); assert.equal(JSON.parse(p.out).ok, false);
+    const u = run(['--json', '--root']);
+    assert.equal(u.code, 2); assert.equal(JSON.parse(u.out).ok, false);
+  });
+});
+
 describe('lintSkillSlots', () => {
   it('a missing root is unreadable and an empty root is no-skills — never a pass', () => {
     assert.equal(lintSkillSlots(path.join(tmp, 'absent')).status, 'unreadable');

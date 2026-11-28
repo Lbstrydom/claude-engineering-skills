@@ -51,6 +51,8 @@ const commit = (msg) => { git(['add', '-A'], consumer); git(['commit', '-q', '-m
 const sync = async () => { const r = await runSyncCli(['--target-path', consumer, '--no-prompt']); return { ...r, text: stripAnsi(r.out) }; };
 const overrides = (doc) => write('.sync-overrides.json', `${JSON.stringify({ version: 1, ...doc }, null, 2)}\n`);
 const navBlock = { path: NAV, slot: 'target-adapter', from: FRAG, reason: 'no HTTP surface: drive the repo-local adapter' };
+/** Remove a directory LINK, never its target: unlink a POSIX symlink; rmdir a Windows junction (unlink refuses one). */
+const removeLink = (p) => { try { fs.unlinkSync(p); } catch { fs.rmdirSync(p); } };
 const FRAGMENT = '## Electron target (this repo)\n\nRun the repo adapter: node scripts/openai-audit.mjs --mine\n';
 
 before(async () => {
@@ -126,7 +128,11 @@ describe('a declared block is spliced into its slot', () => {
       assert.notEqual(bad.code, 0, 'negative control: the deployed gate sees the block-held file');
     } finally {
       fs.writeFileSync(abs(NAV), good);
-      for (const stub of swapped) { fs.rmdirSync(stub); fs.renameSync(`${stub}.stub`, stub); } // rmdirSync unlinks the junction, never its target
+      const restoreErrors = [];
+      for (const stub of swapped) {
+        try { removeLink(stub); fs.renameSync(`${stub}.stub`, stub); } catch (err) { restoreErrors.push(`${stub}: ${err.message}`); }
+      }
+      assert.deepEqual(restoreErrors, [], 'every stub restored');
     }
   });
 
@@ -248,11 +254,14 @@ describe('an upstream slot moved under another heading is reported', () => {
 describe('migrating a whole-file hold to a block hold', () => {
   const VA_FRAG = '.sync-blocks/visual-audit.target-adapter.md';
   const ADAPTER = '<!-- repo-electron-target:start -->\n## Electron target\nUse the repo driver.\n<!-- repo-electron-target:end -->\n';
+  // Sequential steps over one consumer (node:test runs a describe's its in order); split so no single test runs long.
+  let held;
+  let token;
 
-  it('a held file with the block pasted in, then the declaration swapped: refused until consent names the bytes', async () => {
+  it('a held file with the block pasted in, then the declaration swapped: refused, printing the consent token', async () => {
     overrides({ overrides: [{ path: VA, reason: 'carries the adapter block' }], blocks: [navBlock] });
     commit('hold visual-audit');
-    const held = read(VA).replace('## Flow', `${ADAPTER}\n## Flow`).replace('## Flow', '## Flow (drifted)');
+    held = read(VA).replace('## Flow', `${ADAPTER}\n## Flow`).replace('## Flow', '## Flow (drifted)');
     write(VA, held);
     commit('consumer edits its held copy');
     let r = await sync();
@@ -264,25 +273,27 @@ describe('migrating a whole-file hold to a block hold', () => {
     commit('swap hold for block, no consent yet');
     r = await sync();
     assert.notEqual(r.code, 0, 'refused without consent');
-    const token = /"adoptHeldFile": "(sha256:[0-9a-f]{16})"/.exec(r.text)?.[1];
+    token = /"adoptHeldFile": "(sha256:[0-9a-f]{16})"/.exec(r.text)?.[1];
     assert.ok(token, `the refusal prints the consent token:\n${r.text.slice(-2000)}`);
     assert.equal(read(VA), held, 'the held file is untouched');
+  });
 
-    // An UNTRACKED held file is refused too — never the generic untracked overwrite (audit R2 H2 of the plan; code R1 M10).
+  it('an UNTRACKED held file is refused too, never the generic untracked overwrite', async () => {
     git(['rm', '-q', '--cached', VA], consumer);
     commit('untrack the held file');
-    r = await sync();
+    const r = await sync();
     assert.notEqual(r.code, 0, 'pending adoption refuses an untracked held file');
     assert.doesNotMatch(r.text, /diverged-untracked|untracked here/, 'not the generic untracked rule');
     assert.equal(read(VA), held);
     git(['add', VA], consumer);
     commit('track it again');
+  });
 
-    // (d) uncommitted work is never migrated, even with the right consent.
+  it('uncommitted work is never migrated, even with the right consent; committed, it migrates', async () => {
     overrides({ blocks: [navBlock, { path: VA, slot: 'target-adapter', from: VA_FRAG, reason: 'adapter block', adoptHeldFile: token }] });
     commit('consent');
     write(VA, `${held}uncommitted tail\n`);
-    r = await sync();
+    let r = await sync();
     assert.notEqual(r.code, 0);
     assert.match(r.text, /uncommitted changes/);
     write(VA, held);
@@ -296,15 +307,18 @@ describe('migrating a whole-file hold to a block hold', () => {
     assert.ok(text.includes(`${ADAPTER}<!-- sync-slot:target-adapter:end -->`), 'the block is spliced');
     assert.ok(lastSync().divergedOverwritten.some((d) => d.path === VA && d.reason === 'block-hold-migration'));
     commit('migrated');
+  });
 
-    r = await sync();
+  it('after adoption, a spent flag is inert', async () => {
+    const r = await sync();
     assert.equal(r.code, 0, whySyncFailed(r));
     assert.doesNotMatch(r.text, /block-hold-migration|adopted as a block hold/, 'a spent flag is inert');
+  });
 
-    // A NEW hold generation: hold again, edit, then restore the old block entry with its stale token -> refused.
+  it('a NEW hold generation is never adopted by the stale token', async () => {
     overrides({ overrides: [{ path: VA, reason: 'held again' }], blocks: [navBlock] });
     commit('hold again');
-    r = await sync();
+    let r = await sync();
     assert.equal(r.code, 0, whySyncFailed(r));
     write(VA, `${read(VA)}a newer held edit\n`);
     commit('edit the new held generation');
@@ -345,7 +359,8 @@ describe('lifecycle against an ISOLATED source checkout: upstream changes, moves
     // Everything that differs from HEAD (staged AND unstaged) plus untracked files; a path gone from the working tree is
     // deleted in the fixture too, so it carries exactly the state under test.
     const changed = [
-      ...git(['diff', '-z', '--name-only', 'HEAD'], REPO_ROOT).split('\0'),
+      // --no-renames: a staged rename is its old path (deleted below) plus its new path (copied), never the new one alone.
+      ...git(['diff', '-z', '--no-renames', '--name-only', 'HEAD'], REPO_ROOT).split('\0'),
       ...git(['ls-files', '-z', '--others', '--exclude-standard'], REPO_ROOT).split('\0'),
     ].filter(Boolean);
     for (const rel of new Set(changed)) {
@@ -384,7 +399,7 @@ describe('lifecycle against an ISOLATED source checkout: upstream changes, moves
     // Unlink the node_modules JUNCTION first (rmdirSync removes the link, never its target), so no later recursive delete
     // of the temp tree can walk into this repo's real node_modules; then deregister the worktree (--force twice: it holds
     // untracked files), then prune whatever a locked directory left registered.
-    try { fs.rmdirSync(path.join(src, 'node_modules')); } catch { /* junction already gone */ }
+    try { removeLink(path.join(src, 'node_modules')); } catch { /* link already gone */ }
     try { git(['worktree', 'remove', '--force', '--force', src], REPO_ROOT); } catch { /* fall through to prune */ }
     try { git(['worktree', 'prune'], REPO_ROOT); } catch { /* best effort */ }
   });
