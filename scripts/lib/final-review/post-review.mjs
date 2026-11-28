@@ -579,25 +579,57 @@ function recordWronglyDismissed(result, revId, modelId = 'gemini') {
   }
 }
 
+const GEMINI_REVIEW_ARM = 'gemini-review';
+const VERDICT_REWARDS = { APPROVE: 0.8, CONCERNS: 0.5, CONCERNS_REMAINING: 0.35, REJECT: 0.2 };
+
+/**
+ * Record the final-review verdict as a bandit reward — registering the arm
+ * first, here, where the reward is produced.
+ *
+ * The arm used to be registered only by the legacy code-audit loop, so in a
+ * fresh checkout (bandit state is per checkout) and on every plan / tiered /
+ * standalone review, `update` hit an unknown arm and the reward was dropped
+ * with its `false` return ignored (upstream 0aab5c0f). `addArm` is idempotent.
+ *
+ * @param {{addArm:Function, update:Function}} bandit
+ * @param {object} result - the final-review result
+ * @param {string} revId - active prompt revision for gemini-review
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
+ * @returns {{recorded:boolean, reason:'recorded'|'learning-disabled'|'coverage-gated'|'update-rejected'|'error'}}
+ */
+export function recordGeminiVerdictReward(bandit, result, revId, { env = process.env } = {}) {
+  if (env.LEARNING_DISABLE === '1') return { recorded: false, reason: 'learning-disabled' };
+  // A coverage-gated verdict is a mechanical post-condition, not a judgement
+  // about the prompt — feeding it to the bandit would teach the wrong lesson
+  // from a run the reviewer could not perform.
+  if (result?._coverageGate?.downgraded) return { recorded: false, reason: 'coverage-gated' };
+  const reward = VERDICT_REWARDS[result?.verdict] ?? 0.5;
+  try {
+    bandit.addArm(GEMINI_REVIEW_ARM, revId, null, { promptRevisionId: revId });
+    if (bandit.update(GEMINI_REVIEW_ARM, revId, reward)) return { recorded: true, reason: 'recorded' };
+    process.stderr.write(`  [learning] ⚠ ${GEMINI_REVIEW_ARM} verdict reward NOT recorded (arm ${GEMINI_REVIEW_ARM}:${revId} rejected the update)\n`);
+    return { recorded: false, reason: 'update-rejected' };
+  } catch (err) {
+    process.stderr.write(`  [learning] ⚠ ${GEMINI_REVIEW_ARM} verdict reward NOT recorded (${String(err?.message || err).slice(0, 100)})\n`);
+    return { recorded: false, reason: 'error' };
+  }
+}
+
 export function recordGeminiOutcomes(result, modelId = 'gemini') {
   try {
     const repoProfile = generateRepoProfile();
     const repoFP = repoProfile?.repoFingerprint || null;
-    const bandit = new PromptBandit();
     const fpTracker = new FalsePositiveTracker();
     const revId = getActiveRevisionId('gemini-review') || 'default';
     recordNewFindings(result, fpTracker, repoFP, revId, modelId);
     recordWronglyDismissed(result, revId, modelId);
-    const VERDICT_REWARDS = { APPROVE: 0.8, CONCERNS: 0.5, CONCERNS_REMAINING: 0.35, REJECT: 0.2 };
-    // A coverage-gated verdict is a mechanical post-condition, not a judgement
-    // about the prompt — feeding it to the bandit would teach the wrong lesson
-    // from a run the reviewer could not perform. Skip the verdict reward; the
-    // finding-level outcomes above are recorded either way.
-    if (!result._coverageGate?.downgraded) {
-      const verdictReward = VERDICT_REWARDS[result.verdict] ?? 0.5;
-      bandit.update('gemini-review', revId, verdictReward);
+    // LEARNING_DISABLE=1: never construct the bandit, so no state file is
+    // created or rewritten. The finding-level outcomes above are unchanged.
+    if (process.env.LEARNING_DISABLE !== '1') {
+      const bandit = new PromptBandit();
+      recordGeminiVerdictReward(bandit, result, revId);
+      bandit.flush();
     }
-    bandit.flush();
     fpTracker.flush?.();
     const newCount = result.new_findings?.length ?? 0;
     const wrongCount = result.wrongly_dismissed?.length ?? 0;

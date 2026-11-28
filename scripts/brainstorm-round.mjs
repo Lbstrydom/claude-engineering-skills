@@ -26,7 +26,7 @@ import { resolveOutputBudget, resolveProviderCall, DEPTH_TOKENS } from './lib/br
 import { assembleResumeContext } from './lib/brainstorm/resume-context.mjs';
 import { loadArchSection, shouldAttachArch } from './lib/brainstorm/arch-context.mjs';
 import { buildBrainstormSystemPrompt, DEFAULT_WORD_TARGET } from './lib/brainstorm/prompt.mjs';
-import { loadArtifacts } from './lib/brainstorm/artifact-context.mjs';
+import { loadArtifacts, summariseArtifacts } from './lib/brainstorm/artifact-context.mjs';
 import { loadPolicyPack } from './lib/brainstorm/policy-context.mjs';
 import { buildDebatePrompt } from './lib/brainstorm/debate-prompt.mjs';
 import { classifyDebateOutcome, isDebateEligible } from './lib/brainstorm/debate-outcome.mjs';
@@ -480,6 +480,9 @@ async function runBrainstormMode(args) {
     if (loaded.attached.length > 0) {
       process.stderr.write(`  [brainstorm] attached ${loaded.attached.length} focal artifact(s), ~${loaded.totalTokens} tokens${loaded.redactionCount > 0 ? ` (${loaded.redactionCount} secret(s) redacted)` : ''}\n`);
     }
+    for (const a of loaded.attached.filter(x => x.truncated)) {
+      process.stderr.write(`  [brainstorm] ⚠ artifact TRUNCATED: ${a.path} — ~${a.sentChars} of ${a.totalChars} chars attached (per-artifact budget ${loaded.perArtifactTokens} tokens)\n`);
+    }
     if (!args.noPolicy && loaded.attached.length > 0) {
       const pack = loadPolicyPack({ artifactPaths: loaded.attached.map(a => a.path) });
       policyBlock = pack.text;
@@ -487,12 +490,10 @@ async function runBrainstormMode(args) {
         process.stderr.write(`  [brainstorm] attached policy pack: ${pack.requirementCount} in-scope invariant(s), ${pack.sectionsIncluded.length} doc section(s), ~${pack.totalTokens} tokens${pack.ledgerStale ? ' (⚠ ledger may be stale)' : ''}\n`);
       }
     }
-    artifactSummary = {
+    artifactSummary = summariseArtifacts(loaded, {
       requested: args.withArtifact.length,
-      attached: loaded.attached.map(a => ({ path: a.path, bytes: a.bytes, truncated: a.truncated })),
-      refused: loaded.refused.map(r => ({ path: r.path, reason: r.reason })),
       policyAttached: policyBlock.length > 0,
-    };
+    });
   }
 
   // Assemble resume context + --with-context (BEFORE preflight per §13.C)

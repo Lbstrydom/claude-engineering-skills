@@ -145,6 +145,7 @@ source comments that no docs linter sees — stays valid.
 | [Backlog triage + arch drift — 2026-10-25](./backlog-triage-2026-10-25.md) | `Complete` |  |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/`… |
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
+| [/brainstorm artifact-send honesty + gemini-review bandit arm registration](./brainstorm-artifact-honesty-and-gemini-bandit-arm.md) | `Complete` | implemented 2026-11-28 in one PR (merge by the coordinator) |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix… |
 | [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate… |
 | [CES full suite on GitHub Actions, light local pre-push](./ci-full-suite-actions.md) | `Complete` |  |

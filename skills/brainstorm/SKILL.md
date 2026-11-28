@@ -34,7 +34,7 @@ Usage:
   /brainstorm --depth shallow|standard|deep <topic>  # token budget per response
   /brainstorm --continue-from <sid> <topic>    # resume a prior session
   /brainstorm --with-context "<text>" <topic>  # attach extra context (repeatable)
-  /brainstorm --with-artifact <path> <topic>   # attach the focal artifact verbatim (repeatable)
+  /brainstorm --with-artifact <path> <topic>   # attach the focal artifact (repeatable)
   /brainstorm save <sid> <round> "<insight>"   # record a keeper insight from a prior round
 ```
 
@@ -85,7 +85,7 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 | `--with-context "<text>"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |
 | `--with-arch` | auto | Force-attach the repo's `AGENTS.md` `## Architecture` section so the external LLMs share Claude's codebase grounding. |
 | `--no-arch` | auto | Force-skip architecture context — unanchored greenfield ideation. |
-| `--with-artifact <path>` | — | Attach the **focal artifact** verbatim — the plan/diff/module the topic is actually about. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |
+| `--with-artifact <path>` | — | Attach the **focal artifact** — the plan/diff/module the topic is actually about; secrets redacted, cut to a shared ~3K-token budget. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |
 | `--no-policy` | off | Suppress the auto-attached policy pack (artifact only). |
 
 **Which two voices you get depends on the profile** — the default is "two
@@ -223,9 +223,9 @@ inspect argv):
 - If `archContextAttached` is `true`, prepend an info line above the blocks:
   > ℹ Sent the repo's architecture summary (`archContextChars` chars) to the
   > external models — pass `--no-arch` for an unanchored view.
-- If `artifactContext` is non-null, prepend one info line naming what the
-  models actually saw:
-  > ℹ Focal artifact(s) sent verbatim: `<paths>`[ + repo policy pack].
+- If `artifactContext` is non-null, prepend `artifactContext.renderLine`
+  word for word — it says per artifact whether it went whole or TRUNCATED.
+  If it is absent, name each `truncated: true` path as TRUNCATED.
 - If `artifactContext.refused` is non-empty, prepend a WARNING line per
   refusal. **Never silently drop one** — the user must not believe the
   models saw a file that was withheld:
