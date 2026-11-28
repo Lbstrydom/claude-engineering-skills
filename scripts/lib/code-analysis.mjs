@@ -327,7 +327,7 @@ export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit
  * System prompt for the REDUCE phase of map-reduce auditing.
  *
  * REDUCE answers with DECISIONS about payload refs (`ReduceDecisionSchema`,
- * schemas.mjs); code rebuilds each output finding from the full
+ * reduce-decision-schema.mjs); code rebuilds each output finding from the full
  * MAP finding (upstream aa0298f2). Every field this prompt names must be a
  * property of the EMITTED schema — tests/reduce-rehydrate.test.mjs checks
  * `z.toJSONSchema(ReduceDecisionSchema)`, not the Zod source. The old prompt

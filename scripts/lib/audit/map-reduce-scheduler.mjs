@@ -16,7 +16,8 @@
 
 import fs from 'node:fs';
 import { z } from 'zod';
-import { ProducerFindingSchema, ReduceDecisionSchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta } from '../schemas.mjs';
+import { ProducerFindingSchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta } from '../schemas.mjs';
+import { ReduceDecisionSchema } from '../reduce-decision-schema.mjs';
 import { safeInt, normalizePath, readFilesAsContext } from '../file-io.mjs';
 import { buildAuditUnits, chunkScopeMode, measureContextChars, REDUCE_SYSTEM_PROMPT } from '../code-analysis.mjs';
 import { classifyFindingScope, PRE_EXISTING, strictChunkRanges } from '../finding-scope.mjs';
