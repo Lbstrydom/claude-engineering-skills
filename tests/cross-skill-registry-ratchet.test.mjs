@@ -58,13 +58,14 @@ const CLI_PATH = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta
 //   close-finding (2026-10-02) - by-id discharge of an ordinary-pass finding;
 //     /ship-checked 0.5e's printed final-review-record-fix could not touch one.
 //     Registered directly: 75 + 1 = 76, then +1 for the own-model `ledger` verb = 77
+//     +2 registered directly for the step-timing pair (step-timing-ready, judge-step-timings) = 79
 //
 // ZERO is the end state, and the ratchet flips meaning here: from "legacy may
 // only shrink" to "legacy must not come BACK". A new command belongs in the
 // registry; re-introducing a second dispatch surface is the two-oracles defect
 // this migration removed.
 const LEGACY_PIN = 0;
-const TOTAL_INVENTORY = 77;
+const TOTAL_INVENTORY = 79;
 
 describe('cross-skill registry ratchet', () => {
   it(`legacy command count is exactly ${LEGACY_PIN} (decrease-only; update WITH the cohort that moves it)`, () => {

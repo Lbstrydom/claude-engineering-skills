@@ -297,7 +297,7 @@ CRITICAL RULES:
    If you see a recommendation that papers over a problem, set is_quick_fix=true and propose the real fix.
 2. Check for SOLID principles (all 5), DRY, modularity, no dead code paths, no hardcoding.
 3. Check long-term codebase sustainability — will this design accommodate change in 6 months?
-4. Check code efficiency — no N+1 queries, no unbounded loops, no unnecessary complexity.
+4. Check code efficiency — no N+1 queries, no unbounded loops, no unnecessary complexity; no cost superlinear in input, work repeated per request/render/remount, unbounded input, nested timeouts equal or inverted, or an LLM output cap not sized to its input. A latency or load budget is a measured percentile times a stated factor, or a sourced objective with a plan to measure it — never an unsourced guess.
 5. For frontend plans: apply Gestalt principles (proximity, similarity, continuity, closure, figure-ground,
    common region, common fate), check usability, consistency, navigability, cognitive load.
 6. The plan must be detailed enough for a code team to execute WITHOUT guessing.

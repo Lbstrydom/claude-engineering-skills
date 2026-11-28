@@ -73,10 +73,33 @@ const PASS_BACKEND_OBJECTIVE_R1 = `You are auditing BACKEND CODE quality against
 FOCUS ONLY on these files: routes, services, DB queries, config, schemas.
 Be ruthlessly honest about finding REAL issues that will cause bugs or technical debt.`;
 
+// Cost checklist shared by the backend and frontend rubrics (one home — the
+// plan-audit one-liner in openai-audit.mjs names the same classes). Every item
+// comes from a measured instance in a three-consumer survey; the instances are
+// in docs/plans/performance-checklist-and-step-timings.md §Change 1. The size
+// goes in `detail` behind a fixed label because ProducerFindingSchema has no
+// cost field and `detail` is one the EMITTED schema carries (see that plan).
+export const COST_CHECKLIST = `
+COST (flag only with the input that makes it expensive; put the size in \`detail\` as
+"Expected cost: <estimate> at <input size>" — an estimate from the code, never a measurement):
+- cost growing faster than linear with input (a scan/regex over all earlier text per item, nested loops over one collection);
+- work repeated every request, render, rerun or remount that could run once;
+- independent I/O awaited in series;
+- a statement prepared or a client built per item; N+1 queries;
+- a failure neither cached nor backed off (retried at full rate, or the same work bought again);
+- input with no size limit; extract-then-truncate; a result cap that truncates silently;
+- nested timeouts equal or inverted (inner >= outer), a timeout below the real latency or above a proxy's idle cutoff, a cancel signal no handler reads;
+- one shared row or pointer every concurrent write must update.
+LLM COST: a fixed output-token cap or thinking budget not sized to the input, or no stop_reason
+check (truncated output reads as success); a model call that can repeat (remount, retry, research
+bought twice); no prompt cache on a repeated prefix; model egress not paced to the rate limit.
+A cache, memo or parallel read you recommend is a correctness change: every input in the key,
+memory bounded, shared state published only once it is decided.`;
+
 const PASS_BACKEND_RUBRIC = `Check: SOLID (all 5), DRY, async/await correctness, error handling, input validation,
 transaction safety, tenant/owner scoping on ALL row-scoped queries (reads AND writes filtered
-by the repo's tenant key), auth middleware, N+1 queries,
-hardcoded values, dead code, single source of truth.
+by the repo's tenant key), auth middleware,
+hardcoded values, dead code, single source of truth.${COST_CHECKLIST}
 PERSISTENCE CONTRACT (DB writes — silent failures here are HIGH, they masquerade as success):
 - Silent error-swallow: a write that catches a DB error and returns a SUCCESS-SHAPED value
   (null / {} / [] / false / {id:null}) without re-throwing, logging, or an {ok:false} signal —
@@ -123,7 +146,7 @@ Be ruthlessly honest about finding REAL issues that will cause UX bugs or techni
 const PASS_FRONTEND_RUBRIC = `Check: CSP compliance (no inline handlers), apiFetch (not raw fetch), event listener cleanup,
 loading/error/empty state handling, accessibility (ARIA, keyboard, focus management),
 Gestalt principles (proximity, similarity, continuity, closure, figure-ground),
-cognitive load, consistency, responsive design, CSS variables, debounce on scroll/resize.
+cognitive load, consistency, responsive design, CSS variables, debounce on scroll/resize.${COST_CHECKLIST}
 Do NOT check backend files or wiring — other passes handle that.
 Every recommendation must be a PROPER sustainable solution, not a band-aid.
 

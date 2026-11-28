@@ -406,6 +406,19 @@ export const REGISTRY = Object.freeze([
     load: () => import('./commands/arch-query.mjs').then((m) => m.computeTargetDomainsCmd),
   },
   {
+    // /persona-test + /click-test step timings (docs/plans/performance-checklist-and-step-timings.md).
+    name: 'judge-step-timings',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/misc.mjs').then((m) => m.judgeStepTimingsCmd),
+  },
+  {
+    name: 'step-timing-ready',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/misc.mjs').then((m) => m.stepTimingReadyCmd),
+  },
+  {
     name: 'get-callers-for-file',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'read', cloud: 'degrade-noop',

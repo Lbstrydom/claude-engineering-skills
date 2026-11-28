@@ -267,3 +267,55 @@ export async function getFrictionNeighbourhoodCmd(ctx) {
     k: p.k ?? (ctx.flag('k') ? Number(ctx.flag('k')) : undefined),
   });
 }
+
+/**
+ * `judge-step-timings` — judge the step timings /persona-test and /click-test
+ * recorded against the app's optional `step-timing-contract.json`
+ * (docs/plans/performance-checklist-and-step-timings.md §Change 2). Local and
+ * pure apart from reading the contract, which `loadStepTimingContract` does
+ * through the sensitive-path seam; an untimed or unsent step reads
+ * `unmeasured`, never green.
+ */
+export async function judgeStepTimingsCmd(ctx) {
+  const { StepTimingInputSchema, loadStepTimingContract, judgeStepTimings, contractDigest } = await import('../../step-timing.mjs');
+  const parsed = StepTimingInputSchema.safeParse(ctx.payload());
+  if (!parsed.success) {
+    const why = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
+    throw new CommandError('BAD_INPUT', `judge-step-timings: ${why}`, {}, 1);
+  }
+  const { steps, attemptedIds, ready, contractPath, contractDigest: sent } = parsed.data;
+  const loaded = loadStepTimingContract({ contractPath, repoRoot: process.cwd() });
+  if (!loaded.ok) throw new CommandError('BAD_INPUT', `judge-step-timings: ${loaded.error}`, {}, 1);
+  if (contractDigest(loaded.contract) !== sent) {
+    throw new CommandError('BAD_INPUT', 'judge-step-timings: contract changed between calls (digest differs from step-timing-ready) — timings not judged', {}, 1);
+  }
+  const judged = judgeStepTimings(steps, loaded.contract, { attemptedIds, ready });
+  if (!judged.ok) throw new CommandError('BAD_INPUT', `judge-step-timings: ${judged.error}`, {}, 1);
+  return {
+    ok: true,
+    overall: judged.overall,
+    counts: judged.counts,
+    missingIds: judged.missingIds,
+    readyOverridden: judged.readyOverridden,
+    steps: judged.steps,
+    contract: { declared: loaded.contract !== null, path: loaded.path },
+  };
+}
+
+/**
+ * `step-timing-ready` — the ready settings (selector, quietMs, timeoutMs) a
+ * browser skill measures with, resolved from the app's contract BEFORE any
+ * step is timed; defaults when none is declared. Budgets are not returned.
+ */
+export async function stepTimingReadyCmd(ctx) {
+  const { resolveReadySettings } = await import('../../step-timing.mjs');
+  const p = ctx.payload() ?? {};
+  const extra = Object.keys(p).filter((k) => k !== 'contractPath');
+  if (extra.length) throw new CommandError('BAD_INPUT', `step-timing-ready: unknown key(s) ${extra.join(', ')}`, {}, 1);
+  if (p.contractPath !== undefined && (typeof p.contractPath !== 'string' || !p.contractPath)) {
+    throw new CommandError('BAD_INPUT', 'step-timing-ready: contractPath must be a non-empty string', {}, 1);
+  }
+  const r = resolveReadySettings({ contractPath: p.contractPath, repoRoot: process.cwd() });
+  if (!r.ok) throw new CommandError('BAD_INPUT', `step-timing-ready: ${r.error}`, {}, 1);
+  return { ok: true, ready: r.ready, contractDigest: r.contractDigest, contract: { declared: r.contractDeclared, path: r.path } };
+}

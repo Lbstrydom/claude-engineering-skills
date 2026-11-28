@@ -83,6 +83,9 @@ export const EXPECTED_CONSUMERS = Object.freeze({
     'investigate', 'audit-code', 'ux-lock', 'ship-checked', 'explain', 'plan', 'audit-plan',
     'nav-audit', 'persona-test', 'cycle',
   ],
+  // Budgets, CPU-time guards, the step-timing snippet the two browser skills run,
+  // and the load-harness recipe /plan points at (docs/plans/performance-checklist-and-step-timings.md).
+  'performance-measurement.md': ['plan', 'persona-test', 'click-test'],
   // The worktree-preflight hydrate recipe. DERIVED, not listed: every skill the
   // preflight gate puts in scope carries the marker that points here, so the
   // consumer set is that gate's own subject set (scripts/lib/worktree-preflight.mjs).
