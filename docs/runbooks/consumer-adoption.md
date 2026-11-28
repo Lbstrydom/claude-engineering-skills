@@ -823,6 +823,14 @@ npm run sync -- --target $Target --dry-run
 Do not use `--overwrite-diverged` for this: it overwrites every diverged file in
 the target, not just the one you are migrating.
 
+**Your own path rules must allow `.sync-blocks/`.** A new top-level directory can
+fail your repo's own gates even when every sync check is green: the sync cannot
+see a repo-local path allowlist, a phase gate's allowed prefixes, or a test that
+requires every directory to be a mapped domain or a named exclusion. Add the
+directory to each of those in the same PR as the migration (measured 2026-11-28: a
+consumer's first CI run failed on two such coupled edits while all three of its
+sync guards passed).
+
 ---
 
 ## Fresh-clone workflow
