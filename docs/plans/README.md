@@ -43,6 +43,7 @@ This is the list to read when asking "what is in flight?".
 | [Automatic meta step-back at the audit round cap (plan + code)](./meta-step-back-at-cap.md) | `Approved` |  |
 | [Own-model full capture — every audit call, every finding, every chip trajectory, from day one](./own-model-full-capture.md) | `Draft` |  |
 | [a telemetry path from a consumer whose store CES cannot reach](./private-store-telemetry-path.md) | `Approved` |  |
+| [REDUCE decides by reference, MAP findings survive byte for byte](./reduce-rehydrate-findings-by-ref.md) | `In Progress` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |
 | [Sashiko-inspired audit improvements (audit --resume, contested-finding verification, defect corpus)](./sashiko-audit-improvements.md) | `Approved` | plan audit closed 2026-11-19; implementation waits for the coordinator's go |
 | [Seeded-defect benchmark — pilot-first eval of record for the `/audit-code` loop](./seeded-defect-benchmark.md) | `Draft` |  |
@@ -441,6 +442,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Postgres-Parity M3 + M4 — `/audit-code` Summary](./postgres-parity-m3m4-audit-summary.md) |  |
 | [Audit Summary — Pre-push hook fails closed when killed](./prepush-hook-fail-closed-when-killed-audit-summary.md) |  |
 | [Audit summary: Python indexing for architectural memory](./python-arch-memory-indexing-audit-summary.md) |  |
+| [Audit summary: REDUCE decides by reference (upstream aa0298f2)](./reduce-rehydrate-findings-by-ref-audit-summary.md) |  |
 | [Audit summary — arch-memory / symbol-index manifest transport](./refactor-arch-memory-symbol-index-2026-07-audit-summary.md) |  |
 | [Audit Summary — refactor-architecture-debt-remainder-2026-07](./refactor-architecture-debt-remainder-2026-07-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |

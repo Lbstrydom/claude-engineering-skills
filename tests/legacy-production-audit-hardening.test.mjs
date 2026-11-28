@@ -561,7 +561,8 @@ describe('Phase 4 — runMapReducePass mapUnitStatus', () => {
         mapBehavior: (i) => (i === 0
           ? { throw: 'simulated MAP failure' }
           : { result: { ...EMPTY_PASS, findings: [mkFinding({ id: `H${i}`, section: `unit${i}.mjs:1`, detail: `finding from unit ${i}` })] } }),
-        reduceBehavior: { result: { pass_name: 'mrtest', findings: [mkFinding({ detail: 'reduced finding' })], quick_fix_warnings: [], summary: 'reduced' } },
+        // REDUCE answers with decisions about refs (aa0298f2); an empty answer keeps every MAP finding.
+        reduceBehavior: { result: { pass_name: 'mrtest', merge_groups: [], severity_elevations: [], systemic_findings: [], quick_fix_warnings: [], summary: 'reduced' } },
       });
       const result = await runMapReducePass(stub, files, 'mrtest', buildPromptForUnit, 1);
       assert.equal(result.mapUnitStatus, 'partial');
@@ -734,7 +735,8 @@ describe('runMapReducePass — reduceStatus reflects the actual failure category
     try {
       const stub = makeStub(() => ({
         status: 'completed', output: [], usage: OK_USAGE,
-        output_parsed: { pass_name: 'mrtest', findings: [mkFinding({ detail: 'reduced' })], quick_fix_warnings: [], summary: 'reduced' },
+        // A clean decision answer (aa0298f2: REDUCE no longer regenerates findings).
+        output_parsed: { pass_name: 'mrtest', merge_groups: [], severity_elevations: [], systemic_findings: [], quick_fix_warnings: [], summary: 'reduced' },
       }));
       const r = await runMapReducePass(stub, files, 'mrtest', buildPromptForUnit, 1);
       assert.equal(r.result._executionMeta, undefined);

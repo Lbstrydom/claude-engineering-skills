@@ -135,11 +135,15 @@ describe('buildReducePayload', () => {
     assert.doesNotThrow(() => JSON.parse(json));
   });
 
-  it('caps detail length at MAX_DETAIL_CHARS', () => {
+  // Inverse of the old `caps detail length at MAX_DETAIL_CHARS`, which pinned
+  // upstream aa0298f2 as intended behaviour: an unmarked 200-char cut that then
+  // became the output. Within budget, the view carries the full detail.
+  it('does not cut detail when the payload fits the budget', () => {
     const findings = [makeFinding('H1', 'HIGH', 'x'.repeat(1000))];
     const { json } = buildReducePayload(findings);
     const parsed = JSON.parse(json);
-    assert.ok(parsed[0].detail.length <= 200);
+    assert.equal(parsed[0].detail.length, 1000);
+    assert.equal(parsed[0].ref, 'F1');
   });
 });
 

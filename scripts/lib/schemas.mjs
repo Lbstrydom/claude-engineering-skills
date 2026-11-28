@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { FindingTagsProducer, FindingTagsPersisted } from './finding-tags.mjs';  // required on producers, nullable on persisted
 import { LineQuoteField, LineBoundField } from './finding-line-fields.mjs';
+import { ReduceDecisionSchema } from './reduce-decision-schema.mjs'; // own module: this file is size-ratcheted
 
 // ── Classification Schema (SonarQube-style, Phase B) ─────────────────────────
 
@@ -359,6 +360,8 @@ export function makeProducerFindingV3Schema(ids) {
  */
 export const PROVIDER_FACING_SCHEMAS = Object.freeze({
   ProducerEvidenceAnchorSchema,
+  // REDUCE's decision contract (upstream aa0298f2) — reaches GPT via zodTextFormat.
+  ReduceDecisionSchema,
   // The per-run V3 is dynamic; its refinement-freeness is a property of the
   // factory, so the guard instantiates it with a probe id.
   makeProducerFindingV3Schema,

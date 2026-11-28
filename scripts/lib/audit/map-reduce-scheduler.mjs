@@ -17,13 +17,14 @@
 import fs from 'node:fs';
 import { z } from 'zod';
 import { ProducerFindingSchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta } from '../schemas.mjs';
+import { ReduceDecisionSchema } from '../reduce-decision-schema.mjs';
 import { safeInt, normalizePath, readFilesAsContext } from '../file-io.mjs';
 import { buildAuditUnits, chunkScopeMode, measureContextChars, REDUCE_SYSTEM_PROMPT } from '../code-analysis.mjs';
 import { classifyFindingScope, PRE_EXISTING, strictChunkRanges } from '../finding-scope.mjs';
 import { callGPT, safeCallGPT } from './llm-helpers.mjs';
 import {
-  buildReducePayload, MAX_REDUCE_JSON_CHARS, MAP_FAILURE_THRESHOLD, computePassLimits, addUsage,
-  LlmError, normalizeFindingsForOutput as _normalizeFindingsForOutput,
+  buildReducePayload, applyReduceDecisions, MAX_REDUCE_JSON_CHARS, MAP_FAILURE_THRESHOLD,
+  computePassLimits, addUsage, LlmError, collapseIdenticalFindings,
 } from '../robustness.mjs';
 import { semanticId } from '../findings.mjs';
 import { openaiConfig, auditRuntimeConfig } from '../config.mjs';
@@ -36,14 +37,14 @@ const MAP_REDUCE_TOKEN_THRESHOLD = openaiConfig.mapReduceTokenThreshold;
 const HIGH_REASONING_MAP_REDUCE_THRESHOLD = openaiConfig.highReasoningMapReduceThreshold;
 const HIGH_REASONING_MAP_REDUCE_TOKEN_THRESHOLD = openaiConfig.highReasoningMapReduceTokenThreshold;
 
-// Same tiny semanticId-wrapped normalizer as pass-result-cache.mjs's own —
-// duplicated rather than cross-imported: neither new module is on the
-// other's allow-list in this plan's dependency direction, and it's three
-// lines wrapping two pre-existing shared primitives (robustness.mjs,
-// findings.mjs), not new logic.
-// @duplicate-justification: target=scripts/lib/audit/pass-result-cache.mjs:normalizeFindingsForOutput reason=deliberate — see the comment above; neither new module may import the other under this plan's dependency direction, and this is 3 lines wrapping 2 pre-existing shared primitives
+// Every output path of a map-reduce pass — REDUCE applied, failed, skipped or
+// over budget, and the pre-existing findings — goes through this one LOSSLESS
+// collapse (upstream aa0298f2): findings sharing a semanticId become one, with
+// the others kept whole on `_reduce.mergedFrom`. It used to wrap the deduping
+// normaliser, which discarded a "duplicate" whose remedy or classification
+// differed (semanticId reads only category|section|detail).
 function normalizeFindingsForOutput(findings) {
-  return _normalizeFindingsForOutput(findings, semanticId);
+  return collapseIdenticalFindings(findings, semanticId);
 }
 
 export const PassFindingsSchema = z.object({
@@ -432,8 +433,13 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   // REDUCE phase: single synthesis call
   process.stderr.write(`  [${passName}] REDUCE: synthesizing ${allFindings.length} findings\n`);
 
-  // Safe JSON truncation — always produces valid JSON
-  const payload = buildReducePayload(allFindings);
+  // Identical-identity twins are collapsed BEFORE REDUCE (losslessly — the
+  // twin stays whole on the survivor's _reduce.mergedFrom, and its gating tags
+  // are promoted onto the survivor). So every ref REDUCE sees is a settled
+  // survivor, and a systemic finding derived from it inherits the twin's tags;
+  // collapsing only afterwards left the systemic tags stale (aa0298f2 audit R4).
+  // Safe JSON truncation — always produces valid JSON.
+  const payload = buildReducePayload(normalizeFindingsForOutput(allFindings));
   if (payload.degraded) {
     process.stderr.write(`  [${passName}] REDUCE payload could not fit budget — skipping REDUCE\n`);
     return withPre({
@@ -447,9 +453,12 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
       mapUnitStatus, unitsAttempted, unitsFailed, model: dispatchedModel,
     });
   }
-  const { json: findingsJson, includedCount, totalCount } = payload;
+  const { json: findingsJson, includedCount, totalCount, truncatedViewRefs } = payload;
   if (includedCount < totalCount) {
-    process.stderr.write(`  [${passName}] REDUCE input truncated: ${includedCount}/${totalCount} findings (budget: ${MAX_REDUCE_JSON_CHARS} chars)\n`);
+    process.stderr.write(`  [${passName}] REDUCE input truncated: ${includedCount}/${totalCount} findings (budget: ${MAX_REDUCE_JSON_CHARS} chars) — the other ${totalCount - includedCount} pass through unchanged, marked _reduce.excluded\n`);
+  }
+  if (truncatedViewRefs.length > 0) {
+    process.stderr.write(`  [${passName}] REDUCE view of ${truncatedViewRefs.join(', ')} cut to fit the budget (view only — the output keeps the full MAP finding)\n`);
   }
 
   // Reduce uses low reasoning — it's dedup/ranking, not deep analysis. Higher timeout for large finding sets.
@@ -457,13 +466,13 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   reduceLimits.timeoutMs = Math.max(reduceLimits.timeoutMs, 240000); // Min 4 min for reduce (frontend/backend sets can be large)
   const reduceResult = await safeCallGPT(openai, {
     systemPrompt: REDUCE_SYSTEM_PROMPT,
-    userPrompt: `## Findings from ${units.length} audit units (${effectiveFailures} failed):\n\n${findingsJson}\n\n## Tasks:\n1. Deduplicate\n2. Elevate systemic patterns (3+ occurrences)\n3. Flag cross-file issues\n4. Rank by severity`,
-    schema: PassFindingsSchema,
+    userPrompt: `## Findings from ${units.length} audit units (${effectiveFailures} failed), each under a ref:\n\n${findingsJson}\n\n## Tasks (answer with refs only):\n1. merge_groups: duplicates of the same issue\n2. severity_elevations: findings whose severity a pattern raises\n3. systemic_findings: cross-unit patterns (3+ occurrences) or cross-file issues, citing source_refs`,
+    schema: ReduceDecisionSchema,
     schemaName: `reduce_${passName}`,
     reasoning: 'low',
     ...reduceLimits,
     passName: `reduce-${passName}`
-  }, { pass_name: passName, findings: allFindings, quick_fix_warnings: [], summary: 'Reduce phase failed — returning raw map findings' });
+  }, { pass_name: passName, merge_groups: [], severity_elevations: [], systemic_findings: [], quick_fix_warnings: [], summary: 'Reduce phase failed — returning raw map findings' });
 
   // Status-gated fallback: if safeCallGPT returned the empty-result sentinel (failed=true),
   // classify the failure and preserve raw MAP findings rather than silently discarding them.
@@ -476,9 +485,27 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
   // ever written it, so the fallback WAS the implementation and the override was
   // a branch no input could take — the same declared-not-real defect this line
   // exists to fix, one level down. A seam with no writer is not extensibility.
-  const reduceStatus = reduceResult.failed
+  //
+  // A REDUCE that answered is applied only if every decision is consistent
+  // with the payload (applyReduceDecisions). An unknown ref or a contradiction
+  // is a broken answer, reported as PARSE_ERROR through the same preservation
+  // path — never partly applied, never silently ignored.
+  let reduceStatus = reduceResult.failed
     ? reduceStatusFromErrorCategory(reduceResult.errorCategory)
     : ReduceStatus.OK;
+  let applied = null;
+  if (reduceStatus === ReduceStatus.OK) {
+    const parsed = ReduceDecisionSchema.safeParse(reduceResult.result);
+    const reducerName = reduceResult.model ?? dispatchedModel;
+    const violations = parsed.success
+      ? (applied = applyReduceDecisions(parsed.data, payload, { reducerName })).violations ?? []
+      : parsed.error.issues.map(iss => `${iss.path.join('.') || '(root)'}: ${iss.message}`);
+    if (!parsed.success || !applied.ok) {
+      process.stderr.write(`  [${passName}] REDUCE answer rejected — ${violations.length} contract violation(s):\n${violations.map(v => `    - ${v}`).join('\n')}\n`);
+      reduceStatus = ReduceStatus.PARSE_ERROR;
+      applied = null;
+    }
+  }
   if (reduceStatus !== ReduceStatus.OK && allFindings.length > 0) {
     process.stderr.write(`  [${passName}] REDUCE failed (${reduceStatus}) — preserving ${allFindings.length} raw MAP findings\n`);
     const totalLatency = Date.now() - mapStart;
@@ -501,9 +528,22 @@ export async function runMapReducePass(openai, files, passName, buildPromptForUn
     });
   }
 
+  // Success: the same lossless collapse as every other path. Two unmerged
+  // findings with one semanticId would otherwise share a `_hash` and collide in
+  // every consumer keyed on it; collapsed, neither is lost.
+  const findings = normalizeFindingsForOutput(applied.findings);
+  const { merged, elevated, systemic, excluded } = applied.stats;
+  process.stderr.write(`  [${passName}] REDUCE applied: ${allFindings.length} → ${findings.length} findings (merged ${merged}, elevated ${elevated}, systemic ${systemic}, budget-excluded ${excluded})\n`);
   const totalLatency = Date.now() - mapStart;
   return withPre({
-    result: reduceResult.result,
+    result: {
+      pass_name: passName,
+      findings,
+      quick_fix_warnings: reduceResult.result.quick_fix_warnings ?? [],
+      summary: excluded > 0
+        ? `${reduceResult.result.summary} [${excluded} finding(s) not shown to REDUCE (budget) passed through unchanged]`
+        : reduceResult.result.summary,
+    },
     // Sum MAP + REDUCE token usage — the success path previously hard-coded
     // zeros, dropping the entire pass's spend (the failed-REDUCE path above
     // already preserves `mapUsage`). Harmless while usage was only a telemetry

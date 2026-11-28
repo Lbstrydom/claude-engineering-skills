@@ -11,7 +11,6 @@ import { isTelemetryWriter } from './durable-write.mjs';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 export const MAX_REDUCE_JSON_CHARS = 120_000;
-export const MAX_DETAIL_CHARS = 200;
 export const MAP_FAILURE_THRESHOLD = 0.5;
 export const RETRY_MAX_ATTEMPTS = 1;
 export const RETRY_BASE_DELAY_MS = 2000;
@@ -155,47 +154,363 @@ export function nextRetryDelayMs({ category, attempt, retryAfter = null, random 
 // ── Reduce Payload Builder ──────────────────────────────────────────────────
 
 /**
- * Build a budget-safe JSON payload for the REDUCE phase.
- * Owns the sort invariant (HIGH > MEDIUM > LOW, tie-break by id).
- * Drops lowest-severity findings until under budget.
+ * Marker appended to a REDUCE *view* `detail` that had to be cut to fit the
+ * budget. It only ever appears in what REDUCE is shown — never in an output
+ * finding, which is always rebuilt from the full MAP object.
+ */
+export const REDUCE_VIEW_TRUNCATION_MARKER = '…[truncated for REDUCE input]';
+
+/**
+ * Every MAP unit that reported this finding: its own `_mapUnit` plus those of
+ * anything already merged into it (`_reduce.mergedFrom`). After the lossless
+ * identity collapse a survivor speaks for its twins, so a systemic finding's
+ * "spans units" rule must count their units too (aa0298f2 audit R5).
+ */
+export function contributingUnits(f) {
+  const units = new Set();
+  const add = (x) => {
+    if (x === undefined || x === null) return;
+    units.add(x);
+  };
+  add(f._mapUnit);
+  for (const m of f._reduce?.mergedFrom ?? []) {
+    if (m.finding) for (const u of contributingUnits(m.finding)) add(u);
+  }
+  return [...units].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+}
+
+const bySeverityThenId = (a, b) => {
+  const sd = (SEV_ORDER[a.severity] ?? 2) - (SEV_ORDER[b.severity] ?? 2);
+  return sd !== 0 ? sd : (a.id ?? '').localeCompare(b.id ?? '');
+};
+
+/** Stable HIGH > MEDIUM > LOW sort, tie-break by id. Returns a new array; inputs are not mutated. */
+export function sortFindingsForOutput(findings) {
+  return [...findings].sort(bySeverityThenId);
+}
+
+/**
+ * Build the REDUCE input: a budget-safe VIEW of the MAP findings, each under an
+ * opaque per-run reference (`F1`, `F2`, … in severity order).
+ *
+ * REDUCE answers with decisions about refs, never with finding text, and
+ * `applyReduceDecisions` rebuilds the output from `refToFinding` — so nothing
+ * in this view (its field choice, a budget cut) can reach an output finding.
+ * Refs exist because MAP ids are unit-local: `H1` from unit 0 and `H1` from
+ * unit 3 are different findings, so `id` cannot key a rehydration.
+ *
+ * Upstream aa0298f2: this used to BE the output — an 11-field whitelist with
+ * `detail` cut to 200 characters and no marker, which REDUCE then regenerated.
+ *
+ * Budget, measured on the exact string sent: tail findings are left out of the
+ * view first (they come back as `excludedFindings`, still passed through to the
+ * output, marked); a lone finding still over budget has its view `detail` cut
+ * with `REDUCE_VIEW_TRUNCATION_MARKER`; if even that cannot fit, `degraded`.
+ *
+ * @returns {{json:string, includedCount:number, totalCount:number, degraded:boolean,
+ *   refToFinding: Map<string, object>, excludedFindings: object[], truncatedViewRefs: string[]}}
  */
 export function buildReducePayload(findings, budget = MAX_REDUCE_JSON_CHARS) {
-  const sorted = [...findings].sort((a, b) => {
-    const sd = (SEV_ORDER[a.severity] ?? 2) - (SEV_ORDER[b.severity] ?? 2);
-    return sd !== 0 ? sd : (a.id ?? '').localeCompare(b.id ?? '');
-  });
+  const sorted = sortFindingsForOutput(findings);
+  const views = sorted.map((f, i) => ({
+    ref: `F${i + 1}`, id: f.id, severity: f.severity, category: f.category,
+    section: f.section, detail: f.detail, recommendation: f.recommendation, principle: f.principle, _mapUnits: contributingUnits(f),
+  }));
+  const serialize = (v) => JSON.stringify(v, null, 2);
 
-  const summarize = (f) => ({
-    id: f.id, severity: f.severity, category: f.category,
-    section: f.section, detail: f.detail?.slice(0, MAX_DETAIL_CHARS),
-    is_quick_fix: f.is_quick_fix,
-    importance: f.importance, pre_existing: f.pre_existing, newly_reachable: f.newly_reachable, _mapUnit: f._mapUnit
-  });
-
-  let subset = sorted.map(summarize);
-  let json = JSON.stringify(subset, null, 2);
-
-  while (json.length > budget && subset.length > 1) {
-    subset.pop();
-    json = JSON.stringify(subset, null, 2);
+  // The longest severity-ordered prefix whose serialized view fits — binary
+  // search, so an oversized set costs O(log n) serializations, not O(n).
+  let subset = views;
+  let json = serialize(subset);
+  if (json.length > budget && subset.length > 1) {
+    let lo = 1; let hi = views.length - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (serialize(views.slice(0, mid)).length <= budget) lo = mid; else hi = mid - 1;
+    }
+    subset = views.slice(0, lo);
+    json = serialize(subset);
   }
 
-  if (json.length > budget && subset.length === 1) {
-    const f = subset[0];
-    for (const field of ['detail', 'category', 'section']) {
-      if (json.length <= budget) break;
-      const maxLen = Math.max(30, (f[field]?.length ?? 0) - (json.length - budget));
-      f[field] = f[field]?.slice(0, maxLen);
-      subset[0] = { ...f };
-      json = JSON.stringify(subset, null, 2);
+  const truncatedViewRefs = [];
+  if (json.length > budget && subset.length === 1 && typeof subset[0].detail === 'string') {
+    // The longest detail prefix whose SERIALIZED view fits. Searched on the
+    // serialized length, never estimated from the character count: JSON
+    // escaping can double a string (every `"` or newline is two characters).
+    const original = subset[0].detail;
+    const cut = (k) => [{ ...subset[0], detail: original.slice(0, k) + REDUCE_VIEW_TRUNCATION_MARKER }];
+    const fits = (k) => serialize(cut(k)).length <= budget;
+    if (fits(0)) {
+      let lo = 0; let hi = original.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (fits(mid)) lo = mid; else hi = mid - 1;
+      }
+      subset = cut(lo);
+      json = serialize(subset);
+      truncatedViewRefs.push(subset[0].ref);
     }
   }
 
   if (json.length > budget) {
-    return { json: '[]', includedCount: 0, totalCount: findings.length, degraded: true };
+    return { json: '[]', includedCount: 0, totalCount: findings.length, degraded: true,
+      refToFinding: new Map(), excludedFindings: sorted, truncatedViewRefs: [] };
   }
 
-  return { json, includedCount: subset.length, totalCount: findings.length, degraded: false };
+  const refToFinding = new Map(subset.map((v, i) => [v.ref, sorted[i]]));
+  return {
+    json, includedCount: subset.length, totalCount: findings.length, degraded: false,
+    refToFinding, excludedFindings: sorted.slice(subset.length), truncatedViewRefs,
+  };
+}
+
+const EFFORT_ORDER = ['TRIVIAL', 'EASY', 'MEDIUM', 'MAJOR', 'CRITICAL'];
+
+/**
+ * The one merge rule for the GATING tags a survivor inherits from what was
+ * merged into it — the conservative direction for each: `importance` is
+ * `important` if any member is, `is_quick_fix` is `true` if any member is.
+ * Severity needs no rule here: both merge paths already keep the highest.
+ * Shared by REDUCE merges, the identical-identity collapse and systemic
+ * sources, so a merge can never hide a finding from the convergence gate.
+ * Changed tags are recorded on `_reduce` as `<tag>From`; the merged members
+ * themselves stay whole on `_reduce.mergedFrom`.
+ *
+ * @returns {{importance?: string, is_quick_fix?: boolean}} only the tags that change
+ */
+function mergedGateTags(survivor, merged) {
+  const all = [survivor, ...merged];
+  const changed = {};
+  if (survivor.importance !== 'important' && all.some(f => f.importance === 'important')) changed.importance = 'important';
+  if (survivor.is_quick_fix !== true && all.some(f => f.is_quick_fix === true)) changed.is_quick_fix = true;
+  return changed;
+}
+const tagProvenance = (survivor, changed) =>
+  Object.fromEntries(Object.keys(changed).map(k => [`${k === 'is_quick_fix' ? 'quickFix' : k}From`, survivor[k] ?? null]));
+const higherSeverity = (a, b) => ((SEV_ORDER[b] ?? 2) < (SEV_ORDER[a] ?? 2) ? b : a);
+
+/**
+ * Apply REDUCE's decisions to the full MAP findings (upstream aa0298f2).
+ *
+ * Pure. Every output finding is either a MAP object untouched (same reference),
+ * a MAP object copied with only `severity` raised and a `_reduce` provenance
+ * block added, or a code-built systemic finding whose prose alone came from
+ * REDUCE. A ref REDUCE never mentions passes through; a budget-excluded finding
+ * passes through marked `_reduce.excluded: 'budget'`.
+ *
+ * All-or-nothing: any unknown ref, reuse of a ref across decisions, empty merge,
+ * lowering, or a systemic finding that is not genuinely cross-unit returns
+ * `{ok:false, violations}` and applies NOTHING — a partly-trusted answer mixed
+ * into the output would be silent in exactly the way this exists to prevent.
+ *
+ * @param {{merge_groups?:object[], severity_elevations?:object[], systemic_findings?:object[]}} decisions
+ * @param {{refToFinding: Map<string, object>, excludedFindings?: object[]}} payload  from buildReducePayload
+ * @param {{reducerName?: string|null}} [opts]  the model that served REDUCE — the systemic findings' producer
+ * @returns {{ok:true, findings:object[], stats:object} | {ok:false, violations:string[]}}
+ */
+export function applyReduceDecisions(decisions, { refToFinding, excludedFindings = [] }, { reducerName = null } = {}) {
+  const violations = [];
+  const refOf = new Map([...refToFinding].map(([ref, f]) => [f, ref]));
+  const provenance = (f) => ({ ref: refOf.get(f), id: f.id, section: f.section, _mapUnit: f._mapUnit });
+  const known = (ref, where) => {
+    if (refToFinding.has(ref)) return true;
+    violations.push(`${where}: unknown ref ${JSON.stringify(ref)}`);
+    return false;
+  };
+
+  // Merge groups — every ref belongs to at most one group.
+  const claimedBy = new Map();
+  const claim = (ref, where) => {
+    if (claimedBy.has(ref)) violations.push(`${where}: ref ${ref} is already used by ${claimedBy.get(ref)}`);
+    else claimedBy.set(ref, where);
+  };
+  const removed = new Set();
+  const mergedInto = new Map();
+  (decisions.merge_groups ?? []).forEach((g, i) => {
+    const where = `merge_groups[${i}]`;
+    const dupRefs = Array.isArray(g.duplicate_refs) ? g.duplicate_refs : [];
+    if (dupRefs.length === 0) violations.push(`${where}: duplicate_refs is empty`);
+    if (known(g.keep_ref, where)) claim(g.keep_ref, where);
+    const dups = [];
+    for (const d of dupRefs) {
+      if (d === g.keep_ref) { violations.push(`${where}: keep_ref ${d} is also listed as its own duplicate`); continue; }
+      if (!known(d, where)) continue;
+      claim(d, where);
+      dups.push(d);
+      removed.add(d);
+    }
+    mergedInto.set(g.keep_ref, [...(mergedInto.get(g.keep_ref) ?? []), ...dups]);
+  });
+
+  // Severity elevations — raise only, once per ref, never a merged-away ref.
+  const elevated = new Map();
+  (decisions.severity_elevations ?? []).forEach((e, i) => {
+    const where = `severity_elevations[${i}]`;
+    if (!known(e.ref, where)) return;
+    if (!(e.severity in SEV_ORDER)) { violations.push(`${where}: invalid severity ${JSON.stringify(e.severity)}`); return; }
+    if (removed.has(e.ref)) { violations.push(`${where}: ${e.ref} was merged away`); return; }
+    if (elevated.has(e.ref)) { violations.push(`${where}: ${e.ref} is elevated twice`); return; }
+    const base = refToFinding.get(e.ref).severity;
+    if ((SEV_ORDER[e.severity] ?? 2) > (SEV_ORDER[base] ?? 2)) {
+      violations.push(`${where}: ${e.ref} lowered ${base} -> ${e.severity}; REDUCE may only raise`);
+      return;
+    }
+    elevated.set(e.ref, { severity: e.severity, reason: e.reason });
+  });
+
+  // A systemic source's EFFECTIVE group — the one derivation its unit check,
+  // gating tags and classification all read: the source itself, everything
+  // already merged into it (collapsed twins, recursively), and whatever THIS
+  // answer merges into it. Each member is paired with the ref of the visible
+  // source it belongs to, for provenance.
+  const flattenMerged = (f) => [f, ...(f._reduce?.mergedFrom ?? []).flatMap(m => (m.finding ? flattenMerged(m.finding) : []))];
+  const effectiveGroup = (source) => {
+    const ref = refOf.get(source);
+    return [source, ...(mergedInto.get(ref) ?? []).map(d => refToFinding.get(d))]
+      .flatMap(flattenMerged)
+      .map(member => ({ ref, member }));
+  };
+
+  // Systemic findings — validated here, built below once nothing failed.
+  const payloadOrder = [...refToFinding.keys()];
+  const systemicSources = [];
+  (decisions.systemic_findings ?? []).forEach((s, i) => {
+    const where = `systemic_findings[${i}]`;
+    const refs = Array.isArray(s.source_refs) ? s.source_refs : [];
+    const distinct = new Set(refs);
+    if (distinct.size !== refs.length) violations.push(`${where}: source_refs repeats a ref`);
+    const allKnown = refs.map(r => known(r, where)).every(Boolean);
+    if (!(s.severity in SEV_ORDER)) violations.push(`${where}: invalid severity ${JSON.stringify(s.severity)}`);
+    if (distinct.size < 2) { violations.push(`${where}: needs at least 2 distinct source_refs`); return; }
+    if (!allKnown) return;
+    const sources = payloadOrder.filter(r => distinct.has(r)).map(r => refToFinding.get(r));
+    const mergedAway = refs.filter(r => removed.has(r));
+    if (mergedAway.length > 0) {
+      violations.push(`${where}: source(s) ${mergedAway.join(', ')} are merged away; a systemic finding's instances must stay`);
+      return;
+    }
+    const units = new Set(sources.flatMap(effectiveGroup).map(({ member }) => member._mapUnit).filter(u => u !== undefined && u !== null));
+    if (units.size < 2) {
+      violations.push(`${where}: every source is from one MAP unit; a systemic finding must span units`);
+      return;
+    }
+    systemicSources[i] = sources;
+  });
+
+  if (violations.length > 0) return { ok: false, violations };
+
+  const out = [];
+  for (const [ref, f] of refToFinding) {
+    if (removed.has(ref)) continue;
+    const dups = mergedInto.get(ref) ?? [];
+    let severity = f.severity;
+    for (const d of dups) severity = higherSeverity(severity, refToFinding.get(d).severity);
+    const elevation = elevated.get(ref);
+    if (elevation) severity = higherSeverity(severity, elevation.severity);
+    if (dups.length === 0 && severity === f.severity) { out.push(f); continue; }
+    const tags = mergedGateTags(f, dups.map(d => refToFinding.get(d)));
+    const reduce = { ...(f._reduce ?? {}) };
+    // The duplicates leave the output but are kept WHOLE here, so a merge never
+    // loses a remedy, line quote or classification REDUCE could not weigh.
+    // APPEND: a survivor may already carry identical-identity twins from the
+    // pre-REDUCE collapse; replacing the list would discard them.
+    if (dups.length > 0) reduce.mergedFrom = [...(reduce.mergedFrom ?? []), ...dups.map(d => ({ ref: d, reason: 'reduce-merge', finding: refToFinding.get(d) }))];
+    if (severity !== f.severity) reduce.severityFrom = f.severity;
+    if (elevation?.reason) reduce.elevationReason = elevation.reason;
+    Object.assign(reduce, tagProvenance(f, tags));
+    out.push({ ...f, severity, ...tags, _reduce: reduce });
+  }
+  for (const f of excludedFindings) out.push({ ...f, _reduce: { ...(f._reduce ?? {}), excluded: 'budget' } });
+
+  const usedIds = new Set([...refToFinding.values(), ...excludedFindings].map(f => f.id));
+  let n = 0;
+  const nextSystemicId = () => {
+    let id;
+    do { id = `S${++n}`; } while (usedIds.has(id));
+    usedIds.add(id);
+    return id;
+  };
+  (decisions.systemic_findings ?? []).forEach((s, i) => {
+    const sources = systemicSources[i];
+    const groups = sources.flatMap(effectiveGroup); // payload order, each source followed by its members
+    const effective = groups.map(({ member }) => member);
+    const classified = groups.filter(({ member }) => member.classification);
+    let classification = null;
+    let classificationDerivedFrom = null;
+    if (classified.length > 0) {
+      // Strict `<` keeps the first of equal severity: ties go to payload order.
+      const primary = classified.reduce((best, g) => ((SEV_ORDER[g.member.severity] ?? 2) < (SEV_ORDER[best.member.severity] ?? 2) ? g : best));
+      const effort = classified.map(({ member }) => member.classification.effort)
+        .reduce((a, b) => (EFFORT_ORDER.indexOf(b) > EFFORT_ORDER.indexOf(a) ? b : a));
+      // The PRODUCER is the REDUCE model (sourceKind/sourceName); only sonarType
+      // and effort are inherited, and _reduce.classificationDerivedFrom says from
+      // which contributing finding (it may be a merged member, not the visible source).
+      classification = { sonarType: primary.member.classification.sonarType, effort, sourceKind: 'MODEL', sourceName: String(reducerName ?? 'reduce').slice(0, 64) };
+      classificationDerivedFrom = { ref: primary.ref, id: primary.member.id, _mapUnit: primary.member._mapUnit };
+    }
+    out.push({
+      id: nextSystemicId(),
+      severity: s.severity,
+      category: String(s.category ?? '').startsWith('[SYSTEMIC]') ? s.category : `[SYSTEMIC] ${s.category ?? ''}`,
+      section: s.section, detail: s.detail, risk: s.risk, recommendation: s.recommendation,
+      // REDUCE judges its own recommendation (s.is_quick_fix), but may only RAISE the
+      // flag: a pattern whose instances include a band-aid stays flagged, so a
+      // model answer can never clear the quickFix gate. A cross-unit fix is never mechanical.
+      is_quick_fix: s.is_quick_fix === true || effective.some(f => f.is_quick_fix === true), is_mechanical: false, principle: s.principle, classification, is_reopened: false,
+      // Tags: pre-existing findings never enter REDUCE; importance is the strongest of the sources'.
+      importance: effective.some(f => f.importance === 'important') ? 'important' : 'nit', pre_existing: false, newly_reachable: false,
+      _reduce: { systemic: true, sourceRefs: sources.map(provenance), classificationDerivedFrom },
+    });
+  });
+
+  return {
+    ok: true,
+    findings: out,
+    stats: {
+      merged: removed.size, elevated: elevated.size,
+      systemic: (decisions.systemic_findings ?? []).length, excluded: excludedFindings.length,
+    },
+  };
+}
+
+/**
+ * Collapse findings that share a content identity WITHOUT losing any of them,
+ * then sort. The first in output order survives; every other is kept WHOLE on
+ * the survivor's `_reduce.mergedFrom` (`reason: 'identical-identity'`).
+ *
+ * Why not `normalizeFindingsForOutput`: that DISCARDS the later duplicate, and
+ * the identity (`semanticId` = category|section|detail) ignores
+ * `recommendation`, `classification` and `lineQuote`, so a dropped
+ * "duplicate" can carry a different remedy (aa0298f2 audit, R1 H2). Keeping two
+ * findings with one `_hash` instead would collide in every consumer keyed on it.
+ *
+ * @param {object[]} findings
+ * @param {(f: object) => string} semanticIdFn
+ */
+export function collapseIdenticalFindings(findings, semanticIdFn) {
+  const byHash = new Map();
+  const out = [];
+  for (const f of sortFindingsForOutput(findings)) {
+    const hash = f._hash || semanticIdFn(f);
+    const survivor = byHash.get(hash);
+    if (!survivor) {
+      const kept = { ...f, _hash: hash };
+      byHash.set(hash, kept);
+      out.push(kept);
+      continue;
+    }
+    const tags = mergedGateTags(survivor, [f]);
+    if (Object.keys(tags).length > 0) {
+      // A first change wins the `<tag>From` record: it names the survivor's ORIGINAL value.
+      survivor._reduce = { ...tagProvenance(survivor, tags), ...(survivor._reduce ?? {}) };
+      Object.assign(survivor, tags);
+    }
+    survivor._reduce = {
+      ...(survivor._reduce ?? {}),
+      mergedFrom: [...(survivor._reduce?.mergedFrom ?? []), { reason: 'identical-identity', finding: f }],
+    };
+  }
+  return out;
 }
 
 /**
@@ -213,11 +528,7 @@ export function normalizeFindingsForOutput(findings, semanticIdFn) {
     seen.add(hash);
     deduped.push({ ...f, _hash: hash });
   }
-  deduped.sort((a, b) => {
-    const sd = (SEV_ORDER[a.severity] ?? 2) - (SEV_ORDER[b.severity] ?? 2);
-    return sd !== 0 ? sd : (a.id ?? '').localeCompare(b.id ?? '');
-  });
-  return deduped;
+  return sortFindingsForOutput(deduped);
 }
 
 /**

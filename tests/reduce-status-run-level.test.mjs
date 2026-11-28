@@ -105,7 +105,8 @@ describe('run-level _executionMeta carries per-pass REDUCE degradation', () => {
 
   it('negative control — a clean run carries no reducePassStatuses', async () => {
     const result = await runMultiPassCodeAudit(
-      makeStub(() => ok({ pass_name: 'frontend', findings: [mkFinding({ detail: 'reduced' })], quick_fix_warnings: [], summary: 'reduced' })),
+      // A clean decision answer (aa0298f2: REDUCE no longer regenerates findings).
+      makeStub(() => ok({ pass_name: 'frontend', merge_groups: [], severity_elevations: [], systemic_findings: [], quick_fix_warnings: [], summary: 'reduced' })),
       PLAN_CONTENT, '', false, null, '', BASE_OPTS,
     );
     assert.equal(result._executionMeta?.reducePassStatuses, undefined,
