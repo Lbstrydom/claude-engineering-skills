@@ -235,6 +235,7 @@
         "scripts/.claude-skills/lib/sanitizer.mjs",
         "scripts/.claude-skills/lib/schemas-install.mjs",
         "scripts/.claude-skills/lib/schemas.mjs",
+        "scripts/.claude-skills/lib/step-timing.mjs",
         "scripts/.claude-skills/lib/store/friction.mjs",
         "scripts/.claude-skills/lib/store/model-eval.mjs",
         "scripts/.claude-skills/lib/store/nav-audit.mjs",

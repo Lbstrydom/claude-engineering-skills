@@ -1606,6 +1606,104 @@
         "ruleCount": 0
       }
     },
+    "step-timing-ready-default": {
+      "args": [
+        "step-timing-ready",
+        "--json",
+        "{}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "ready": {
+          "selector": null,
+          "quietMs": 500,
+          "timeoutMs": 10000
+        },
+        "contractDigest": null,
+        "contract": {
+          "declared": false,
+          "path": null
+        }
+      }
+    },
+    "step-timing-ready-missing-explicit": {
+      "args": [
+        "step-timing-ready",
+        "--json",
+        "{\"contractPath\":\"no-such-contract.json\"}"
+      ],
+      "status": 1,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "step-timing-ready: contract no-such-contract.json does not exist or cannot be resolved"
+        }
+      }
+    },
+    "judge-step-timings-untimed": {
+      "args": [
+        "judge-step-timings",
+        "--json",
+        "{\"steps\":[{\"id\":\"s1\",\"route\":\"/\",\"kind\":\"navigate\",\"durationMs\":420},{\"id\":\"s2\",\"route\":\"/a\",\"kind\":\"action\"}],\"attemptedIds\":[\"s1\",\"s2\",\"s3\"],\"ready\":{\"selector\":null,\"quietMs\":500,\"timeoutMs\":10000},\"contractDigest\":null}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "overall": "unmeasured",
+        "counts": {
+          "within-budget": 0,
+          "over-budget": 0,
+          "reported": 1,
+          "unmeasured": 1,
+          "missing": 1
+        },
+        "missingIds": [
+          "s3"
+        ],
+        "readyOverridden": false,
+        "steps": [
+          {
+            "id": "s1",
+            "route": "/",
+            "kind": "navigate",
+            "durationMs": 420,
+            "budgetMs": null,
+            "basis": null,
+            "status": "reported"
+          },
+          {
+            "id": "s2",
+            "route": "/a",
+            "kind": "action",
+            "durationMs": null,
+            "budgetMs": null,
+            "status": "unmeasured",
+            "unmeasuredReason": "not-recorded"
+          }
+        ],
+        "contract": {
+          "declared": false,
+          "path": null
+        }
+      }
+    },
+    "judge-step-timings-bad-input": {
+      "args": [
+        "judge-step-timings",
+        "--json",
+        "{\"steps\":[]}"
+      ],
+      "status": 1,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "judge-step-timings: attemptedIds: Invalid input: expected array, received undefined; ready: Invalid input: expected object, received undefined; contractDigest: Invalid input: expected string, received undefined"
+        }
+      }
+    },
     "callers-no-path": {
       "args": [
         "get-callers-for-file",

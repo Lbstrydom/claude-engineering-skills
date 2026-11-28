@@ -271,6 +271,8 @@ For each route in `routes`:
    c. Timeout after `--ready-timeout` ms (default 8000).
    d. If timeout fires, classify the route as `coverageStatus: "readiness-timeout"`
       and skip its scan — do NOT scan a skeleton DOM.
+   e. Time it as a `navigate` step (`references/performance-measurement.md` §7); each
+      Phase 4b trigger attempted is an `action` step.
 3. **Route execution status** — independent of finding count. Record one of:
    - `scanned` — readiness met AND scanner output validated. (May still have findings.)
    - `auth-required` — landed on login (URL changed AND `[type=password]` present)
@@ -519,6 +521,7 @@ Then, in order:
   section (shared / desktop-only / mobile-only counts + one interpretation line).
 - **DYNAMIC SURFACES** (`--with-modals`) — per device+route: triggers total,
   scanned, skipped-destructive, modal-stuck.
+- **STEP TIMINGS** — the judge's output (§7).
 - **OVERALL** — `<Broken | Broken+Incomplete | Has issues | Incomplete | Clean>`
   plus a one-sentence Reason.
 
@@ -568,13 +571,10 @@ which R3 audit concerns were deferred, or how this skill is deployed.
 
 ## Reminders
 
-- **One scanner pass per settled DOM state** — one static pass per route per
-  device, plus one pass per successfully opened dynamic surface in
-  `--with-modals` mode. Aggregate findings in JS using
-  `{device, route, via, kind, selector}` as the dedup key so a finding
-  present in both static + modal states (on the same device) is reported
-  once, but the same finding on two different devices is reported twice
-  (responsive CSS can cause a duplicate-id to surface on only one viewport).
+- **One scanner pass per settled DOM state** — per route per device, plus one per opened
+  dynamic surface. Dedup in JS on `{device, route, via, kind, selector}`: a finding in both
+  static + modal states is reported once, on two devices twice (responsive CSS can
+  differ per viewport).
 
 ---
 
@@ -584,6 +584,7 @@ which R3 audit concerns were deferred, or how this skill is deployed.
 |---|---|---|
 | `references/input-acquisition.md` | Where a skill's arguments come from on any host, and what to do when there are none. | Reading $ARGUMENTS on a host that does not substitute it, or deciding what empty input means at a site. |
 | `references/browser-tool-detection.md` | The browser-driver contract — capabilities, driver table, selection order, minimum sets, degraded/blocked evidence. | Phase 1 driver selection — resolving which driver to use, or diagnosing a `blocked` result. |
+| `references/performance-measurement.md` | Budgets as percentile × factor, CPU-time guards, browser step timings, a load-harness recipe. | Phase 3 step 2e and Phase 6 (STEP TIMINGS). |
 | `references/auth-bootstrap.md` | Sanctioned auth-gated exploratory-testing pattern via MCP-server storageState, plus its connect-time-race escape hatch. | The target's primary surfaces need a login — pre-authenticate the shared driver connection before scanning, so `auth-required` routes are not coverage gaps. |
 | `references/dom-scanner.md` | The full browser_evaluate scanner JS — every assertion's implementation, selector-stringifier helpers, severity mapping. | About to run Phase 4 or Phase 4b. |
 | `references/scan-rules-detail.md` | Why the scan rules are what they are — perceivability, touch-target regions, severity intuition, FP notes, prep JSON. | A finding's severity or perceivability is disputed, a touch-target finding looks false, OR the prep contract shape is unclear. |

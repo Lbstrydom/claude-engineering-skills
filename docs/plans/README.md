@@ -42,6 +42,7 @@ This is the list to read when asking "what is in flight?".
 | [Harness Retro — promote recurring session failures into enforcement](./harness-retro.md) | `In Progress` |  |
 | [Automatic meta step-back at the audit round cap (plan + code)](./meta-step-back-at-cap.md) | `Approved` |  |
 | [Own-model full capture — every audit call, every finding, every chip trajectory, from day one](./own-model-full-capture.md) | `Draft` |  |
+| [Performance checklist, step timings, performance-measurement reference](./performance-checklist-and-step-timings.md) | `In Progress` |  |
 | [a telemetry path from a consumer whose store CES cannot reach](./private-store-telemetry-path.md) | `Approved` |  |
 | [REDUCE decides by reference, MAP findings survive byte for byte](./reduce-rehydrate-findings-by-ref.md) | `In Progress` |  |
 | [render-mermaid must not overwrite a tracked architecture map](./render-mermaid-tracked-output-guard.md) | `Draft` |  |

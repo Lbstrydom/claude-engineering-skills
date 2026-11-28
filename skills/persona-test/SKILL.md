@@ -356,7 +356,8 @@ to the persona's "voice").
 Each step is **Plan → Act → Reflect → Record**:
 
 1. **Plan** — one sentence: "This persona would next try X because Y."
-2. **Act** — take the action (click, type, navigate); screenshot immediately after.
+2. **Act** — take the action (click, type, navigate), timed in-page — navigation → ready, action → settled
+   (`references/performance-measurement.md` §7; run `step-timing-ready` before step 1); screenshot immediately after.
 3. **Reflect** — answer:
    - Did the observed state match the expectation? (Yes / No / Partial)
    - Does anything visible suggest a P0–P3 finding? (cite the element)
@@ -369,9 +370,7 @@ Each step is **Plan → Act → Reflect → Record**:
 Record a finding only when confidence ≥0.6. Below that, note it as
 "uncertain — did not report". Every finding needs `element`, `observed`,
 `fix`, `severity`, `confidence` — and `step`, the 1-based Act step it was
-observed on. `step` is how the auto-correlator (Phase 6b) finds the page URL
-the finding happened on (via `clickPath`) and compares it with the audited
-file that serves that page; a finding without it correlates on its text alone.
+observed on — Phase 6b maps it to the page via `clickPath`; without it a finding correlates on text alone.
 
 ### Stateful mission checklist (REQUIRED when the goal changes state)
 
@@ -552,9 +551,9 @@ COVERAGE (relative to this persona's own session — not an inventory scan)
   Auth:           <authState>
   Lifecycle:      <verified | partial (unchecked: <step ids>) | not-applicable>
 
-  Not a surface-complete scan: this persona explored as it naturally would,
-  not exhaustively. For surface-complete coverage, run /nav-audit or
-  /click-test against the same URL.
+  Not a surface-complete scan — for that, run /nav-audit or /click-test.
+
+STEP TIMINGS: <overall> — from judge-step-timings (§7)
 
 OVERALL: <Ready for users | Needs work | Blocked>
   Reason: <one sentence>
@@ -862,6 +861,7 @@ situations — read them only when the trigger applies.
 | `references/browser-tool-detection.md` | The browser-driver contract — capabilities, driver table, selection order, minimum sets, degraded/blocked evidence. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
 | `references/auth-bootstrap.md` | Sanctioned auth-gated exploratory-testing pattern via MCP-server storageState, plus its connect-time-race escape hatch. | Phase 1 detects a login-gated target, OR Phase 3 hits a login wall (bootstrap configured or not). |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 3 Record step / Phase 5 — rendering the COVERAGE block, to apply §7's reciprocal warning (it renders only from the session work-record). |
+| `references/performance-measurement.md` | Budgets as percentile × factor, CPU-time guards, browser step timings, a load-harness recipe. | Phase 3 Act (timing a step) and Phase 5 (STEP TIMINGS). |
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/consistency-runner-and-report.md` | Consistency-mode runner steps (Step C2) and the Step C4 report fence, including the RIG BROKEN callout. | Phase 3b — about to run the consistency runner (Step C2) or render its report (Step C4). |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |

@@ -179,13 +179,8 @@ plan output addressing each relevant invariant.
 
 If `docs/architecture-map.md` exists AND target domains are non-empty:
 **Read** the file (or `Grep` for `## <domain>`) and read the symbol
-table beneath each target-domain section. This is the human-curated
-view — complements the embedding-based neighbourhood query with the
-full inventory of the domain you're working in. Especially valuable
-when the domain has its own per-domain Haiku summary at the top
-explaining the domain's purpose.
-
-No tool invocation; pure file Read.
+table beneath each target-domain section — the domain's full inventory
+(and its summary, if any), complementing the embedding query.
 
 ---
 
@@ -645,6 +640,7 @@ in Phase 0 tells you which ones).
 | `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
 | `references/proof-oracle.md` | Proof oracle for any plan - what proves the change right, its pass condition, and the evidence the report shows. | Phase 6 §9 Proof plan. |
 | `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |
+| `references/performance-measurement.md` | Budgets as percentile × factor, CPU-time guards, browser step timings, a load-harness recipe. | A plan names concurrent users, a pilot, load testing or a latency target. |
 | `references/context-callouts.md` | Render templates for the plan's context callouts — incident table, freshness and bootstrap warnings, persona issues. | Phase 0.5c returned records, a `freshnessWarning` or a `hint`, OR Phase 1 persona rows matched the feature. |
 | `references/authoring-rationale.md` | Why /plan's authoring rules exist — Code Trace, repo-relative paths, Mermaid checks, payload file, Depends on. | A rule is questioned, fewer than 5 plan paths resolve, OR a change repeats across ≥~5 similar sites. |
 | `references/campaign.md` | Campaign mode — the C1-C12 contract an evaluation or test campaign plan must carry, and the dress-rehearsal gate. | `--campaign` was passed, OR the plan's output is a measurement (eval, test set, experiment). |
