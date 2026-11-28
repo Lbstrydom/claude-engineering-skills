@@ -71,10 +71,11 @@ export function lintSkillSlots(root) {
 
 async function main(argv) {
   if (argv.includes('--selfcheck-relocation')) { process.stdout.write('OK\n'); return finishAndExit(0); }
-  if (argv.includes('--help') || argv.includes('-h')) { process.stdout.write(USAGE); return finishAndExit(0); }
   let root;
   try {
     assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'check-skill-slots', from: 0 });
+    // --help AFTER flag validation (code audit R5 M1): an unknown flag beside --help is still refused.
+    if (argv.includes('--help') || argv.includes('-h')) { process.stdout.write(USAGE); return finishAndExit(0); }
     const i = argv.indexOf('--root');
     const v = i === -1 ? 'skills' : argv[i + 1];
     if (!v || v.startsWith('--')) throw new ArgvError('--root requires a value');

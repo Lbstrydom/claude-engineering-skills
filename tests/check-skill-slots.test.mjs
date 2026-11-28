@@ -30,6 +30,8 @@ describe('check-skill-slots CLI — one JSON envelope with ok on every exit (cod
     assert.equal(p.code, 1); assert.equal(JSON.parse(p.out).ok, false);
     const u = run(['--json', '--root']);
     assert.equal(u.code, 2); assert.equal(JSON.parse(u.out).ok, false);
+    assert.equal(run(['--help', '--bogus']).code, 2, 'an unknown flag beside --help is refused (code audit R5 M1)');
+    assert.equal(run(['--help']).code, 0);
   });
 });
 
