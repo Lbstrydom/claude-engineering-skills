@@ -33,10 +33,12 @@
  *
  * Usage:
  *   node scripts/cycle-cluster-scope.mjs --base <ref> --scope-file <file> \
- *     [--out-dir .audit] [--cluster <id>] [--json]
+ *     [--plan <plan.md>] [--out-dir .audit] [--cluster <id>] [--json]
+ *   … same flags … --plan <plan.md> --audit [-- <extra audit args>]   (computes the scope, then runs the audit)
  *
  * Exit codes: 0 — clean · 1 — out-of-scope edit, unadmittable path, or a
- * comma-unsafe path · 2 — usage error.
+ * comma-unsafe path, or an empty allowlist under `--audit` · 2 — usage error.
+ * Otherwise `--audit` exits with the AUDIT's own code.
  *
  * Design: docs/plans/cycle-cluster-audit-scope.md KD-2 / KD-3.
  *
@@ -44,7 +46,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mjs';
 // The ONE admission oracle. Imported, never restated — a second copy of the
 // predicate is how the pre-flight and the CLI would silently disagree.
@@ -173,10 +176,73 @@ export function selectAuditAllowlist(admissions, changedPaths) {
 /** Paths `--files` cannot transport: it splits on `,` (openai-audit.mjs:594). */
 export const commaUnsafe = paths => paths.filter(p => p.includes(','));
 
+// ── The audit argv (upstream dd3e4276) ──────────────────────────────────────
+// /cycle's SKILL.md used to RE-ASSEMBLE the audit command by hand from fields of
+// this tool's JSON, and dropped `--base`: an allowlist round then stamped no
+// `_diffBase` and the final reviewer could not measure changed lines. The class
+// is "a flag the code knows and the prose forgets", so this tool now builds the
+// whole argv and, under `--audit`, runs it IN THE SAME PROCESS that computed the
+// scope — no JSON is consumed later, so a stale or edited scope file cannot be
+// run (code audit R1-H1/H5/M1). The prose names no audit flag at all.
+
+/** The audit CLI the argv runs: this file's sibling, so it is right here and in a consumer's synced tree. */
+export const AUDIT_CLI = fileURLToPath(new URL('./openai-audit.mjs', import.meta.url));
+
+/**
+ * Flags an extra (after `--`) may not carry: the audit's scope flags, whose values this tool decides (a second value would
+ * fork the scope), and this tool's own flags, which `argOption` would otherwise read from the extras.
+ */
+export const PROTECTED_AUDIT_FLAGS = Object.freeze([
+  '--scope', '--files', '--changed', '--diff', '--base', '--allow-infra-scope',
+  '--scope-file', '--out-dir', '--cluster', '--json', '--plan', '--audit',
+]);
+
+// The shape check `isFullObjectId` (finalize-outcomes.mjs) applies; restated, not imported, because that module pulls the
+// store and zod into a CLI that must start with neither. The base was already resolved by `git rev-parse` above.
+const FULL_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * The complete `openai-audit.mjs` argv for a cluster scope, or null when there is nothing to audit (empty allowlist) or no
+ * plan was given — never a half-argv a caller could complete by hand. The script is always `AUDIT_CLI`.
+ * @param {{plan: string|null, files: string[], diffPath: string|null, base: string, allowInfraScopeRequired: boolean}} a
+ * @returns {string[]|null}
+ */
+export function buildClusterAuditArgv({ plan, files, diffPath, base, allowInfraScopeRequired }) {
+  if (typeof plan !== 'string' || plan === '' || !Array.isArray(files) || files.length === 0) return null;
+  if (typeof diffPath !== 'string' || diffPath === '' || typeof base !== 'string' || !FULL_OID.test(base)) return null;
+  const csv = files.join(',');
+  return [AUDIT_CLI, 'code', plan, '--scope', 'diff', '--files', csv, '--changed', csv, '--diff', diffPath, '--base', base,
+    ...(allowInfraScopeRequired ? ['--allow-infra-scope'] : [])];
+}
+
+/**
+ * Why the extras after `--` cannot be appended, or null. Later rounds pass `--round`, `--ledger`, `--out`, `--passes`
+ * here; `openai-audit.mjs` validates those names itself.
+ * @param {string[]} extras
+ * @returns {string|null}
+ */
+export function auditExtrasProblem(extras) {
+  const hit = (Array.isArray(extras) ? extras : []).find((a) => PROTECTED_AUDIT_FLAGS.includes(String(a).split('=')[0]));
+  return hit ? `${hit} is decided by the scope tool and cannot be passed after --` : null;
+}
+
+/**
+ * Spawn the audit and hand back ITS exit code, so `/audit-code`'s 3 (INCOMPLETE) and 4 (META_*) reach the caller.
+ * `process.execPath`, never a shell: no path can word-split.
+ * @param {string[]} argv `buildClusterAuditArgv` output plus validated extras
+ * @param {{spawn?: Function}} [deps] injected for tests
+ * @returns {number}
+ */
+export function spawnClusterAudit(argv, { spawn = spawnSync } = {}) {
+  const child = spawn(process.execPath, argv, { stdio: 'inherit' });
+  if (child.error) { console.error(`cycle-cluster-scope --audit: could not start the audit: ${child.error.message}`); return 1; }
+  return Number.isInteger(child.status) ? child.status : 1;
+}
+
 function main() {
   const REPO_ROOT = process.cwd();
   assertKnownFlags(process.argv,
-    ['--base', '--scope-file', '--out-dir', '--cluster', '--json', '--selfcheck-relocation'],
+    ['--base', '--scope-file', '--out-dir', '--cluster', '--json', '--plan', '--audit', '--selfcheck-relocation'],
     { cli: 'cycle-cluster-scope' });
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -185,6 +251,16 @@ function main() {
   const outDir = argOption('out-dir', '.audit');
   const clusterId = argOption('cluster', 'x');
   const asJson = hasFlag('json');
+  const planPath = argOption('plan');
+  const runIt = hasFlag('audit');
+  const dd = process.argv.indexOf('--');
+  const extras = dd >= 0 ? process.argv.slice(dd + 1) : [];
+  if (runIt && asJson) {
+    console.error('cycle-cluster-scope: --audit and --json are exclusive (the audit writes to stdout); run --json first to inspect');
+    process.exit(2);
+  }
+  const extrasProblem = runIt ? auditExtrasProblem(extras) : null;
+  if (extrasProblem) { console.error(`cycle-cluster-scope: ${extrasProblem}`); process.exit(2); }
 
   if (!baseRef || !scopeFile) {
     console.error('cycle-cluster-scope: --base <ref> and --scope-file <file> are both required');
@@ -268,6 +344,9 @@ function main() {
     files,
     diffPath,
     allowInfraScopeRequired,
+    plan: planPath ?? null,
+    // The WHOLE audit command, run verbatim by `--run-audit` — null with an empty allowlist or no --plan.
+    auditArgv: buildClusterAuditArgv({ plan: planPath, files, diffPath, base: baseOid, allowInfraScopeRequired }),
     admissions,
     reconciliation: { tracked: recon.tracked, untracked: recon.untracked },
     outOfScope,
@@ -292,6 +371,13 @@ function main() {
   if (result.emptyAllowlist) {
     console.error('cycle-cluster-scope: no changed auditable files (deletion-only cluster, or nothing implemented yet?) — '
       + 'route to the consolidated gate over the union diff; a per-cluster pass here would be vacuous.');
+    // Under --audit there is nothing to run; a 0 would read as "audited and clean".
+    if (runIt) process.exit(1);
+  }
+  if (runIt) {
+    if (!result.auditArgv) { console.error('cycle-cluster-scope: --audit needs --plan <file>'); process.exit(2); }
+    process.exitCode = spawnClusterAudit([...result.auditArgv, ...extras]);
+    return;
   }
   process.exit(0);
 }

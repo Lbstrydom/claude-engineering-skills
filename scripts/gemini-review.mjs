@@ -386,7 +386,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   userPrompt = scanned.text;
   // How much of the DIFF actually reached the model. Distinct from
   // `truncated`, which counts drops without knowing which of them mattered.
-  const codeCoverage = summariseCodeCoverage(built.accounting.codeRender, changedFilesDeclared, { hunksFor: hunks.hunksFor, requested: codePaths });
+  const codeCoverage = summariseCodeCoverage(built.accounting.codeRender, changedFilesDeclared, { hunksFor: hunks.hunksFor, requested: codePaths, isDeleted: hunks.isDeleted });
   // Per --require subject: received or not (the audit wrote the list to the transcript; the key is absent when none was declared).
   const requiredReceived = summariseRequiredReceived(built.accounting.codeRender, transcript.required_subjects, { hunksFor: hunks.hunksFor, changedFiles: changedFilesDeclared });
   const envelopeAccounting = {

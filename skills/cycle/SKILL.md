@@ -316,22 +316,15 @@ For each remaining cluster in declared order:
 
 <!-- cycle:cluster-audit-command -->
 ```bash
-# 1. In code: immutable base, reconciliation set, allowlist (declared ∩ changed, on disk), admission
-#    pre-flight, patch. EXITS NON-ZERO on an out-of-scope edit, an unadmittable
-#    path, or a comma-unsafe path — when it does, STOP and show its stderr.
-node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --out-dir .audit --cluster "$ID" --json > "$SCOPE_JSON"
+# 1. Base, reconciliation set, allowlist (declared ∩ changed, on disk), admission, patch, audit argv.
+#    EXITS NON-ZERO on an out-of-scope edit or an unadmittable/comma-unsafe path: STOP, show stderr.
+node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster "$ID" --json > "$SCOPE_JSON"
 
-# 2. Audit using ONLY values that call produced. Read them with node, not jq —
-#    node is guaranteed here; jq is not, and is absent from check-deps.mjs.
-FILES=$(node -p "require('./$SCOPE_JSON').filesCsv")
-PATCH=$(node -p "require('./$SCOPE_JSON').diffPath")
-INFRA=$(node -p "require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-infra-scope' : ''")
-
-node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --changed "$FILES" --diff "$PATCH" $INFRA
-#   --files   : THE scoping flag — an allowlist; makes --scope a no-op
-#   --changed : R2+ reopen/impact detection only — does NOT scope
-#   --diff    : hunk evidence — centres every round's read windows on the change
-#               (R2+ also annotates); does NOT scope; must be a real file
+# 2. Same call + --audit: recomputes the scope and runs the WHOLE argv it built; never hand-build
+#    audit flags (a hand copy dropped --base). Audit's exit code. Rounds 2+: --round N --ledger … after --.
+node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster "$ID" --audit -- --out ".audit/$SID-r1-result.json"
+#   --files: THE scoping allowlist · --changed: R2+ reopen detection, does NOT scope
+#   --diff: hunk evidence, does NOT scope · --base: stamps _diffBase for the final reviewer
 ```
 <!-- /cycle:cluster-audit-command -->
 
