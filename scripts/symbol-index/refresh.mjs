@@ -350,7 +350,7 @@ async function main() {
         extractionTimedOut, timeoutRecovery, recoveredTouchedSet,
       } = await runExtractSummariseEmbed({
         repoRoot, repoId, mode, restrictFiles,
-        includeDelegates: args.includeDelegates, coverageConfig, concreteEmbedModel, logOk,
+        includeDelegates: args.includeDelegates, coverageConfig, concreteEmbedModel, embedProfile, logOk,
       });
       // CONDITIONAL rebind, never an unconditional destructure: on every
       // path other than timed-out-full recovery, the step-6 `touchedSet`
