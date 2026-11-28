@@ -54,7 +54,7 @@ REFUSED acquire and ran the command anyway (2026-10-14), and a `timeout` wrapper
   No waiter takes a live holder's slot; forcing is a person's call.
 - `--end-turn` yields the repo's turn on release (use it when nothing further is ready); with another job of the same repo waiting it keeps the turn and logs why.
 - The command owns stdout, so `--json` is refused; the lease speaks on stderr, prefixed `fleet lease run:`.
-- On Windows a bare `npm`/`npx` (a `.cmd` shim) runs as `node <node dir>/node_modules/npm/bin/npm-cli.js`; other shims need `node <entry>.js` spelled out. A start failure prints the resolved argv and cwd.
+- On Windows a bare `.cmd` shim runs via node: `npm`/`npx`, corepack, its pnpm and npm global bins (exact launcher templates only; any other `.cmd`/`.bat` fails naming its path). A start failure prints the resolved argv and cwd.
 
 | Exit | Meaning |
 |---|---|
