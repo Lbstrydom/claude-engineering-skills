@@ -13,6 +13,7 @@ import path from 'node:path';
 import { semanticId, setRepoProfileCache } from './findings.mjs';
 import { briefConfig } from './config.mjs';
 import { SOURCE_CODE_EXTENSIONS } from './file-taxonomy.mjs';
+import { condenseBySection, formatSectionCoverage } from './instruction-sections.mjs';
 import { readClassifiedFile } from './path-validation.mjs';
 import { detectPythonUi, isPythonTestPath, PYTHON_UI_FRAMEWORKS } from './python-ui-detect.mjs';
 
@@ -163,6 +164,34 @@ function _extractRegexFacts(content) {
   return facts.join('\n');
 }
 
+// ── Section-wise condensation (upstream 477617f6) ───────────────────────────
+// Every reader of the instruction file used to take its HEAD, silently. They
+// now condense it by section (`instruction-sections.mjs`) and say how much
+// they read. The budgets are unchanged — that was never the fix.
+
+/** Chars of the instruction file handed to the LLM legs (~12K tokens). */
+const BRIEF_LLM_INPUT_CHARS = 48_000;
+/** Chars of raw instruction file in the no-LLM / no-brief fallbacks. */
+const BRIEF_REGEX_FALLBACK_CHARS = 1_500;
+const BRIEF_RAW_FALLBACK_CHARS = 2_000;
+const PASS_CONTEXT_FALLBACK_CHARS = 2_000;
+const PROJECT_CONTEXT_FALLBACK_CHARS = 4_000;
+
+/** Name of the instruction file for the coverage line. */
+function _instructionLabel() {
+  const p = _getClaudeMdPath();
+  return p ? path.basename(p) : 'instruction file';
+}
+
+/**
+ * Raw instruction-file context for a no-brief reader: condensed by section,
+ * prefixed with its coverage line.
+ */
+function _rawContext(content, budget) {
+  const { text, coverage } = condenseBySection(content, budget);
+  return `> ${formatSectionCoverage(coverage, _instructionLabel())}\n\n${text}`;
+}
+
 const BRIEF_SYSTEM_PROMPT = `You are extracting an audit brief from a project's developer guidelines document.
 Produce a CONCISE reference that a code auditor needs to avoid false positives.
 
@@ -246,12 +275,12 @@ export async function describeBriefClaudeFailure(err, cfg) {
  *
  * Bounded by a total deadline — see the budget note above. Never throws.
  *
- * @param {string} content - Raw CLAUDE.md content (will be truncated)
+ * @param {string} condensed - instruction file ALREADY condensed by section
+ *   (`condenseBySection`); this function no longer slices it
  * @returns {Promise<string|null>} LLM-generated brief, or null on failure
  */
-async function _llmCondense(content) {
-  const truncated = content.slice(0, 48000); // ~12K tokens, fits Haiku/Flash comfortably
-  const userContent = `Extract an audit brief from this developer guidelines document:\n\n${truncated}`;
+async function _llmCondense(condensed) {
+  const userContent = `Extract an audit brief from this developer guidelines document:\n\n${condensed}`;
 
   const deadlineAt = Date.now() + BRIEF_TOTAL_TIMEOUT_MS;
   const remaining = () => deadlineAt - Date.now();
@@ -676,22 +705,32 @@ export function generateRepoProfile() {
  *   Phase A: Regex extraction of deps/versions (deterministic)
  *   Phase B: LLM condensation of constraints/rules (Gemini Flash -> Claude Haiku)
  *   Fallback: regex + raw truncation if no LLM available
+ * Every path condenses the instruction file BY SECTION and ends the brief with
+ * a measured coverage line (upstream 477617f6).
+ * @param {{condense?: (condensed: string) => Promise<string|null>}} [opts] -
+ *   `condense` is a test seam (defaults to the real LLM legs) so a test can
+ *   observe the condensation input without spending.
  * @returns {Promise<string>} The generated brief
  */
-export async function initAuditBrief() {
+export async function initAuditBrief({ condense = _llmCondense } = {}) {
   const content = _getClaudeMd();
   if (!content) {
     _auditBriefCache = '(No project instruction file found — checked CLAUDE.md, Agents.md, .github/copilot-instructions.md)';
     return _auditBriefCache;
   }
+  const label = _instructionLabel();
 
   // Phase A: deterministic regex facts
   const regexFacts = _extractRegexFacts(content);
 
-  // Phase B: LLM condensation
-  const llmBrief = await _llmCondense(content);
+  // Phase B: LLM condensation over a by-section condensation of the file
+  const llmInput = condenseBySection(content, BRIEF_LLM_INPUT_CHARS);
+  const llmBrief = await condense(llmInput.text);
 
+  let coverageLine;
   if (llmBrief) {
+    // The line describes what the MODEL WAS GIVEN, not what its summary kept.
+    coverageLine = formatSectionCoverage(llmInput.coverage, `${label} → LLM brief input`);
     // Merge: regex facts (trusted) + LLM brief (flexible)
     _auditBriefCache = regexFacts
       ? `## Project Facts (verified)\n${regexFacts}\n\n## Audit Guidelines\n${llmBrief}`
@@ -699,12 +738,18 @@ export async function initAuditBrief() {
   } else if (regexFacts && regexFacts.length > 200) {
     // Regex-only: good enough for repos with standard structure
     process.stderr.write(`  [brief] No LLM available — using regex-only brief\n`);
-    _auditBriefCache = `## Project Facts\n${regexFacts}\n\n## Raw Context\n${content.slice(0, 1500)}`;
+    const raw = condenseBySection(content, BRIEF_REGEX_FALLBACK_CHARS);
+    coverageLine = formatSectionCoverage(raw.coverage, label);
+    _auditBriefCache = `## Project Facts\n${regexFacts}\n\n## Raw Context\n${raw.text}`;
   } else {
-    // Last resort: raw truncation (same as old behavior)
+    // Last resort: raw context, condensed by section like every other path
     process.stderr.write(`  [brief] No LLM, minimal regex — falling back to raw context\n`);
-    _auditBriefCache = content.slice(0, 2000);
+    const raw = condenseBySection(content, BRIEF_RAW_FALLBACK_CHARS);
+    coverageLine = formatSectionCoverage(raw.coverage, label);
+    _auditBriefCache = raw.text;
   }
+  process.stderr.write(`  [brief] ${coverageLine}\n`);
+  _auditBriefCache += `\n\n> ${coverageLine}`;
 
   process.stderr.write(`  [brief] Final brief: ${_auditBriefCache.length} chars (~${Math.ceil(_auditBriefCache.length / 4)} tokens)\n`);
   return _auditBriefCache;
@@ -721,7 +766,7 @@ export function readProjectContextForPass(passName) {
   const brief = _auditBriefCache;
   if (!brief) {
     const content = _getClaudeMd();
-    return content ? content.slice(0, 2000) : '(No project instruction file found — checked CLAUDE.md, Agents.md, .github/copilot-instructions.md)';
+    return content ? _rawContext(content, PASS_CONTEXT_FALLBACK_CHARS) : '(No project instruction file found — checked CLAUDE.md, Agents.md, .github/copilot-instructions.md)';
   }
   if (brief.startsWith('(No CLAUDE.md')) return brief;
 
@@ -796,7 +841,7 @@ export function loadKnownFpContext(passName = null) {
 export function readProjectContext() {
   if (_auditBriefCache) return _auditBriefCache;
   const content = _getClaudeMd();
-  return content ? content.slice(0, 4000) : '(No project instruction file found — auditing without project context)';
+  return content ? _rawContext(content, PROJECT_CONTEXT_FALLBACK_CHARS) : '(No project instruction file found — auditing without project context)';
 }
 
 /**

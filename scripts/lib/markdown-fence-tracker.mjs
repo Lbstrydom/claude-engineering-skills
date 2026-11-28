@@ -25,8 +25,13 @@ export function makeFenceTracker() {
   let inFence = false;
   let marker = null;
   let openLength = 0;
-  return function update(line) {
-    const m = /^\s*(```+|~~~+)/.exec(line);
+  // `update.isOpen()` — whether a fence is open AFTER the last line fed. The
+  // return value cannot say this: it is true for a closing delimiter too.
+  update.isOpen = () => inFence;
+  return update;
+  function update(line) {
+    // 0-3 spaces of indent: CommonMark reads a fence indented 4+ as indented code.
+    const m = /^ {0,3}(```+|~~~+)/.exec(line);
     if (!m) return inFence;
     const fenceStr = m[1];
     const ch = fenceStr[0];
@@ -37,12 +42,14 @@ export function makeFenceTracker() {
       openLength = len;
       return true;
     }
-    // Closing requires same char AND length >= open length.
-    if (ch === marker && len >= openLength) {
+    // Closing requires same char AND length >= open length AND nothing but
+    // whitespace after it: CommonMark gives a closing fence no info string, so
+    // a "```js" inside a "```markdown" block is content, not a close.
+    if (ch === marker && len >= openLength && line.slice(m[0].length).trim() === '') {
       inFence = false;
       marker = null;
       openLength = 0;
     }
     return true; // line is a fence delimiter or inside a fence — not a heading
-  };
+  }
 }
