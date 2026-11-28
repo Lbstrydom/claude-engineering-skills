@@ -190,11 +190,13 @@ export const AUDIT_CLI = fileURLToPath(new URL('./openai-audit.mjs', import.meta
 
 /**
  * Flags an extra (after `--`) may not carry: the audit's scope flags, whose values this tool decides (a second value would
- * fork the scope), and this tool's own flags, which `argOption` would otherwise read from the extras.
+ * fork the scope); this tool's own flags, which `argOption` would otherwise read from the extras; and the no-op modes
+ * (`--help`, `-h`, `--selfcheck-relocation`), whose exit 0 would read as an audit that ran clean (code audit R2-H2).
  */
 export const PROTECTED_AUDIT_FLAGS = Object.freeze([
   '--scope', '--files', '--changed', '--diff', '--base', '--allow-infra-scope',
   '--scope-file', '--out-dir', '--cluster', '--json', '--plan', '--audit',
+  '--help', '-h', '--selfcheck-relocation',
 ]);
 
 // The shape check `isFullObjectId` (finalize-outcomes.mjs) applies; restated, not imported, because that module pulls the
@@ -244,7 +246,10 @@ function main() {
   assertKnownFlags(process.argv,
     ['--base', '--scope-file', '--out-dir', '--cluster', '--json', '--plan', '--audit', '--selfcheck-relocation'],
     { cli: 'cycle-cluster-scope' });
-  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  // Wrapper args only: `-- --selfcheck-relocation` is a forwarded extra (refused below), never this CLI's self-check
+  // (code audit R2-M1/M2 — it printed OK and exited 0 without computing anything).
+  const ddAt = process.argv.indexOf('--');
+  if ((ddAt < 0 ? process.argv : process.argv.slice(0, ddAt)).includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
   const baseRef = argOption('base');
   const scopeFile = argOption('scope-file');
@@ -253,8 +258,7 @@ function main() {
   const asJson = hasFlag('json');
   const planPath = argOption('plan');
   const runIt = hasFlag('audit');
-  const dd = process.argv.indexOf('--');
-  const extras = dd >= 0 ? process.argv.slice(dd + 1) : [];
+  const extras = ddAt >= 0 ? process.argv.slice(ddAt + 1) : [];
   if (runIt && asJson) {
     console.error('cycle-cluster-scope: --audit and --json are exclusive (the audit writes to stdout); run --json first to inspect');
     process.exit(2);
@@ -372,10 +376,11 @@ function main() {
     console.error('cycle-cluster-scope: no changed auditable files (deletion-only cluster, or nothing implemented yet?) — '
       + 'route to the consolidated gate over the union diff; a per-cluster pass here would be vacuous.');
     // Under --audit there is nothing to run; a 0 would read as "audited and clean".
-    if (runIt) process.exit(1);
+    // exitCode + return, never process.exit: a stdout summary line was just written (stdout-flush gate).
+    if (runIt) { process.exitCode = 1; return; }
   }
   if (runIt) {
-    if (!result.auditArgv) { console.error('cycle-cluster-scope: --audit needs --plan <file>'); process.exit(2); }
+    if (!result.auditArgv) { console.error('cycle-cluster-scope: --audit needs --plan <file>'); process.exitCode = 2; return; }
     process.exitCode = spawnClusterAudit([...result.auditArgv, ...extras]);
     return;
   }

@@ -34,9 +34,15 @@ const makeRepo = ({ edit = true } = {}) => {
   if (edit) fs.appendFileSync(path.join(dir, 's', 'keep.mjs'), 'edit\n');
   return { dir, base };
 };
-const cleanup = (dir) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+const cleanup = (dir) => {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  fs.rmSync(`${dir}-scope`, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+};
+// The scope file sits OUTSIDE the fixture repo (inside, it would be an untracked out-of-scope edit), in a test-owned
+// directory that cleanup() removes.
 const scopeArgs = (dir, base, scopePaths = ['s/keep.mjs']) => {
-  const scopeFile = path.join(os.tmpdir(), `cycle-argv-${path.basename(dir)}.txt`);
+  fs.mkdirSync(`${dir}-scope`, { recursive: true });
+  const scopeFile = path.join(`${dir}-scope`, 'scope.txt');
   fs.writeFileSync(scopeFile, `${scopePaths.join('\n')}\n`);
   return [SCOPE_CLI, '--base', base, '--scope-file', scopeFile];
 };
@@ -72,12 +78,27 @@ describe('cycle-cluster-scope --plan builds the WHOLE audit argv', () => {
     } finally { cleanup(dir); }
   });
 
-  it('--audit really runs the built argv (the audit\'s own --help, exit 0: no spend)', () => {
+  it('--audit really runs the built argv, and the audit\'s non-zero exit is the caller\'s (no spend)', () => {
+    // openai-audit refuses a cwd that is not its own checkout BEFORE any model call (exit 1, naming the expected root), so
+    // a fixture repo proves the spawn happened and its code propagated without spending anything.
     const { dir, base } = makeRepo();
     try {
-      const r = runScope(dir, [...scopeArgs(dir, base), '--plan', 'p.md', '--audit', '--', '--help']);
-      assert.equal(r.status, 0, r.stderr);
-      assert.match(r.stdout, /openai-audit\.mjs code <plan-file>/);
+      const r = runScope(dir, [...scopeArgs(dir, base), '--plan', 'p.md', '--audit', '--', '--out', 'o.json']);
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(r.stderr, /node scripts\/openai-audit\.mjs/, 'the stderr is the AUDIT\'s refusal, so it was spawned');
+    } finally { cleanup(dir); }
+  });
+
+  it('no-op modes cannot ride in as extras: --help and --selfcheck-relocation after -- exit 2, never a vacuous 0', () => {
+    const { dir, base } = makeRepo();
+    try {
+      for (const noop of ['--help', '-h', '--selfcheck-relocation']) {
+        const r = runScope(dir, [...scopeArgs(dir, base), '--plan', 'p.md', '--audit', '--', noop]);
+        assert.equal(r.status, 2, `${noop}: ${r.stdout}${r.stderr}`);
+        assert.doesNotMatch(r.stdout, /^OK$/m);
+      }
+      // Control: as a WRAPPER arg the self-check still answers.
+      assert.equal(runScope(dir, [SCOPE_CLI, '--selfcheck-relocation']).stdout.trim(), 'OK');
     } finally { cleanup(dir); }
   });
 
@@ -85,7 +106,7 @@ describe('cycle-cluster-scope --plan builds the WHOLE audit argv', () => {
     const { dir, base } = makeRepo();
     try {
       fs.writeFileSync(path.join(dir, 's', 'stray.mjs'), 'x\n');
-      const stray = runScope(dir, [...scopeArgs(dir, base), '--plan', 'p.md', '--audit', '--', '--help']);
+      const stray = runScope(dir, [...scopeArgs(dir, base), '--plan', 'p.md', '--audit', '--', '--out', 'o.json']);
       assert.equal(stray.status, 1, 'the scope is RECOMPUTED under --audit, so an edit made after an earlier --json fails closed');
       assert.match(stray.stderr, /out-of-scope edit/);
       fs.rmSync(path.join(dir, 's', 'stray.mjs'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -96,7 +117,7 @@ describe('cycle-cluster-scope --plan builds the WHOLE audit argv', () => {
     } finally { cleanup(dir); }
     const unchanged = makeRepo({ edit: false });
     try {
-      const r = runScope(unchanged.dir, [...scopeArgs(unchanged.dir, unchanged.base), '--plan', 'p.md', '--audit', '--', '--help']);
+      const r = runScope(unchanged.dir, [...scopeArgs(unchanged.dir, unchanged.base), '--plan', 'p.md', '--audit', '--', '--out', 'o.json']);
       assert.equal(r.status, 1, 'nothing to audit must not exit 0 (it would read as audited-and-clean)');
       assert.match(r.stderr, /consolidated gate/);
     } finally { cleanup(unchanged.dir); }
