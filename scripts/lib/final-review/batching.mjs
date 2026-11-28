@@ -127,13 +127,20 @@ const rankOf = (rank, v) => (rank.includes(v) ? rank.indexOf(v) : Infinity);
 const worst = (rank, values) => values.reduce((w, v) => (rankOf(rank, v) > rankOf(rank, w) ? v : w), values[0]);
 const sumOrNull = (vals) => (vals.some((v) => v === null || v === undefined) ? null : vals.reduce((a, b) => a + b, 0));
 
-/** Fold per-batch code coverage: the WEAKEST state wins and the gaps concatenate. */
+/**
+ * Fold per-batch code coverage: the WEAKEST state wins and the gaps concatenate. A batch whose every file was a confirmed
+ * deletion measured nothing and carries no state (it reads `unknown` alone); it would otherwise sink a fully-shown change
+ * to `unknown`. Every batch deletion-only ⇒ `unknown`, as a single review reports it.
+ */
 export function mergeBatchCoverage(coverages) {
   const covs = coverages.filter(Boolean);
   if (covs.length !== coverages.length || covs.length === 0) return { state: 'unknown', reason: 'a batch reported no coverage record', batches: coverages.length };
   const cat = (k) => covs.flatMap((c) => (Array.isArray(c[k]) ? c[k] : []));
+  const deletionOnly = (c) => c.changedRequested > 0 && Array.isArray(c.changedDeleted) && c.changedDeleted.length === c.changedRequested;
+  const measured = covs.filter((c) => !deletionOnly(c));
   return {
-    state: covs.map((c) => c.state).reduce((w, s) => (COVERAGE_STATES.indexOf(s) < COVERAGE_STATES.indexOf(w) ? s : w), 'full'),
+    state: measured.length === 0 ? 'unknown'
+      : measured.map((c) => c.state).reduce((w, s) => (COVERAGE_STATES.indexOf(s) < COVERAGE_STATES.indexOf(w) ? s : w), 'full'),
     batches: covs.length,
     changedRequested: covs.reduce((a, c) => a + (c.changedRequested || 0), 0),
     changedLinesUnread: sumOrNull(covs.map((c) => c.changedLinesUnread)),
@@ -141,6 +148,7 @@ export function mergeBatchCoverage(coverages) {
     changedFull: cat('changedFull'),
     changedHeadCut: cat('changedHeadCut'),
     changedMissing: cat('changedMissing'),
+    changedDeleted: cat('changedDeleted'),
     changedUnread: cat('changedUnread'),
     changedUnmeasured: cat('changedUnmeasured'),
     changedNotReceived: cat('changedNotReceived'),

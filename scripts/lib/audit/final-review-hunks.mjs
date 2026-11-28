@@ -24,12 +24,20 @@ import { readChangeDiff } from './change-record.mjs';
 import { buildHunkMap } from './hunk-evidence.mjs';
 import { normalizePath, safeReadFile } from '../file-io.mjs';
 import { isFullObjectId } from '../finalize-outcomes.mjs';
+import { parseNameStatusZ } from './file-coverage.mjs';
 
 /**
  * Local line-count reads go through the reader's own boundary (repo-contained, realpath-checked, never sensitive):
  * `changed_files` is transcript-supplied, so a path outside the checkout is never opened here (code audit R1-M2).
  */
 const boundedReadText = (p) => safeReadFile(p, path.resolve('.'))?.content ?? null;
+
+/**
+ * Deletion evidence matches on the path EXACTLY as git reported it (code audit R1-H4/H7): `changed_files` comes from git
+ * too, and on a case-sensitive checkout a deleted `Foo.mjs` must never confirm a missing `foo.mjs` — the `normalizePath`
+ * lowercasing is a matching key that would fold the two (batching.mjs `pathKey`, same reasoning).
+ */
+const keyOf = (p) => p;
 
 /**
  * The diff base the transcript's rounds recorded: the EARLIEST round carrying a full hex object id. R1 is the round that
@@ -46,20 +54,51 @@ export function transcriptDiffBase(transcript) {
 }
 
 /**
+ * Which changed paths git reports DELETED (upstream aeaca1fd). The coverage summary treats a path as a confirmed deletion
+ * only when this says so AND the file is absent on disk — absence alone is a gap, not a deletion.
+ *
+ * ONE reading: `git diff <base>` (committed, staged and unstaged deletions since the audit's diff base) when a base was
+ * recorded — and then ONLY that, since a path added after the base and removed again was never deleted relative to it
+ * (plan audit R2-H3); `git diff HEAD` (working-tree deletions) only when no base was recorded. `--no-renames`, so a
+ * rename's old path reads `D`. A failed read confirms nothing — unknown is "not deleted", the direction that shows the gap.
+ *
+ * @param {{base?: string|null, changedFiles?: string[], run?: Function}} input
+ * @returns {{isDeleted: (p: string) => boolean, deleted: string[]}}
+ */
+export function resolveFinalReviewDeletions({ base = null, changedFiles = [], run = execFileSync } = {}) {
+  const changed = new Set((Array.isArray(changedFiles) ? changedFiles : []).filter((p) => typeof p === 'string' && p).map(keyOf));
+  const found = new Set();
+  const rev = isFullObjectId(base) ? base : 'HEAD';
+  try {
+    const out = String(run('git', ['diff', '--name-status', '-z', '--no-renames', rev, '--'], {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000, maxBuffer: 64 * 1024 * 1024,
+    }) ?? '');
+    for (const r of parseNameStatusZ(out)) if (r.changeKind === 'deleted' && changed.has(keyOf(r.path))) found.add(keyOf(r.path));
+  } catch { /* unknown: nothing confirmed */ }
+  return { isDeleted: (p) => typeof p === 'string' && found.has(keyOf(p)), deleted: [...found] };
+}
+
+/** Deferred until the coverage summary first asks about a path it did not render: no unrendered path, no git call. */
+function lazyDeletions(input) {
+  let resolved = null;
+  return (p) => (resolved ??= resolveFinalReviewDeletions(input)).isDeleted(p);
+}
+
+/**
  * @param {{transcript: object, changedFiles: string[], run?: Function, readText?: Function, hashFile?: Function,
  *   warn?: Function}} input
  * @returns {{evidence: 'expected'|'not-applicable', base: string|null, reason: string,
- *   hunksFor: ((p: string) => Array<{startLine: number, lineCount: number}>|null)|null}}
+ *   hunksFor: ((p: string) => Array<{startLine: number, lineCount: number}>|null)|null, isDeleted: (p: string) => boolean}}
  */
 export function resolveFinalReviewHunks({
   transcript, changedFiles = [], run = execFileSync, readText = boundedReadText, hashFile,
   warn = (l) => process.stderr.write(l),
 } = {}) {
   const changed = (Array.isArray(changedFiles) ? changedFiles : []).filter((p) => typeof p === 'string' && p.length > 0);
-  const none = (reason) => ({ evidence: 'not-applicable', base: null, reason, hunksFor: null });
+  const none = (reason) => ({ evidence: 'not-applicable', base: null, reason, hunksFor: null, isDeleted: () => false });
   if (changed.length === 0) return none('no changed files declared');
   const base = transcriptDiffBase(transcript);
-  if (!base) return none('no diff base recorded in the transcript rounds');
+  if (!base) return { ...none('no diff base recorded in the transcript rounds'), isDeleted: lazyDeletions({ changedFiles: changed, run }) };
 
   // Untracked changed files have no diff section: they are wholly new, which is exactly what the hunk map's fallback
   // gives them — so their fallback line is not a degradation worth reporting.
@@ -91,5 +130,6 @@ export function resolveFinalReviewHunks({
       ? `hunks from git diff ${base.slice(0, 12)}..worktree, post-image verified`
       : `git diff ${base.slice(0, 12)} unreadable — changed files treated as wholly changed`,
     hunksFor: map.applicable ? map.hunksFor : null,
+    isDeleted: lazyDeletions({ base, changedFiles: changed, run }),
   };
 }

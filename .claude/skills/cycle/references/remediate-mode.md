@@ -112,15 +112,20 @@ another session may share.
 
 ```bash
 git merge-base --is-ancestor "$REMEDIATE_START" HEAD || { echo "base left history - halt"; exit 1; }
-node scripts/cycle-cluster-scope.mjs --base "$REMEDIATE_START" --scope-file "$SCOPE_FILE" --out-dir .audit --cluster remediate --json > "$SCOPE_JSON"
-FILES=$(node -p "require('./$SCOPE_JSON').filesCsv")
-PATCH=$(node -p "require('./$SCOPE_JSON').diffPath")
-INFRA=$(node -p "require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-infra-scope' : ''")
-node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --changed "$FILES" --diff "$PATCH" $INFRA
+node scripts/cycle-cluster-scope.mjs --base "$REMEDIATE_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster remediate --json > "$SCOPE_JSON"
+node scripts/cycle-cluster-scope.mjs --base "$REMEDIATE_START" --scope-file "$SCOPE_FILE" --plan "$PLAN" --out-dir .audit --cluster remediate --audit -- --out ".audit/$SID-r$R-result.json"
 ```
 
+`--audit` recomputes the scope and runs the argv it built — `--files`,
+`--changed`, `--diff` and `--base` (which stamps `_diffBase`, so the final gate
+can measure changed lines) — exiting with the audit's own code. Never re-assemble
+those flags by hand. It exits 1 on an `emptyAllowlist` scope (route to the final
+gate) and 2 on any scope flag passed again after `--`.
+
 Then follow `/audit-code`'s own loop (R2+ ledger, triage, fix, re-audit) with
-the **same `--files`** on every round, and its Gemini final gate. Caps are
+the **same base and scope file** on every round — the `--audit` call again (`R=1` first), with
+`--round $R --ledger …` added after `--` (a fix that strays outside the scope
+fails closed) — and its Gemini final gate. Caps are
 `/audit-code`'s, not new ones: **6 audit rounds, 2 final-review rounds**.
 Findings about code outside the fix list are triaged by impact exactly as in
 any audit — the focused scope bounds what the model *reads*, not what you may

@@ -47,8 +47,8 @@
       "id": "cluster-scope-preflight-exits-nonzero",
       "kind": "document-only",
       "statedIn": "skills/cycle/SKILL.md",
-      "stated": "#    pre-flight, patch. EXITS NON-ZERO on an out-of-scope edit, an unadmittable",
-      "reason": "DOCUMENT-ONLY here for the same reason as cluster-start-ref-validated-on-use: /cycle is an orchestrator and emits no exit code of its own, so there is nothing for the cli-exit oracle to assert against and asserting one would be the fake-check class this registry exists to catch. The claim is NOT unbacked — the mechanical half is scripts/cycle-cluster-scope.mjs, which owns the exit code and returns non-zero on (a) a changed path belonging to no declared cluster scope, (b) a declared path that would not be admitted and is not explained by this cluster having deleted it, and (c) a comma-unsafe path that --files cannot transport. Pinned by tests/cycle-audit-scope-contract.test.mjs against REAL throwaway git repos — rename (both operands), delete, untracked, typo, space-bearing and comma-bearing paths — because the defect it replaces was invisible to every check that read tool config instead of running it (measured 2026-08-13: 52 files audited against 11 declared, 26 of 31 findings about untouched code). Added 2026-08-14 under docs/plans/cycle-cluster-audit-scope.md KD-2/KD-3. UPDATED 2026-11-15: the comment was condensed (the allowlist is now declared scope ∩ changed, selectAuditAllowlist in the same script, pinned by the same test file); the exit-code claim is unchanged."
+      "stated": "#    EXITS NON-ZERO on an out-of-scope edit or an unadmittable/comma-unsafe path: STOP, show stderr.",
+      "reason": "DOCUMENT-ONLY here for the same reason as cluster-start-ref-validated-on-use: /cycle is an orchestrator and emits no exit code of its own, so there is nothing for the cli-exit oracle to assert against and asserting one would be the fake-check class this registry exists to catch. The claim is NOT unbacked — the mechanical half is scripts/cycle-cluster-scope.mjs, which owns the exit code and returns non-zero on (a) a changed path belonging to no declared cluster scope, (b) a declared path that would not be admitted and is not explained by this cluster having deleted it, and (c) a comma-unsafe path that --files cannot transport. Pinned by tests/cycle-audit-scope-contract.test.mjs against REAL throwaway git repos — rename (both operands), delete, untracked, typo, space-bearing and comma-bearing paths — because the defect it replaces was invisible to every check that read tool config instead of running it (measured 2026-08-13: 52 files audited against 11 declared, 26 of 31 findings about untouched code). Added 2026-08-14 under docs/plans/cycle-cluster-audit-scope.md KD-2/KD-3. UPDATED 2026-11-15: the comment was condensed (the allowlist is now declared scope ∩ changed, selectAuditAllowlist in the same script, pinned by the same test file); the exit-code claim is unchanged. UPDATED 2026-11-28 (upstream dd3e4276): the comment was condensed again when the block gained `--audit`; the exit-code claim is unchanged and now also holds under `--audit`, which recomputes the scope (tests/cycle-cluster-audit-argv.test.mjs: an edit made after the --json call exits 1)."
     },
     {
       "id": "autonomous-never-pushes-without-ship",
@@ -138,10 +138,6 @@
     {
       "line": "PATCH=$(node -p \"require('./$SCOPE_JSON').diffPath\")",
       "reason": "Scanner false positive: Node's `require()` function, not an enforcement verb. Same command block as the FILES= line."
-    },
-    {
-      "line": "INFRA=$(node -p \"require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-infra-scope' : ''\")",
-      "reason": "Scanner false positive on both `require()` (the Node function) and the `allowInfraScopeRequired` field NAME. Reading a boolean the pre-flight computed; the rule it reflects lives in scripts/cycle-cluster-scope.mjs and is dispositioned by cluster-scope-preflight-exits-nonzero."
     },
     {
       "line": "#               (R2+ also annotates); does NOT scope; must be a real file",
@@ -402,6 +398,14 @@
     {
       "line": "| `references/meta-review.md` | Automatic meta-review at the round cap: triggers, guard, records, overrides, opt-out. | Exit 4 `META_*`, or a round admitted. |",
       "reason": "Reference-index row: names the file, its summary and when to read it. Gate is a section name here, not an enforcement claim; nothing exits on this row."
+    },
+    {
+      "line": "# 2. Same call + --audit: recomputes the scope and runs the WHOLE argv it built; never hand-build",
+      "reason": "Step 3C block comment (2026-11-28, upstream dd3e4276): tells the AGENT to run the audit through cycle-cluster-scope.mjs --audit, which builds the whole openai-audit argv (--files, --changed, --diff, --base) and exits with the audit's own code. The enforcing half is the script — buildClusterAuditArgv / auditExtrasProblem / spawnClusterAudit, pinned by tests/cycle-cluster-audit-argv.test.mjs (real CLI) and tests/cycle-audit-scope-contract.test.mjs (the block itself runs --audit and hand-assembles no audit command, with the pre-fix block as negative control); /cycle has no exit code of its own."
+    },
+    {
+      "line": "#    audit flags (a hand copy dropped --base). Audit's exit code. R=1; rounds 2+ also pass --round $R --ledger ….",
+      "reason": "Step 3C block comment (2026-11-28, upstream dd3e4276): tells the AGENT to run the audit through cycle-cluster-scope.mjs --audit, which builds the whole openai-audit argv (--files, --changed, --diff, --base) and exits with the audit's own code. The enforcing half is the script — buildClusterAuditArgv / auditExtrasProblem / spawnClusterAudit, pinned by tests/cycle-cluster-audit-argv.test.mjs (real CLI) and tests/cycle-audit-scope-contract.test.mjs (the block itself runs --audit and hand-assembles no audit command, with the pre-fix block as negative control); /cycle has no exit code of its own."
     }
   ]
 }

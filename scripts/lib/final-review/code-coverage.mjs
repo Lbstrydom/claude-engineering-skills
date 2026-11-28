@@ -44,9 +44,12 @@ export const COVERAGE_STATES = ['unknown', 'none', 'partial', 'full'];
  *   it but absent from the final render was dropped by the envelope budget (envelope.mjs Step 4) and is counted unread.
  * @param {Function} [opts.readText] - fallback line source, used only when the reader recorded no `lineCounts`.
  * @param {Function} [opts.exists] - whether a changed path is still on disk; an absent one is a deletion, not an unreceived file.
+ * @param {Function} [opts.isDeleted] - whether git reports the path DELETED in the diff (`resolveFinalReviewDeletions`). A path
+ *   that is deleted AND absent is `changedDeleted`: nothing on disk to show, so it is neither unmeasured nor a gap (upstream
+ *   aeaca1fd). Absence alone is never a deletion — a missing-but-not-deleted file stays unmeasured.
  * @returns {object} the summary — see docs/plans/final-review-hunk-windows.md D4
  */
-export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = null, requested = null, readText = defaultReadText, exists = defaultExists } = {}) {
+export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = null, requested = null, readText = defaultReadText, exists = defaultExists, isDeleted = () => false } = {}) {
   const changed = (Array.isArray(changedFiles) ? changedFiles : []).filter(
     (p) => typeof p === 'string' && p.length > 0,
   );
@@ -55,6 +58,7 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
     changedFull: [],
     changedHeadCut: [],
     changedMissing: [],
+    changedDeleted: [],
     charsRendered: stats?.charsRendered ?? 0,
     charsOnDisk: stats?.charsOnDisk ?? 0,
     hunkEvidence: typeof hunksFor === 'function' ? 'expected' : 'not-applicable',
@@ -112,6 +116,10 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
       const ranges = Array.isArray(cut.ranges) ? cut.ranges : null;
       m = ranges ? unreadChangedLines({ lineCount: lineCountOf(p), hunks, ranges }) : null;
       base.changedHeadCut.push({ path: p, ...cut, unread: m?.unread ?? null, total: m?.total ?? null });
+    } else if (isDeleted(p) && !exists(p)) {
+      // A confirmed deletion: nothing on disk to receive, so nothing to measure. Never counts toward `complete`.
+      base.changedDeleted.push(p);
+      continue;
     } else {
       base.changedMissing.push(p);
       const dropped = omittedSet.has(k)
@@ -152,12 +160,21 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
   const lines = linesSuffix(base);
 
   const seen = base.changedFull.length + base.changedHeadCut.length;
+  const deleted = base.changedDeleted.length;
+  const deletedNote = deleted > 0 ? `; ${deleted} deleted` : '';
+  // Byte-identical wording when nothing was deleted; otherwise the count is of the files still on disk.
+  const present = deleted > 0 ? `${changed.length - deleted} present` : `${changed.length}`;
+  if (deleted === changed.length) {
+    // Nothing on disk to show, so nothing was measured: `unknown`, never a vacuous `full` (plan audit R1-H1). Not `none`
+    // either — the gate's premise ("the reviewer was handed none of the subject") needs a subject on disk. Named by `DELETED:`.
+    return { ...base, state: 'unknown', reason: `all ${changed.length} changed file(s) deleted — nothing on disk to measure` };
+  }
   if (seen === 0) {
     return {
       ...base,
       state: 'none',
-      reason: `all ${changed.length} changed file(s) were dropped before the reviewer: `
-        + base.changedMissing.slice(0, 8).join(', ') + lines,
+      reason: `all ${present} changed file(s) were dropped before the reviewer: `
+        + base.changedMissing.slice(0, 8).join(', ') + deletedNote + lines,
     };
   }
   if (!complete) {
@@ -166,18 +183,18 @@ export function summariseCodeCoverage(stats, changedFiles = [], { hunksFor = nul
       ...base,
       state: 'partial',
       reason: `${base.changedFull.length}/${changed.length} changed file(s) rendered whole; `
-        + `${base.changedHeadCut.length} head-cut (${windowed} windowed), ${base.changedMissing.length} absent${lines}`,
+        + `${base.changedHeadCut.length} head-cut (${windowed} windowed), ${base.changedMissing.length} absent${deletedNote}${lines}`,
     };
   }
   if (base.changedHeadCut.length > 0) {
     return {
       ...base,
       state: 'full',
-      reason: `all ${changed.length} changed file(s) shown — ${base.changedFull.length} whole, `
-        + `${base.changedHeadCut.length} windowed with every changed line (${base.changedLinesTotal} changed line(s))`,
+      reason: `all ${present} changed file(s) shown — ${base.changedFull.length} whole, `
+        + `${base.changedHeadCut.length} windowed with every changed line (${base.changedLinesTotal} changed line(s))${deletedNote}`,
     };
   }
-  return { ...base, state: 'full', reason: `all ${changed.length} changed file(s) rendered whole` };
+  return { ...base, state: 'full', reason: `all ${present} changed file(s) rendered whole${deletedNote}` };
 }
 
 // Absent ONLY on a confirmed ENOENT/ENOTDIR. Any other failure (permissions, a transient fs error) is "cannot tell", which must not
@@ -235,7 +252,12 @@ export function formatCodeCoverageSegment(cov) {
   const unmeasuredNamed = unmeasured.length > 0
     ? `; UNMEASURED: ${unmeasured.slice(0, 5).map((u) => `${classifyPath(u.path) === 'sensitive' ? '[sensitive path]' : oneLine(u.path)} (${classifyPath(u.path) === 'sensitive' ? 'excluded as sensitive' : oneLine(u.reason)})`).join(', ')}${unmeasured.length > 5 ? ` (+${unmeasured.length - 5} more)` : ''}`
     : '';
-  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}${unmeasuredNamed}`;
+  // A confirmed deletion is not a gap, but it is reported by name so it is never silently absorbed (upstream aeaca1fd).
+  const deletedList = Array.isArray(cov.changedDeleted) ? cov.changedDeleted : [];
+  const deletedNamed = deletedList.length > 0
+    ? `; DELETED: ${deletedList.slice(0, 5).map((p) => (classifyPath(p) === 'sensitive' ? '[sensitive path]' : oneLine(p))).join(', ')}${deletedList.length > 5 ? ` (+${deletedList.length - 5} more)` : ''}`
+    : '';
+  return `Code: ${cov.state.toUpperCase()}${parts.length ? `, ${parts.join(', ')}` : ''}${named}${unmeasuredNamed}${deletedNamed}`;
 }
 
 /**

@@ -30,6 +30,27 @@ const SCOPE_CLI = path.join(REPO_ROOT, 'scripts', 'cycle-cluster-scope.mjs');
 const OPEN_MARK = '<!-- cycle:cluster-audit-command -->';
 const CLOSE_MARK = '<!-- /cycle:cluster-audit-command -->';
 
+/**
+ * What a command block must do to run the cluster audit without dropping a flag: run it through the scope tool's own
+ * `--audit` (which builds the whole argv, `--base` included, from the scope it just computed), pass `--plan` so there is
+ * an argv to build, and never assemble an `openai-audit.mjs` command itself.
+ */
+function auditBlockProblems(text) {
+  const problems = [];
+  const auditCall = text.split('\n').find(l => /cycle-cluster-scope\.mjs --base/.test(l) && /\s--audit(\s|$)/.test(l)) ?? '';
+  if (!auditCall) problems.push('does not run the audit through cycle-cluster-scope.mjs --audit');
+  else if (!/--plan\s+"?\$/.test(auditCall)) problems.push('the --audit call does not pass --plan, so there is no argv to run');
+  if (/^\s*node\s+\S*openai-audit\.mjs/m.test(text)) problems.push('hand-assembles an openai-audit.mjs command');
+  return problems;
+}
+
+/** The block as it stood at 067057e9 — the negative control for auditBlockProblems. */
+const PRE_FIX_BLOCK = [
+  'node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" --scope-file "$SCOPE_FILE" --out-dir .audit --cluster "$ID" --json > "$SCOPE_JSON"',
+  `FILES=$(node -p "require('./$SCOPE_JSON').filesCsv")`,
+  'node scripts/openai-audit.mjs code "$PLAN" --scope diff --files "$FILES" --changed "$FILES" --diff "$PATCH" $INFRA',
+].join('\n');
+
 /** Exclusion stub — the resolver takes it injected, so no glob dep is needed. */
 const excludeStub = (files, patterns) => files.filter(f => !patterns.includes(f));
 
@@ -269,28 +290,31 @@ describe('KD-4b — Step 3C\'s executable block really passes --files', () => {
     assert.ok(block.trim().length > 100, 'the canonical command block is suspiciously short');
   });
 
-  it('the audit INVOCATION carries --files — not merely the surrounding prose', () => {
-    const invocation = block.split('\n').find(l => l.includes('openai-audit.mjs code'));
-    assert.ok(invocation, 'no openai-audit invocation inside the delimited block');
-    const cmd = block.slice(block.indexOf(invocation));
-    assert.match(cmd, /--files\s+"?\$/, 'the invocation must pass --files a variable');
+  // The block used to hand-assemble the audit argv from the scope JSON and dropped --base (upstream dd3e4276), so the
+  // contract moved INTO the scope tool: the block must run the emitted argv, never rebuild it. What the argv carries
+  // (--files = --changed = the scope, --diff, --base) is asserted on the real CLI in cycle-cluster-audit-argv.test.mjs.
+  it('the block runs the emitted argv and hand-assembles no audit command', () => {
+    assert.deepEqual(auditBlockProblems(block), []);
   });
 
-  it('--files and --changed receive the SAME scope variable', () => {
-    // A token check alone would pass on `--files "$PLAN"`: flag present, scoping
-    // still wrong. Assert the data flow, which is the actual contract.
-    const filesVar = block.match(/--files\s+"?(\$\{?\w+\}?)"?/)?.[1];
-    const changedVar = block.match(/--changed\s+"?(\$\{?\w+\}?)"?/)?.[1];
-    assert.ok(filesVar, 'could not read the --files argument');
-    assert.equal(filesVar, changedVar, '--files and --changed must carry the same derived scope');
-    assert.doesNotMatch(filesVar, /PLAN/, '--files must receive the scope, not the plan path');
+  it('negative control: the pre-fix hand-assembled block fails the same predicate', () => {
+    const problems = auditBlockProblems(PRE_FIX_BLOCK);
+    assert.ok(problems.some(p => /hand-assembles/.test(p)), problems.join('; '));
+    assert.ok(problems.some(p => /--audit/.test(p)), problems.join('; '));
+  });
+
+  it('REMEDIATE R4 runs the same emitted argv', () => {
+    const ref = fs.readFileSync(path.join(REPO_ROOT, 'skills', 'cycle', 'references', 'remediate-mode.md'), 'utf8');
+    const r4 = ref.slice(ref.indexOf('## R4'), ref.indexOf('## R5'));
+    assert.ok(r4.length > 100, 'R4 section not found (vacuous-pass guard)');
+    assert.deepEqual(auditBlockProblems(r4), []);
   });
 
   it('the block calls cycle-cluster-scope.mjs before auditing', () => {
-    const scopeIdx = block.indexOf('cycle-cluster-scope.mjs');
-    const auditIdx = block.indexOf('openai-audit.mjs');
+    const scopeIdx = block.search(/cycle-cluster-scope\.mjs --base[^\n]*--json/);
+    const auditIdx = block.search(/cycle-cluster-scope\.mjs --base[^\n]*--audit/);
     assert.ok(scopeIdx >= 0, 'the deterministic pre-flight is not invoked');
-    assert.ok(scopeIdx < auditIdx, 'the pre-flight must run BEFORE the audit spends');
+    assert.ok(auditIdx >= 0 && scopeIdx < auditIdx, 'the inspected pre-flight must run BEFORE the audit spends');
   });
 
   it('reads the canonical source, never the generated .claude/ copy', () => {
