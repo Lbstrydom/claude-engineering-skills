@@ -323,26 +323,39 @@ export function buildAuditUnits(files, maxTokensPerUnit = 30000, maxFilesPerUnit
 
 // ── Reduce Prompt ────────────────────────────────────────────────────────────
 
-/** System prompt for the REDUCE phase of map-reduce auditing. */
+/**
+ * System prompt for the REDUCE phase of map-reduce auditing.
+ *
+ * REDUCE answers with DECISIONS about payload refs (`ReduceDecisionSchema`,
+ * map-reduce-scheduler.mjs); code rebuilds each output finding from the full
+ * MAP finding (upstream aa0298f2). Every field this prompt names must be a
+ * property of the EMITTED schema — tests/reduce-rehydrate.test.mjs checks
+ * `z.toJSONSchema(ReduceDecisionSchema)`, not the Zod source. The old prompt
+ * told the model to "PRESERVE classification" from a payload that never
+ * contained it; code preserves every MAP field now, so the prompt no longer asks.
+ */
 export const REDUCE_SYSTEM_PROMPT = `You are a SENIOR CODE REVIEWER synthesizing findings from multiple parallel audit passes.
 
-Multiple reviewers have independently audited different parts of the same codebase. Your job:
+Multiple reviewers have independently audited different parts of the same codebase. Each finding you are given
+carries a \`ref\` (e.g. "F3") and \`_mapUnits\` (which reviewers found it). You do NOT rewrite findings: the
+originals are kept exactly as written. You answer only with decisions about refs:
 
-1. DEDUPLICATE: Remove findings that describe the same issue (different wording, same problem)
-2. ELEVATE PATTERNS: If 3+ reviewers found the same class of issue in different files, create ONE systemic finding at elevated severity
-3. CROSS-FILE ISSUES: Identify issues that span multiple files (e.g., inconsistent error handling, missing auth in related routes)
-4. RANK: Order findings by severity (HIGH first), then by systemic impact
+1. merge_groups — findings that describe the SAME issue (different wording, same problem). Name the clearest one
+   as keep_ref and the rest as duplicate_refs. The group keeps the highest severity of its members automatically.
+2. severity_elevations — a finding whose severity should be RAISED (e.g. it is one instance of a pattern several
+   reviewers found). Give the ref and the raised severity. Never lower a severity.
+3. systemic_findings — at most 5 NEW cross-unit findings: a class of issue that 3+ reviewers found in different
+   files, or an issue that only shows across files (inconsistent error handling, missing auth in related routes).
+   List every instance in source_refs (at least 2 distinct refs whose _mapUnits name 2+ different units) and
+   write the category, section, detail, risk, recommendation and principle for the pattern as a whole, and set
+   is_quick_fix if your recommendation is a band-aid. The instances stay in the output (never merge a ref you
+   cite as a source); the systemic finding names what connects them.
 
-Do NOT:
-- Add new findings that no reviewer mentioned
-- Change the substance of findings (only merge/elevate)
-- Lower severity unless merging duplicates
-
-Mark systemic findings with category prefix [SYSTEMIC].
-
-PRESERVE the \`classification\` object on every finding (sonarType, effort, sourceKind, sourceName).
-When merging duplicates, keep the highest severity source's classification and set effort to the MAX
-of the merged findings (MAJOR > MEDIUM > EASY > TRIVIAL). Never drop or null the classification field.`;
+Rules:
+- Use only refs exactly as given. A ref may appear in at most one merge group. Leave a finding out of every list
+  to keep it unchanged — that is the default and needs no decision.
+- Do not invent findings no reviewer raised; a systemic finding must rest on its source_refs.
+- An unknown ref, a lowered severity or a ref in two groups makes your whole answer unusable.`;
 
 // ── Context Measurement ──────────────────────────────────────────────────────
 

@@ -197,8 +197,9 @@ describe('census - every site that builds or projects `is_quick_fix` handles the
     'scripts/lib/linter.mjs': 'fills',
     'scripts/gemini-review.mjs': 'fills',
     'scripts/solo-control-audit.mjs': 'projection',
-    'scripts/lib/robustness.mjs': 'projection',
+    'scripts/lib/robustness.mjs': 'fills', // applyReduceDecisions builds systemic findings (aa0298f2); it no longer projects a view
     'scripts/lib/schemas.mjs': 'exempt: FindingBase declares is_quick_fix; the tags are deliberately NOT in FindingBase',
+    'scripts/lib/audit/map-reduce-scheduler.mjs': 'exempt: ReduceDecisionSchema declares a systemic is_quick_fix judgement; robustness.mjs builds the finding and fills the tags',
     'scripts/openai-audit.mjs': 'exempt: the rebuttal schema, not a finding',
     'scripts/lib/audit/legacy-production-audit.mjs': 'exempt: {...f, is_quick_fix:true} spread keeps every tag',
     // Persistence (store/runs-findings.mjs) writes `base.is_quick_fix = ...` with no tag column: NOT persisted; legacy reads null.
