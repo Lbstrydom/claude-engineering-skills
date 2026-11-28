@@ -193,12 +193,21 @@ export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
       path: z.string(),
       bytes: z.number().int().nonnegative(),
       truncated: z.boolean(),
+      // Added 2026-11-28 (upstream c1f6738a). Optional so rows written before
+      // then still parse; declared at all because this non-strict object
+      // STRIPS undeclared keys — an undeclared field never reaches the JSON.
+      totalChars: z.number().int().nonnegative().optional(),
+      sentChars: z.number().int().nonnegative().optional(),
+      redactionCount: z.number().int().nonnegative().optional(),
     })),
     refused: z.array(z.object({
       path: z.string(),
       reason: z.string().nullable(),
     })),
     policyAttached: z.boolean(),
+    // The exact line the skill renders (formatArtifactRenderLine) — the
+    // envelope, not SKILL.md prose, owns what the user is told was attached.
+    renderLine: z.string().nullable().optional(),
   }).nullable().optional(),
 }).superRefine(debateOutcomeIsCoherent);
 
@@ -226,7 +235,29 @@ export const BrainstormEnvelopeWriteSchema = BrainstormEnvelopeV2Schema.required
   // validated. The writer emits `debate` unconditionally, so requiring the key
   // costs nothing and closes the hole.
   debate: true,
-});
+}).superRefine(artifactContextIsCompleteOnWrite);
+
+/**
+ * The artifact fields added 2026-11-28 are optional on READ (older session
+ * rows lack them) but required on WRITE: a fresh writer that drops
+ * `renderLine` or a per-artifact count would leave the skill with nothing
+ * honest to render, which is the bug those fields close (upstream c1f6738a).
+ * `renderLine` may be null (nothing attached); its KEY must be present.
+ */
+function artifactContextIsCompleteOnWrite(env, ctx) {
+  const ac = env?.artifactContext;
+  if (!ac) return;
+  if (!Object.prototype.hasOwnProperty.call(ac, 'renderLine')) {
+    ctx.addIssue({ code: 'custom', path: ['artifactContext', 'renderLine'], message: 'writers must emit artifactContext.renderLine (null when nothing attached)' });
+  }
+  ac.attached.forEach((a, i) => {
+    for (const k of ['totalChars', 'sentChars', 'redactionCount']) {
+      if (a[k] === undefined) {
+        ctx.addIssue({ code: 'custom', path: ['artifactContext', 'attached', i, k], message: `writers must emit attached[].${k}` });
+      }
+    }
+  });
+}
 
 /**
  * Public-facing parse target — union with V2 first so V2 records normalise

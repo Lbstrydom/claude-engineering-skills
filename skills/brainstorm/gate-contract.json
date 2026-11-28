@@ -44,7 +44,7 @@
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
-      "line": "| `--with-artifact <path>` | — | Attach the **focal artifact** verbatim — the plan/diff/module the topic is actually about. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |",
+      "line": "| `--with-artifact <path>` | — | Attach the **focal artifact** — the plan/diff/module the topic is actually about; secrets redacted, cut to a shared ~3K-token budget. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |",
       "reason": "Rewrapped or condensed by the 2026-11-02 skill slim (docs/plans/skill-best-practice-alignment.md): agent-facing instruction text whose verbs (must, never, fails, refuse) direct the agent running the skill. It makes no enforcement claim beyond the gates this contract already binds."
     },
     {
