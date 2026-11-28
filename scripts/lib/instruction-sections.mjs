@@ -98,6 +98,8 @@ const BLANK_QUOTE = /^\s*>\s*$/;
 const INDENTED = /^\s/;
 const BLOCK_START = /^(?:[-*+]\s|\d+[.)]\s|\||```|~~~|#{1,6}\s)/;
 const LIST_ITEM = /^(?:[-*+]\s|\d+[.)]\s)/;
+/** A line ending in `:`, also inside emphasis (`**Only when all hold:**`). */
+const INTRODUCER = /:\s*(?:\*\*|__|\*|_)?\s*$/;
 
 /**
  * Does `line` begin a new block, given the line before it? Deliberately
@@ -117,10 +119,10 @@ const LIST_ITEM = /^(?:[-*+]\s|\d+[.)]\s)/;
  * @param {boolean} afterFence - the previous line closed a code fence
  */
 function startsBlock(line, prev, introducer, afterFence) {
-  if (/:\s*$/.test(introducer)) return false;
+  if (INTRODUCER.test(introducer)) return false;
   if (afterFence) return true; // a closed fence ends its block
+  if (INDENTED.test(line)) return false; // incl. an indented quote nested in a list item
   if (QUOTE.test(line)) return !QUOTE.test(prev) || BLANK_QUOTE.test(prev);
-  if (INDENTED.test(line)) return false;
   if (BLANK.test(prev) || BLANK_QUOTE.test(prev)) return true;
   return BLOCK_START.test(line);
 }
@@ -237,30 +239,44 @@ export function condenseBySection(content, budget) {
     const cost = costAt(i, points[i][0]);
     if (cost <= left) { at[i] = 0; left -= cost; }
   }
-  // 2. Round-robin by block, over the ACTIVE sections only. `left` never
-  //    grows, so a section whose next step does not fit now never will: it
-  //    leaves the rotation, as does a finished one. Every pass therefore
-  //    advances every section still in it, and the total work is linear in
-  //    the number of blocks.
+  // 2. Round-robin by block, over the ACTIVE sections only. A finished
+  //    section leaves the rotation; so does a stalled one (its next step does
+  //    not fit), until a step RELEASES budget (see below). Every pass advances
+  //    every section still in it, so the work is linear in blocks plus at
+  //    most n re-admissions per release.
   let active = sections.map((_, i) => i).filter((i) => at[i] >= 0 && at[i] < points[i].length - 1);
+  let stalled = [];
   while (active.length > 0) {
     const next = [];
+    let released = false;
     for (const i of active) {
       const now = costAt(i, points[i][at[i]]);
       const last = points[i].length - 1;
       const delta = costAt(i, points[i][at[i] + 1]) - now;
-      if (delta <= left) { at[i] += 1; left -= delta; }
-      else {
+      if (delta <= left) {
+        at[i] += 1;
+        left -= delta;
+        if (delta < 0) released = true;
+      } else {
         // Completing the section drops its cut marker, so "whole" can cost
         // less than the next cut point did: take it when it fits.
         const toWhole = costAt(i, points[i][last]) - now;
-        if (toWhole > left) continue; // stalled for good
+        if (toWhole > left) { stalled.push(i); continue; }
         at[i] = last;
         left -= toWhole;
+        if (toWhole < 0) released = true;
       }
       if (at[i] < last) next.push(i);
     }
-    active = next;
+    // Completing a section can give its marker's chars BACK (a negative
+    // step), so a stalled section may now fit: re-admit them, in file order.
+    // Only a release re-admits, and there are at most n releases.
+    if (released && stalled.length > 0) {
+      active = [...next, ...stalled].sort((a, b) => a - b);
+      stalled = [];
+    } else {
+      active = next;
+    }
   }
 
   // 3. Render.

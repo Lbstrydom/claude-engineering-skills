@@ -239,3 +239,15 @@ tune.
   list item by item when the whole list does not fit): that is the split code
   R2 rated HIGH — an introduction shown without its conditions. The safe side
   holds; the stalled section is counted in the coverage line.
+- 2026-11-28: re-gate at the pushed head `7de118a4` (the amend after the
+  first final gate added `maxRetries` to a test `rmSync` and the regenerated
+  plans index). Code R6 — the round cap — with `--base 067057e9` (3 H, 3 M).
+  Fixed, each red-checked by mutation: **a regression from R5** — completing
+  a section can give its marker's chars back, so the "stalled for good"
+  assumption was false; stalled sections are now re-admitted after any
+  release; an introducer wrapped in emphasis (`**…only when all hold:**`)
+  keeps its list; an indented quote nested in a list item stays with its
+  item. **Challenged** R6 H3: the same split as R5 H2, so the same answer.
+  R6 M3 (`ADJACENCY_INCOMPLETE`, maxContainers reached) is the audit tool's
+  coverage note about its own adjacency wave, not a defect in this change.
+  No GPT round remains after R6 (cap); the final gate re-runs at the new head.

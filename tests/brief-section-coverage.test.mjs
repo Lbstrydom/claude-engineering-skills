@@ -201,6 +201,59 @@ describe('condenseBySection', () => {
     }
   });
 
+  it('an introducer wrapped in emphasis keeps its list', () => {
+    const doc = [
+      '## Deletes', '**Delete files only when ALL conditions hold:**', '- inside a disposable worktree', '- with the lease held',
+      `- third ${'z'.repeat(300)}`, '', `Next ${'q'.repeat(300)}`, '## Tail', 'y'.repeat(400),
+    ].join('\n');
+    let sawIntro = false;
+    for (let budget = 100; budget <= 600; budget += 2) {
+      const { text } = condenseBySection(doc, budget);
+      if (!text.includes('ALL conditions hold')) continue;
+      sawIntro = true;
+      assert.ok(text.includes('- with the lease held'), `budget ${budget}: introduction kept without its conditions:\n${text}`);
+    }
+    assert.ok(sawIntro, 'not vacuous');
+  });
+
+  it('an indented quote nested in a list item stays with its item', () => {
+    const doc = ['## Db', '- You may delete the database', '  > only in a disposable test workspace', `- next ${'n'.repeat(300)}`, '## Tail', 'y'.repeat(400)].join('\n');
+    let sawItem = false;
+    for (let budget = 60; budget <= 400; budget += 2) {
+      const { text } = condenseBySection(doc, budget);
+      if (!text.includes('You may delete the database')) continue;
+      sawItem = true;
+      assert.ok(text.includes('only in a disposable test workspace'), `budget ${budget}: item kept without its qualification:\n${text}`);
+    }
+    assert.ok(sawItem, 'not vacuous');
+  });
+
+  it('budget released by a section completing is offered back to a stalled one', () => {
+    // A ends in a 1-char block, so completing it gives back its marker (~20
+    // chars). B's next block only fits with that released budget.
+    const a = ['## A', 'a'.repeat(40), '', 'z'].join('\n');
+    const b = ['## B', 'b'.repeat(30), '', 'c'.repeat(400)].join('\n');
+    // A first: pass 1 gives A its cut block and stalls B; pass 2 completes A
+    // (a negative step), and only that release lets B in.
+    const doc = `${a}\n${b}`;
+    let reached = false;
+    for (let budget = 80; budget <= 260; budget++) {
+      const { text, coverage } = condenseBySection(doc, budget);
+      assert.ok(text.length <= budget);
+      if (text.includes('z') && text.includes('b'.repeat(30))) reached = true;
+      // Never leave usable budget idle: if A is whole and B is heading-only,
+      // B's first block must truly not have fitted.
+      if (coverage.headingOnly > 0 && text.includes(a)) {
+        // B's first block costs 30 + 1 + its marker; one more char of slack is
+        // the allocator's deliberate reserve for the first section's join.
+        const need = 30 + 1 + `\n…[cut: 35/${b.length} chars]`.length;
+        const spare = budget - text.length;
+        assert.ok(spare <= need, `budget ${budget}: ${spare} chars idle while B stalled (needs ${need}):\n${text}`);
+      }
+    }
+    assert.ok(reached, 'not vacuous: at some budget both A and the first block of B are kept');
+  });
+
   it('`##` followed by a tab is a heading', () => {
     assert.deepEqual(splitInstructionSections('## A\na\n##\tSafety\ns').map((x) => x.heading), ['A', 'Safety']);
   });
