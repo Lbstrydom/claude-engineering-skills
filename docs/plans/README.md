@@ -444,6 +444,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Audit convergence summary — runs-findings write-boundary hardening](./runs-findings-write-boundary-hardening-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
 | [/audit-code summary — sync-output-drift-classification](./sync-output-drift-classification-audit-summary.md) |  |
+| [Audit summary: Block holds (docs/plans/sync-skill-block-holds.md)](./sync-skill-block-holds-audit-summary.md) |  |
 | [Audit summary: sync-to-repos failure honesty](./sync-to-repos-failure-honesty-audit-summary.md) |  |
 | [Audit summary — test-runner-hang-guard](./test-runner-hang-guard-audit-summary.md) |  |
 | [Audit Summary: triage-independence-test-and-write-boundary-fixes](./triage-independence-test-and-write-boundary-fixes-audit-summary.md) |  |
